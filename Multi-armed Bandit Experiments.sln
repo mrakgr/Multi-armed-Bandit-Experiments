@@ -5,7 +5,7 @@ VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Multi-armed Bandit Experiments", "Multi-armed Bandit Experiments\Multi-armed Bandit Experiments.fsproj", "{5D726FC5-F56E-4646-8CE2-177A7647AF3F}"
 EndProject
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Spiral V4", "..\Spiral V4\Spiral V4\Spiral V4.fsproj", "{DED1C5B0-B19E-4852-8ED5-781B267E37B4}"
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Spiral V4 (bandits)", "Spiral V4 (bandits)\Spiral V4 (bandits).fsproj", "{70BC3679-E519-4513-9DEC-7424CA234C4B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -17,10 +17,10 @@ Global
 		{5D726FC5-F56E-4646-8CE2-177A7647AF3F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5D726FC5-F56E-4646-8CE2-177A7647AF3F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5D726FC5-F56E-4646-8CE2-177A7647AF3F}.Release|Any CPU.Build.0 = Release|Any CPU
-		{DED1C5B0-B19E-4852-8ED5-781B267E37B4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{DED1C5B0-B19E-4852-8ED5-781B267E37B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{DED1C5B0-B19E-4852-8ED5-781B267E37B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{DED1C5B0-B19E-4852-8ED5-781B267E37B4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{70BC3679-E519-4513-9DEC-7424CA234C4B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70BC3679-E519-4513-9DEC-7424CA234C4B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70BC3679-E519-4513-9DEC-7424CA234C4B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70BC3679-E519-4513-9DEC-7424CA234C4B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
