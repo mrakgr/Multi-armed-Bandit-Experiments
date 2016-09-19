@@ -55,6 +55,7 @@
     <Compile Include="SpiralV4.fs" />
     <Compile Include="SpiralV4.Combinators.fs" />
     <Compile Include="SpiralV4.Testing.fs" />
+    <None Include="readme.md" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
