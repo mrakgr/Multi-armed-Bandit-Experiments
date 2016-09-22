@@ -170,8 +170,8 @@ module private Testing =
                 |> Array.map (fun x -> Path.Combine(mnist_path,x) |> load_mnist)
 
             {
-            training_set = Array.zip train_labels train_images
-            test_set = Array.zip test_labels test_images
+            training_set = Array.zip train_images train_labels
+            test_set = Array.zip test_images test_labels
             state = StanState()
             }
 
@@ -184,7 +184,7 @@ module private Testing =
     type ReberData =
         {
         state : RNN1DState
-        data : Dictionary<int, (d2M*d2M)[]>
+        data : Dictionary<int, (d2M*d2M)[][]>
         }
 
         static member create() =
@@ -257,38 +257,25 @@ module private Testing =
             
             let make_reber_set num_examples =
                 let mutable c = 0
-                let reber_set = new HashSet<string * float32 [] [] * float32 [] []>(HashIdentity.Structural)
+                let reber_set = new HashSet<(float32 [] * float32 []) []>(HashIdentity.Structural)
 
                 while c < num_examples do
-                    if reber_set.Add (make_random_reber_string "" [] []) then c <- c+1
-                reber_set
+                    let _,inp,lab = make_random_reber_string "" [] []
+                    if reber_set.Add (Array.zip inp lab) then c <- c+1
+                reber_set |> Seq.toArray
 
-            let make_data_from_set num_examples =
-                let reber_set = make_reber_set num_examples |> Seq.toArray |> Array.groupBy (fun (s,_,_) -> s.Length)
-                let rotate_and_concat_3darray_and_load_to_gpu (inp: float32[][][]) =
-                    // [dataset][sequence][sample] -> [sequence][dataset][sample] -> [sequence][dataset*sample]
-                    let dataset_length = inp.Length
-                    let sequence_length = inp.[0].Length
-                    Array.init sequence_length <| fun sequence ->
-                        Array.init dataset_length <| fun dataset ->
-                            inp.[dataset].[sequence]
-                        |> Array.concat
-                        |> fun input -> d2M.createConstant(7,dataset_length,input)
-    
-                reber_set 
-                |> Array.map (fun (k,v) -> 
-                    let snd = Array.map (fun (_,inp,lab) -> inp)
-                    let trd = Array.map (fun (_,inp,lab) -> lab)
-                    let f ex = rotate_and_concat_3darray_and_load_to_gpu << ex
-                    k,Array.zip (f snd v) (f trd v))
+            let ex = 
+                group_data_by_seq_length_and_load_to_gpu 512 (make_reber_set 3000)
+                |> Array.concat
+                |> Array.groupBy (fun x -> x.Length)
                 |> dict |> Dictionary
 
-            {state=RNN1DState(); data = make_data_from_set 3000}
+            {state=RNN1DState(); data = ex}
 
         interface IDisposable with
             member t.Dispose() = 
                 t.state |> dispose
-                t.data.Values |> Seq.iter (Seq.iter (fun (lab,inp) -> lab |> dispose; inp |> dispose))
+                t.data.Values |> Seq.iter (Seq.iter <| Seq.iter (fun (inp,lab) -> dispose inp; dispose lab))
 
     let run_all_tests() =
         let gradientCheckingTests =
@@ -299,9 +286,9 @@ module private Testing =
                 let input = data.inputd2M
                 let target = data.outputd2M
                 let state = data.state
-                let _ = train layer squared_error_cost' GradChecking [|(target,input)|] state
+                let _,_,fin = train layer GradChecking [|(target,input)|] state false
                 let getNodes extract_node = 
-                    [|for dm in layer.WrappedNodes.[layer_number].Value do 
+                    [|for dm in fin.Value.WrappedNodes.[layer_number].Value do 
                         match extract_node dm with
                         | Some v -> yield v
                         | None -> ()|]
@@ -317,7 +304,7 @@ module private Testing =
                         for i=0 to int ar.Size-1 do
                             let i = SizeT i
                             let orig = ar.[i]
-                            let cost() = inferCostOnly layer squared_error_cost' GradChecking [|(target,input)|] state
+                            let cost() = infer layer GradChecking [|(target,input)|] state false |> fun (_,x,_) -> x
                             ar.[i] <- orig + epsilon
                             let cost_plus_epsilon = cost()
                             ar.[i] <- orig - epsilon
@@ -336,22 +323,27 @@ module private Testing =
     //            printfn "difference_between_true_and_approx_gradients=%A" difference_between_true_and_approx_gradients
     //            printfn "max_difference=%f" max_difference
                 max_difference <= boundary |> assertTest "max_difference <= boundary"
-            let ``feedforward layer test`` = checkLayer 0 (FFLayer size_gradcheck relu)
-            let ``batch normalization test`` = checkLayer 0 (BNLayer 1)
+            let ``feedforward layer test`` = 
+                let main = FFLayer size_gradcheck relu
+                checkLayer 0 <| fun target -> main ^- SquaredErrorLayer target
+//            let ``batch normalization test`` = 
+//                let main = BNLayer()
+//                checkLayer 0 (fun target -> main ^- squaredErrorLayer target)
             [|
             "feedforward layer test", ``feedforward layer test``
             //"batch normalization test", ``batch normalization test`` // Note: read the warning in batch_normalization_forward before proceeding with this one.
             |]
        
         let mnistTests =
-            let inline layerTest network train infer optimizer num_iters (data: MnistData) =
+            let inline layerTest network optimizer num_iters (data: MnistData) =
                 let training_set = data.training_set
                 let test_set = data.test_set
                 let state = data.state
                 printfn "Testing the feedforward net with %A..." optimizer
                 let rec loop iter =
-                    let training_cost = train network cross_entropy_cost' optimizer training_set state
-                    let (test_accuracy, max_accuracy), test_cost = infer network cross_entropy_cost' optimizer test_set state
+                    let _,training_cost,_ = train network optimizer training_set state false
+                    printfn "Done with training."
+                    let (test_accuracy, max_accuracy),test_cost,_ = infer network optimizer test_set state true
                     printfn "Training cost is %f at iteration %i" training_cost iter
                     printfn "Test accuracy and cost are (%i/%i, %f) at iteration %i" test_accuracy max_accuracy test_cost iter
                     if iter >= num_iters then 
@@ -361,40 +353,44 @@ module private Testing =
                 loop 1
 
             let ``n layer feedforward net test`` =
-                layerTest (
+                let main = 
+                    // Warning: do not substitute main with the expression in the layerTest lambda otherwise it will
+                    // reintantiate the layer on each iteration.
                     FFLayer 256 relu ^-
                     FFLayer 256 relu ^-
-                    FFLayer 10 clipped_sigmoid) train infer
+                    FFLayer 10 clipped_sigmoid
+                layerTest <| fun target -> main ^- CrossEntropyLayer target
         
-            let ``3 layer delayed feedforward net test`` =
-                layerTest (FFLayer 256 relu ^- FFLayer 256 relu ^- FFLayer 10 clipped_sigmoid) train' infer'
-
             let ``n layer feedforward net test (with BN)`` =
-                layerTest (
-                    BNLayer 1 ^- FFLayer' false 256 relu ^-
-                    BNLayer 1 ^- FFLayer' false 256 relu ^-
-                    BNLayer 1 ^- FFLayer 10 clipped_sigmoid) train infer
+                let main =
+                    BNLayer() ^- FFLayer' false 256 relu ^-
+                    BNLayer() ^- FFLayer' false 256 relu ^-
+                    BNLayer() ^- FFLayer 10 clipped_sigmoid
+                layerTest <| fun target -> main ^- CrossEntropyLayer target
 
             [|
             "n layer feedforward net test", ``n layer feedforward net test`` (Sgd(0.5f)) 20
-            //"3 layer delayed feedforward net test", ``3 layer delayed feedforward net test``
             "n layer feedforward net test (with BN)", ``n layer feedforward net test (with BN)`` (Sgd(1.5f)) 20
             |]
 
         let reberTests =
             let ``standard 1 layer RNN test`` num_iters (optimizer: Optimizer) (data: ReberData) =
                 let state = data.state
-                let training_set = [|data.data.[20]|] // As these two are full batch I need to put them in an array explicitly.
-                let test_set = [|data.data.[30]|]
-                let network = RNN1DLayer 128 tanh_ ^- FFLayer 7 clipped_sigmoid
+                let training_set = data.data.[20] // As these two are full batch I need to put them in an array explicitly.
+                let test_set = data.data.[30]
+                let network = 
+                    let main = RNN1DLayer 128 tanh_ ^- FFLayer 7 clipped_sigmoid
+                    fun target -> main ^- CrossEntropyLayer target
                 printfn "Testing the standard 1 layer RNN for %i iterations and optimizer %A..." num_iters optimizer
+                let stopwatch = Diagnostics.Stopwatch.StartNew()
                 let rec loop iter =
-                    let training_cost = train1DRNN network cross_entropy_cost' optimizer training_set state
-                    let (test_accuracy, max_accuracy), test_cost = infer1DRNN network cross_entropy_cost' optimizer test_set state false
+                    let _,training_cost,_ = train1DRNN network optimizer training_set state false
+                    let _, test_cost,_ = infer1DRNN network optimizer test_set state false
                     printfn "Training cost is %f at iteration %i" training_cost iter
                     printfn "Test cost is %f at iteration %i" test_cost iter
                     let boundary = 0.5f
                     if iter >= num_iters then 
+                        printfn "Time elapse for Reber test is %A" stopwatch.Elapsed
                         test_cost <= boundary |> assertTest (sprintf "test_cost <= boundary(%f/%f)" test_cost boundary)
                     else
                         loop <| iter+1
@@ -411,9 +407,9 @@ module private Testing =
                 @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\SpiralQ\SpiralQ\Tests" 
             testArray null
                 [|
-                testIgnore <| testCases "Mnist Tests" (MnistData.create 64 mnist_path) mnistTests
-                testIgnore <| testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
-                testIgnore <| testCases "Reber Grammar RNN Tests" ReberData.create reberTests
+//                testCases "Mnist Tests" (MnistData.create 64 mnist_path) mnistTests
+//                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
+                testCases "Reber Grammar RNN Tests" ReberData.create reberTests
                 |]
         run tree
-    //run_all_tests()
+    run_all_tests()

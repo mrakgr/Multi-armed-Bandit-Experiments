@@ -55,10 +55,11 @@
   <Import Project="$(FSharpTargetsPath)" />
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
-    <Compile Include="Program.fs" />
     <None Include="App.config" />
     <Content Include="packages.config" />
     <None Include="readme.md" />
+    <Compile Include="bandit_v0.fs" />
+    <None Include="Script1.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
@@ -106,9 +107,9 @@
     <Reference Include="System.Numerics" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Spiral V4 %28bandits%29\Spiral V4 %28bandits%29.fsproj">
-      <Name>Spiral V4 (bandits)</Name>
-      <Project>{70bc3679-e519-4513-9dec-7424ca234c4b}</Project>
+    <ProjectReference Include="..\Spiral V4 Pipes %28bandits%29\Spiral V4 Pipes %28bandits%29.fsproj">
+      <Name>Spiral V4 Pipes (bandits)</Name>
+      <Project>{97d92324-c158-4c58-bf79-f2d2e1ec98fb}</Project>
       <Private>True</Private>
     </ProjectReference>
   </ItemGroup>

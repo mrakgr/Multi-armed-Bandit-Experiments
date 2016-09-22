@@ -1,7 +1,5 @@
-﻿// Basic reverse mode AD on the GPU. This v4 of Spiral is focused on removing the global state.
-// My recent experience with Haskell has shown me the way to weave the state across function calls.
-// I will also add array slicing operations. Streams will be removed as their benefit is too marginal to
-// be worth the maintenance cost. Also I won't bother merging 2d and 4d operations.
+﻿/// Deep learning on the GPU. Previous versions called themselves AD libraries, but this one has so many neural net specific
+/// optimizations that I am no longer going to be calling it that. This version has strong focus on usability.
 
 [<AutoOpen>]
 module SpiralV4.Main
@@ -99,7 +97,7 @@ type AutoDiffType =
         PrimalAndAdjoint(a,b)
 
     static member private resize (size: int) (v: CudaDeviceVariable<float32>) = 
-        if size < int v.Size then v
+        if size <= int v.Size then v
         else
             v.Dispose()
             new CudaDeviceVariable<float32>(SizeT size)
@@ -1170,7 +1168,7 @@ let inline geam
         (str: CudaStream) transa transb 
         (alpha: float32) (ext_a: ^a -> CudaDeviceVariable<float32>, A: ^a) 
         (beta: float32)  (ext_b: ^a -> CudaDeviceVariable<float32>, B: ^a) 
-                            (ext_c: ^a -> CudaDeviceVariable<float32>, C: ^a) =
+                         (ext_c: ^a -> CudaDeviceVariable<float32>, C: ^a) =
     let a_row = if transa = nT then rows A else cols A
     let a_col = if transa = nT then cols A else rows A
     let b_row = if transb = nT then rows B else cols B
@@ -1761,7 +1759,7 @@ let inline scale (alpha: float32) (a:Df) (state: #StanState) =
 
     c, state
 
-let inline sum_scalars (a:Df[]) (state: #StanState) =
+let inline sum_scalars (a:Df seq) (state: #StanState) =
     let c = Df.create 0.0f
     c.P :=
         lazy 
@@ -2083,13 +2081,13 @@ let inline createStdRNNRec has_bias activation desired_hidden_size (input: d2M) 
         | None -> [|W;U|] |> Array.map D2M
     }
 
-let inline create1DRNNLayer (desired_hidden_size: int) (create_layer: (int -> ^input -> ^state -> ^layer_type)) =
+let inline create1DRNNLayer (desired_hidden_size: int) (create_layer: (int -> ^input -> RNN1DState -> ^layer_type)) =
     let inline run v =
-        (^layer_type: (member Run: ((^output option * ^input) -> ^state -> ^output * ^state)) v)
+        (^layer_type: (member Run: ((^output option * ^input) -> RNN1DState -> ^output * RNN1DState)) v)
     let dict = Dictionary<_,_>(HashIdentity.Structural)
     let mutable node = Uninitialized(desired_hidden_size,create_layer)
     {
-    RunLayer = fun (input: ^input) (state: ^state) ->
+    RunLayer = fun (input: ^input) (state: RNN1DState) ->
         let inline execute node =
             let step = timestep state
             let v = match dict.TryGetValue (step-1) with 
