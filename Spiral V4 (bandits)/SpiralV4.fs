@@ -73,6 +73,9 @@ type Df =
     A : float32 ref // adjoint
     }
 
+    /// Shorthand for t.P.Value.Value
+    member t.PrimalValue = t.P.Value.Value
+
     static member inline create P =
         {P=ref (lazy P);A=ref 0.0f}
 
@@ -1149,6 +1152,7 @@ let randMapModule = lazy DeviceBinaryCoefTransformModule("coef_x*(x-0.5f)+coef_y
 /// Fills primal of a matrix by sampling from a random uniform distribution in <-1.0f,1.0f]
 let inline fillRandomUniformMatrix (str: CudaStream) (x: ^a) (scaling_factor: float32) (location: float32) =
     cudaRandom.SetStream str.Stream
+
     cudaRandom.GenerateUniform(extract_primal' x)
 
     let x = extract_primal, x
@@ -1213,6 +1217,19 @@ let inline gemm
         cublas.Stream <- str.Stream
         cublas.Gemv(transa, m, n, alpha, ext_a A, lda, ext_x x, 1, beta, ext_o o, 1)
 
+    // A <- alpha * x * yT + beta * A (outer product)
+    let inline ger 
+            (str: CudaStream)
+            (alpha: float32) (ext_x: _ -> CudaDeviceVariable<float32>, x)
+                             (ext_y: _ -> CudaDeviceVariable<float32>, y)
+            (beta: float32)  (ext_a: _ -> CudaDeviceVariable<float32>, a) =
+        let m = max (rows x) (cols x)
+        let n = max (rows y) (cols y)
+        if beta <> 1.0f then geam str nT nT beta (ext_a, a) 0.0f (ext_a, a) (ext_a, a) 
+        cublas.Stream <- str.Stream
+        let _status = CudaBlasNativeMethods.cublasSger_v2(cublas.CublasHandle, m, n, ref alpha, (ext_x x).DevicePointer, 1, (ext_y y).DevicePointer, 1, (ext_a a).DevicePointer, m)
+        if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status);
+
     // -------
 
     let inline is_vector (x: ^a) = rows x = 1 || cols x = 1
@@ -1228,19 +1245,6 @@ let inline gemm
     let ldc = m
 
     if m <> rows C || n <> cols C then failwithf "m(%i) <> rows C(%i) || n(%i) <> cols C(%i)" m (rows C) n (cols C)
-
-    // A <- alpha * x * yT + beta * A (outer product)
-    let inline ger 
-            (str: CudaStream)
-            (alpha: float32) (ext_x: _ -> CudaDeviceVariable<float32>, x)
-                             (ext_y: _ -> CudaDeviceVariable<float32>, y)
-            (beta: float32)  (ext_a: _ -> CudaDeviceVariable<float32>, a) =
-        let m = max (rows x) (cols x)
-        let n = max (rows y) (cols y)
-        if beta <> 1.0f then geam str nT nT beta (ext_a, a) 0.0f (ext_a, a) (ext_a, a) 
-        cublas.Stream <- str.Stream
-        let _status = CudaBlasNativeMethods.cublasSger_v2(cublas.CublasHandle, m, n, ref alpha, (ext_x x).DevicePointer, 1, (ext_y y).DevicePointer, 1, (ext_a a).DevicePointer, m)
-        if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status);
 
     // If is outer product call ger
     if a_col = 1 && b_row = 1 then 
@@ -1290,20 +1294,11 @@ let inline with_is_inference_only (x: #StanState) v =
     x.IsInferenceOnly <- v
     x
 
-let inline tape (x: #StanState) =
-    x.Tape
-
-let inline mem (x: #StanState) =
-    x.Mem
-
-let inline str (x: #StanState) =
-    x.Str
-
-let inline workspace (x: #StanState) =
-    x.Workspace
-
-let inline is_inference_only (x: #StanState) =
-    x.IsInferenceOnly
+let inline tape (x: #StanState) = x.Tape
+let inline mem (x: #StanState) = x.Mem
+let inline str (x: #StanState) = x.Str
+let inline workspace (x: #StanState) = x.Workspace
+let inline is_inference_only (x: #StanState) = x.IsInferenceOnly
 
 /// Gets a dM the same size as the first one from the object pool.
 let inline getdMLike (x: ^a) (p: ObjectPool) is_constant is_inference_only str = // TODO: Like copy, refactor this one too.
@@ -1749,6 +1744,7 @@ let inline sum (a: ^a) (state: #StanState) =
             (tape state).Push(sum_backward_name, sum_backward)
     c, state
 
+/// alpha * a
 let inline scale (alpha: float32) (a:Df) (state: #StanState) =
     let c = Df.create 0.0f
     c.P := lazy (alpha * a.P.Value.Value)
@@ -1922,7 +1918,7 @@ let inline cross_entropy_cost (target: ^a) (activations: ^a) = state {
     let! rt = scalar_matrix_add 1.0f -1.0f target
     let! rl = scalar_matrix_add 1.0f -1.0f activations >>= log_
     return! linear_layer_hadmult [|lt, ll; rt, rl|] 
-            >>= sum 
+            >>= sum
             >>= scale (-1.0f / float32 (cols target))
     }
 
@@ -1934,9 +1930,8 @@ let inline get_accuracy (targets: ^a) (activations : ^a) (state: #StanState) =
         lazy
             let o = convertdMLikeFromWorkspace targets (workspace state)
             maxColumnActivationModule.Value.A((str state), P activations, P o)
-            accuracyModule.Value.A((str state), P targets, P o).Value
-            |> round |> int
-    a, state
+            accuracyModule.Value.A((str state), P targets, P o).Value |> round |> int
+    (a, cols targets), state
 
 /// Squared error cost that also returns the accuracy.
 let inline squared_error_cost' (targets: ^a) (activations : ^a) (state: #StanState) =
