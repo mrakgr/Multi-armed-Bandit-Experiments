@@ -284,6 +284,36 @@ module private Testing =
                 t.state |> dispose
                 t.data.Values |> Seq.iter (Seq.iter <| Seq.iter (fun (inp,lab) -> dispose inp; dispose lab))
 
+    type BanditData =
+        {
+        input : d2M
+        }
+
+        // Full batch only for now.
+        static member create num_examples num_levers min_reward max_reward () =
+            let size = max_reward - min_reward + 1
+            let rng = Random()
+            let make_random_phase num_levers min_reward max_reward =
+                let reward_matrix = 
+                    Array.init num_levers (fun x -> rng.Next(min_reward,max_reward+1))
+                    |> Array.map (scalar_decoder' min_reward max_reward)
+                let ideal_action =
+                    reward_matrix
+                    |> Array.mapi (fun i x -> i, Array.max x)
+                    |> Array.maxBy snd
+                    |> fst
+                    |> scalar_decoder' 0 (num_levers-1)
+                reward_matrix, ideal_action
+
+            Array.init num_examples (fun _ -> make_random_phase num_levers min_reward max_reward)
+            |> Array.concat
+            |> fun x -> {input = d2M.createConstant((size,x.Length/size),x)}
+
+        interface IDisposable with
+            member t.Dispose()=
+                ()
+
+
     let run_all_tests() =
         let gradientCheckingTests =
             let epsilon = 0.001f
@@ -402,6 +432,13 @@ module private Testing =
             "standard 1 layer RNN test", ``standard 1 layer RNN test`` 100 <| ClippedSgd(0.1f, 0.1f)
             |]
 
+        let banditTests =
+            let ``idealized bandit test`` num_iters (data: BanditData) =
+                let input = data.input
+            [|
+            "idealized bandit test", ``idealized bandit test``
+            |]
+
         ctx.Synchronize() // Inits the library.
         let tree =
             let mnist_path = 
@@ -409,9 +446,9 @@ module private Testing =
                 @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\SpiralQ\SpiralQ\Tests" 
             testArray null
                 [|
-//                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
-//                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
+                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
+                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
                 testCases "Reber Grammar RNN Tests" ReberData.create reberTests
                 |]
         run tree
-    run_all_tests()
+    //run_all_tests()

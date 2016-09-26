@@ -54,7 +54,7 @@
     <None Include="Script.fsx" />
     <Content Include="packages.config" />
     <Compile Include="SpiralV4.Combinators.fs" />
-    <Compile Include="SpiralV4.Testing.fs" />
+    <None Include="SpiralV4.Testing.f" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

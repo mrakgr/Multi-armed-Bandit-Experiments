@@ -711,9 +711,7 @@ type DeviceUnaryTransformModule(op: string, unique_name : string) =
 
         " |] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    member t.Kernel = kernel
+    member val Kernel = load_kernel kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
@@ -750,9 +748,7 @@ type DeviceBinaryTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
     
-    let kernel = load_kernel kernel_code kernel_name
-
-    member t.Kernel = kernel
+    member val Kernel = load_kernel kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
@@ -790,9 +786,7 @@ type DeviceTrinaryTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    member t.Kernel = kernel
+    member val Kernel = load_kernel kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
@@ -859,12 +853,8 @@ type DeviceUnaryMapSumModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    let o = new CudaDeviceVariable<float32>(SizeT 1)
-
-    member t.Kernel = kernel
-    member t.O = o
+    member val Kernel = load_kernel kernel_code kernel_name
+    member val O = new CudaDeviceVariable<float32>(SizeT 1)
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a)) =
@@ -917,12 +907,8 @@ type DeviceBinaryMapSumModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    let o = new CudaDeviceVariable<float32>(SizeT 1)
-
-    member t.Kernel = kernel
-    member t.O = o
+    member val Kernel = load_kernel kernel_code kernel_name
+    member val O = new CudaDeviceVariable<float32>(SizeT 1)
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
@@ -961,9 +947,7 @@ type DeviceUnaryCoefTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    member t.Kernel = kernel
+    member val Kernel = load_kernel kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 coef_x: float32, (ext_x: ^a -> CUdeviceptr, x: ^a), 
@@ -1004,9 +988,7 @@ type DeviceBinaryCoefTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    member t.Kernel = kernel
+    member val Kernel = load_kernel kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 coef_x: float32, (ext_x: ^a -> CUdeviceptr, x: ^a), 
@@ -1047,9 +1029,7 @@ type DeviceTrinaryCoefTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    member t.Kernel = kernel
+    member val Kernel = load_kernel kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 coef_x: float32, (ext_x: ^a -> CUdeviceptr, x: ^a), 
@@ -1060,8 +1040,8 @@ type DeviceTrinaryCoefTransformModule(op: string, unique_name) =
         let n = Size x
         map_launcher(str, t.Kernel, n, [|coef_x; ext_x x; coef_y; ext_y y; coef_z; ext_z z; ext_o o; n|])
 
-let max_column_launcher(str: CudaStream, kernel: CudaKernel, num_columns: int, args: obj[]) =
-    let block_size = 128
+let max_column_launcher(str: CudaStream, kernel: CudaKernel, num_rows: int, num_columns: int, args: obj[]) =
+    let block_size = min 128 num_rows |> max 32
 
     kernel.GridDimensions <- dim3(num_columns)
     kernel.BlockDimensions <- dim3(block_size)
@@ -1130,16 +1110,14 @@ type DeviceMaxColumnActivationModule() =
 
         "|] |> String.concat ""
 
-    let kernel = load_kernel kernel_code kernel_name
-
-    member t.Kernel = kernel
+    member val Kernel = load_kernel kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
                 (ext_o: ^a -> CUdeviceptr, o: ^a)) = 
         GuardSizes2(x,o)
         let r,c = rc x
-        max_column_launcher(str, t.Kernel, c, [|ext_x x; ext_o o; r; c|])
+        max_column_launcher(str, t.Kernel, r, c, [|ext_x x; ext_o o; r; c|])
 
 // The gradient clipping module.
 let gradclipModule = lazy DeviceUnaryCoefTransformModule("(x < -coef_x) ? -coef_x : (x > coef_x ? coef_x : x);", "GradClip") // Unique names like GradClip are necessary for load and saving to drive. Be very careful of collisions.

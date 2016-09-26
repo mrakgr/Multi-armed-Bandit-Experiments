@@ -2,6 +2,28 @@
 module SpiralV4.Combinators
 
 open System
+open ManagedCuda
+open ManagedCuda.BasicTypes
+open ManagedCuda.VectorTypes
+
+/// Creates an array of float32 zeroes with only index x set to 1.0f
+let scalar_decoder min_bound max_bound (x: int option) = // .NET arrays can be created with min and max bounds specified.
+    let size = max_bound - min_bound + 1
+    if size <= 0 then failwith "size <= 0"
+    let ar = Array.zeroCreate size
+    try
+        match x with
+        | Some x -> ar.[x-min_bound] <- 1.0f
+        | None -> ()
+    with
+        :? IndexOutOfRangeException -> 
+            failwithf 
+                "Index out of range exception in scalar_decoder.\nmin_bound=%i max_bound=%i size=%i x=%i"
+                min_bound max_bound size x.Value
+    ar
+
+/// Creates an array of float32 zeroes with only index x set to 1.0f
+let scalar_decoder' min_bound max_bound (x: int) = scalar_decoder min_bound max_bound (Some x)
 
 /// An auxiliary function that takes in data in the form of [dataset][sequence][input * target (tupled)] where the first tuple array 
 /// is the input and the other the target output, groups the sequences by their length, merges 
@@ -281,3 +303,222 @@ let inline recurrectSequence
             let accuracy = lazy (accuracy_ar |> Seq.fold (fun s x -> s+x.Value) 0)
             ((accuracy,max_accuracy),accumulated_cost), state
     { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
+
+// The following modules are for RL so they've been placed here.
+
+/// o <- max_col_index(x)
+/// Gets the maximum indices of each column.
+type DeviceMaxColumnIndexModule() = 
+    let kernel_name = "MaxColumnIndexKernel"
+    let kernel_code = 
+        [|"
+        //Kernel code:
+        extern \"C\" {
+            typedef float floatType;
+            #define INIT __int_as_float(0xff800000) // The constant init for the reduce operations. This is float negative infinity.
+            // The max reduce version.
+            __device__ inline floatType warpReduce(floatType value){
+                #pragma unroll
+	            for (int i=1; i<32; i*=2) {
+                    floatType tmp = __shfl_xor(value, i);
+                    value = (tmp > value) ? tmp : value;
+                    }
+	            return value;
+            }
+              
+            // Device code
+            __global__ void ";kernel_name;"(const floatType* A, int* O, const int num_rows, const int num_cols)
+            {
+                int row = threadIdx.x;
+                const int col = blockIdx.x;
+                int col_idx = blockIdx.x*num_rows; 
+                floatType max = INIT; // This is the negative infinity for floats.
+                int index = -1;
+                while (row < num_rows)
+                {
+                   if (A[row+col_idx] > max) {
+                        max = A[row+col_idx];
+                        index = row;
+                        }
+                    row += blockDim.x;
+                }
+                
+                __shared__ floatType max_index;
+                if (max == warpReduce(max)) max_index = index;
+                __syncthreads();
+                O[col] = max_index;
+            }
+        }
+
+        "|] |> String.concat ""
+
+    member val Kernel = load_kernel kernel_code kernel_name
+    member inline t.A
+            (str: CudaStream,
+                (ext_a: ^a -> CUdeviceptr, a: ^a),
+                o: CudaDeviceVariable<int>) = 
+        let r,c = rc a
+        let r' = int o.Size
+        if c <> r' then failwithf "c(%i) <> r'(%i)" c r'
+        max_column_launcher(str, t.Kernel, r, c, [|ext_a a; o.DevicePointer; r; c|])
+
+/// o <- gather(indices,x)
+/// Gathers the columns from x given the indices to o. Triggers an illegal instruction error on out of bounds index.
+type DeviceGatherIndexModule() = 
+    let kernel_name = "GatherIndexKernel"
+    let kernel_code = 
+        [|"//Kernel code:
+        extern \"C\" {
+            typedef float floatType;
+              
+            // Device code
+            __global__ void ";kernel_name;"(const int* Indices, const floatType* A, floatType* O, const int num_rows, const int num_cols)
+            {
+                int* er = NULL; // For triggering an error on illegal access.
+                int row = threadIdx.x;
+                const int col = blockIdx.x;
+                const int col_idx = col*num_rows; 
+                while (row < num_rows)
+                {
+                    const int index = Indices[col];
+                    if (index < 0 || index >= num_cols) *er = 555; // Triggers a illegal instruction error on an out of bounds access.
+                    const int A_idx = index*num_rows;
+                    O[row+col_idx] = A[row+A_idx];
+                    row += blockDim.x;
+                }
+                
+            }
+        }
+
+        "|] |> String.concat ""
+
+    member val Kernel = load_kernel kernel_code kernel_name
+    member inline t.A
+            (str: CudaStream,
+                indices: CudaDeviceVariable<int>,
+                (ext_a: ^a -> CUdeviceptr, a: ^a),
+                (ext_o: ^a -> CUdeviceptr, o: ^a)) = 
+        let size_indices = int indices.Size
+        let r,c = rc a
+        let r',c' = rc o
+        if c' <> size_indices then failwithf "c'(%i) <> size_indices(%i)" c' size_indices
+        if r <> r' then failwithf "r(%i) <> r'(%i)" r r'
+        max_column_launcher(str, t.Kernel, r, size_indices, [|indices.DevicePointer; ext_a a; ext_o o; r; c|])
+
+let maxColumnIndexModule = lazy DeviceMaxColumnIndexModule()
+let gatherIndexModule = lazy DeviceGatherIndexModule()
+
+/// Y[slice] <- beta * Y[slice] + alpha * X[slice]
+type DeviceAddSliceModule() = 
+    let block_size = 256
+    
+    let kernel_name = "AddSliceKernel"
+    let kernel_code = 
+        [|"//Kernel code:
+        extern \"C\" {
+            typedef float floatType;
+            __global__ void ";kernel_name;"(
+                    const int start_row_x, const int start_col_x, const int num_rows_x, const int num_cols_x, floatType alpha, const floatType* X,
+                    const int start_row_y, const int start_col_y, const int num_rows_y, const int num_cols_y, floatType beta, floatType* Y,
+                    const int row_stride, const int col_stride){
+                const int stride = blockDim.x * gridDim.x;
+                int i = threadIdx.x+blockIdx.x*blockDim.x;
+                while (1) {
+                    const int row_i = i % row_stride;
+                    const int col_i = i / row_stride;
+                        
+                    const int row_x = start_row_x+row_i;
+                    const int col_x = start_col_x+col_i;
+                    const int idx_x = row_x+col_x*num_rows_x;
+
+                    const int row_y = start_row_y+row_i;
+                    const int col_y = start_col_y+col_i;
+                    const int idx_y = row_y+col_y*num_rows_y;
+
+                    if (row_i < row_stride && col_i < col_stride) {
+                        Y[idx_y] = beta * Y[idx_y] + alpha * X[idx_x];
+                        i += stride;
+                    } else return;
+                }
+            }
+        }
+
+        "|] |> String.concat ""
+
+    member val Kernel = load_kernel kernel_code kernel_name
+
+    /// Zero based indexing.
+    member t.A(str: CudaStream, 
+                start_row_x, start_col_x, alpha: float32, (ext_x: d2M -> CUdeviceptr, x: d2M), 
+                start_row_y, start_col_y, beta: float32, (ext_y: d2M -> CUdeviceptr, y: d2M), 
+                row_stride, col_stride) =
+        if start_row_x < 0 || start_col_x < 0 then failwithf "start_row_x(%i) < 0 || start_col_x(%i) < 0" start_row_x start_col_x
+        if start_row_y < 0 || start_col_y < 0 then failwithf "start_row_y(%i) < 0 || start_col_y(%i) < 0" start_row_y start_col_y
+
+        let end_row_x = start_row_x+row_stride-1
+        let end_col_x = start_col_x+col_stride-1
+        let end_row_y = start_row_y+row_stride-1
+        let end_col_y = start_col_y+col_stride-1
+
+        if end_row_x >= x.Rows || end_col_x >= x.Columns then 
+            failwithf "end_row(%i) >= x.Rows(%i) || end_col_x(%i) >= x.Columns(%i)" end_row_x x.Rows end_col_x x.Columns
+        if end_row_y >= y.Rows || end_col_y >= y.Columns then 
+            failwithf "end_row_y(%i) >= y.Rows(%i) || end_col_y(%i) >= y.Columns(%i)" end_row_y y.Rows end_col_y y.Columns
+        
+        let n = row_stride*col_stride
+        let gridSize = divup n block_size
+        t.Kernel.GridDimensions <- dim3(gridSize)
+        t.Kernel.BlockDimensions <- dim3(block_size)
+        t.Kernel.RunAsync(str.Stream, start_row_x, start_col_x, x.Rows, x.Columns, alpha, ext_x x, start_row_y, start_col_y, y.Rows, y.Columns, beta, ext_y y, row_stride, col_stride)
+
+
+// The Item and GetSlice operators. Column major
+let addSliceModule = lazy DeviceAddSliceModule()
+
+let add_slice_backward_name = "add_slice_backward"
+
+/// Y[rowStartY..rowStartY+row_stride-1,colStartY..colStartY+col_stride-1] 
+/// += alpha * 
+/// X[rowStartX..rowStartX+row_stride-1,colStartX..colStartX+col_stride-1]
+let add_slice (rowStartX: int) (colStartX: int) (alpha: float32) (X: d2M)
+              (rowStartY: int) (colStartY: int) (beta: float32) (Y: d2M)
+              (row_stride: int) (col_stride: int) (state: #StanState) =
+    addSliceModule.Value.A(str state,rowStartX,colStartX,alpha,P X,rowStartY,colStartY,beta,P Y,row_stride,col_stride)
+
+    if (is_inference_only state) = false then
+        if hasAdjoint X && hasAdjoint Y then
+            let add_slice_backward () = 
+                deadness_check Y X
+                <| fun _ -> 
+                    addSliceModule.Value.A(str state,rowStartY,colStartY,alpha,A Y,
+                                                     rowStartX,colStartX,1.0f,A X,
+                                                     row_stride,col_stride)
+            (tape state).Push(add_slice_backward_name,add_slice_backward)
+
+/// Stacks A and B along the row dimension.
+let stack_vertical (A: d2M) (B: d2M) (state: #StanState) =
+    if cols A <> cols B then failwithf "cols A(%i) <> cols B(%i)" (cols A) (cols B)
+    let cols = cols A
+    let C = d2M.create(rows A + rows B, cols)
+    add_slice 0 0 1.0f A 0 0 0.0f C (rows  A) cols state
+    add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols state
+    C, state
+
+ctx.Synchronize()
+
+cudaRandom.SetPseudoRandomGeneratorSeed(56UL)
+let state = new StanState()
+
+let A = d2M.createConstant((4,4)) |> fun x -> fillRandomUniformMatrix state.Str x 1.0f 0.0f; x
+let B = d2M.createConstant((2,4)) |> fun x -> fillRandomUniformMatrix state.Str x 100.0f 0.0f; x
+
+let getd2M (x: d2M) =
+    let t = x.GPV.Gather()
+    Array2D.init x.Rows x.Columns (fun r c -> t.[r + c*x.Rows])
+
+printfn "%A" (getd2M A)
+printfn "%A" (getd2M B)
+
+let C,_ = stack_vertical A B state
+
+printfn "%A" (getd2M C)
