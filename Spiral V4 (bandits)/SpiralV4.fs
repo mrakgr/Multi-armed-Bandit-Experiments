@@ -213,22 +213,14 @@ type ConvolutionDescriptor with
 type Workspace() = 
     let mutable workspace: CudaDeviceVariable<byte> = CudaDeviceVariable.Null
 
-    /// Resizes the workspace if it is less than size and returns it. The size is in bytes.
-    member t.ResizeIf(size: int) =
-        if size < int workspace.Size then workspace
+    /// Resizes the workspace if it is less than size and returns it. The size is in 'a.
+    member t.ResizeIf<'a when 'a: (new: unit -> 'a) and 'a: struct and 'a :> ValueType>(size: int) =
+        let toGeneric(workspace: CudaDeviceVariable<byte>) = new CudaDeviceVariable<'a>(workspace.DevicePointer,false)
+        if size < int workspace.Size then toGeneric workspace
         else
             workspace.Dispose()
-            workspace <- new CudaDeviceVariable<byte>(SizeT size)
-            workspace
-
-    /// Resizes the workspace if it is less than size and returns it. The size is in float32s.
-    member t.ResizeIfF32(size: int) =
-        let toF32(workspace: CudaDeviceVariable<byte>) = new CudaDeviceVariable<float32>(workspace.DevicePointer,false)
-        if size < int workspace.Size then toF32 workspace
-        else
-            workspace.Dispose()
-            workspace <- new CudaDeviceVariable<byte>(SizeT (size * sizeof<float32>))
-            toF32 workspace
+            workspace <- new CudaDeviceVariable<byte>(SizeT (size * sizeof<'a>))
+            toGeneric workspace
 
     interface IDisposable with
         member t.Dispose() = workspace.Dispose()
@@ -375,7 +367,7 @@ and d2M =
 
     /// For temporary immediate use only.
     member t.ConvertdMLikeFromWorkspace(w: Workspace) =
-        let v = w.ResizeIfF32 t.Size
+        let v = w.ResizeIf<float32> t.Size
         {rc = t.rc; diff = PrimalOnly v; is_dead = Undefined}
 
     /// Cast to DM.
@@ -508,7 +500,7 @@ and d4M =
 
     /// For temporary immediate use only.
     member t.ConvertdMLikeFromWorkspace(w: Workspace) =
-        let v = w.ResizeIfF32 t.Size
+        let v = w.ResizeIf<float32> t.Size
         {nchw = t.nchw; diff = PrimalOnly v; is_dead = Undefined}
 
     /// Cast to DM.
@@ -1278,6 +1270,14 @@ let inline str (x: #StanState) = x.Str
 let inline workspace (x: #StanState) = x.Workspace
 let inline is_inference_only (x: #StanState) = x.IsInferenceOnly
 
+/// Helper for the Getd2M.
+let inline getd2M is_constant (rc: int*int) (state: #StanState) =
+    state.Mem.Getd2M(is_constant,rc,state.IsInferenceOnly,state.Str)
+
+/// Helper for the Getd4M.
+let inline getd4M is_constant (nchw: int*int*int*int) (state: #StanState) =
+    state.Mem.Getd4M(is_constant,nchw,state.IsInferenceOnly,state.Str)
+
 /// Gets a dM the same size as the first one from the object pool.
 let inline getdMLike (x: ^a) (p: ObjectPool) is_constant is_inference_only str = // TODO: Like copy, refactor this one too.
     (^a: (member GetFromObjectPool: ObjectPool * bool * bool * CudaStream -> ^a) x, p, is_constant, is_inference_only, str)
@@ -1605,7 +1605,7 @@ let inline batch_normalization_forward
                     // It is really annoying how trying to apply batch norm to the first input requires
                     // making use of the workspace.
                     if hasAdjoint input then extract_adjoint' input 
-                    else (workspace state).ResizeIfF32 <| size input
+                    else (workspace state).ResizeIf <| size input
 
                 cudnn.SetStream (str state)
                 cudnn.BatchNormalizationBackward(

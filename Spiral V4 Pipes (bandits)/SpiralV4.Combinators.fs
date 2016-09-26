@@ -304,6 +304,28 @@ let inline recurrectSequence
             ((accuracy,max_accuracy),accumulated_cost), state
     { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
 
+/// Takes a standard net and wraps it so it takes in a recurrent sequence.
+let inline recurrectCostSum
+        (extractor: ^output -> Cost)
+        (network: LayerWrapper< ^input  , ^output, ^state>)
+                : LayerWrapper< ^input  , Cost   , ^state> =
+    let runLayer (sequence: ^input[]) state =
+        let len = sequence.Length
+        (Array.zeroCreate len,0,Array.zeroCreate len,0) 
+        |> Array.fold ( fun (accuracy_ar,max_accuracy,cost_ar,iter) example ->
+            setTimestep state iter
+            let ((hits,max_hits),cost),_ = network.RunLayer example <| state
+            cost_ar.[iter] <- cost
+            accuracy_ar.[iter] <- hits
+            let max_accuracy = max_accuracy + max_hits
+            (accuracy_ar,max_accuracy,cost_ar,iter+1)
+            ) <| sequence
+        |> fun (accuracy_ar,max_accuracy,l,iter) ->
+            let accumulated_cost = sum_scalars l state |> fst
+            let accuracy = lazy (accuracy_ar |> Seq.fold (fun s x -> s+x.Value) 0)
+            ((accuracy,max_accuracy),accumulated_cost), state
+    { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
+
 // The following modules are for RL so they've been placed here.
 
 /// o <- max_col_index(x)
@@ -363,7 +385,7 @@ type DeviceMaxColumnIndexModule() =
         max_column_launcher(str, t.Kernel, r, c, [|ext_a a; o.DevicePointer; r; c|])
 
 /// o <- gather(indices,x)
-/// Gathers the columns from x given the indices to o. Triggers an illegal instruction error on out of bounds index.
+/// Gathers the columns from x given the indices to o.
 type DeviceGatherIndexModule() = 
     let kernel_name = "GatherIndexKernel"
     let kernel_code = 
@@ -374,14 +396,14 @@ type DeviceGatherIndexModule() =
             // Device code
             __global__ void ";kernel_name;"(const int* Indices, const floatType* A, floatType* O, const int num_rows, const int num_cols)
             {
-                int* er = NULL; // For triggering an error on illegal access.
+                //int* er = NULL; // For triggering an error on illegal access.
                 int row = threadIdx.x;
                 const int col = blockIdx.x;
                 const int col_idx = col*num_rows; 
                 while (row < num_rows)
                 {
                     const int index = Indices[col];
-                    if (index < 0 || index >= num_cols) *er = 555; // Triggers a illegal instruction error on an out of bounds access.
+                    //if (index < 0 || index >= num_cols) *er = 555; // Triggers a illegal instruction error on an out of bounds access.
                     const int A_idx = index*num_rows;
                     O[row+col_idx] = A[row+A_idx];
                     row += blockDim.x;
@@ -405,8 +427,134 @@ type DeviceGatherIndexModule() =
         if r <> r' then failwithf "r(%i) <> r'(%i)" r r'
         max_column_launcher(str, t.Kernel, r, size_indices, [|indices.DevicePointer; ext_a a; ext_o o; r; c|])
 
+type d3M =
+    {
+    mutable rcn : int * int*int
+    mutable diff: AutoDiffType
+    }
+
+    static member private size_rcn (row,col,img) = row*col*img
+
+    static member create' (size : (int * int * int)) =
+        let is_constant = false
+        let diff = 
+            let s = d3M.size_rcn size
+            match is_constant with
+            | true -> AutoDiffType.CreatePrimalOnly s
+            | false -> AutoDiffType.CreatePA s
+        {rcn = size; diff = diff}
+
+    static member create' (size : (int * int * int), host_data : float32[]) =
+        let t = d3M.create'(size)
+        t.diff.CopyToPrimal(host_data)
+        t
+
+    /// Number of rows
+    member t.Rows = t.rcn |> fun (r,c,n) -> r
+    /// Number of columns
+    member t.Columns = t.rcn |> fun (r,c,n) -> c
+    /// Number of images
+    member t.Images = t.rcn |> fun (r,c,n) -> n
+    /// Returns whether the function has an adjoint
+    member t.HasAdjoint = t.diff.HasAdjoint
+    /// Returns the size of matrix
+    member t.Size = d3M.size_rcn t.rcn
+    /// Get Adjoint Pointer
+    member t.GAP = t.diff.A.DevicePointer
+    /// Get Primal Pointer
+    member t.GPP = t.diff.P.DevicePointer
+    /// Get Adjoint Variable
+    member t.GAV = t.diff.A
+    /// Get Primal Variable
+    member t.GPV = t.diff.P
+
+    /// Throws an exception if the sizes are not all equal
+    static member GuardSizes(x:d3M, o: d3M) =
+        if x.rcn <> o.rcn then failwithf "x.rcn(%A) <> o.rcn(%A)" x.rcn o.rcn
+
+    /// Throws an exception if the sizes are not all equal
+    static member GuardSizes(x:d3M, y:d3M, o: d3M) =
+        if x.rcn <> y.rcn then failwithf "x.rcn(%A) <> y.rcn(%A)" x.rcn y.rcn
+        if y.rcn <> o.rcn then failwithf "y.rcn(%A) <> o.rcn(%A)" y.rcn o.rcn
+
+    /// Throws an exception if the sizes are not all equal
+    static member GuardSizes(x:d3M, y:d3M, z: d3M, o: d3M) =
+        if x.rcn <> y.rcn then failwithf "x.rcn(%A) <> y.rcn(%A)" x.rcn y.rcn
+        if y.rcn <> z.rcn then failwithf "y.rcn(%A) <> z.rcn(%A)" y.rcn z.rcn
+        if z.rcn <> o.rcn then failwithf "z.rcn(%A) <> o.rcn(%A)" z.rcn o.rcn
+
+    interface IDisposable with
+        member t.Dispose() = t.diff |> dispose
+
+/// o <- gather(indices,x)
+/// Gathers the columns from x given the indices to o.
+type DeviceGatherIndex3DModule() = 
+    let kernel_name = "GatherIndex3DKernel"
+    let kernel_code = 
+        [|"//Kernel code:
+        extern \"C\" {
+            typedef float floatType;
+              
+            // Device code
+            __global__ void ";kernel_name;"(const int* Indices, const floatType* A, floatType* O, const int num_rows, const int num_cols)
+            {
+                int row = threadIdx.x;
+                const int col = blockIdx.x;
+                const int col_idx = col*num_rows; 
+                while (row < num_rows)
+                {
+                    const int index = Indices[col];
+                    const int A_col_idx = index*num_rows;
+                    const int A_img_idx = col*num_rows*num_cols;
+                    O[row+col_idx] = A[row+A_col_idx+A_img_idx];
+                    row += blockDim.x;
+                }
+                
+            }
+        }
+
+        "|] |> String.concat ""
+
+    member val Kernel = load_kernel kernel_code kernel_name
+    member inline t.A
+            (str: CudaStream,
+                indices: CudaDeviceVariable<int>,
+                (ext_a: d3M -> CUdeviceptr, a: d3M),
+                (ext_o: ^a -> CUdeviceptr, o: ^a)) = 
+        let size_indices = int indices.Size
+        let r,c,_ = a.rcn
+        let r',c' = rc o
+        if c' <> size_indices then failwithf "c'(%i) <> size_indices(%i)" c' size_indices
+        if r <> r' then failwithf "r(%i) <> r'(%i)" r r'
+        max_column_launcher(str, t.Kernel, r, size_indices, [|indices.DevicePointer; ext_a a; ext_o o; r; c|])
+
+
 let maxColumnIndexModule = lazy DeviceMaxColumnIndexModule()
 let gatherIndexModule = lazy DeviceGatherIndexModule()
+let gatherIndex3DModule = lazy DeviceGatherIndex3DModule()
+
+/// Given an input matrix and an index mapping matrix, it gets the max row indices of the input array and then maps 
+/// them to the columns of the index mapping matrix.
+let map_indices (input: d2M) (map: d2M) (state: #StanState) =
+    if rows input <> cols map then failwithf "rows input(%i) <> cols map(%i)" (rows input) (cols map)
+    let indices = (workspace state).ResizeIf<int>(cols input)
+    maxColumnIndexModule.Value.A(str state, P input, indices)
+    let output = getd2M true (rows map, cols input) state
+    gatherIndexModule.Value.A(str state, indices, P map, P output)
+    output, state
+
+let inline images x = (^a : (member Images: int) x)
+
+/// Given an input matrix and a 3D index mapping matrix, it gets the max row indices of the input array and then maps 
+/// them to the columns and images of the 3D index mapping matrix.
+let map_indices_3d (input: d2M) (map: d3M) (state: #StanState) =
+    if rows input <> cols map then failwithf "rows input(%i) <> cols map(%i)" (rows input) (cols map)
+    if cols input <> images map then failwithf "cols input(%i) <> images map(%i)" (cols input) (images map)
+    let indices = (workspace state).ResizeIf<int>(cols input)
+    maxColumnIndexModule.Value.A(str state, P input, indices)
+    let output = getd2M true (rows map, cols input) state
+    gatherIndex3DModule.Value.A(str state, indices, P map, P output)
+    output, state
 
 /// Y[slice] <- beta * Y[slice] + alpha * X[slice]
 type DeviceAddSliceModule() = 
@@ -504,21 +652,3 @@ let stack_vertical (A: d2M) (B: d2M) (state: #StanState) =
     add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols state
     C, state
 
-ctx.Synchronize()
-
-cudaRandom.SetPseudoRandomGeneratorSeed(56UL)
-let state = new StanState()
-
-let A = d2M.createConstant((4,4)) |> fun x -> fillRandomUniformMatrix state.Str x 1.0f 0.0f; x
-let B = d2M.createConstant((2,4)) |> fun x -> fillRandomUniformMatrix state.Str x 100.0f 0.0f; x
-
-let getd2M (x: d2M) =
-    let t = x.GPV.Gather()
-    Array2D.init x.Rows x.Columns (fun r c -> t.[r + c*x.Rows])
-
-printfn "%A" (getd2M A)
-printfn "%A" (getd2M B)
-
-let C,_ = stack_vertical A B state
-
-printfn "%A" (getd2M C)

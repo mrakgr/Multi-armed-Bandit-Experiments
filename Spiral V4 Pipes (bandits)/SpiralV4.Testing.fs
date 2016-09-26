@@ -286,12 +286,13 @@ module private Testing =
 
     type BanditData =
         {
-        input : d2M
+        reward_matrices : d3M
+        idealized_actions : d2M
         }
 
         // Full batch only for now.
         static member create num_examples num_levers min_reward max_reward () =
-            let size = max_reward - min_reward + 1
+            let reward_size = max_reward - min_reward + 1
             let rng = Random()
             let make_random_phase num_levers min_reward max_reward =
                 let reward_matrix = 
@@ -304,14 +305,20 @@ module private Testing =
                     |> fst
                     |> scalar_decoder' 0 (num_levers-1)
                 reward_matrix, ideal_action
+            
+            let reward_matrices, ideal_actions = 
+                Array.init num_examples (fun _ -> make_random_phase num_levers min_reward max_reward)
+                |> Array.unzip
 
-            Array.init num_examples (fun _ -> make_random_phase num_levers min_reward max_reward)
-            |> Array.concat
-            |> fun x -> {input = d2M.createConstant((size,x.Length/size),x)}
+            {
+            reward_matrices = d3M.create'((reward_size,num_levers,num_examples),Array.concat (Array.concat reward_matrices))
+            idealized_actions = d2M.createConstant(num_levers,num_examples,Array.concat ideal_actions)
+            }
 
         interface IDisposable with
             member t.Dispose()=
-                ()
+                t.reward_matrices |> dispose
+                t.idealized_actions |> dispose
 
 
     let run_all_tests() =
@@ -433,8 +440,32 @@ module private Testing =
             |]
 
         let banditTests =
-            let ``idealized bandit test`` num_iters (data: BanditData) =
-                let input = data.input
+            let ``bandit prediction test`` num_iters (data: BanditData) =
+                let rewards_matrices = data.reward_matrices
+                let idealized_actions = data.idealized_actions
+                let reward_size,num_levers,num_examples = rewards_matrices.rcn
+
+                // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
+                let reward_layers: LayerWrapper<d2M,Cost * d2M, _> = 
+                    RNN1DLayer 128 tanh_ ^- RNN1DLayer reward_size tanh_
+                    |> wrapFold <| fun input state ->
+                            let explicit_reward, state = map_indices_3d input rewards_matrices state
+                            let implicit_reward, state = x.RunLayer input state
+                            let total_reward, state = stack_vertical implicit_reward explicit_reward state
+                            let cost, state = cross_entropy_cost' explicit_reward implicit_reward state
+                            (cost, total_reward), state
+
+                let action_layers = RNN1DLayer 128 tanh_ ^- RNN1DLayer num_levers tanh_
+
+                let initial_net = reward_layers
+                let feedback_net = 
+                    action_layers ^+ reward_layers 
+                    |> recurrentFeedback 100 (fun (action,(cost,reward)) -> reward)
+                    |> wrapMap (fun (action,(cost,reward)) -> cost)
+                    
+
+                let network = initial_net ^- feedback_net
+
             [|
             "idealized bandit test", ``idealized bandit test``
             |]
