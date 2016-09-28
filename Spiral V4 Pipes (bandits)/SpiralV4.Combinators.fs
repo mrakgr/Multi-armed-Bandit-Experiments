@@ -130,22 +130,11 @@ let inline (>=>) a b = fun x -> a x >>= b
 let inline combine (l1: LayerWrapper<'a,'b,'state>) (l2: LayerWrapper<'b,'c,'state>) =
     {RunLayer=l1.RunLayer >=> l2.RunLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
 
-/// Combines two LayerWrappers.
+/// Combines two LayerWrappers. The same as |- except right associative.
 let inline (^-) l1 l2 = combine l1 l2
 
-/// Combines the two LayerWrappers while accumulating the intermediate results.
-let stitch (l1: LayerWrapper<'a,'b,'state>) (l2: LayerWrapper<'b,'c,'state>): LayerWrapper<'a,'b*'c,'state> =
-    let runLayer input state =
-        let a,s = l1.RunLayer input state
-        let b,s = l2.RunLayer a s
-        (a,b),s
-    {RunLayer=runLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
-
-/// Combines the two LayerWrappers while accumulating the intermediate results.
-let inline (^+) l1 l2 = stitch l1 l2
-
 /// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output.
-let select_and_stitch (l1: LayerWrapper<'a,'r,'state>) (selector: 'r -> 'b) (l2: LayerWrapper<'b,'c,'state>): LayerWrapper<'a,'r*'c,'state> =
+let inline select_and_stitch (l1: LayerWrapper<'a,'r,'state>) (selector: 'r -> 'b) (l2: LayerWrapper<'b,'c,'state>): LayerWrapper<'a,'r*'c,'state> =
     let runLayer input state =
         let a,s = l1.RunLayer input state
         let b,s = l2.RunLayer (selector a) s
@@ -153,21 +142,18 @@ let select_and_stitch (l1: LayerWrapper<'a,'r,'state>) (selector: 'r -> 'b) (l2:
     {RunLayer=runLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
 
 /// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output.
-let inline (^*) l1 selector l2 = select_and_stitch l1 selector l2
+let inline (|*) l1 selector l2 = select_and_stitch l1 selector l2
 
-/// Combines the two LayerWrappers while performing selection on the first output.
-let select_and_pass (l1: LayerWrapper<'a,'r,'state>) (selector: 'a * 'r -> 'b) (l2: LayerWrapper<'b,'c,'state>): LayerWrapper<'a,'c,'state> =
-    let runLayer input state =
-        let a,s = l1.RunLayer input state
-        l2.RunLayer (selector (input,a)) s
-    {RunLayer=runLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
+/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output using the snd function.
+/// In other words, it passes the previous function's output while also doing accumulation.
+let inline (|/) l1 l2 = select_and_stitch l1 snd l2
 
-/// Combines the two LayerWrappers while performing selection on the first output.
-let inline (^>) l1 selector l2 = select_and_pass l1 selector l2
+/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output using the id function.
+/// In other words, it makes that first stitch.
+let inline (|+) l1 l2 = select_and_stitch l1 id l2
 
-
-/// (accuracy * max_accuracy) * cost
-type Cost = (Lazy<int> * int) * Df 
+/// Combines two LayerWrappers. The same as ^- except left associative.
+let inline (|-) l1 l2 = l1 ^- l2
 
 /// A type use to apply the cost function of the same name. It is used as a substitute for higher order functions
 /// which are insufficiently generic. It is the same as the Optimizer type in purpose.
@@ -190,8 +176,8 @@ let inline wrapStitchedCost (cost_func: CostFunction) (network: LayerWrapper<'a,
 
     let runLayer (input, (target1, target2)) state =
         let (output1,output2),state = network.RunLayer input state
-        let ((l1,mac1),r1),_ = cost_func.ApplyCostFunction target1 output1 state
-        let ((l2,mac2),r2),state = cost_func.ApplyCostFunction target2 output2 state
+        let l1,mac1,r1,state = cost_func.ApplyCostFunction target1 output1 state |> costAsTuple
+        let l2,mac2,r2,state = cost_func.ApplyCostFunction target2 output2 state |> costAsTuple
         ((addLazy l1 l2, mac1+mac2), addDf r1 r1), state
     
     {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
@@ -203,9 +189,10 @@ let inline private run
         (set : ^input []) 
         (state: #StanState) 
         test_accuracy =
-    Array.fold <| fun (accuracy,max_accuracy,accumulated_cost) example ->
+    Array.fold <| fun (accuracy,max_accuracy,accumulated_cost,iter) example ->
         (mem state).Reset()
-        let ((hits,max_hits),r),_ = network.RunLayer example state
+        minibatch_number_set state iter
+        let hits,max_hits,r,_ = network.RunLayer example state |> costAsTuple
 
         let accuracy, max_accuracy =
             if test_accuracy then
@@ -227,9 +214,9 @@ let inline private run
 
             update (optimizer, state) network
 
-        accuracy, max_accuracy, accumulated_cost
-    <| (0,0,0.0f) <| set
-    |> fun (accuracy, max_accuracy, accumulated_cost) ->
+        accuracy, max_accuracy, accumulated_cost, iter+1
+    <| (0,0,0.0f,0) <| set
+    |> fun (accuracy, max_accuracy, accumulated_cost,iter) ->
         ((accuracy, max_accuracy), accumulated_cost / float32 set.Length)
 
 /// Trains the network in the depth direction.
@@ -318,11 +305,16 @@ type CostAccumulator =
     member inline t.SetTimeStepToIter(state) =
         setTimestep state t.iter
 
-    member t.AddCostAndIncrementIter(((hits,max_hits),cost): Cost) =
+    member t.AddCostAndIncrementIter(cost: Cost) =
+        let hits,max_hits,cost = costAsTuple' cost
         t.cost_ar.[t.iter] <- cost
         t.accuracy_ar.[t.iter] <- hits
         t.max_accuracy <- t.max_accuracy + max_hits
         t.iter <- t.iter+1
+
+    /// The same as the standard AddCostAndIncrementIter. It throws away the second tuple argument.
+    member t.AddCostAndIncrementIter'(cost: Cost * #StanState) =
+        t.AddCostAndIncrementIter(fst cost)
 
     static member create len =
         {accuracy_ar=Array.zeroCreate len;max_accuracy=0;cost_ar=Array.zeroCreate len;iter=0}
@@ -332,7 +324,7 @@ let inline add_cost_and_increment_iter (x: CostAccumulator) cost = x.AddCostAndI
 let sum_accumulated_costs state (x: CostAccumulator) =
     let accumulated_cost = sum_scalars x.cost_ar state |> fst
     let accuracy = lazy (x.accuracy_ar |> Array.fold (fun s x -> s+x.Value) 0)
-    ((accuracy,x.max_accuracy),accumulated_cost), state
+    toCost' accuracy x.max_accuracy accumulated_cost, state
 
 /// Takes a standard net and wraps it so it takes in a recurrent sequence.
 let inline recurrectSequence
@@ -342,7 +334,7 @@ let inline recurrectSequence
         CostAccumulator.create sequence.Length
         |> Array.fold ( fun accumulator example ->
             accumulator.SetTimeStepToIter state
-            accumulator.AddCostAndIncrementIter(network.RunLayer example state |> fst)
+            accumulator.AddCostAndIncrementIter'(network.RunLayer example state)
             accumulator
             ) <| sequence
         |> sum_accumulated_costs state
@@ -689,3 +681,19 @@ let stack_vertical_lazy (A: d2M) (B: d2M) (state: #StanState) =
     let C = lazy (stack_vertical A B state |> fst)
     C, state
 
+/// Adds the two input arguments together.
+let inline ResidualLayer() =
+    {
+    RunLayer = fun (a, b) state -> 
+        match a with
+        | Some a -> add 1.0f a 1.0f b state
+        | None -> b, state
+    WrappedNodes=[]
+    }
+
+/// Passes the input through to the output.
+let inline IdentityLayer() =
+    {
+    RunLayer = fun a state -> a,state
+    WrappedNodes=[]
+    }

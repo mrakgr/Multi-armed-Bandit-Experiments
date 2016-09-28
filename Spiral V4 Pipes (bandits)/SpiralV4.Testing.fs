@@ -290,8 +290,8 @@ module private Testing =
 
     type BanditData =
         {
-        reward_matrices : d3M
-        idealized_actions : d2M
+        reward_matrices : d3M[]
+        idealized_actions : d2M[]
         state : RNN1DState
         }
 
@@ -316,15 +316,15 @@ module private Testing =
                 |> Array.unzip
 
             {
-            reward_matrices = d3M.create'((reward_size,num_levers,num_examples),Array.concat (Array.concat reward_matrices))
-            idealized_actions = d2M.createConstant(num_levers,num_examples,Array.concat ideal_actions)
+            reward_matrices = [|d3M.create'((reward_size,num_levers,num_examples),Array.concat (Array.concat reward_matrices))|]
+            idealized_actions = [|d2M.createConstant(num_levers,num_examples,Array.concat ideal_actions)|]
             state = new RNN1DState()
             }
 
         interface IDisposable with
             member t.Dispose()=
-                t.reward_matrices |> dispose
-                t.idealized_actions |> dispose
+                t.reward_matrices |> Array.iter dispose
+                t.idealized_actions |> Array.iter dispose
                 t.state |> dispose
 
 
@@ -450,13 +450,13 @@ module private Testing =
             let ``bandit prediction test 1`` (num_iters: int) optimizer (data: BanditData) =
                 let rewards_matrices = data.reward_matrices
                 let idealized_actions = data.idealized_actions
-                let reward_size,num_levers,num_examples = rewards_matrices.rcn
+                let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
 
                 let state = data.state
-                let first_inputs = [|idealized_actions|]
 
+                /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
                 let reward_layers_reward_stacker layer calculate_cost_too action state =
-                    let explicit_reward, state = map_indices_3d action rewards_matrices state
+                    let explicit_reward, state = map_indices_3d action rewards_matrices.[minibatch_number state] state
                     let implicit_reward, state = layer.RunLayer action state
                     let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
 
@@ -472,6 +472,7 @@ module private Testing =
                 let reward_layers_with_costs = 
                     reward_layers |> fun x -> {RunLayer=reward_layers_reward_stacker x true; WrappedNodes=x.WrappedNodes}
 
+                /// Loops the reward and action layers.
                 let feedback_section =
                     action_layers ^- reward_layers_with_costs
                     |> recurrentFeedback 10 (fun (_,reward) -> reward.Value)
@@ -479,7 +480,7 @@ module private Testing =
                     |> recurrectCostSum
 
                 let init_layers =
-                    reward_layers 
+                    reward_layers  // Does not run the cost for this layer.
                     |> fun x -> {RunLayer=reward_layers_reward_stacker x false; WrappedNodes=x.WrappedNodes}
                     |> wrapMap' (snd >> force)
 
@@ -487,17 +488,17 @@ module private Testing =
 
                 let results_ar = ResizeArray(num_iters)
 
-                printfn "Testing the bandit for %i iterations and optimizer %A..." num_iters optimizer
+                printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
                 let stopwatch = Diagnostics.Stopwatch.StartNew()
                 let rec loop iter =
-                    let _,training_cost = train network optimizer first_inputs state false
+                    let _,training_cost = train network optimizer idealized_actions state false
 //                    let _, test_cost = infer network optimizer test_set state false
                     printfn "Training cost is %f at iteration %i" training_cost iter
 //                    printfn "Test cost is %f at iteration %i" test_cost iter
                     results_ar.Add(training_cost)
                     //let boundary = 0.5f
                     if iter >= num_iters then 
-                        printfn "Time elapse for bandit test is %A" stopwatch.Elapsed
+                        printfn "Time elapsed for bandit test is %A" stopwatch.Elapsed
                         Chart.Line(results_ar).ShowChart().Show()
 //                        test_cost <= boundary |> assertTest (sprintf "test_cost <= boundary(%f/%f)" test_cost boundary)
                         assertTest "Ok" true
@@ -505,67 +506,166 @@ module private Testing =
                         loop <| iter+1
                 loop 1
 
-            let ``bandit prediction test 2`` (num_iters: int) optimizer (data: BanditData) =
-                let rewards_matrices = data.reward_matrices
-                let idealized_actions = data.idealized_actions
-                let reward_size,num_levers,num_examples = rewards_matrices.rcn
+            /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
+            let reward_layers_reward_stacker (reward_matrices: d3M[]) layer calculate_cost_too (residual_input,action as ex) state =
+                let explicit_reward, state = map_indices_3d action reward_matrices.[minibatch_number state] state
+                let (residual_output, implicit_reward), state = layer.RunLayer ex state
+                let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
+
+                if calculate_cost_too then
+                    let cost, state = cross_entropy_cost' explicit_reward implicit_reward state
+                    (residual_output, (Some cost, total_reward)), state
+                else (residual_output, (None, total_reward)), state
+
+            let banditTemplate network (num_iters: int) optimizer (data: BanditData) =
+                let reward_matrices = data.reward_matrices
+                let idealized_actions = data.idealized_actions |> Array.map (fun x -> None,x)
+                let reward_size,num_levers,num_examples = data.reward_matrices.[0].rcn
 
                 let state = data.state
-                let first_inputs = [|idealized_actions|]
 
-                let reward_layers_reward_stacker layer calculate_cost_too action state =
-                    let explicit_reward, state = map_indices_3d action rewards_matrices state
-                    let implicit_reward, state = layer.RunLayer action state
-                    let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
+                let reward_layers_inner = RNN1DLayer 128 tanh_
+                let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
 
-                    if calculate_cost_too then
-                        let cost, state = cross_entropy_cost' explicit_reward implicit_reward state
-                        (Some cost, total_reward), state
-                    else (None, total_reward), state
+                let non_residual_reward_layers = 
+                    IdentityLayer()
+                    |> wrapMap' (fun (x,y) -> y)
+                    |- reward_layers_inner
+                    |+ reward_layers_outer
+                    |> wrapMap' (fun (x,y) -> Some x, y)
 
-                let reward_layers = RNN1DLayer 128 tanh_ ^- RNN1DLayer reward_size clipped_sigmoid
-                let action_layers = RNN1DLayer 128 tanh_ ^- RNN1DLayer num_levers tanh_
-                
+                let residual_reward_layers = 
+                    IdentityLayer()
+                    |/ reward_layers_inner
+                    |> wrapMap' (fun ((x,_),y) -> x,y)
+                    |- ResidualLayer()
+                    |+ reward_layers_outer
+                    |> wrapMap' (fun (x,y) -> Some x, y)
+
+                let residual_action_layers = 
+                    IdentityLayer()
+                    |/ RNN1DLayer 128 tanh_
+                    |> wrapMap' (fun ((x,_),y) -> x,y)
+                    |- ResidualLayer()
+                    |+ RNN1DLayer num_levers tanh_
+                    |> wrapMap' (fun (x,y) -> Some x, y)
+
                 // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
                 let reward_layers_with_costs = 
-                    reward_layers |> fun x -> {RunLayer=reward_layers_reward_stacker x true; WrappedNodes=x.WrappedNodes}
+                    residual_reward_layers |> fun x -> {RunLayer=reward_layers_reward_stacker x true; WrappedNodes=x.WrappedNodes}
 
+                /// Loops the reward and action layers.
                 let feedback_section =
-                    action_layers ^- reward_layers_with_costs
-                    |> recurrentFeedback 10 (fun (_,reward) -> reward.Value)
-                    |> wrapMap (fun (Some(cost),_) -> cost)
+                    residual_action_layers ^- reward_layers_with_costs
+                    |> recurrentFeedback 10 (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
+                    |> wrapMap (fun (_,(Some(cost),_)) -> cost)
                     |> recurrectCostSum
 
                 let init_layers =
-                    reward_layers 
+                    non_residual_reward_layers // Does not run the cost for this layer.
                     |> fun x -> {RunLayer=reward_layers_reward_stacker x false; WrappedNodes=x.WrappedNodes}
-                    |> wrapMap' (snd >> force)
+                    |> wrapMap' (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
 
                 let network = init_layers ^- feedback_section
 
                 let results_ar = ResizeArray(num_iters)
 
-                printfn "Testing the bandit for %i iterations and optimizer %A..." num_iters optimizer
+                printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
                 let stopwatch = Diagnostics.Stopwatch.StartNew()
                 let rec loop iter =
-                    let _,training_cost = train network optimizer first_inputs state false
-//                    let _, test_cost = infer network optimizer test_set state false
+                    let _,training_cost = train network optimizer idealized_actions state false
                     printfn "Training cost is %f at iteration %i" training_cost iter
-//                    printfn "Test cost is %f at iteration %i" test_cost iter
                     results_ar.Add(training_cost)
-                    //let boundary = 0.5f
                     if iter >= num_iters then 
-                        printfn "Time elapse for bandit test is %A" stopwatch.Elapsed
+                        printfn "Time elapsed for bandit test is %A" stopwatch.Elapsed
                         Chart.Line(results_ar).ShowChart().Show()
-//                        test_cost <= boundary |> assertTest (sprintf "test_cost <= boundary(%f/%f)" test_cost boundary)
+                        assertTest "Ok" true
+                    else
+                        loop <| iter+1
+                loop 1
+
+
+            let ``bandit prediction test 2`` (num_iters: int) optimizer (data: BanditData) =
+                let reward_matrices = data.reward_matrices
+                let idealized_actions = data.idealized_actions |> Array.map (fun x -> None,x)
+                let reward_size,num_levers,num_examples = data.reward_matrices.[0].rcn
+
+                let state = data.state
+
+                /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
+                let reward_layers_reward_stacker layer calculate_cost_too (residual_input,action as ex) state =
+                    let explicit_reward, state = map_indices_3d action reward_matrices.[minibatch_number state] state
+                    let (residual_output, implicit_reward), state = layer.RunLayer ex state
+                    let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
+
+                    if calculate_cost_too then
+                        let cost, state = cross_entropy_cost' explicit_reward implicit_reward state
+                        (residual_output, (Some cost, total_reward)), state
+                    else (residual_output, (None, total_reward)), state
+
+                let reward_layers_inner = RNN1DLayer 128 tanh_
+                let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
+
+                let non_residual_reward_layers = 
+                    IdentityLayer()
+                    |> wrapMap' (fun (x,y) -> y)
+                    |- reward_layers_inner
+                    |+ reward_layers_outer
+                    |> wrapMap' (fun (x,y) -> Some x, y)
+
+                let residual_reward_layers = 
+                    IdentityLayer()
+                    |/ reward_layers_inner
+                    |> wrapMap' (fun ((x,_),y) -> x,y)
+                    |- ResidualLayer()
+                    |+ reward_layers_outer
+                    |> wrapMap' (fun (x,y) -> Some x, y)
+
+                let residual_action_layers = 
+                    IdentityLayer()
+                    |/ RNN1DLayer 128 tanh_
+                    |> wrapMap' (fun ((x,_),y) -> x,y)
+                    |- ResidualLayer()
+                    |+ RNN1DLayer num_levers tanh_
+                    |> wrapMap' (fun (x,y) -> Some x, y)
+
+                // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
+                let reward_layers_with_costs = 
+                    residual_reward_layers |> fun x -> {RunLayer=reward_layers_reward_stacker x true; WrappedNodes=x.WrappedNodes}
+
+                /// Loops the reward and action layers.
+                let feedback_section =
+                    residual_action_layers ^- reward_layers_with_costs
+                    |> recurrentFeedback 10 (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
+                    |> wrapMap (fun (_,(Some(cost),_)) -> cost)
+                    |> recurrectCostSum
+
+                let init_layers =
+                    non_residual_reward_layers // Does not run the cost for this layer.
+                    |> fun x -> {RunLayer=reward_layers_reward_stacker x false; WrappedNodes=x.WrappedNodes}
+                    |> wrapMap' (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
+
+                let network = init_layers ^- feedback_section
+
+                let results_ar = ResizeArray(num_iters)
+
+                printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
+                let stopwatch = Diagnostics.Stopwatch.StartNew()
+                let rec loop iter =
+                    let _,training_cost = train network optimizer idealized_actions state false
+                    printfn "Training cost is %f at iteration %i" training_cost iter
+                    results_ar.Add(training_cost)
+                    if iter >= num_iters then 
+                        printfn "Time elapsed for bandit test is %A" stopwatch.Elapsed
+                        Chart.Line(results_ar).ShowChart().Show()
                         assertTest "Ok" true
                     else
                         loop <| iter+1
                 loop 1
 
             [|
-            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.1f))
-            "bandit prediction test 2", ``bandit prediction test 2`` 100 (ClippedSgd(0.1f,0.1f))
+            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.05f))
+            "bandit prediction test 2", ``bandit prediction test 2`` 100 (ClippedSgd(0.1f,0.05f))
             |]
 
         
@@ -579,7 +679,7 @@ module private Testing =
 //                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
 //                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
 //                testCases "Reber Grammar RNN Tests" ReberData.create reberTests
-                testCases "Mutli-armed Bandit Tests" (BanditData.create 128 8 0 9) banditTests
+                testCases "Multi-armed Bandit Tests" (BanditData.create 128 8 0 9) banditTests
                 |]
         run tree
         Application().Run(Window()) |> ignore

@@ -1247,6 +1247,7 @@ let inline deadness_check c a (f : unit -> unit) =
         f()
 
 type StanState() =
+    member val MinibatchNumber = 0 with get,set
     member val Workspace = new Workspace()
     member val Str = new CudaStream()
     member val Mem = new ObjectPool()
@@ -1264,6 +1265,8 @@ let inline with_is_inference_only (x: #StanState) v =
     x.IsInferenceOnly <- v
     x
 
+let inline minibatch_number (x: #StanState) = x.MinibatchNumber
+let inline minibatch_number_set (x: #StanState) v = x.MinibatchNumber <- v
 let inline tape (x: #StanState) = x.Tape
 let inline mem (x: #StanState) = x.Mem
 let inline str (x: #StanState) = x.Str
@@ -1919,7 +1922,14 @@ type Cost =
     cost: Df
     }
 
+/// Makes a Cost record.
+let toCost' accuracy max_accuracy cost = {accuracy=accuracy; max_accuracy=max_accuracy; cost=cost}
+/// Makes a Cost record.
 let toCost(((accuracy,max_accuracy),cost),state) = {accuracy=accuracy; max_accuracy=max_accuracy; cost=cost}, state
+/// Helper for extracting the cost as a tuple from the Cost record.
+let costAsTuple' (cost: Cost) = cost.accuracy,cost.max_accuracy,cost.cost
+/// Helper for extracting the cost as a tuple from the Cost record.
+let costAsTuple (cost,state: #StanState) = cost.accuracy, cost.max_accuracy, cost.cost, state
 
 /// Squared error cost that also returns the accuracy.
 let inline squared_error_cost' (targets: ^a) (activations : ^a) (state: #StanState) =
