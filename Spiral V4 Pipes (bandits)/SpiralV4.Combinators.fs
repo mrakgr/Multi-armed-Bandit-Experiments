@@ -144,6 +144,28 @@ let stitch (l1: LayerWrapper<'a,'b,'state>) (l2: LayerWrapper<'b,'c,'state>): La
 /// Combines the two LayerWrappers while accumulating the intermediate results.
 let inline (^+) l1 l2 = stitch l1 l2
 
+/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output.
+let select_and_stitch (l1: LayerWrapper<'a,'r,'state>) (selector: 'r -> 'b) (l2: LayerWrapper<'b,'c,'state>): LayerWrapper<'a,'r*'c,'state> =
+    let runLayer input state =
+        let a,s = l1.RunLayer input state
+        let b,s = l2.RunLayer (selector a) s
+        (a,b),s
+    {RunLayer=runLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
+
+/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output.
+let inline (^*) l1 selector l2 = select_and_stitch l1 selector l2
+
+/// Combines the two LayerWrappers while performing selection on the first output.
+let select_and_pass (l1: LayerWrapper<'a,'r,'state>) (selector: 'a * 'r -> 'b) (l2: LayerWrapper<'b,'c,'state>): LayerWrapper<'a,'c,'state> =
+    let runLayer input state =
+        let a,s = l1.RunLayer input state
+        l2.RunLayer (selector (input,a)) s
+    {RunLayer=runLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
+
+/// Combines the two LayerWrappers while performing selection on the first output.
+let inline (^>) l1 selector l2 = select_and_pass l1 selector l2
+
+
 /// (accuracy * max_accuracy) * cost
 type Cost = (Lazy<int> * int) * Df 
 
@@ -183,7 +205,7 @@ let inline private run
         test_accuracy =
     Array.fold <| fun (accuracy,max_accuracy,accumulated_cost) example ->
         (mem state).Reset()
-        let ((hits,max_hits),r),_ = network.RunLayer example <| state
+        let ((hits,max_hits),r),_ = network.RunLayer example state
 
         let accuracy, max_accuracy =
             if test_accuracy then
@@ -202,6 +224,7 @@ let inline private run
             while tape.Count > 0 do
                 tape.Pop()
                 |> fun (name,func) -> func()
+
             update (optimizer, state) network
 
         accuracy, max_accuracy, accumulated_cost
@@ -241,11 +264,12 @@ let inline recurrentFeedback
                 : LayerWrapper< ^input , ^output[], ^state> =
     let runLayer (sequence: ^input) state =
         let rec loop (output_ar: ^output[],iter,state,example) =
-            if iter < len then
+            if iter <= len-1 then
                 setTimestep state iter
-                let output,state = network.RunLayer example state
+                let output,state = network.RunLayer (example) state
                 output_ar.[iter] <- output
-                loop (output_ar,iter+1,state,selector output)
+                if iter = len-1 then output_ar, state // This is one place where I wished F# was a lazy language. 
+                else loop (output_ar,iter+1,state,selector output) // This complex loop is so the selector does not get triggered on the last iteration.
             else output_ar, state
         loop (Array.zeroCreate len,0,state,sequence)
     {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
@@ -260,14 +284,14 @@ let inline wrapMap
         output |> Array.map map, state
     {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
 
-/// Folds the output into the target.
-let inline wrapFold
-        (fold: ^output -> ^state -> ^target * ^state)
+/// Map for single outputs.
+let inline wrapMap'
+        (map: ^output -> ^target)
         (network: LayerWrapper< ^input  , ^output  , ^state>)
                 : LayerWrapper< ^input  , ^target  , ^state> =
     let runLayer (input: ^input) state =
-        let output,state = network.RunLayer input >>= fold <| state
-        output, state
+        let output,state = network.RunLayer input state
+        map output, state
     {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
 
 let inline wrapCostFunc
@@ -283,47 +307,55 @@ let inline (==)
         (cost_func: ^output -> ^output -> ^state -> Cost * ^state) =
     wrapCostFunc network cost_func
 
+type CostAccumulator =
+    {
+    accuracy_ar : Lazy<int> []
+    mutable max_accuracy : int
+    cost_ar : Df []
+    mutable iter : int
+    }
+
+    member inline t.SetTimeStepToIter(state) =
+        setTimestep state t.iter
+
+    member t.AddCostAndIncrementIter(((hits,max_hits),cost): Cost) =
+        t.cost_ar.[t.iter] <- cost
+        t.accuracy_ar.[t.iter] <- hits
+        t.max_accuracy <- t.max_accuracy + max_hits
+        t.iter <- t.iter+1
+
+    static member create len =
+        {accuracy_ar=Array.zeroCreate len;max_accuracy=0;cost_ar=Array.zeroCreate len;iter=0}
+
+let inline add_cost_and_increment_iter (x: CostAccumulator) cost = x.AddCostAndIncrementIter cost; x
+
+let sum_accumulated_costs state (x: CostAccumulator) =
+    let accumulated_cost = sum_scalars x.cost_ar state |> fst
+    let accuracy = lazy (x.accuracy_ar |> Array.fold (fun s x -> s+x.Value) 0)
+    ((accuracy,x.max_accuracy),accumulated_cost), state
+
 /// Takes a standard net and wraps it so it takes in a recurrent sequence.
 let inline recurrectSequence
         (network: LayerWrapper< ^input  , Cost, ^state>)
                 : LayerWrapper< ^input[], Cost, ^state> =
     let runLayer (sequence: ^input[]) state =
-        let len = sequence.Length
-        (Array.zeroCreate len,0,Array.zeroCreate len,0) 
-        |> Array.fold ( fun (accuracy_ar,max_accuracy,cost_ar,iter) example ->
-            setTimestep state iter
-            let ((hits,max_hits),cost),_ = network.RunLayer example <| state
-            cost_ar.[iter] <- cost
-            accuracy_ar.[iter] <- hits
-            let max_accuracy = max_accuracy + max_hits
-            (accuracy_ar,max_accuracy,cost_ar,iter+1)
+        CostAccumulator.create sequence.Length
+        |> Array.fold ( fun accumulator example ->
+            accumulator.SetTimeStepToIter state
+            accumulator.AddCostAndIncrementIter(network.RunLayer example state |> fst)
+            accumulator
             ) <| sequence
-        |> fun (accuracy_ar,max_accuracy,l,iter) ->
-            let accumulated_cost = sum_scalars l state |> fst
-            let accuracy = lazy (accuracy_ar |> Seq.fold (fun s x -> s+x.Value) 0)
-            ((accuracy,max_accuracy),accumulated_cost), state
+        |> sum_accumulated_costs state
     { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
 
-/// Takes a standard net and wraps it so it takes in a recurrent sequence.
+/// Sums an array of costs in the output.
 let inline recurrectCostSum
-        (extractor: ^output -> Cost)
-        (network: LayerWrapper< ^input  , ^output, ^state>)
+        (network: LayerWrapper< ^input  , Cost[] , ^state>)
                 : LayerWrapper< ^input  , Cost   , ^state> =
-    let runLayer (sequence: ^input[]) state =
-        let len = sequence.Length
-        (Array.zeroCreate len,0,Array.zeroCreate len,0) 
-        |> Array.fold ( fun (accuracy_ar,max_accuracy,cost_ar,iter) example ->
-            setTimestep state iter
-            let ((hits,max_hits),cost),_ = network.RunLayer example <| state
-            cost_ar.[iter] <- cost
-            accuracy_ar.[iter] <- hits
-            let max_accuracy = max_accuracy + max_hits
-            (accuracy_ar,max_accuracy,cost_ar,iter+1)
-            ) <| sequence
-        |> fun (accuracy_ar,max_accuracy,l,iter) ->
-            let accumulated_cost = sum_scalars l state |> fst
-            let accuracy = lazy (accuracy_ar |> Seq.fold (fun s x -> s+x.Value) 0)
-            ((accuracy,max_accuracy),accumulated_cost), state
+    let runLayer (sequence: ^input) state =
+        let costs = network.RunLayer sequence state |> fst
+        Array.fold add_cost_and_increment_iter (CostAccumulator.create costs.Length) costs
+        |> sum_accumulated_costs state
     { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
 
 // The following modules are for RL so they've been placed here.
@@ -650,5 +682,10 @@ let stack_vertical (A: d2M) (B: d2M) (state: #StanState) =
     let C = d2M.create(rows A + rows B, cols)
     add_slice 0 0 1.0f A 0 0 0.0f C (rows  A) cols state
     add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols state
+    C, state
+
+/// Stacks A and B along the row dimension lazily
+let stack_vertical_lazy (A: d2M) (B: d2M) (state: #StanState) =
+    let C = lazy (stack_vertical A B state |> fst)
     C, state
 

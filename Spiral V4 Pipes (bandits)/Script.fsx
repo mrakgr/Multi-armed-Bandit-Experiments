@@ -1,3 +1,4 @@
-﻿let a = [|1.0f;2.0f|]
+﻿open System
 
-Array.fold (fun (s,iter) x -> x/iter+s,iter+1.0f) (0.0f,1.0f) a
+let rng = Random(42)
+rng.Next(50)

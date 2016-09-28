@@ -1346,6 +1346,7 @@ let inline private matmult' (prev_output : d2M option) (a:d2M, b:d2M) (state: #S
             let matmult_backward_left () = 
                 deadness_check c a <| fun _ -> 
                     gemm (str state) nT T 1.0f (A' c) (P' b) 1.0f (A' a)
+
             (tape state).Push(matmult_backward_left_name,matmult_backward_left)
 
         if hasAdjoint b then 
@@ -1911,13 +1912,22 @@ let inline get_accuracy (targets: ^a) (activations : ^a) (state: #StanState) =
             accuracyModule.Value.A((str state), P targets, P o).Value |> round |> int
     (a, cols targets), state
 
+type Cost =
+    {
+    accuracy: Lazy<int>
+    max_accuracy: int
+    cost: Df
+    }
+
+let toCost(((accuracy,max_accuracy),cost),state) = {accuracy=accuracy; max_accuracy=max_accuracy; cost=cost}, state
+
 /// Squared error cost that also returns the accuracy.
 let inline squared_error_cost' (targets: ^a) (activations : ^a) (state: #StanState) =
-    para2 (get_accuracy targets) (squared_error_cost targets) activations state
+    para2 (get_accuracy targets) (squared_error_cost targets) activations state |> toCost
 
 /// Cross entropy cost that also returns the accuracy.
 let inline cross_entropy_cost' (targets: ^a) (activations : ^a) (state: #StanState) =
-    para2 (get_accuracy targets) (cross_entropy_cost targets) activations state
+    para2 (get_accuracy targets) (cross_entropy_cost targets) activations state |> toCost
 
 let find_max_index (action_values : float32[]) =
     let mutable max = Single.NegativeInfinity
