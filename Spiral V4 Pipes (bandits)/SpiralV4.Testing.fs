@@ -3,8 +3,8 @@
 open FSharp.Charting
 
 module Embel =
-    let random_seed = 42
-    let reset_random_seed_on_each_runTestCase = true
+    let random_seed_system_random = Some 42
+    let random_seed_GPU = Some 42UL
 
     open System
     open System.IO
@@ -45,9 +45,11 @@ module Embel =
 
     /// The internal function for running tests.
     let inline runTestCase (x: ^a) (name: string, code: ^a -> Result) (state: Tally) =
-        if reset_random_seed_on_each_runTestCase then
+        match random_seed_GPU with
+        | Some v ->
             cudaRandom.SetOffset(0UL)
-            cudaRandom.SetPseudoRandomGeneratorSeed(42UL)
+            cudaRandom.SetPseudoRandomGeneratorSeed(v)
+        | None -> ()
 
         if state.am_ignoring then
             state.ignored <- state.ignored+1
@@ -132,7 +134,7 @@ module private Testing =
         }
 
         static member create() =
-            let state = StanState()
+            let state = new StanState()
             let inputd2M = d2M.create(size_gradcheck,2) |> fun x -> fillRandomUniformMatrix state.Str x 1.0f 0.0f; x
             let outputd2M = d2M.create(size_gradcheck,2) // Gets initialized to zero.
             {inputd2M = inputd2M; state = state; outputd2M=outputd2M}
@@ -183,7 +185,7 @@ module private Testing =
             {
             training_set = Array.zip train_images train_labels
             test_set = Array.zip test_images test_labels
-            state = StanState()
+            state = new StanState()
             }
 
         interface IDisposable with
@@ -199,7 +201,10 @@ module private Testing =
         }
 
         static member create() =
-            let rng = System.Random(random_seed)
+            let rng = 
+                match random_seed_system_random with
+                | Some random_seed -> System.Random(random_seed)
+                | None -> System.Random()
 
             let b_string = [|1.0f;0.0f;0.0f;0.0f;0.0f;0.0f;0.0f|]
             let t_string = [|0.0f;1.0f;0.0f;0.0f;0.0f;0.0f;0.0f|]
@@ -281,7 +286,7 @@ module private Testing =
                 |> Array.groupBy (fun x -> x.Length)
                 |> dict |> Dictionary
 
-            {state=RNN1DState(); data = ex}
+            {state=new RNN1DState(); data = ex}
 
         interface IDisposable with
             member t.Dispose() = 
@@ -298,7 +303,10 @@ module private Testing =
         // Full batch only for now.
         static member create num_examples num_levers min_reward max_reward () =
             let reward_size = max_reward - min_reward + 1
-            let rng = Random(random_seed)
+            let rng = 
+                match random_seed_system_random with
+                | Some random_seed -> System.Random(random_seed)
+                | None -> System.Random()
             let make_random_phase num_levers min_reward max_reward =
                 let reward_matrix = 
                     Array.init num_levers (fun x -> rng.Next(min_reward,max_reward+1))
@@ -447,6 +455,25 @@ module private Testing =
             |]
 
         let banditTests =
+            let inline bandit_test_run input_mapping_func (network: LayerWrapper<_,_,_>) (num_iters: int) optimizer (data: BanditData) =
+                let idealized_actions = data.idealized_actions |> input_mapping_func
+
+                let results_ar = ResizeArray(num_iters)
+
+                printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
+                let stopwatch = Diagnostics.Stopwatch.StartNew()
+                let rec loop iter =
+                    let _,training_cost = train network optimizer idealized_actions data.state false
+                    printfn "Training cost is %f at iteration %i" training_cost iter
+                    results_ar.Add(training_cost)
+                    if iter >= num_iters then 
+                        printfn "Time elapsed for bandit test is %A" stopwatch.Elapsed
+                        Chart.Line(results_ar).ShowChart().Show()
+                        assertTest "Ok" true
+                    else
+                        loop <| iter+1
+                loop 1
+
             let ``bandit prediction test 1`` (num_iters: int) optimizer (data: BanditData) =
                 let rewards_matrices = data.reward_matrices
                 let idealized_actions = data.idealized_actions
@@ -486,28 +513,12 @@ module private Testing =
 
                 let network = init_layers ^- feedback_section
 
-                let results_ar = ResizeArray(num_iters)
-
-                printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
-                let stopwatch = Diagnostics.Stopwatch.StartNew()
-                let rec loop iter =
-                    let _,training_cost = train network optimizer idealized_actions state false
-//                    let _, test_cost = infer network optimizer test_set state false
-                    printfn "Training cost is %f at iteration %i" training_cost iter
-//                    printfn "Test cost is %f at iteration %i" test_cost iter
-                    results_ar.Add(training_cost)
-                    //let boundary = 0.5f
-                    if iter >= num_iters then 
-                        printfn "Time elapsed for bandit test is %A" stopwatch.Elapsed
-                        Chart.Line(results_ar).ShowChart().Show()
-//                        test_cost <= boundary |> assertTest (sprintf "test_cost <= boundary(%f/%f)" test_cost boundary)
-                        assertTest "Ok" true
-                    else
-                        loop <| iter+1
-                loop 1
+                bandit_test_run id network num_iters optimizer data
 
             /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
-            let reward_layers_reward_stacker (reward_matrices: d3M[]) layer calculate_cost_too (residual_input,action as ex) state =
+            let residual_reward_layers_reward_stacker 
+                    (reward_matrices: d3M[]) (layer: LayerWrapper<_,_,_>) 
+                    calculate_cost_too (residual_input,action as ex) state =
                 let explicit_reward, state = map_indices_3d action reward_matrices.[minibatch_number state] state
                 let (residual_output, implicit_reward), state = layer.RunLayer ex state
                 let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
@@ -517,12 +528,10 @@ module private Testing =
                     (residual_output, (Some cost, total_reward)), state
                 else (residual_output, (None, total_reward)), state
 
-            let banditTemplate network (num_iters: int) optimizer (data: BanditData) =
+            let ``bandit prediction test 2(residual layers in depth)`` (num_iters: int) optimizer (data: BanditData) =
                 let reward_matrices = data.reward_matrices
-                let idealized_actions = data.idealized_actions |> Array.map (fun x -> None,x)
+                let input_mapping_func = Array.map (fun x -> None,x)
                 let reward_size,num_levers,num_examples = data.reward_matrices.[0].rcn
-
-                let state = data.state
 
                 let reward_layers_inner = RNN1DLayer 128 tanh_
                 let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
@@ -552,7 +561,7 @@ module private Testing =
 
                 // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
                 let reward_layers_with_costs = 
-                    residual_reward_layers |> fun x -> {RunLayer=reward_layers_reward_stacker x true; WrappedNodes=x.WrappedNodes}
+                    residual_reward_layers |> fun x -> {RunLayer=residual_reward_layers_reward_stacker reward_matrices x true; WrappedNodes=x.WrappedNodes}
 
                 /// Loops the reward and action layers.
                 let feedback_section =
@@ -563,109 +572,16 @@ module private Testing =
 
                 let init_layers =
                     non_residual_reward_layers // Does not run the cost for this layer.
-                    |> fun x -> {RunLayer=reward_layers_reward_stacker x false; WrappedNodes=x.WrappedNodes}
+                    |> fun x -> {RunLayer=residual_reward_layers_reward_stacker reward_matrices x false; WrappedNodes=x.WrappedNodes}
                     |> wrapMap' (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
 
                 let network = init_layers ^- feedback_section
 
-                let results_ar = ResizeArray(num_iters)
-
-                printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
-                let stopwatch = Diagnostics.Stopwatch.StartNew()
-                let rec loop iter =
-                    let _,training_cost = train network optimizer idealized_actions state false
-                    printfn "Training cost is %f at iteration %i" training_cost iter
-                    results_ar.Add(training_cost)
-                    if iter >= num_iters then 
-                        printfn "Time elapsed for bandit test is %A" stopwatch.Elapsed
-                        Chart.Line(results_ar).ShowChart().Show()
-                        assertTest "Ok" true
-                    else
-                        loop <| iter+1
-                loop 1
-
-
-            let ``bandit prediction test 2`` (num_iters: int) optimizer (data: BanditData) =
-                let reward_matrices = data.reward_matrices
-                let idealized_actions = data.idealized_actions |> Array.map (fun x -> None,x)
-                let reward_size,num_levers,num_examples = data.reward_matrices.[0].rcn
-
-                let state = data.state
-
-                /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
-                let reward_layers_reward_stacker layer calculate_cost_too (residual_input,action as ex) state =
-                    let explicit_reward, state = map_indices_3d action reward_matrices.[minibatch_number state] state
-                    let (residual_output, implicit_reward), state = layer.RunLayer ex state
-                    let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
-
-                    if calculate_cost_too then
-                        let cost, state = cross_entropy_cost' explicit_reward implicit_reward state
-                        (residual_output, (Some cost, total_reward)), state
-                    else (residual_output, (None, total_reward)), state
-
-                let reward_layers_inner = RNN1DLayer 128 tanh_
-                let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
-
-                let non_residual_reward_layers = 
-                    IdentityLayer()
-                    |> wrapMap' (fun (x,y) -> y)
-                    |- reward_layers_inner
-                    |+ reward_layers_outer
-                    |> wrapMap' (fun (x,y) -> Some x, y)
-
-                let residual_reward_layers = 
-                    IdentityLayer()
-                    |/ reward_layers_inner
-                    |> wrapMap' (fun ((x,_),y) -> x,y)
-                    |- ResidualLayer()
-                    |+ reward_layers_outer
-                    |> wrapMap' (fun (x,y) -> Some x, y)
-
-                let residual_action_layers = 
-                    IdentityLayer()
-                    |/ RNN1DLayer 128 tanh_
-                    |> wrapMap' (fun ((x,_),y) -> x,y)
-                    |- ResidualLayer()
-                    |+ RNN1DLayer num_levers tanh_
-                    |> wrapMap' (fun (x,y) -> Some x, y)
-
-                // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
-                let reward_layers_with_costs = 
-                    residual_reward_layers |> fun x -> {RunLayer=reward_layers_reward_stacker x true; WrappedNodes=x.WrappedNodes}
-
-                /// Loops the reward and action layers.
-                let feedback_section =
-                    residual_action_layers ^- reward_layers_with_costs
-                    |> recurrentFeedback 10 (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
-                    |> wrapMap (fun (_,(Some(cost),_)) -> cost)
-                    |> recurrectCostSum
-
-                let init_layers =
-                    non_residual_reward_layers // Does not run the cost for this layer.
-                    |> fun x -> {RunLayer=reward_layers_reward_stacker x false; WrappedNodes=x.WrappedNodes}
-                    |> wrapMap' (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
-
-                let network = init_layers ^- feedback_section
-
-                let results_ar = ResizeArray(num_iters)
-
-                printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
-                let stopwatch = Diagnostics.Stopwatch.StartNew()
-                let rec loop iter =
-                    let _,training_cost = train network optimizer idealized_actions state false
-                    printfn "Training cost is %f at iteration %i" training_cost iter
-                    results_ar.Add(training_cost)
-                    if iter >= num_iters then 
-                        printfn "Time elapsed for bandit test is %A" stopwatch.Elapsed
-                        Chart.Line(results_ar).ShowChart().Show()
-                        assertTest "Ok" true
-                    else
-                        loop <| iter+1
-                loop 1
+                bandit_test_run input_mapping_func network num_iters optimizer data
 
             [|
-            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.05f))
-            "bandit prediction test 2", ``bandit prediction test 2`` 100 (ClippedSgd(0.1f,0.05f))
+            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.025f))
+            "bandit prediction test 2 (residual layers in depth)", ``bandit prediction test 2(residual layers in depth)`` 100 (ClippedSgd(0.1f,0.025f))
             |]
 
         

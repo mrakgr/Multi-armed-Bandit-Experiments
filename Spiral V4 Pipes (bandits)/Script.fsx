@@ -1,4 +1,11 @@
-﻿open System
+﻿type A(x : int) = 
+    member val x = x with get,set
 
-let rng = Random(42)
-rng.Next(50)
+let a = A(2)
+let b = A(2)
+
+type C = B of A
+
+let c = B a
+let c' = B a
+c = c'

@@ -70,10 +70,13 @@ let group_data_by_seq_length_and_load_to_gpu minibatch_size (data: (float32[] * 
         v)
 
 /// The type for combining layers. Can be used to combine RNN with feedfoward layers.
-type LayerWrapper<'input,'output,'state when 'state :> StanState > =
+type LayerWrapper<'input,'output,'state,'aux_input,'aux_output,'aux_data when 'state :> StanState > =
     {
     RunLayer: 'input -> 'state -> 'output * 'state
     WrappedNodes: Lazy<DM[]> list
+    AuxInput: 'aux_input
+    AuxOutput: 'aux_output
+    AuxData: 'aux_data
     }
 
     member inline t.Update(optimizer,state) =
@@ -84,8 +87,12 @@ type LayerWrapper<'input,'output,'state when 'state :> StanState > =
             t.WrappedNodes |> List.iter (fun x -> x.Value |> Array.iter dispose)
 
 /// Creates the LayerWrapper type from the Layer. LayerWrapper type is the actual layer type.
-let inline wrap (l1: Layer<_,_,_>) = 
-    {RunLayer = (fun input state -> l1.RunLayer input state); WrappedNodes = [toArrayLazy l1]}
+let inline wrap (l1: Layer<_,_,_,_,_,_>) = 
+    {RunLayer = (fun input state -> l1.RunLayer input state)
+     WrappedNodes = [toArrayLazy l1]
+     AuxInput = ()
+     AuxOutput = ()
+     Aux}
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
 let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFRec has_bias activation) |> wrap
@@ -189,6 +196,9 @@ let inline private run
         (set : ^input []) 
         (state: #StanState) 
         test_accuracy =
+    // Ironically, it works the same even without this hack as during the regular gradient descent the adjoints get set to zero.
+    // The reason this is lazy is because the network has to be run once to init it for the first time.
+    let network_without_node_duplicates = lazy {network with WrappedNodes = network.WrappedNodes |> List.distinctBy force}
     Array.fold <| fun (accuracy,max_accuracy,accumulated_cost,iter) example ->
         (mem state).Reset()
         minibatch_number_set state iter
@@ -212,7 +222,7 @@ let inline private run
                 tape.Pop()
                 |> fun (name,func) -> func()
 
-            update (optimizer, state) network
+            update (optimizer, state) network_without_node_duplicates.Value
 
         accuracy, max_accuracy, accumulated_cost, iter+1
     <| (0,0,0.0f,0) <| set
