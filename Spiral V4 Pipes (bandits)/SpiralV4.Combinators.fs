@@ -70,12 +70,13 @@ let group_data_by_seq_length_and_load_to_gpu minibatch_size (data: (float32[] * 
         v)
 
 /// The type for combining layers. Can be used to combine RNN with feedfoward layers.
-type LayerWrapper<'input,'output,'state,'aux_input,'aux_output,'aux_data when 'state :> StanState > =
+type LayerWrapper<'input,'output,'state,'aux_input,'aux_output,'aux_cost,'aux_data when 'state :> StanState > =
     {
     RunLayer: 'input -> 'state -> 'output * 'state
     WrappedNodes: Lazy<DM[]> list
     AuxInput: 'aux_input
     AuxOutput: 'aux_output
+    AuxCost: 'aux_cost
     AuxData: 'aux_data
     }
 
@@ -87,12 +88,13 @@ type LayerWrapper<'input,'output,'state,'aux_input,'aux_output,'aux_data when 's
             t.WrappedNodes |> List.iter (fun x -> x.Value |> Array.iter dispose)
 
 /// Creates the LayerWrapper type from the Layer. LayerWrapper type is the actual layer type.
-let inline wrap (l1: Layer<_,_,_,_,_,_>) = 
+let inline wrap (l1: Layer<_,_,_>) = 
     {RunLayer = (fun input state -> l1.RunLayer input state)
      WrappedNodes = [toArrayLazy l1]
      AuxInput = ()
      AuxOutput = ()
-     Aux}
+     AuxCost = ()
+     AuxData = ()}
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
 let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFRec has_bias activation) |> wrap

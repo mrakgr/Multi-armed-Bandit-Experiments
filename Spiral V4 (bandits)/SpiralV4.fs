@@ -1251,7 +1251,7 @@ type StanState() =
     member val Workspace = new Workspace()
     member val Str = new CudaStream()
     member val Mem = new ObjectPool()
-    member val Tape = Stack<string * (unit -> unit)>()
+    member val Tape = [] : (string * (unit -> unit)) list with get,set
     member val IsInferenceOnly = false with get, set
 
     interface IDisposable with
@@ -1259,7 +1259,6 @@ type StanState() =
             t.Workspace |> dispose
             t.Str.Dispose()
             t.Mem |> dispose
-            t.Tape.Clear()
 
 let inline with_is_inference_only (x: #StanState) v =
     x.IsInferenceOnly <- v
