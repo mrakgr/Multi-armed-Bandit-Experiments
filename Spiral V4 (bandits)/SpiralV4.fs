@@ -1254,8 +1254,10 @@ type Context<'userstate> =
     Mem : ObjectPool
     // State (mutable)
     mutable UserState : 'userstate
-    // (unit -> unit) is the closure for the backwards pass
-    mutable Tape : (string * (unit -> unit)) list
+    // (unit -> unit) is the closure for the backwards pass. 
+    // The ref is there to make sure the mutable value does not get dereferenced during the copy
+    // otherwise the nodes won't get accumulated properly through the with_userstate call.
+    Tape : (string * (unit -> unit)) list ref
     // Initialized layers (mutable)
     Nodes : ResizeArray<DM[]>
     // State (immutable)
@@ -1268,19 +1270,20 @@ type Context<'userstate> =
         Str = new CudaStream()
         Mem = new ObjectPool()
         UserState = ()
-        Tape = []
+        Tape = ref []
         Nodes = ResizeArray()
         IsInferenceOnly = false
         }
 
     interface IDisposable with
         member t.Dispose() = 
-            t.Workspace |> dispose
-            t.Str.Dispose()
-            t.Mem |> dispose
+            dispose t.Workspace
+            dispose t.Str
+            dispose t.Mem
+            Seq.iter (Array.iter dispose) t.Nodes
 
 let inline with_is_inference_only (x: Context<_>) v =
-    {x with IsInferenceOnly = x.IsInferenceOnly}
+    { x with IsInferenceOnly = v }
 
 let inline with_userstate (x: Context<_>) v =
         {
@@ -1295,11 +1298,12 @@ let inline with_userstate (x: Context<_>) v =
 
 let inline userstate (x: Context<_>) = x.UserState
 let inline add_nodes (x: Context<_>) v = x.Nodes.Add v
-let inline push_tape (x: Context<_>) v = x.Tape <- v :: x.Tape
+let inline push_tape (x: Context<_>) v = x.Tape := v :: !x.Tape
 let inline tape (x: Context<_>) = x.Tape
 let inline mem (x: Context<_>) = x.Mem
 let inline str (x: Context<_>) = x.Str
 let inline workspace (x: Context<_>) = x.Workspace
+let inline nodes (x: Context<_>) = x.Nodes
 let inline is_inference_only (x: Context<_>) = x.IsInferenceOnly
 
 /// Helper for the Getd2M.
@@ -1894,10 +1898,13 @@ let inline clipped_softmax x (context: Context<_>) =
     let x = softmax x context
     clip 0.0001f 0.9999f x 0.0f context
 
-/// Bind for the context passing functions. Is actually the reader monad rather than the context monad
+/// Bind for the context passing functions. Is actually the reader monad rather than the state monad
 /// since it is mutable.
 let inline (>>=) (a: Context<_> -> ^a) (f: ^a -> Context<_> -> ^b): Context<_> -> ^b =
     fun context -> let v = a context in f v context
+
+/// Kleisli arrow function for the easier contextual function composition.
+let inline (>=>) a b x = a x >>= b
 
 // TODO: In a future version of Spiral, make the two operations actually run in parallel by
 // passing in different streams and waiting on them using events. This would be a more controlable
@@ -2038,7 +2045,7 @@ let inline createLayer (desired_hidden_size: int) (create_layer: (int -> ^input 
             node <- Initialized sub_layer
             sub_layer input context
 
-let inline createStdRNNRec has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
+let inline createStdRNNSubLayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
     let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context
     let U = d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context
     let b = if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer context |> Some else None
@@ -2053,14 +2060,14 @@ let inline createStdRNNRec has_bias activation desired_hidden_size (input: d2M) 
         | None -> linear_layer_matmult [|W,x|] b >>= activation
         | Some y -> linear_layer_matmult [|W,x;U,y|] b >>= activation
 
-let inline create1DRNNLayer 
-        (desired_hidden_size: int) 
-        (create_layer: (int -> ^input -> Context<int> -> ((^output option * ^input) -> Context<int> -> ^output))) =
+let inline create1DRNNLayer
+        (desired_hidden_size: int)
+        (create_layer: (int -> ^input -> Context<_> -> ((^output option * ^input) -> Context<_> -> ^output))) =
     let dict = Dictionary<_,_>(HashIdentity.Structural)
     let mutable node = Uninitialized(desired_hidden_size,create_layer)
     
-    fun (input: ^input) (context: Context<int>) ->
-        let inline execute (sub_layer: (^output option * ^input) -> Context<int> -> ^output) =
+    fun (input: ^input) (context: Context<_>) ->
+        let inline execute (sub_layer: (^output option * ^input) -> Context<_> -> ^output) =
             let step = userstate context
             let v = match dict.TryGetValue (step-1) with 
                     | true, v -> Some v

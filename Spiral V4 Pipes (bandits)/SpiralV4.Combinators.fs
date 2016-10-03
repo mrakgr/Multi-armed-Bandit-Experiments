@@ -70,34 +70,11 @@ let group_data_by_seq_length_and_load_to_gpu minibatch_size (data: (float32[] * 
             |> Array.map (fun (a,b) -> Array.zip a b)
         v)
 
-/// The type for combining layers. Can be used to combine RNN with feedfoward layers.
-type LayerWrapper<'output> =
-    {
-    Output: 'output
-    WrappedNodes: HashSet<Lazy<DM[]>>
-    }
-
-    member inline t.Update(optimizer,state) =
-        t.WrappedNodes |> Seq.iter (fun x -> x.Value |> Array.iter (optimize(optimizer,state)))
-
-    interface IDisposable with
-        member t.Dispose() =
-            t.WrappedNodes |> Seq.iter (fun x -> x.Value |> Array.iter dispose)
-
-let new_hashset_with v = HashSet() |> fun x -> x.Add v |> ignore; x
-
-/// Creates the LayerWrapper type from the Layer. LayerWrapper type is the actual layer type.
-let inline wrap (l1: Layer<_,_,_>) input state = 
-    {
-    Output = l1.RunLayer input state
-    WrappedNodes = toArrayLazy l1 |> new_hashset_with
-    }
-
 /// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
-let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFRec has_bias activation) |> wrap
+let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFSubLayer has_bias activation)
 /// Creates a 1D recurrent layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
 let inline RNN1DLayer' has_bias hidden_size activation = 
-    create1DRNNLayer hidden_size (createStdRNNRec has_bias activation) |> wrap
+    create1DRNNLayer hidden_size (createStdRNNSubLayer has_bias activation)
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Creates bias by default.
 let inline FFLayer hidden_size activation = FFLayer' true hidden_size activation
@@ -108,33 +85,21 @@ let inline RNN1DLayer hidden_size activation = RNN1DLayer' true hidden_size acti
 let inline castToDM x = (^a:(member CastToDM: DM) x)
 
 // Auxiliary layers
-let inline createBNRec _ (input: ^input) (state: ^state) =
-    let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,state) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
+let inline createBNSubLayer _ (input: ^input) (context: Context<_>) =
+    let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,context) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
     let Bias = input |> ghostCopyBias false
     let RunningMean = input |> ghostCopyBias true
     let RunningVariance = input |> ghostCopyBias true
 //    let mutable factor = 0.0
-    {
-    Run =
-        fun (input: ^input) (state: ^state) ->
-            let bnMode = ManagedCuda.CudaDNN.cudnnBatchNormMode.BatchNormPerActivation
+    fun (input: ^input) (context: Context<_>) ->
+        let bnMode = ManagedCuda.CudaDNN.cudnnBatchNormMode.BatchNormPerActivation
 //            factor <- factor + 1.0
 //            (1.0/factor)
-            batch_normalization_forward bnMode Scale Bias RunningMean RunningVariance 0.01 input state
-    ToArray =
-        [|Scale;Bias;RunningMean;RunningVariance|] |> Array.map castToDM
-    }
+        batch_normalization_forward bnMode Scale Bias RunningMean RunningVariance 0.01 input context
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
 /// The empty parameter does nothing. It is just there because inline functions have to have a parameter in the current version of F#.
-let inline BNLayer() = createLayer 1 createBNRec |> wrap
-
-/// Bind two LayerWrappers.
-let inline bind_layerwrapper (l1: 'state -> LayerWrapper<'a>) (l2: 'a -> 'state -> LayerWrapper<'b>) state =
-    let o1 = l1 state
-    let o2 = l2 o1.Output state
-    Seq.iter (o1.WrappedNodes.Add >> ignore) o2.WrappedNodes
-    { Output = o2.Output; WrappedNodes = o1.WrappedNodes }
+let inline BNLayer() = createLayer 1 createBNSubLayer
 
 /// A type use to apply the cost function of the same name. It is used as a substitute for higher order functions
 /// which are insufficiently generic. It is the same as the Optimizer type in purpose.
@@ -142,24 +107,22 @@ type CostFunction =
     | SquaredError
     | CrossEntropy
 
-    member inline t.ApplyCostFunction targets activations state =
+    member inline t.ApplyCostFunction targets activations context =
         match t with
-        | SquaredError -> squared_error_cost' targets activations state
-        | CrossEntropy -> cross_entropy_cost' targets activations state
+        | SquaredError -> squared_error_cost' targets activations context
+        | CrossEntropy -> cross_entropy_cost' targets activations context
 
 /// Generic function for net training and inference.
 let inline private run
-        (network: ^input -> ^state -> LayerWrapper<Cost>) 
+        (network: ^input -> Context<_> -> Cost) 
         (optimizer: Optimizer)
         (set : ^input []) 
-        (state: #StanState) 
+        (context: Context<_>) 
         test_accuracy =
     Array.fold <| fun (accuracy,max_accuracy,accumulated_cost,iter) example ->
-        (mem state).Reset()
-        minibatch_number_set state iter
+        (mem context).Reset()
 
-        let wrapper = network example state
-        let hits,max_hits,r = wrapper.Output |> costAsTuple'
+        let hits,max_hits,r = network example context |> costAsTuple
 
         let accuracy, max_accuracy =
             if test_accuracy then
@@ -169,17 +132,19 @@ let inline private run
 
         let accumulated_cost = accumulated_cost + r.PrimalValue
 
-        if is_inference_only state = true then
-            if (tape state).Length > 0 then
+        if is_inference_only context = true then
+            if (tape context).Value.Length > 0 then
                 failwith "Forgot to use the is_inference_only flag in a library function somewhere"
         else
             r.A := 1.0f
             
-            List.foldBack <| fun (name,func) () -> func()
-            <| tape state
-            <| ()
+            let t = !(tape context)
+            for name,func in t do
+                func()
 
-            update (optimizer, state) wrapper
+            (tape context) := []
+
+            Seq.iter (Array.iter <| fun x -> optimizer.Optimize(x,context)) (nodes context)
 
         accuracy, max_accuracy, accumulated_cost, iter+1
     <| (0,0,0.0f,0) <| set
@@ -187,83 +152,75 @@ let inline private run
         ((accuracy, max_accuracy), accumulated_cost / float32 set.Length)
 
 /// Trains the network in the depth direction.
-let inline train network optimizer set state test_accuracy = 
-    run network optimizer set (with_is_inference_only state false) test_accuracy
+let inline train network optimizer set context test_accuracy = 
+    run network optimizer set (with_is_inference_only context false) test_accuracy
 /// Runs the network without doing backprop.
-let inline infer network optimizer set state test_accuracy = 
-    run network optimizer set (with_is_inference_only state true) test_accuracy
+let inline infer network optimizer set context test_accuracy = 
+    run network optimizer set (with_is_inference_only context true) test_accuracy
 
 /// Takes a standard net and wraps it so it takes in a recurrent sequence.
 let inline recurrentRepeat
-        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (network: ^input -> Context<_> -> ^output)
         (sequence: ^input[])
-        (state: #StanState)
-        : LayerWrapper< ^output[]> =
-    let len = sequence.Length   
-    (Array.zeroCreate len,0,None) 
-    |> Array.fold ( fun (output_ar,iter,_) example ->
-        setTimestep state iter
-        let wrapper = network example state
-        let output = wrapper.Output
+        (context: Context<_>)
+        : ^output[] =
+    let len = sequence.Length
+    let context = with_userstate context 0
+    (Array.zeroCreate len,0)
+    |> Array.fold ( fun (output_ar,iter) example ->
+        context.UserState <- iter // Sets the timestep.
+        let output = network example context
         output_ar.[iter] <- output
-        (output_ar, iter+1, Some wrapper)
-        ) <| sequence 
-    |> fun (output_ar, iter, Some wrapper) ->
-        {Output=output_ar; WrappedNodes = wrapper.WrappedNodes}
+        (output_ar, iter+1)
+        ) <| sequence
+    |> fst
 
 /// Feds the selected output to itself for n times in a recurrent fashion. Accumulates interemediate results in an array.
 let inline recurrentFeedback
         (len: int)
         (selector: ^output -> ^input)
-        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (network: ^input -> Context<_> -> ^output)
         (sequence: ^input)
-        (state: #StanState)
-        : LayerWrapper< ^output[]> =
-    let rec loop (output_ar: ^output[],iter,example, w) =
+        (context: Context<_>)
+        : ^output[] =
+    let context = with_userstate context 0
+    let rec loop (output_ar: ^output[],iter,example) =
         if iter <= len-1 then
-            setTimestep state iter
-            let wrapper = network example state
-            let output = wrapper.Output
+            context.UserState <- iter // Sets the timestep.
+            let output = network example context
             output_ar.[iter] <- output
-            if iter = len-1 then output_ar, Some wrapper // This is one place where I wished F# was a lazy language. 
-            else loop (output_ar,iter+1,selector output, Some wrapper) // This complex loop is so the selector does not get triggered on the last iteration.
-        else output_ar, w
-    let output_ar,w = loop (Array.zeroCreate len,0,sequence,None)
-    {Output=output_ar; WrappedNodes = w.Value.WrappedNodes}
+            if iter = len-1 then output_ar
+            else loop (output_ar,iter+1,selector output)
+        else output_ar
+    loop (Array.zeroCreate len,0,sequence)
 
 /// Maps the outputs to targets.
 let inline wrapMap
         (map: ^output -> ^target)
-        (network: ^input -> ^state -> LayerWrapper< ^output[]>)
+        (network: ^input -> Context<_> -> ^output[])
         (input: ^input)
-        (state: #StanState)
-        : LayerWrapper< ^target[]> =
-    let wrapper = network input state
-    let output = wrapper.Output
-    {Output=output |> Array.map map; WrappedNodes = wrapper.WrappedNodes}
+        (context: Context<_>)
+        : ^target[] =
+    network input context |> Array.map map
 
 /// Map for single outputs.
 let inline wrapMap'
         (map: ^output -> ^target)
-        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (network: ^input -> Context<_> -> ^output)
         (input: ^input)
-        (state: #StanState)
-        : LayerWrapper< ^target> =
-    let wrapper = network input state
-    let output = wrapper.Output
-    {Output=map output; WrappedNodes = wrapper.WrappedNodes}
+        (context: Context<_>)
+        : ^target =
+    network input context |> map
 
 let inline wrapCostFunc
-        (network: ^input -> ^state -> LayerWrapper< ^output>)
-        (cost_func: ^output -> ^output -> ^state -> Cost) 
-        (input, target) state =
-    let wrapper = network input state
-    let output = wrapper.Output
-    { Output = cost_func target output state; WrappedNodes = wrapper.WrappedNodes}
+        (network: ^input -> Context<_> -> ^output)
+        (cost_func: ^output -> ^output -> Context<_> -> Cost) 
+        (input, target) context =
+    network input context |> cost_func target <| context
 
 let inline (==)
-        (network: ^input -> ^state -> LayerWrapper< ^output>)
-        (cost_func: ^output -> ^output -> ^state -> Cost) =
+        (network: ^input -> Context<_> -> ^output)
+        (cost_func: ^output -> ^output -> Context<_> -> Cost) =
     wrapCostFunc network cost_func
 
 type CostAccumulator =
@@ -274,11 +231,11 @@ type CostAccumulator =
     mutable iter : int
     }
 
-    member inline t.SetTimeStepToIter(state) =
-        setTimestep state t.iter
+    member inline t.SetTimeStepToIter(context: Context<_>) =
+        context.UserState <- t.iter
 
     member t.AddCostAndIncrementIter(cost: Cost) =
-        let hits,max_hits,cost = costAsTuple' cost
+        let hits,max_hits,cost = costAsTuple cost
         t.cost_ar.[t.iter] <- cost
         t.accuracy_ar.[t.iter] <- hits
         t.max_accuracy <- t.max_accuracy + max_hits
@@ -289,40 +246,36 @@ type CostAccumulator =
 
 let inline add_cost_and_increment_iter (x: CostAccumulator) cost = x.AddCostAndIncrementIter cost; x
 
-let sum_accumulated_costs state (x: CostAccumulator) =
-    let accumulated_cost = sum_scalars x.cost_ar state
+let sum_accumulated_costs context (x: CostAccumulator) =
+    let accumulated_cost = sum_scalars x.cost_ar context
     let accuracy = lazy (x.accuracy_ar |> Array.fold (fun s x -> s+x.Value) 0)
     toCost' accuracy x.max_accuracy accumulated_cost
 
 /// Takes a standard net and wraps it so it takes in a recurrent sequence.
 let inline recurrectSequence
-        (network: ^input -> ^state -> LayerWrapper<Cost>)
+        (network: ^input -> Context<_> -> Cost)
         (sequence: ^input[])
-        (state: #StanState)
-        : LayerWrapper< Cost> =
-    let output, Some wrapper =
-        (CostAccumulator.create sequence.Length, None)
-        |> Array.fold ( fun (accumulator,_) example ->
-            accumulator.SetTimeStepToIter state
-            let wrapper = network example state
-            let output = wrapper.Output
-            accumulator.AddCostAndIncrementIter(output)
-            accumulator, Some wrapper
-            ) <| sequence
-    { Output = sum_accumulated_costs state output; WrappedNodes = wrapper.WrappedNodes}
+        (context: Context<_>)
+        : Cost =
+    let context = with_userstate context 0
+    (CostAccumulator.create sequence.Length)
+    |> Array.fold ( fun accumulator example ->
+        accumulator.SetTimeStepToIter context
+        let output = network example context
+        accumulator.AddCostAndIncrementIter(output)
+        accumulator
+        ) <| sequence
+    |> sum_accumulated_costs context
 
 /// Sums an array of costs in the output.
 let inline recurrectCostSum
-        (network: ^input -> ^state -> LayerWrapper< Cost[]>)
+        (network: ^input -> Context<_> -> Cost[])
         (sequence: ^input)
-        (state: #StanState)
-        : LayerWrapper<Cost> =
-    let wrapper = network sequence state
-    let output =
-        let costs = wrapper.Output
-        Array.fold add_cost_and_increment_iter (CostAccumulator.create costs.Length) costs
-        |> sum_accumulated_costs state
-    { Output = output; WrappedNodes = wrapper.WrappedNodes}
+        (context: Context<_>)
+        : Cost =
+    let costs = network sequence context
+    Array.fold add_cost_and_increment_iter (CostAccumulator.create costs.Length) costs
+    |> sum_accumulated_costs context
 
 // The following modules are for RL so they've been placed here.
 
@@ -533,25 +486,25 @@ let gatherIndex3DModule = lazy DeviceGatherIndex3DModule()
 
 /// Given an input matrix and an index mapping matrix, it gets the max row indices of the input array and then maps 
 /// them to the columns of the index mapping matrix.
-let map_indices (input: d2M) (map: d2M) (state: #StanState) =
+let map_indices (input: d2M) (map: d2M) (context: Context<_>) =
     if rows input <> cols map then failwithf "rows input(%i) <> cols map(%i)" (rows input) (cols map)
-    let indices = (workspace state).ResizeIf<int>(cols input)
-    maxColumnIndexModule.Value.A(str state, P input, indices)
-    let output = getd2M true (rows map, cols input) state
-    gatherIndexModule.Value.A(str state, indices, P map, P output)
+    let indices = (workspace context).ResizeIf<int>(cols input)
+    maxColumnIndexModule.Value.A(str context, P input, indices)
+    let output = getd2M true (rows map, cols input) context
+    gatherIndexModule.Value.A(str context, indices, P map, P output)
     output
 
 let inline images x = (^a : (member Images: int) x)
 
 /// Given an input matrix and a 3D index mapping matrix, it gets the max row indices of the input array and then maps 
 /// them to the columns and images of the 3D index mapping matrix.
-let map_indices_3d (input: d2M) (map: d3M) (state: #StanState) =
+let map_indices_3d (input: d2M) (map: d3M) (context: Context<_>) =
     if rows input <> cols map then failwithf "rows input(%i) <> cols map(%i)" (rows input) (cols map)
     if cols input <> images map then failwithf "cols input(%i) <> images map(%i)" (cols input) (images map)
-    let indices = (workspace state).ResizeIf<int>(cols input)
-    maxColumnIndexModule.Value.A(str state, P input, indices)
-    let output = getd2M true (rows map, cols input) state
-    gatherIndex3DModule.Value.A(str state, indices, P map, P output)
+    let indices = (workspace context).ResizeIf<int>(cols input)
+    maxColumnIndexModule.Value.A(str context, P input, indices)
+    let output = getd2M true (rows map, cols input) context
+    gatherIndex3DModule.Value.A(str context, indices, P map, P output)
     output
 
 /// Y[slice] <- beta * Y[slice] + alpha * X[slice]
@@ -628,46 +581,39 @@ let add_slice_backward_name = "add_slice_backward"
 /// X[rowStartX..rowStartX+row_stride-1,colStartX..colStartX+col_stride-1]
 let add_slice (rowStartX: int) (colStartX: int) (alpha: float32) (X: d2M)
               (rowStartY: int) (colStartY: int) (beta: float32) (Y: d2M)
-              (row_stride: int) (col_stride: int) (state: #StanState) =
-    addSliceModule.Value.A(str state,rowStartX,colStartX,alpha,P X,rowStartY,colStartY,beta,P Y,row_stride,col_stride)
+              (row_stride: int) (col_stride: int) (context: Context<_>) =
+    addSliceModule.Value.A(str context,rowStartX,colStartX,alpha,P X,rowStartY,colStartY,beta,P Y,row_stride,col_stride)
 
-    if (is_inference_only state) = false then
+    if (is_inference_only context) = false then
         if hasAdjoint X && hasAdjoint Y then
             let add_slice_backward () = 
                 deadness_check Y X
                 <| fun _ -> 
-                    addSliceModule.Value.A(str state,rowStartY,colStartY,alpha,A Y,
+                    addSliceModule.Value.A(str context,rowStartY,colStartY,alpha,A Y,
                                                      rowStartX,colStartX,1.0f,A X,
                                                      row_stride,col_stride)
-            state.PushTape(add_slice_backward_name,add_slice_backward)
+            push_tape context (add_slice_backward_name,add_slice_backward)
 
 /// Stacks A and B along the row dimension.
-let stack_vertical (A: d2M) (B: d2M) (state: #StanState) =
+let stack_vertical (A: d2M) (B: d2M) (context: Context<_>) =
     if cols A <> cols B then failwithf "cols A(%i) <> cols B(%i)" (cols A) (cols B)
     let cols = cols A
     let C = d2M.create(rows A + rows B, cols)
-    add_slice 0 0 1.0f A 0 0 0.0f C (rows  A) cols state
-    add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols state
+    add_slice 0 0 1.0f A 0 0 0.0f C (rows  A) cols context
+    add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols context
     C
 
-/// Stacks A and B along the row dimension lazily
-let stack_vertical_lazy (A: d2M) (B: d2M) (state: #StanState) =
-    let C = lazy (stack_vertical A B state)
-    C
+let stack_vertical_lazy (A: d2M) (B: d2M) (context: Context<_>) = 
+    lazy stack_vertical A B context
 
 /// Adds the two input arguments together.
-let inline ResidualLayer() (a, b) state =
-    {
-    Output =
-        match a with
-        | Some a -> add 1.0f a 1.0f b state
-        | None -> b
-    WrappedNodes = HashSet()
-    }
+let inline ResidualLayer (a, b) context =
+    match a with
+    | Some a -> add 1.0f a 1.0f b context
+    | None -> b
 
 /// Passes the input through to the output.
-let inline IdentityLayer() a state =
-    {
-    Output = a
-    WrappedNodes = HashSet()
-    }
+let inline IdentityLayer a context =
+    a
+
+let inline force (x: Lazy<_>) = x.Value

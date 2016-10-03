@@ -130,25 +130,25 @@ module private Testing =
         {
         inputd2M: d2M
         outputd2M: d2M
-        state: StanState
         }
 
         static member create() =
-            let state = new StanState()
-            let inputd2M = d2M.create(size_gradcheck,2) |> fun x -> fillRandomUniformMatrix state.Str x 1.0f 0.0f; x
+            use str = new CudaStream()
+            cudaRandom.SetPseudoRandomGeneratorSeed(0UL) // I want this to be always deterministic.
+            cudaRandom.SetOffset(0UL)
+            let inputd2M = d2M.create(size_gradcheck,2) |> fun x -> fillRandomUniformMatrix str x 1.0f 0.0f; x
             let outputd2M = d2M.create(size_gradcheck,2) // Gets initialized to zero.
-            {inputd2M = inputd2M; state = state; outputd2M=outputd2M}
+            {inputd2M = inputd2M; outputd2M=outputd2M}
 
         interface IDisposable with
             member t.Dispose() =
                 t.inputd2M |> dispose
-                t.state |> dispose
+                t.outputd2M |> dispose
 
     type MnistData =
         {
         training_set : (d2M * d2M)[]
         test_set : (d2M * d2M)[]
-        state : StanState
         }
 
         static member create minibatch_size mnist_path () =
@@ -185,18 +185,15 @@ module private Testing =
             {
             training_set = Array.zip train_images train_labels
             test_set = Array.zip test_images test_labels
-            state = new StanState()
             }
 
         interface IDisposable with
             member t.Dispose() =
                 for x,y in t.training_set do x |> dispose; y |> dispose
                 for x,y in t.test_set do x |> dispose; y |> dispose
-                t.state |> dispose
 
     type ReberData =
         {
-        state : RNN1DState
         data : Dictionary<int, (d2M*d2M)[][]>
         }
 
@@ -286,18 +283,16 @@ module private Testing =
                 |> Array.groupBy (fun x -> x.Length)
                 |> dict |> Dictionary
 
-            {state=new RNN1DState(); data = ex}
+            { data = ex }
 
         interface IDisposable with
             member t.Dispose() = 
-                t.state |> dispose
                 t.data.Values |> Seq.iter (Seq.iter <| Seq.iter (fun (inp,lab) -> dispose inp; dispose lab))
 
     type BanditData =
         {
         reward_matrices : d3M[]
         idealized_actions : d2M[]
-        state : RNN1DState
         }
 
         // Full batch only for now.
@@ -326,14 +321,12 @@ module private Testing =
             {
             reward_matrices = [|d3M.create'((reward_size,num_levers,num_examples),Array.concat (Array.concat reward_matrices))|]
             idealized_actions = [|d2M.createConstant(num_levers,num_examples,Array.concat ideal_actions)|]
-            state = new RNN1DState()
             }
 
         interface IDisposable with
             member t.Dispose()=
                 t.reward_matrices |> Array.iter dispose
                 t.idealized_actions |> Array.iter dispose
-                t.state |> dispose
 
 
     let run_all_tests() =
@@ -344,10 +337,10 @@ module private Testing =
             let inline checkLayer layer_number layer (data: GradientCheckingData) =
                 let input = data.inputd2M
                 let target = data.outputd2M
-                let state = data.state
-                let _ = train layer GradChecking [|(target,input)|] state false
+                let context = Context<_>.create
+                let _ = train layer GradChecking [|(target,input)|] context false
                 let getNodes extract_node = 
-                    [|for dm in layer.WrappedNodes.[layer_number].Value do 
+                    [|for dm in (nodes context).[layer_number] do 
                         match extract_node dm with
                         | Some v -> yield v
                         | None -> ()|]
@@ -363,7 +356,7 @@ module private Testing =
                         for i=0 to int ar.Size-1 do
                             let i = SizeT i
                             let orig = ar.[i]
-                            let cost() = infer layer GradChecking [|(target,input)|] state false |> fun (_,x) -> x
+                            let cost() = infer layer GradChecking [|(target,input)|] context false |> fun (_,x) -> x
                             ar.[i] <- orig + epsilon
                             let cost_plus_epsilon = cost()
                             ar.[i] <- orig - epsilon
@@ -396,12 +389,12 @@ module private Testing =
             let inline layerTest network optimizer num_iters (data: MnistData) =
                 let training_set = data.training_set
                 let test_set = data.test_set
-                let state = data.state
+                let context = Context<_>.create
                 printfn "Testing the feedforward net with %A..." optimizer
                 let rec loop iter =
-                    let _,training_cost = train network optimizer training_set state false
+                    let _,training_cost = train network optimizer training_set context false
                     printfn "Done with training."
-                    let (test_accuracy, max_accuracy),test_cost = infer network optimizer test_set state true
+                    let (test_accuracy, max_accuracy),test_cost = infer network optimizer test_set context true
                     printfn "Training cost is %f at iteration %i" training_cost iter
                     printfn "Test accuracy and cost are (%i/%i, %f) at iteration %i" test_accuracy max_accuracy test_cost iter
                     if iter >= num_iters then 
@@ -412,15 +405,15 @@ module private Testing =
 
             let ``n layer feedforward net test`` =
                 layerTest 
-                    (FFLayer 256 relu ^-
-                     FFLayer 256 relu ^-
+                    (FFLayer 256 relu >=>
+                     FFLayer 256 relu >=>
                      FFLayer 10 clipped_sigmoid ==
                      cross_entropy_cost')
         
             let ``n layer feedforward net test (with BN)`` =
                 layerTest
-                    (FFLayer' false 256 relu ^- BNLayer() ^- 
-                     FFLayer' false 256 relu ^- BNLayer() ^- 
+                    (FFLayer' false 256 relu >=> BNLayer() >=>
+                     FFLayer' false 256 relu >=> BNLayer() >=>
                      FFLayer 10 clipped_sigmoid ==
                      cross_entropy_cost')
 
@@ -431,10 +424,10 @@ module private Testing =
 
         let reberTests =
             let ``standard 1 layer RNN test`` num_iters (optimizer: Optimizer) (data: ReberData) =
-                let state = data.state
+                let state = Context<_>.create
                 let training_set = data.data.[20] // As these two are full batch I need to put them in an array explicitly.
                 let test_set = data.data.[30]
-                let network = RNN1DLayer 128 tanh_ ^- FFLayer 7 clipped_sigmoid == cross_entropy_cost' |> recurrectSequence
+                let network = RNN1DLayer 128 tanh_ >=> FFLayer 7 clipped_sigmoid == cross_entropy_cost' |> recurrectSequence
                 printfn "Testing the standard 1 layer RNN for %i iterations and optimizer %A..." num_iters optimizer
                 let stopwatch = Diagnostics.Stopwatch.StartNew()
                 let rec loop iter =
@@ -455,15 +448,13 @@ module private Testing =
             |]
 
         let banditTests =
-            let inline bandit_test_run input_mapping_func (network: LayerWrapper<_,_,_>) (num_iters: int) optimizer (data: BanditData) =
-                let idealized_actions = data.idealized_actions |> input_mapping_func
-
+            let inline bandit_test_run set network context (num_iters: int) optimizer =
                 let results_ar = ResizeArray(num_iters)
 
                 printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
                 let stopwatch = Diagnostics.Stopwatch.StartNew()
                 let rec loop iter =
-                    let _,training_cost = train network optimizer idealized_actions data.state false
+                    let _,training_cost = train network optimizer set context false
                     printfn "Training cost is %f at iteration %i" training_cost iter
                     results_ar.Add(training_cost)
                     if iter >= num_iters then 
@@ -479,108 +470,110 @@ module private Testing =
                 let idealized_actions = data.idealized_actions
                 let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
 
-                let state = data.state
-
                 /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
-                let reward_layers_reward_stacker layer calculate_cost_too action state =
-                    let explicit_reward, state = map_indices_3d action rewards_matrices.[minibatch_number state] state
-                    let implicit_reward, state = layer.RunLayer action state
-                    let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
+                let reward_layers_reward_stacker layer reward_matrices action = context {
+                    let! explicit_reward = map_indices_3d action reward_matrices
+                    let! implicit_reward = layer action
+                    let! total_reward = stack_vertical_lazy implicit_reward explicit_reward
 
-                    if calculate_cost_too then
-                        let cost, state = cross_entropy_cost' explicit_reward implicit_reward state
-                        (Some cost, total_reward), state
-                    else (None, total_reward), state
+                    let! cost = cross_entropy_cost' explicit_reward implicit_reward
+                    return (cost, total_reward)
+                    }
 
-                let reward_layers = RNN1DLayer 128 tanh_ ^- RNN1DLayer reward_size clipped_sigmoid
-                let action_layers = RNN1DLayer 128 tanh_ ^- RNN1DLayer num_levers tanh_
-                
+                let reward_layers = RNN1DLayer 128 tanh_ >=> RNN1DLayer reward_size clipped_sigmoid
+                let action_layers = RNN1DLayer 128 tanh_ >=> RNN1DLayer num_levers clipped_sigmoid
+
                 // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
-                let reward_layers_with_costs = 
-                    reward_layers |> fun x -> {RunLayer=reward_layers_reward_stacker x true; WrappedNodes=x.WrappedNodes}
+                let reward_layers_with_costs rewards_matrices input = 
+                    reward_layers_reward_stacker reward_layers rewards_matrices input
+
+                let lazy_action_layers input context = 
+                    lazy action_layers (force input) context
+                
+                let feedback_section rewards_matrices input = context {
+                    let! cost, output = reward_layers_with_costs rewards_matrices input
+                    let! output = lazy_action_layers output
+                    return cost, output
+                    }
 
                 /// Loops the reward and action layers.
-                let feedback_section =
-                    action_layers ^- reward_layers_with_costs
-                    |> recurrentFeedback 10 (fun (_,reward) -> reward.Value)
-                    |> wrapMap (fun (Some(cost),_) -> cost)
+                let recurrect_feedback_section rewards_matrices =
+                    feedback_section rewards_matrices
+                    |> recurrentFeedback 10 (fun (_,reward) -> force reward)
+                    |> wrapMap (fun (cost,_) -> cost)
                     |> recurrectCostSum
 
-                let init_layers =
-                    reward_layers  // Does not run the cost for this layer.
-                    |> fun x -> {RunLayer=reward_layers_reward_stacker x false; WrappedNodes=x.WrappedNodes}
-                    |> wrapMap' (snd >> force)
+                let network (rewards_matrices, input) =
+                    recurrect_feedback_section rewards_matrices input
 
-                let network = init_layers ^- feedback_section
-
-                bandit_test_run id network num_iters optimizer data
+                use cc = Context<_>.create
+                let d = Array.zip data.reward_matrices data.idealized_actions
+                bandit_test_run d network cc num_iters optimizer
 
             /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
             let residual_reward_layers_reward_stacker 
-                    (reward_matrices: d3M[]) (layer: LayerWrapper<_,_,_>) 
-                    calculate_cost_too (residual_input,action as ex) state =
-                let explicit_reward, state = map_indices_3d action reward_matrices.[minibatch_number state] state
-                let (residual_output, implicit_reward), state = layer.RunLayer ex state
-                let total_reward, state = stack_vertical_lazy implicit_reward explicit_reward state
+                    layer reward_matrices (residual_input,action as ex) = context {
+                let! explicit_reward = map_indices_3d action reward_matrices
+                let! (residual_output, implicit_reward) = layer ex
+                let! total_reward = stack_vertical_lazy implicit_reward explicit_reward
 
-                if calculate_cost_too then
-                    let cost, state = cross_entropy_cost' explicit_reward implicit_reward state
-                    (residual_output, (Some cost, total_reward)), state
-                else (residual_output, (None, total_reward)), state
+                let! cost = cross_entropy_cost' explicit_reward implicit_reward
+                return (residual_output, cost, total_reward)
+                }
 
             let ``bandit prediction test 2(residual layers in depth)`` (num_iters: int) optimizer (data: BanditData) =
-                let reward_matrices = data.reward_matrices
-                let input_mapping_func = Array.map (fun x -> None,x)
-                let reward_size,num_levers,num_examples = data.reward_matrices.[0].rcn
+                let rewards_matrices = data.reward_matrices
+                let idealized_actions = data.idealized_actions
+                let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
 
                 let reward_layers_inner = RNN1DLayer 128 tanh_
                 let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
 
-                let non_residual_reward_layers = 
-                    IdentityLayer()
-                    |> wrapMap' (fun (x,y) -> y)
-                    |- reward_layers_inner
-                    |+ reward_layers_outer
-                    |> wrapMap' (fun (x,y) -> Some x, y)
+                let residual_reward_layers (residual_input, input) = context {
+                    let! output = reward_layers_inner input
+                    let! residual_output = ResidualLayer (residual_input,output)
+                    let! output = reward_layers_outer residual_output
+                    return Some residual_output, output
+                    }
 
-                let residual_reward_layers = 
-                    IdentityLayer()
-                    |/ reward_layers_inner
-                    |> wrapMap' (fun ((x,_),y) -> x,y)
-                    |- ResidualLayer()
-                    |+ reward_layers_outer
-                    |> wrapMap' (fun (x,y) -> Some x, y)
+                let action_layers_inner = RNN1DLayer 128 tanh_
+                let action_layers_outer = RNN1DLayer num_levers clipped_sigmoid
 
-                let residual_action_layers = 
-                    IdentityLayer()
-                    |/ RNN1DLayer 128 tanh_
-                    |> wrapMap' (fun ((x,_),y) -> x,y)
-                    |- ResidualLayer()
-                    |+ RNN1DLayer num_levers tanh_
-                    |> wrapMap' (fun (x,y) -> Some x, y)
+                let residual_action_layers (residual_input, input) = context {
+                    let! output = action_layers_inner input
+                    let! residual_output = ResidualLayer (residual_input,output)
+                    let! output = action_layers_outer residual_output
+                    return Some residual_output, output
+                    }
 
-                // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
-                let reward_layers_with_costs = 
-                    residual_reward_layers |> fun x -> {RunLayer=residual_reward_layers_reward_stacker reward_matrices x true; WrappedNodes=x.WrappedNodes}
+                let reward_layers_with_costs rewards_matrices input = 
+                    residual_reward_layers_reward_stacker residual_reward_layers rewards_matrices input
+
+                let lazy_action_layers input context = 
+                    lazy residual_action_layers (force input) context
+                
+                let feedback_section rewards_matrices input = context {
+                    let! residual_output, cost, output = reward_layers_with_costs rewards_matrices input
+                    let! output = lazy_action_layers (lazy (residual_output,force output))
+                    return cost, output
+                    }
 
                 /// Loops the reward and action layers.
-                let feedback_section =
-                    residual_action_layers ^- reward_layers_with_costs
-                    |> recurrentFeedback 10 (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
-                    |> wrapMap (fun (_,(Some(cost),_)) -> cost)
+                let recurrect_feedback_section rewards_matrices =
+                    feedback_section rewards_matrices
+                    |> recurrentFeedback 10 (fun (_,reward) -> force reward)
+                    |> wrapMap (fun (cost,_) -> cost)
                     |> recurrectCostSum
 
-                let init_layers =
-                    non_residual_reward_layers // Does not run the cost for this layer.
-                    |> fun x -> {RunLayer=residual_reward_layers_reward_stacker reward_matrices x false; WrappedNodes=x.WrappedNodes}
-                    |> wrapMap' (fun (residual_output,(_,reward)) -> residual_output,reward.Value)
+                let network (rewards_matrices, input) =
+                    recurrect_feedback_section rewards_matrices (None,input)
 
-                let network = init_layers ^- feedback_section
-
-                bandit_test_run input_mapping_func network num_iters optimizer data
+                use cc = Context<_>.create
+                let d = Array.zip data.reward_matrices data.idealized_actions
+                bandit_test_run d network cc num_iters optimizer
 
             [|
-            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.025f))
+//            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.025f))
             "bandit prediction test 2 (residual layers in depth)", ``bandit prediction test 2(residual layers in depth)`` 100 (ClippedSgd(0.1f,0.025f))
             |]
 
@@ -598,7 +591,7 @@ module private Testing =
                 testCases "Multi-armed Bandit Tests" (BanditData.create 128 8 0 9) banditTests
                 |]
         run tree
-        Application().Run(Window()) |> ignore
+        Application().Run() |> ignore
 
     [<STAThread>]
     run_all_tests()

@@ -1,11 +1,7 @@
-﻿type A =
+﻿type A<'a> =
     {
-    mutable x: int list
-    v : string
+    mutable x: 'a
     }
 
-let a = {x=[1;2;3]; v="Hello."}
-let b = {a with v="Bye."}
-a.x <- [3;4;5]
-a
-b
+let a = {x = 1}
+{a with x="Hello"} // Type error
