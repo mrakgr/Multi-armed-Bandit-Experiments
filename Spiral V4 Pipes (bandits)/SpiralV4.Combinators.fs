@@ -5,6 +5,7 @@ open System
 open ManagedCuda
 open ManagedCuda.BasicTypes
 open ManagedCuda.VectorTypes
+open System.Collections.Generic
 
 /// Creates an array of float32 zeroes with only index x set to 1.0f
 let scalar_decoder min_bound max_bound (x: int option) = // .NET arrays can be created with min and max bounds specified.
@@ -70,31 +71,27 @@ let group_data_by_seq_length_and_load_to_gpu minibatch_size (data: (float32[] * 
         v)
 
 /// The type for combining layers. Can be used to combine RNN with feedfoward layers.
-type LayerWrapper<'input,'output,'state,'aux_input,'aux_output,'aux_cost,'aux_data when 'state :> StanState > =
+type LayerWrapper<'output> =
     {
-    RunLayer: 'input -> 'state -> 'output * 'state
-    WrappedNodes: Lazy<DM[]> list
-    AuxInput: 'aux_input
-    AuxOutput: 'aux_output
-    AuxCost: 'aux_cost
-    AuxData: 'aux_data
+    Output: 'output
+    WrappedNodes: HashSet<Lazy<DM[]>>
     }
 
     member inline t.Update(optimizer,state) =
-        t.WrappedNodes |> List.iter (fun x -> x.Value |> Array.iter (optimize(optimizer,state)))
+        t.WrappedNodes |> Seq.iter (fun x -> x.Value |> Array.iter (optimize(optimizer,state)))
 
     interface IDisposable with
         member t.Dispose() =
-            t.WrappedNodes |> List.iter (fun x -> x.Value |> Array.iter dispose)
+            t.WrappedNodes |> Seq.iter (fun x -> x.Value |> Array.iter dispose)
+
+let new_hashset_with v = HashSet() |> fun x -> x.Add v |> ignore; x
 
 /// Creates the LayerWrapper type from the Layer. LayerWrapper type is the actual layer type.
-let inline wrap (l1: Layer<_,_,_>) = 
-    {RunLayer = (fun input state -> l1.RunLayer input state)
-     WrappedNodes = [toArrayLazy l1]
-     AuxInput = ()
-     AuxOutput = ()
-     AuxCost = ()
-     AuxData = ()}
+let inline wrap (l1: Layer<_,_,_>) input state = 
+    {
+    Output = l1.RunLayer input state
+    WrappedNodes = toArrayLazy l1 |> new_hashset_with
+    }
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
 let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFRec has_bias activation) |> wrap
@@ -132,37 +129,12 @@ let inline createBNRec _ (input: ^input) (state: ^state) =
 /// The empty parameter does nothing. It is just there because inline functions have to have a parameter in the current version of F#.
 let inline BNLayer() = createLayer 1 createBNRec |> wrap
 
-/// Kleisli arrow for the state passing functions
-let inline (>=>) a b = fun x -> a x >>= b
-
-/// Combines two LayerWrappers.
-let inline combine (l1: LayerWrapper<'a,'b,'state>) (l2: LayerWrapper<'b,'c,'state>) =
-    {RunLayer=l1.RunLayer >=> l2.RunLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
-
-/// Combines two LayerWrappers. The same as |- except right associative.
-let inline (^-) l1 l2 = combine l1 l2
-
-/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output.
-let inline select_and_stitch (l1: LayerWrapper<'a,'r,'state>) (selector: 'r -> 'b) (l2: LayerWrapper<'b,'c,'state>): LayerWrapper<'a,'r*'c,'state> =
-    let runLayer input state =
-        let a,s = l1.RunLayer input state
-        let b,s = l2.RunLayer (selector a) s
-        (a,b),s
-    {RunLayer=runLayer; WrappedNodes=l1.WrappedNodes @ l2.WrappedNodes}
-
-/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output.
-let inline (|*) l1 selector l2 = select_and_stitch l1 selector l2
-
-/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output using the snd function.
-/// In other words, it passes the previous function's output while also doing accumulation.
-let inline (|/) l1 l2 = select_and_stitch l1 snd l2
-
-/// Combines the two LayerWrappers while accumulating the intermediate results and performing selection on the first output using the id function.
-/// In other words, it makes that first stitch.
-let inline (|+) l1 l2 = select_and_stitch l1 id l2
-
-/// Combines two LayerWrappers. The same as ^- except left associative.
-let inline (|-) l1 l2 = l1 ^- l2
+/// Bind two LayerWrappers.
+let inline bind_layerwrapper (l1: 'state -> LayerWrapper<'a>) (l2: 'a -> 'state -> LayerWrapper<'b>) state =
+    let o1 = l1 state
+    let o2 = l2 o1.Output state
+    Seq.iter (o1.WrappedNodes.Add >> ignore) o2.WrappedNodes
+    { Output = o2.Output; WrappedNodes = o1.WrappedNodes }
 
 /// A type use to apply the cost function of the same name. It is used as a substitute for higher order functions
 /// which are insufficiently generic. It is the same as the Optimizer type in purpose.
@@ -175,36 +147,19 @@ type CostFunction =
         | SquaredError -> squared_error_cost' targets activations state
         | CrossEntropy -> cross_entropy_cost' targets activations state
 
-// To make the following function generic I would need a polymorphic map over tuples from FsControl.
-/// Wraps a layer with two targets in the cross entropy cost.
-let inline wrapStitchedCost (cost_func: CostFunction) (network: LayerWrapper<'a,'b*'c,'state>) =
-    let addDf (a: Df) (b: Df) =
-        {P= ref (lazy (a.PrimalValue + b.PrimalValue)); A= ref 0.0f}
-    let addLazy (a: Lazy<int>) (b: Lazy<int>) =
-        lazy (a.Value + b.Value)
-
-    let runLayer (input, (target1, target2)) state =
-        let (output1,output2),state = network.RunLayer input state
-        let l1,mac1,r1,state = cost_func.ApplyCostFunction target1 output1 state |> costAsTuple
-        let l2,mac2,r2,state = cost_func.ApplyCostFunction target2 output2 state |> costAsTuple
-        ((addLazy l1 l2, mac1+mac2), addDf r1 r1), state
-    
-    {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
-
 /// Generic function for net training and inference.
 let inline private run
-        (network: LayerWrapper< ^input, Cost, ^state>) 
+        (network: ^input -> ^state -> LayerWrapper<Cost>) 
         (optimizer: Optimizer)
         (set : ^input []) 
         (state: #StanState) 
         test_accuracy =
-    // Ironically, it works the same even without this hack as during the regular gradient descent the adjoints get set to zero.
-    // The reason this is lazy is because the network has to be run once to init it for the first time.
-    let network_without_node_duplicates = lazy {network with WrappedNodes = network.WrappedNodes |> List.distinctBy force}
     Array.fold <| fun (accuracy,max_accuracy,accumulated_cost,iter) example ->
         (mem state).Reset()
         minibatch_number_set state iter
-        let hits,max_hits,r,_ = network.RunLayer example state |> costAsTuple
+
+        let wrapper = network example state
+        let hits,max_hits,r = wrapper.Output |> costAsTuple'
 
         let accuracy, max_accuracy =
             if test_accuracy then
@@ -215,20 +170,20 @@ let inline private run
         let accumulated_cost = accumulated_cost + r.PrimalValue
 
         if is_inference_only state = true then
-            if (tape state).Count > 0 then
+            if (tape state).Length > 0 then
                 failwith "Forgot to use the is_inference_only flag in a library function somewhere"
         else
             r.A := 1.0f
-            let tape = tape state
-            while tape.Count > 0 do
-                tape.Pop()
-                |> fun (name,func) -> func()
+            
+            List.foldBack <| fun (name,func) () -> func()
+            <| tape state
+            <| ()
 
-            update (optimizer, state) network_without_node_duplicates.Value
+            update (optimizer, state) wrapper
 
         accuracy, max_accuracy, accumulated_cost, iter+1
     <| (0,0,0.0f,0) <| set
-    |> fun (accuracy, max_accuracy, accumulated_cost,iter) ->
+    |> fun (accuracy, max_accuracy, accumulated_cost, iter) ->
         ((accuracy, max_accuracy), accumulated_cost / float32 set.Length)
 
 /// Trains the network in the depth direction.
@@ -240,70 +195,75 @@ let inline infer network optimizer set state test_accuracy =
 
 /// Takes a standard net and wraps it so it takes in a recurrent sequence.
 let inline recurrentRepeat
-        (network: LayerWrapper< ^input  , 'output  , ^state>)
-                : LayerWrapper< ^input[], 'output[], ^state> =
-    let runLayer (sequence: ^input[]) state =
-        let len = sequence.Length   
-        (Array.zeroCreate len,0,state) 
-        |> Array.fold ( fun (output_ar,iter,state) example ->
-            setTimestep state iter
-            let output,state = network.RunLayer example state
-            output_ar.[iter] <- output
-            (output_ar,iter+1,state)
-            ) <| sequence 
-        |> fun (output_ar,iter,state) ->
-            output_ar,state
-    {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
+        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (sequence: ^input[])
+        (state: #StanState)
+        : LayerWrapper< ^output[]> =
+    let len = sequence.Length   
+    (Array.zeroCreate len,0,None) 
+    |> Array.fold ( fun (output_ar,iter,_) example ->
+        setTimestep state iter
+        let wrapper = network example state
+        let output = wrapper.Output
+        output_ar.[iter] <- output
+        (output_ar, iter+1, Some wrapper)
+        ) <| sequence 
+    |> fun (output_ar, iter, Some wrapper) ->
+        {Output=output_ar; WrappedNodes = wrapper.WrappedNodes}
 
 /// Feds the selected output to itself for n times in a recurrent fashion. Accumulates interemediate results in an array.
 let inline recurrentFeedback
         (len: int)
         (selector: ^output -> ^input)
-        (network: LayerWrapper< ^input , ^output  , ^state>)
-                : LayerWrapper< ^input , ^output[], ^state> =
-    let runLayer (sequence: ^input) state =
-        let rec loop (output_ar: ^output[],iter,state,example) =
-            if iter <= len-1 then
-                setTimestep state iter
-                let output,state = network.RunLayer (example) state
-                output_ar.[iter] <- output
-                if iter = len-1 then output_ar, state // This is one place where I wished F# was a lazy language. 
-                else loop (output_ar,iter+1,state,selector output) // This complex loop is so the selector does not get triggered on the last iteration.
-            else output_ar, state
-        loop (Array.zeroCreate len,0,state,sequence)
-    {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
+        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (sequence: ^input)
+        (state: #StanState)
+        : LayerWrapper< ^output[]> =
+    let rec loop (output_ar: ^output[],iter,example, w) =
+        if iter <= len-1 then
+            setTimestep state iter
+            let wrapper = network example state
+            let output = wrapper.Output
+            output_ar.[iter] <- output
+            if iter = len-1 then output_ar, Some wrapper // This is one place where I wished F# was a lazy language. 
+            else loop (output_ar,iter+1,selector output, Some wrapper) // This complex loop is so the selector does not get triggered on the last iteration.
+        else output_ar, w
+    let output_ar,w = loop (Array.zeroCreate len,0,sequence,None)
+    {Output=output_ar; WrappedNodes = w.Value.WrappedNodes}
 
 /// Maps the outputs to targets.
 let inline wrapMap
         (map: ^output -> ^target)
-        (network: LayerWrapper< ^input, ^output[], ^state>)
-                : LayerWrapper< ^input, ^target[], ^state> =
-    let runLayer (input: ^input) state =
-        let output,state = network.RunLayer input state
-        output |> Array.map map, state
-    {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
+        (network: ^input -> ^state -> LayerWrapper< ^output[]>)
+        (input: ^input)
+        (state: #StanState)
+        : LayerWrapper< ^target[]> =
+    let wrapper = network input state
+    let output = wrapper.Output
+    {Output=output |> Array.map map; WrappedNodes = wrapper.WrappedNodes}
 
 /// Map for single outputs.
 let inline wrapMap'
         (map: ^output -> ^target)
-        (network: LayerWrapper< ^input  , ^output  , ^state>)
-                : LayerWrapper< ^input  , ^target  , ^state> =
-    let runLayer (input: ^input) state =
-        let output,state = network.RunLayer input state
-        map output, state
-    {RunLayer=runLayer; WrappedNodes=network.WrappedNodes}
+        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (input: ^input)
+        (state: #StanState)
+        : LayerWrapper< ^target> =
+    let wrapper = network input state
+    let output = wrapper.Output
+    {Output=map output; WrappedNodes = wrapper.WrappedNodes}
 
 let inline wrapCostFunc
-        (network: LayerWrapper< ^input, ^output, ^state>) 
-        (cost_func: ^output -> ^output -> ^state -> Cost * ^state) =
-    let runLayer (input, target) state =
-        let output,state = network.RunLayer input state
-        cost_func target output state 
-    { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
+        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (cost_func: ^output -> ^output -> ^state -> Cost) 
+        (input, target) state =
+    let wrapper = network input state
+    let output = wrapper.Output
+    { Output = cost_func target output state; WrappedNodes = wrapper.WrappedNodes}
 
 let inline (==)
-        (network: LayerWrapper< ^input, ^output, ^state>) 
-        (cost_func: ^output -> ^output -> ^state -> Cost * ^state) =
+        (network: ^input -> ^state -> LayerWrapper< ^output>)
+        (cost_func: ^output -> ^output -> ^state -> Cost) =
     wrapCostFunc network cost_func
 
 type CostAccumulator =
@@ -324,43 +284,45 @@ type CostAccumulator =
         t.max_accuracy <- t.max_accuracy + max_hits
         t.iter <- t.iter+1
 
-    /// The same as the standard AddCostAndIncrementIter. It throws away the second tuple argument.
-    member t.AddCostAndIncrementIter'(cost: Cost * #StanState) =
-        t.AddCostAndIncrementIter(fst cost)
-
     static member create len =
         {accuracy_ar=Array.zeroCreate len;max_accuracy=0;cost_ar=Array.zeroCreate len;iter=0}
 
 let inline add_cost_and_increment_iter (x: CostAccumulator) cost = x.AddCostAndIncrementIter cost; x
 
 let sum_accumulated_costs state (x: CostAccumulator) =
-    let accumulated_cost = sum_scalars x.cost_ar state |> fst
+    let accumulated_cost = sum_scalars x.cost_ar state
     let accuracy = lazy (x.accuracy_ar |> Array.fold (fun s x -> s+x.Value) 0)
-    toCost' accuracy x.max_accuracy accumulated_cost, state
+    toCost' accuracy x.max_accuracy accumulated_cost
 
 /// Takes a standard net and wraps it so it takes in a recurrent sequence.
 let inline recurrectSequence
-        (network: LayerWrapper< ^input  , Cost, ^state>)
-                : LayerWrapper< ^input[], Cost, ^state> =
-    let runLayer (sequence: ^input[]) state =
-        CostAccumulator.create sequence.Length
-        |> Array.fold ( fun accumulator example ->
+        (network: ^input -> ^state -> LayerWrapper<Cost>)
+        (sequence: ^input[])
+        (state: #StanState)
+        : LayerWrapper< Cost> =
+    let output, Some wrapper =
+        (CostAccumulator.create sequence.Length, None)
+        |> Array.fold ( fun (accumulator,_) example ->
             accumulator.SetTimeStepToIter state
-            accumulator.AddCostAndIncrementIter'(network.RunLayer example state)
-            accumulator
+            let wrapper = network example state
+            let output = wrapper.Output
+            accumulator.AddCostAndIncrementIter(output)
+            accumulator, Some wrapper
             ) <| sequence
-        |> sum_accumulated_costs state
-    { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
+    { Output = sum_accumulated_costs state output; WrappedNodes = wrapper.WrappedNodes}
 
 /// Sums an array of costs in the output.
 let inline recurrectCostSum
-        (network: LayerWrapper< ^input  , Cost[] , ^state>)
-                : LayerWrapper< ^input  , Cost   , ^state> =
-    let runLayer (sequence: ^input) state =
-        let costs = network.RunLayer sequence state |> fst
+        (network: ^input -> ^state -> LayerWrapper< Cost[]>)
+        (sequence: ^input)
+        (state: #StanState)
+        : LayerWrapper<Cost> =
+    let wrapper = network sequence state
+    let output =
+        let costs = wrapper.Output
         Array.fold add_cost_and_increment_iter (CostAccumulator.create costs.Length) costs
         |> sum_accumulated_costs state
-    { RunLayer = runLayer; WrappedNodes = network.WrappedNodes}
+    { Output = output; WrappedNodes = wrapper.WrappedNodes}
 
 // The following modules are for RL so they've been placed here.
 
@@ -577,7 +539,7 @@ let map_indices (input: d2M) (map: d2M) (state: #StanState) =
     maxColumnIndexModule.Value.A(str state, P input, indices)
     let output = getd2M true (rows map, cols input) state
     gatherIndexModule.Value.A(str state, indices, P map, P output)
-    output, state
+    output
 
 let inline images x = (^a : (member Images: int) x)
 
@@ -590,7 +552,7 @@ let map_indices_3d (input: d2M) (map: d3M) (state: #StanState) =
     maxColumnIndexModule.Value.A(str state, P input, indices)
     let output = getd2M true (rows map, cols input) state
     gatherIndex3DModule.Value.A(str state, indices, P map, P output)
-    output, state
+    output
 
 /// Y[slice] <- beta * Y[slice] + alpha * X[slice]
 type DeviceAddSliceModule() = 
@@ -677,7 +639,7 @@ let add_slice (rowStartX: int) (colStartX: int) (alpha: float32) (X: d2M)
                     addSliceModule.Value.A(str state,rowStartY,colStartY,alpha,A Y,
                                                      rowStartX,colStartX,1.0f,A X,
                                                      row_stride,col_stride)
-            (tape state).Push(add_slice_backward_name,add_slice_backward)
+            state.PushTape(add_slice_backward_name,add_slice_backward)
 
 /// Stacks A and B along the row dimension.
 let stack_vertical (A: d2M) (B: d2M) (state: #StanState) =
@@ -686,26 +648,26 @@ let stack_vertical (A: d2M) (B: d2M) (state: #StanState) =
     let C = d2M.create(rows A + rows B, cols)
     add_slice 0 0 1.0f A 0 0 0.0f C (rows  A) cols state
     add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols state
-    C, state
+    C
 
 /// Stacks A and B along the row dimension lazily
 let stack_vertical_lazy (A: d2M) (B: d2M) (state: #StanState) =
-    let C = lazy (stack_vertical A B state |> fst)
-    C, state
+    let C = lazy (stack_vertical A B state)
+    C
 
 /// Adds the two input arguments together.
-let inline ResidualLayer() =
+let inline ResidualLayer() (a, b) state =
     {
-    RunLayer = fun (a, b) state -> 
+    Output =
         match a with
         | Some a -> add 1.0f a 1.0f b state
-        | None -> b, state
-    WrappedNodes=[]
+        | None -> b
+    WrappedNodes = HashSet()
     }
 
 /// Passes the input through to the output.
-let inline IdentityLayer() =
+let inline IdentityLayer() a state =
     {
-    RunLayer = fun a state -> a,state
-    WrappedNodes=[]
+    Output = a
+    WrappedNodes = HashSet()
     }
