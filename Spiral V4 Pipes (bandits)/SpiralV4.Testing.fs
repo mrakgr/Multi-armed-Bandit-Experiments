@@ -561,7 +561,7 @@ module private Testing =
                 /// Loops the reward and action layers.
                 let recurrect_feedback_section rewards_matrices =
                     feedback_section rewards_matrices
-                    |> recurrentFeedback 10 (fun (_,reward) -> force reward)
+                    |> recurrentFeedback 10 (fun (_,reward) -> force reward) // Why are there only two arguments here???
                     |> wrapMap (fun (cost,_) -> cost)
                     |> recurrectCostSum
 
@@ -572,9 +572,77 @@ module private Testing =
                 let d = Array.zip data.reward_matrices data.idealized_actions
                 bandit_test_run d network cc num_iters optimizer
 
+            // There is/was a a bug in test two so I brought in this one.
+            let ``bandit prediction test 3(old style residual test)`` (num_iters: int) optimizer (data: BanditData) =
+                let rewards_matrices = data.reward_matrices
+                let idealized_actions = data.idealized_actions
+                let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
+
+                /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
+                let reward_layers_reward_stacker layer calculate_cost_too reward_matrices (residual_input,action as ex) state =
+                    let explicit_reward = map_indices_3d action reward_matrices state
+                    let (residual_output, implicit_reward) = layer ex state
+                    let total_reward = stack_vertical_lazy implicit_reward explicit_reward state
+
+                    if calculate_cost_too then
+                        let cost = cross_entropy_cost' explicit_reward implicit_reward state
+                        (residual_output, Some cost, total_reward)
+                    else (residual_output, None, total_reward)
+
+                let reward_layers_inner = RNN1DLayer 128 tanh_
+                let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
+
+                let non_residual_reward_layers (None,input) = context { 
+                    let! a = reward_layers_inner input
+                    let! b = reward_layers_outer a
+                    return Some a,b
+                    }
+
+                let residual_reward_layers (residual_input, input) = context {
+                    let! a = reward_layers_inner input
+                    let! res = ResidualLayer (residual_input,a)
+                    let! b = reward_layers_outer res
+                    return Some res, b
+                    }
+
+                let action_layers_inner = RNN1DLayer 128 tanh_
+                let action_layers_outer = RNN1DLayer num_levers tanh_
+
+                let residual_action_layers (residual_input, input) = context {
+                    let! a = action_layers_inner input
+                    let! res = ResidualLayer (residual_input,a)
+                    let! b = action_layers_outer res
+                    return Some res, b
+                    }
+                    
+
+                // The reward layer is complicated by the fact that it has to also receive the explicit reward as a part of its input.
+                let reward_layers_with_costs reward_matrices = 
+                    reward_layers_reward_stacker residual_reward_layers true reward_matrices
+
+                /// Loops the reward and action layers.
+                let feedback_section reward_matrices =
+                    fun ex -> residual_action_layers ex >>= reward_layers_with_costs reward_matrices
+                    |> recurrentFeedback 10 (fun (residual_output,_,reward) -> residual_output,reward.Value)
+                    |> wrapMap (fun (_,Some(cost),_) -> cost)
+                    |> recurrectCostSum
+
+                let init_layers reward_matrices =
+                    // Does not run the cost for this layer.
+                    reward_layers_reward_stacker non_residual_reward_layers false reward_matrices
+                    |> wrapMap' (fun (residual_output,_,reward) -> residual_output,reward.Value)
+
+                let network (reward_matrices, input) = init_layers reward_matrices (None, input) >>= feedback_section reward_matrices
+
+                use cc = Context<_>.create |> with_userstate 0
+                let d = Array.zip data.reward_matrices data.idealized_actions
+                bandit_test_run d network cc num_iters optimizer
+
+
             [|
 //            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.025f))
-            "bandit prediction test 2 (residual layers in depth)", ``bandit prediction test 2(residual layers in depth)`` 100 (ClippedSgd(0.1f,0.025f))
+            //"bandit prediction test 2 (residual layers in depth)", ``bandit prediction test 2(residual layers in depth)`` 100 (ClippedSgd(0.1f,0.01f))
+            "bandit prediction test 3 (old style residual test)", ``bandit prediction test 3(old style residual test)`` 2 (ClippedSgd(0.1f,0.01f))
             |]
 
         

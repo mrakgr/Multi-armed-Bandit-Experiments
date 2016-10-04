@@ -124,6 +124,8 @@ let inline private run
 
         let hits,max_hits,r = network example context |> costAsTuple
 
+        printfn "%A" (context.Nodes.[0].[0] |> fun (D2M x) -> x.GPV.Gather())
+
         let accuracy, max_accuracy =
             if test_accuracy then
                 accuracy + hits.Value, max_accuracy + max_hits
@@ -140,6 +142,7 @@ let inline private run
             
             let t = !(tape context)
             for name,func in t do
+                printfn "\"%s\"" name
                 func()
 
             (tape context) := []
@@ -165,7 +168,7 @@ let inline recurrentRepeat
         (context: Context<_>)
         : ^output[] =
     let len = sequence.Length
-    let context = with_userstate context 0
+    let context = with_userstate 0 context
     (Array.zeroCreate len,0)
     |> Array.fold ( fun (output_ar,iter) example ->
         context.UserState <- iter // Sets the timestep.
@@ -183,7 +186,7 @@ let inline recurrentFeedback
         (sequence: ^input)
         (context: Context<_>)
         : ^output[] =
-    let context = with_userstate context 0
+    let context = with_userstate 0 context
     let rec loop (output_ar: ^output[],iter,example) =
         if iter <= len-1 then
             context.UserState <- iter // Sets the timestep.
@@ -257,7 +260,7 @@ let inline recurrectSequence
         (sequence: ^input[])
         (context: Context<_>)
         : Cost =
-    let context = with_userstate context 0
+    let context = with_userstate 0 context
     (CostAccumulator.create sequence.Length)
     |> Array.fold ( fun accumulator example ->
         accumulator.SetTimeStepToIter context
