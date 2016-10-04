@@ -1285,7 +1285,7 @@ type Context<'userstate> =
 let inline with_is_inference_only (x: Context<_>) v =
     { x with IsInferenceOnly = v }
 
-let inline with_userstate (x: Context<_>) v =
+let inline with_userstate v (x: Context<_>) =
         {
         Workspace = x.Workspace
         Str = x.Str

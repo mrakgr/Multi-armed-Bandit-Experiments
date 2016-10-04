@@ -165,7 +165,7 @@ let inline recurrentRepeat
         (context: Context<_>)
         : ^output[] =
     let len = sequence.Length
-    let context = with_userstate context 0
+    let context = with_userstate 0 context
     (Array.zeroCreate len,0)
     |> Array.fold ( fun (output_ar,iter) example ->
         context.UserState <- iter // Sets the timestep.
@@ -183,7 +183,7 @@ let inline recurrentFeedback
         (sequence: ^input)
         (context: Context<_>)
         : ^output[] =
-    let context = with_userstate context 0
+    let context = with_userstate 0 context
     let rec loop (output_ar: ^output[],iter,example) =
         if iter <= len-1 then
             context.UserState <- iter // Sets the timestep.
@@ -257,7 +257,7 @@ let inline recurrectSequence
         (sequence: ^input[])
         (context: Context<_>)
         : Cost =
-    let context = with_userstate context 0
+    let context = with_userstate 0 context
     (CostAccumulator.create sequence.Length)
     |> Array.fold ( fun accumulator example ->
         accumulator.SetTimeStepToIter context
