@@ -71,10 +71,10 @@ let group_data_by_seq_length_and_load_to_gpu minibatch_size (data: (float32[] * 
         v)
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
-let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFSubLayer has_bias activation)
+let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFSublayer has_bias activation)
 /// Creates a 1D recurrent layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
 let inline RNN1DLayer' has_bias hidden_size activation = 
-    create1DRNNLayer hidden_size (createStdRNNSubLayer has_bias activation)
+    create1DRNNLayer hidden_size (createStdRNNSublayer has_bias activation)
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Creates bias by default.
 let inline FFLayer hidden_size activation = FFLayer' true hidden_size activation
@@ -115,7 +115,7 @@ type BN_RNNState<'timestep> =
         }
 
 // Auxiliary layers
-let inline createBNSubLayer factor _ (input: ^input) (context: Context<_>) =
+let inline createBNSublayer factor _ (input: ^input) (context: Context<_>) =
     let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,context) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
     let Bias = input |> ghostCopyBias false
     let RunningMean = input |> ghostCopyBias true
@@ -130,7 +130,7 @@ let inline createBNSubLayer factor _ (input: ^input) (context: Context<_>) =
 /// Creates a BN layer using a constant factor. The running mean and variance are initialized to zero by default, as is bias.
 /// The scale is set to 0.1 as per the Recurrent Batch Normalization paper by Cooijmans et al.
 /// Factor values in the range of [0.01,0.1] work well for Mnist.
-let inline BNLayer factor = createLayer 1 (createBNSubLayer factor)
+let inline BNLayer factor = createLayer 1 (createBNSublayer factor)
 
 /// A type use to apply the cost function of the same name. It is used as a substitute for higher order functions
 /// which are insufficiently generic. It is the same as the Optimizer type in purpose.
@@ -652,8 +652,68 @@ let inline ResidualLayer (a, b) context =
     | Some a -> add 1.0f a 1.0f b context
     | None -> b
 
-/// Passes the input through to the output.
-let inline IdentityLayer a context =
-    a
-
 let inline force (x: Lazy<_>) = x.Value
+
+let inline createGRUSublayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
+    let [|W_u;W_r;W_n|] as ar1 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
+    let [|U_u;U_r;U_n|] as ar2 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
+    let [|b_u;b_r;b_n|] as ar3 = Array.init 3 (fun _ -> if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer context |> Some else None)
+
+    [| ar1; ar2; Array.choose id ar3 |]
+    |> Array.collect (Array.map D2M)
+    |> add_nodes context
+
+    fun (y,x) (context: Context<_>) -> 
+        match y with
+        | Some y ->
+            let update_gate = linear_layer_matmult [|W_u,x;U_u,y|] b_u >>= sigmoid <| context
+            let reset_gate = linear_layer_matmult [|W_r,x;U_r,y|] b_r >>= sigmoid <| context
+            let potential_new_state = linear_layer_matmult [|W_n,x;U_n, (hadmult reset_gate y context)|] b_n >>= activation <| context
+            linear_layer_hadmult [|update_gate,y;(scalar_matrix_add 1.0f -1.0f update_gate context),potential_new_state|] <| context
+        | None ->
+            let update_gate = linear_layer_matmult [|W_u,x|] b_u >>= sigmoid <| context
+            let reset_gate = linear_layer_matmult [|W_r,x|] b_r >>= sigmoid <| context
+            let potential_new_state = linear_layer_matmult [|W_n,x|] b_n >>= activation <| context
+            linear_layer_hadmult [|scalar_matrix_add 1.0f -1.0f update_gate context, potential_new_state|] <| context
+        
+let inline createLSTMSublayer has_bias activation_for_block_input activation_for_block_output desired_hidden_size (input: d2M) (context: Context<_>) =
+    let [|W_z;W_i;W_f;W_o|] as ar1 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
+    let [|U_z;U_i;U_f;U_o|] as ar2 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
+    let [|P_i;P_f;P_o|] as ar3 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
+    let [|b_z;b_i;b_f;b_o|] as ar4 = 
+        let relu_ini = reluInitializer context
+        // The forget gate bias gets initialized to 1.0f for easier gradient propagation.
+        // It might be worth trying the same thing with the input gate to the GRU.
+        let forget_bias_ini (x: d2M) = x.SetPrimal(1.0f, str context); x
+        [|relu_ini;relu_ini;forget_bias_ini;relu_ini|] 
+        |> Array.map (fun ini -> if has_bias then d2M.create(desired_hidden_size,1) |> ini |> Some else None)
+
+    [| ar1; ar2; ar3; Array.choose id ar4 |]
+    |> Array.collect (Array.map D2M)
+    |> add_nodes context
+
+    fun (y,x) (context: Context<_>) -> 
+        match y with
+        | Some (y, c) ->
+            let block_input = linear_layer_matmult [|W_z,x;U_z,y|] b_z >>= activation_for_block_input <| context
+            let input_gate = linear_layer_matmult [|W_i,x;U_i,y;P_i,c|] b_i >>= sigmoid <| context
+            let forget_gate = linear_layer_matmult [|W_f,x;U_f,y;P_f,c|] b_f >>= sigmoid <| context
+            let c' = linear_layer_hadmult [|block_input,input_gate;c,forget_gate|] context
+            let output_gate = linear_layer_matmult [|W_o,x;U_o,y;P_o,c'|] b_o >>= sigmoid <| context
+            hadmult (activation_for_block_output c' context) output_gate context, c'
+        | None ->
+            let block_input = linear_layer_matmult [|W_z,x|] b_z >>= activation_for_block_input <| context
+            let input_gate = linear_layer_matmult [|W_i,x|] b_i >>= sigmoid <| context
+            // In nearly forgot that forgetting to remove the forget gate would trigger the deadness check.
+            let c' = linear_layer_hadmult [|block_input,input_gate|] context
+            let output_gate = linear_layer_matmult [|W_o,x;P_o,c'|] b_o >>= sigmoid <| context
+            hadmult (activation_for_block_output c' context) output_gate context, c'
+
+/// Creates a 1D GRU layer with the specified hidden size and activation function.
+/// Tanh works well as the activation for the output block.
+let inline GRULayer hidden_size activation = create1DRNNLayer hidden_size (createGRUSublayer true activation)
+
+/// Creates a 1D LSTM layer with the specified hidden size and activation function.
+/// Tanh works well as the activation for the input and the output block.
+let inline LSTMLayer hidden_size activation_for_block_input activation_for_block_output = 
+    create1DRNNLayer hidden_size (createLSTMSublayer true activation_for_block_input activation_for_block_output)

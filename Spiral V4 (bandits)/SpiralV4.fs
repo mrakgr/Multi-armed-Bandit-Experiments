@@ -2009,14 +2009,15 @@ type Optimizer =
         | D2M x -> if x.HasAdjoint then opt x
         | D4M x -> if x.HasAdjoint then opt x
 
-let inline createFFSubLayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
+let inline createFFSublayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
     let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context
     let b = if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer context |> Some else None
     let a = activation
 
     match b with
-    | Some b -> [|W;b|] |> Array.map D2M
-    | None -> [|W|] |> Array.map D2M
+    | Some b -> [|W;b|]
+    | None -> [|W|] 
+    |> Array.map D2M
     |> add_nodes context
 
     fun (x: d2M) -> linear_layer_matmult [|W,x|] b >>= a
@@ -2047,14 +2048,15 @@ let inline createLayer (desired_hidden_size: int) (create_layer: (int -> ^input 
             node <- Initialized(get_tag(),sub_layer)
             sub_layer input context
 
-let inline createStdRNNSubLayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
+let inline createStdRNNSublayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
     let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context
     let U = d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context
     let b = if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer context |> Some else None
 
     match b with
-    | Some b -> [|W;U;b|] |> Array.map D2M
-    | None -> [|W;U|] |> Array.map D2M
+    | Some b -> [|W;U;b|] 
+    | None -> [|W;U|] 
+    |> Array.map D2M
     |> add_nodes context
 
     fun (y: d2M option,x: d2M) ->
