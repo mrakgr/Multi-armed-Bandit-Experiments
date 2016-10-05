@@ -412,8 +412,8 @@ module private Testing =
         
             let ``n layer feedforward net test (with BN)`` =
                 layerTest
-                    (FFLayer' false 256 relu >=> BNLayer() >=>
-                     FFLayer' false 256 relu >=> BNLayer() >=>
+                    (FFLayer' false 256 relu >=> BNLayer 0.01 >=>
+                     FFLayer' false 256 relu >=> BNLayer 0.01 >=>
                      FFLayer 10 clipped_sigmoid ==
                      cross_entropy_cost')
 
@@ -584,7 +584,7 @@ module private Testing =
 
                 let network (reward_matrices, input) = init_layers reward_matrices (None, input) >>= feedback_section reward_matrices
 
-                use cc = Context<_>.create |> with_userstate BN_RNN1D_State.create
+                use cc = Context<_>.create |> with_userstate (BN_RNNState<_>.create 0) // The troublesome part.
                 let d = Array.zip data.reward_matrices data.idealized_actions
                 bandit_test_run d network cc num_iters optimizer
 
@@ -610,7 +610,7 @@ module private Testing =
                     let (residual_output, implicit_reward) = layer ex context
                     let total_reward = stack_vertical_lazy implicit_reward explicit_reward context
 
-                    if timestep (getRNN1DState context) >= delay_reward_for_n_steps then
+                    if timestep (getRNNState context) >= delay_reward_for_n_steps then
                         let cost = cross_entropy_cost' explicit_reward implicit_reward context
                         (residual_output, Some cost, total_reward)
                     else
@@ -674,8 +674,8 @@ module private Testing =
                 @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\SpiralQ\SpiralQ\Tests" 
             testArray null
                 [|
-                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
-                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
+//                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
+//                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
                 testCases "Reber Grammar RNN Tests" ReberData.create reberTests
                 testCases "Multi-armed Bandit Tests" (BanditData.create 128 8 0 9) banditTests
                 |]

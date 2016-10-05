@@ -2062,67 +2062,57 @@ let inline createStdRNNSubLayer has_bias activation desired_hidden_size (input: 
         | None -> linear_layer_matmult [|W,x|] b >>= activation
         | Some y -> linear_layer_matmult [|W,x;U,y|] b >>= activation
 
-/// A dummy class with no methods or field. Its purporse is to emulate return polymorphism in userstate methods.
-type DummyClass<'a>() = class end
-
 // The dictionaries used to be inside the Layers directly in a previous version, but that led to some state related bugs so
 // it has been changed to this. It is a matter of tunning the right level of abstraction for the state.
 
 // Just like the Context is a level below having direct global state, the userstate is supposed to represent a level between
 // the Context level and local state.
-type RNN1D_State =
-    {                      // tag * timestep
-    RNN1DD2MDict : Dictionary<int * int, d2M>
-    RNN1DD4MDict : Dictionary<int * int, d4M>
-    mutable Timestep : int
+
+// UPDATE: At first I meant to create state for every kind of RNN, but using dynamic casts for this sort of thing is one place
+// where it makes sense. Because the layers can remember the types if not the state and types can only change in depth, it makes
+// sense to story all the nodes in one dict.
+type RNNState<'timestep> =
+    {                 // tag * timestep
+    RNNDict : Dictionary<int * 'timestep, obj>
+    mutable Timestep : 'timestep
     }
 
-    // This function is like getting this particular record when it is nested inside others.
-    // Here it is just the identity.
-    member t.GetRNN1D_State = t
+    // The GetRNNState function is for getting this particular record when it is nested inside others.
+    // Here it is just the identity. Elsewhere it would do a deep dive.
+    member t.GetRNNState = t
 
-    static member GetRNNDM(t: RNN1D_State, _type: DummyClass<d2M>, tag, timestep) =
-        match t.RNN1DD2MDict.TryGetValue((tag,timestep)) with
-        | true, v -> Some v
+    static member GetRNNDM(t: RNNState<'timestep>, tag, timestep: 'timestep) =
+        match t.RNNDict.TryGetValue((tag,timestep)) with
+        | true, v -> Some (v :?> _) // Amazingly this works. It casts to ^output automatically in the RNN layer function.
         | false, _ -> None
 
-    static member GetRNNDM(t: RNN1D_State, _type: DummyClass<d4M>, tag, timestep) =
-        match t.RNN1DD4MDict.TryGetValue((tag,timestep)) with
-        | true, v -> Some v
-        | false, _ -> None
+    static member SetRNNDM(t: RNNState<'timestep>, tag, timestep: 'timestep, v: obj) =
+        t.RNNDict.[(tag,timestep)] <- v
 
-    static member SetRNNDM(t: RNN1D_State, tag, timestep, v: d2M) =
-        t.RNN1DD2MDict.[(tag,timestep)] <- v
-
-    static member SetRNNDM(t: RNN1D_State, tag, timestep, v: d4M) =
-        t.RNN1DD4MDict.[(tag,timestep)] <- v
-
-    static member create =
+    static member create x =
         {
-        RNN1DD2MDict = Dictionary(HashIdentity.Structural)
-        RNN1DD4MDict = Dictionary(HashIdentity.Structural)
-        Timestep = 0
+        RNNDict = Dictionary(HashIdentity.Structural)
+        Timestep = x
         }
 
-let inline getRNN1DState (context: Context<_>) = (^userstate : (member GetRNN1DState: RNN1D_State) context.UserState)
+let inline getRNNState (context: Context<_>) = (^userstate : (member GetRNNState: RNNState<_>) context.UserState)
 let inline timestep userstate = (^userstate : (member Timestep: ^time) userstate)
 let inline set_timestep userstate v = (^userstate : (member set_Timestep: ^time -> unit) userstate, v)
-let inline getRNNDM userstate _type tag timestep = 
-    ((^userstate or ^typ or ^time) : (static member GetRNNDM: ^userstate * DummyClass< ^typ> * int * ^time -> ^typ option) userstate, _type, tag, timestep)
+let inline getRNNDM userstate tag timestep = 
+    ((^userstate or ^time) : (static member GetRNNDM: ^userstate * int * ^time -> ^typ option) userstate, tag, timestep)
 let inline setRNNDM userstate tag timestep v = 
-    ((^userstate or ^time or ^typ) : (static member SetRNNDM: ^userstate * int * ^time * ^typ -> unit) userstate, tag, timestep, v)
+    ((^userstate or ^time) : (static member SetRNNDM: ^userstate * int * ^time * obj -> unit) userstate, tag, timestep, v)
 
 let inline create1DRNNLayer
         (desired_hidden_size: int)
         (create_layer: (int -> ^input -> Context<_> -> ((^output option * ^input) -> Context<_> -> ^output))) =
-    let dummy_type = DummyClass< ^output>() // I use this to get around F#'s lack of support for return type polymorphism.
     let mutable node = Uninitialized(desired_hidden_size,create_layer)
     
     fun (input: ^input) (context: Context<_>) ->
         let inline execute tag (sub_layer: (^output option * ^input) -> Context<_> -> ^output) =
-            let state = getRNN1DState context
+            let state = getRNNState context
             let step: int = state |> timestep
-            let v = getRNNDM state dummy_type tag (step-1)
+            let v = getRNNDM state tag (step-1)
             let output = sub_layer (v,input) context
             setRNNDM state tag step output
             output

@@ -84,7 +84,7 @@ let inline RNN1DLayer hidden_size activation = RNN1DLayer' true hidden_size acti
 /// Casts to DM
 let inline castToDM x = (^a:(member CastToDM: DM) x)
 
-type BN_State =
+type BNState =
     {
     BNDict : Dictionary<int, float>
     }
@@ -96,25 +96,26 @@ type BN_State =
 
     static member create = { BNDict = Dictionary() }
 
-let inline getBNState (context: Context<_>) = (^userstate : (member GetBNState: BN_State) context.UserState)
-let inline getBNFactor (userstate: BN_State) tag = userstate.GetBNFactor(tag)
-let inline setBNFactor (userstate: BN_State) tag v = userstate.SetBNFactor(tag,v)
+let inline getBNState (context: Context<_>) = (^userstate : (member GetBNState: BNState) context.UserState)
+let inline getBNFactor (userstate: BNState) tag = userstate.GetBNFactor(tag)
+let inline setBNFactor (userstate: BNState) tag v = userstate.SetBNFactor(tag,v)
 
-// It is trivial to combine BN and RNN1D States.
-type BN_RNN1D_State =
+/// It is trivial to combine BN and RNN1D States.
+/// This is just an example. I do not indent to use it in the BN layer for the time being.
+type BN_RNNState<'timestep> =
     {
-    GetBNState : BN_State
-    GetRNN1DState : RNN1D_State
+    GetBNState : BNState
+    GetRNNState : RNNState<'timestep>
     }
 
-    static member create =
+    static member create x =
         {
-        GetBNState = BN_State.create
-        GetRNN1DState = RNN1D_State.create
+        GetBNState = BNState.create
+        GetRNNState = RNNState<_>.create x
         }
 
 // Auxiliary layers
-let inline createBNSubLayer _ (input: ^input) (context: Context<_>) =
+let inline createBNSubLayer factor _ (input: ^input) (context: Context<_>) =
     let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,context) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
     let Bias = input |> ghostCopyBias false
     let RunningMean = input |> ghostCopyBias true
@@ -124,11 +125,12 @@ let inline createBNSubLayer _ (input: ^input) (context: Context<_>) =
         let bnMode = ManagedCuda.CudaDNN.cudnnBatchNormMode.BatchNormPerActivation
 //            factor <- factor + 1.0
 //            (1.0/factor)
-        batch_normalization_forward bnMode Scale Bias RunningMean RunningVariance 0.01 input context
+        batch_normalization_forward bnMode Scale Bias RunningMean RunningVariance factor input context
 
-/// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
-/// The empty parameter does nothing. It is just there because inline functions have to have a parameter in the current version of F#.
-let inline BNLayer() = createLayer 1 createBNSubLayer
+/// Creates a BN layer using a constant factor. The running mean and variance are initialized to zero by default, as is bias.
+/// The scale is set to 0.1 as per the Recurrent Batch Normalization paper by Cooijmans et al.
+/// Factor values in the range of [0.01,0.1] work well for Mnist.
+let inline BNLayer factor = createLayer 1 (createBNSubLayer factor)
 
 /// A type use to apply the cost function of the same name. It is used as a substitute for higher order functions
 /// which are insufficiently generic. It is the same as the Optimizer type in purpose.
@@ -212,10 +214,10 @@ let inline recurrentFeedback
         (sequence: ^input)
         (context: Context<_>)
         : ^output[] =
-    let context = with_userstate BN_RNN1D_State.create context
+    let context = with_userstate (BN_RNNState<_>.create 0) context
     let rec loop (output_ar: ^output[],iter,example) =
         if iter <= len-1 then
-            set_timestep (getRNN1DState context) iter // Sets the timestep.
+            set_timestep (getRNNState context) iter // Sets the timestep.
             let output = network example context
             output_ar.[iter] <- output
             if iter = len-1 then output_ar
@@ -270,7 +272,7 @@ type CostAccumulator =
     }
 
     member inline t.SetTimeStepToIter(context: Context<_>) =
-        set_timestep (getRNN1DState context) t.iter
+        set_timestep (getRNNState context) t.iter
 
     member t.AddCostAndIncrementIter(cost: Cost) =
         let hits,max_hits,cost = costAsTuple cost
@@ -295,7 +297,7 @@ let inline recurrectSequence
         (sequence: ^input[])
         (context: Context<_>)
         : Cost =
-    let context = with_userstate BN_RNN1D_State.create context
+    let context = with_userstate (BN_RNNState<_>.create 0) context
     (CostAccumulator.create sequence.Length)
     |> Array.fold ( fun accumulator example ->
         accumulator.SetTimeStepToIter context
