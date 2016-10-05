@@ -84,6 +84,35 @@ let inline RNN1DLayer hidden_size activation = RNN1DLayer' true hidden_size acti
 /// Casts to DM
 let inline castToDM x = (^a:(member CastToDM: DM) x)
 
+type BN_State =
+    {
+    BNDict : Dictionary<int, float>
+    }
+
+    member t.GetBNState = t
+    
+    member t.GetBNFactor(tag) = t.BNDict.[tag]
+    member t.SetBNFactor(tag, v) = t.BNDict.[tag] <- v
+
+    static member create = { BNDict = Dictionary() }
+
+let inline getBNState (context: Context<_>) = (^userstate : (member GetBNState: BN_State) context.UserState)
+let inline getBNFactor (userstate: BN_State) tag = userstate.GetBNFactor(tag)
+let inline setBNFactor (userstate: BN_State) tag v = userstate.SetBNFactor(tag,v)
+
+// It is trivial to combine BN and RNN1D States.
+type BN_RNN1D_State =
+    {
+    GetBNState : BN_State
+    GetRNN1DState : RNN1D_State
+    }
+
+    static member create =
+        {
+        GetBNState = BN_State.create
+        GetRNN1DState = RNN1D_State.create
+        }
+
 // Auxiliary layers
 let inline createBNSubLayer _ (input: ^input) (context: Context<_>) =
     let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,context) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
@@ -124,8 +153,6 @@ let inline private run
 
         let hits,max_hits,r = network example context |> costAsTuple
 
-        printfn "%A" (context.Nodes.[0].[0] |> fun (D2M x) -> x.GPV.Gather())
-
         let accuracy, max_accuracy =
             if test_accuracy then
                 accuracy + hits.Value, max_accuracy + max_hits
@@ -142,7 +169,6 @@ let inline private run
             
             let t = !(tape context)
             for name,func in t do
-                printfn "\"%s\"" name
                 func()
 
             (tape context) := []
@@ -186,10 +212,10 @@ let inline recurrentFeedback
         (sequence: ^input)
         (context: Context<_>)
         : ^output[] =
-    let context = with_userstate 0 context
+    let context = with_userstate BN_RNN1D_State.create context
     let rec loop (output_ar: ^output[],iter,example) =
         if iter <= len-1 then
-            context.UserState <- iter // Sets the timestep.
+            set_timestep (getRNN1DState context) iter // Sets the timestep.
             let output = network example context
             output_ar.[iter] <- output
             if iter = len-1 then output_ar
@@ -205,6 +231,15 @@ let inline wrapMap
         (context: Context<_>)
         : ^target[] =
     network input context |> Array.map map
+
+/// Maps the outputs to targets.
+let inline wrapChoose
+        (map: ^output -> ^target option)
+        (network: ^input -> Context<_> -> ^output[])
+        (input: ^input)
+        (context: Context<_>)
+        : ^target[] =
+    network input context |> Array.choose map
 
 /// Map for single outputs.
 let inline wrapMap'
@@ -235,7 +270,7 @@ type CostAccumulator =
     }
 
     member inline t.SetTimeStepToIter(context: Context<_>) =
-        context.UserState <- t.iter
+        set_timestep (getRNN1DState context) t.iter
 
     member t.AddCostAndIncrementIter(cost: Cost) =
         let hits,max_hits,cost = costAsTuple cost
@@ -260,7 +295,7 @@ let inline recurrectSequence
         (sequence: ^input[])
         (context: Context<_>)
         : Cost =
-    let context = with_userstate 0 context
+    let context = with_userstate BN_RNN1D_State.create context
     (CostAccumulator.create sequence.Length)
     |> Array.fold ( fun accumulator example ->
         accumulator.SetTimeStepToIter context

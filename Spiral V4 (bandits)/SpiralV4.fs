@@ -19,7 +19,7 @@ open System.Runtime.InteropServices
 
 // Initialize the context. Analogous to a CPU process. Cuda tries to offload as much as possible during context creation so there aren't
 // any unexpected delays later.
-let ctx = new CudaContext()
+let ctx = new CudaContext(false)
 let numSm = ctx.GetDeviceInfo().MultiProcessorCount // The number of streaming multiprocessors on the device.
 
 // Set the Cuda libraries handles to the above stream.
@@ -2027,22 +2027,24 @@ let inline optimize (optimizer: Optimizer, context: Context<_>) node =
 
 type LayerType<'input, 'context, 'layer_type> =
     | Uninitialized of desired_hidden_size: int * create_layer: (int -> 'input -> 'context -> 'layer_type)
-    | Initialized of node: 'layer_type
+    | Initialized of tag: int * node: 'layer_type
 
-    member t.Value =
-        match t with
-        | Initialized v -> v
-        | _ -> failwith "Node is uninitialized."
+/// Returns an unique global tag.
+let get_tag = 
+    let mutable tags = 0
+    fun () ->
+        tags <- tags+1
+        tags
 
 let inline createLayer (desired_hidden_size: int) (create_layer: (int -> ^input -> ^context -> (^input -> ^context -> ^output))) =
     let mutable node = Uninitialized(desired_hidden_size,create_layer)
     fun (input: ^input) (context: ^context) ->
         match node with
-        | Initialized sub_layer ->
+        | Initialized(tag,sub_layer) ->
             sub_layer input context
         | Uninitialized(desired_hidden_size,create_layer) ->
             let sub_layer = create_layer desired_hidden_size input context
-            node <- Initialized sub_layer
+            node <- Initialized(get_tag(),sub_layer)
             sub_layer input context
 
 let inline createStdRNNSubLayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
@@ -2060,24 +2062,74 @@ let inline createStdRNNSubLayer has_bias activation desired_hidden_size (input: 
         | None -> linear_layer_matmult [|W,x|] b >>= activation
         | Some y -> linear_layer_matmult [|W,x;U,y|] b >>= activation
 
+/// A dummy class with no methods or field. Its purporse is to emulate return polymorphism in userstate methods.
+type DummyClass<'a>() = class end
+
+// The dictionaries used to be inside the Layers directly in a previous version, but that led to some state related bugs so
+// it has been changed to this. It is a matter of tunning the right level of abstraction for the state.
+
+// Just like the Context is a level below having direct global state, the userstate is supposed to represent a level between
+// the Context level and local state.
+type RNN1D_State =
+    {                      // tag * timestep
+    RNN1DD2MDict : Dictionary<int * int, d2M>
+    RNN1DD4MDict : Dictionary<int * int, d4M>
+    mutable Timestep : int
+    }
+
+    // This function is like getting this particular record when it is nested inside others.
+    // Here it is just the identity.
+    member t.GetRNN1D_State = t
+
+    static member GetRNNDM(t: RNN1D_State, _type: DummyClass<d2M>, tag, timestep) =
+        match t.RNN1DD2MDict.TryGetValue((tag,timestep)) with
+        | true, v -> Some v
+        | false, _ -> None
+
+    static member GetRNNDM(t: RNN1D_State, _type: DummyClass<d4M>, tag, timestep) =
+        match t.RNN1DD4MDict.TryGetValue((tag,timestep)) with
+        | true, v -> Some v
+        | false, _ -> None
+
+    static member SetRNNDM(t: RNN1D_State, tag, timestep, v: d2M) =
+        t.RNN1DD2MDict.[(tag,timestep)] <- v
+
+    static member SetRNNDM(t: RNN1D_State, tag, timestep, v: d4M) =
+        t.RNN1DD4MDict.[(tag,timestep)] <- v
+
+    static member create =
+        {
+        RNN1DD2MDict = Dictionary(HashIdentity.Structural)
+        RNN1DD4MDict = Dictionary(HashIdentity.Structural)
+        Timestep = 0
+        }
+
+let inline getRNN1DState (context: Context<_>) = (^userstate : (member GetRNN1DState: RNN1D_State) context.UserState)
+let inline timestep userstate = (^userstate : (member Timestep: ^time) userstate)
+let inline set_timestep userstate v = (^userstate : (member set_Timestep: ^time -> unit) userstate, v)
+let inline getRNNDM userstate _type tag timestep = 
+    ((^userstate or ^typ or ^time) : (static member GetRNNDM: ^userstate * DummyClass< ^typ> * int * ^time -> ^typ option) userstate, _type, tag, timestep)
+let inline setRNNDM userstate tag timestep v = 
+    ((^userstate or ^time or ^typ) : (static member SetRNNDM: ^userstate * int * ^time * ^typ -> unit) userstate, tag, timestep, v)
+
 let inline create1DRNNLayer
         (desired_hidden_size: int)
         (create_layer: (int -> ^input -> Context<_> -> ((^output option * ^input) -> Context<_> -> ^output))) =
-    let dict = Dictionary<_,_>(HashIdentity.Structural)
+    let dummy_type = DummyClass< ^output>() // I use this to get around F#'s lack of support for return type polymorphism.
     let mutable node = Uninitialized(desired_hidden_size,create_layer)
     
     fun (input: ^input) (context: Context<_>) ->
-        let inline execute (sub_layer: (^output option * ^input) -> Context<_> -> ^output) =
-            let step = userstate context
-            let v = match dict.TryGetValue (step-1) with 
-                    | true, v -> Some v
-                    | false, _ -> None
+        let inline execute tag (sub_layer: (^output option * ^input) -> Context<_> -> ^output) =
+            let state = getRNN1DState context
+            let step: int = state |> timestep
+            let v = getRNNDM state dummy_type tag (step-1)
             let output = sub_layer (v,input) context
-            dict.[step] <- output
+            setRNNDM state tag step output
             output
         match node with
-        | Initialized sub_layer -> execute sub_layer
+        | Initialized (tag,sub_layer) -> execute tag sub_layer
         | Uninitialized(desired_hidden_size,create_layer) ->
             let sub_layer = create_layer desired_hidden_size input context
-            node <- Initialized sub_layer
-            execute sub_layer
+            let tag = get_tag()
+            node <- Initialized(tag,sub_layer)
+            execute tag sub_layer

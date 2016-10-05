@@ -510,69 +510,19 @@ module private Testing =
                 let d = Array.zip data.reward_matrices data.idealized_actions
                 bandit_test_run d network cc num_iters optimizer
 
-            /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
-            let residual_reward_layers_reward_stacker 
-                    layer reward_matrices (residual_input,action as ex) = context {
-                let! explicit_reward = map_indices_3d action reward_matrices
-                let! (residual_output, implicit_reward) = layer ex
-                let! total_reward = stack_vertical_lazy implicit_reward explicit_reward
+            // ---
 
-                let! cost = cross_entropy_cost' explicit_reward implicit_reward
-                return (residual_output, cost, total_reward)
-                }
+            // Test two used to be here.
+            // Test two is equivalent to test 4 with delayed_steps argument set to zero.
+            
+            // ---
 
-            let ``bandit prediction test 2(residual layers in depth)`` (num_iters: int) optimizer (data: BanditData) =
-                let rewards_matrices = data.reward_matrices
-                let idealized_actions = data.idealized_actions
-                let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
+            // There was a a bug in test two of the previous library so I brought in this one.
+            // As it turned out the prev timestep got set to the max iteration of the previous run.
+            // I like my decision to use state in the sublayers a lot less now. I'll have to be more cautious.
 
-                let reward_layers_inner = RNN1DLayer 128 tanh_
-                let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
-
-                let residual_reward_layers (residual_input, input) = context {
-                    let! output = reward_layers_inner input
-                    let! residual_output = ResidualLayer (residual_input,output)
-                    let! output = reward_layers_outer residual_output
-                    return Some residual_output, output
-                    }
-
-                let action_layers_inner = RNN1DLayer 128 tanh_
-                let action_layers_outer = RNN1DLayer num_levers clipped_sigmoid
-
-                let residual_action_layers (residual_input, input) = context {
-                    let! output = action_layers_inner input
-                    let! residual_output = ResidualLayer (residual_input,output)
-                    let! output = action_layers_outer residual_output
-                    return Some residual_output, output
-                    }
-
-                let reward_layers_with_costs rewards_matrices input = 
-                    residual_reward_layers_reward_stacker residual_reward_layers rewards_matrices input
-
-                let lazy_action_layers input context = 
-                    lazy residual_action_layers (force input) context
-                
-                let feedback_section rewards_matrices input = context {
-                    let! residual_output, cost, output = reward_layers_with_costs rewards_matrices input
-                    let! output = lazy_action_layers (lazy (residual_output,force output))
-                    return cost, output
-                    }
-
-                /// Loops the reward and action layers.
-                let recurrect_feedback_section rewards_matrices =
-                    feedback_section rewards_matrices
-                    |> recurrentFeedback 10 (fun (_,reward) -> force reward) // Why are there only two arguments here???
-                    |> wrapMap (fun (cost,_) -> cost)
-                    |> recurrectCostSum
-
-                let network (rewards_matrices, input) =
-                    recurrect_feedback_section rewards_matrices (None,input)
-
-                use cc = Context<_>.create
-                let d = Array.zip data.reward_matrices data.idealized_actions
-                bandit_test_run d network cc num_iters optimizer
-
-            // There is/was a a bug in test two so I brought in this one.
+            // Also the style of coding recurrent nets as seen in this test is succeptible for races in userstate.
+            // Be warned.
             let ``bandit prediction test 3(old style residual test)`` (num_iters: int) optimizer (data: BanditData) =
                 let rewards_matrices = data.reward_matrices
                 let idealized_actions = data.idealized_actions
@@ -634,15 +584,86 @@ module private Testing =
 
                 let network (reward_matrices, input) = init_layers reward_matrices (None, input) >>= feedback_section reward_matrices
 
-                use cc = Context<_>.create |> with_userstate 0
+                use cc = Context<_>.create |> with_userstate BN_RNN1D_State.create
                 let d = Array.zip data.reward_matrices data.idealized_actions
                 bandit_test_run d network cc num_iters optimizer
 
+            // Now that I've found the bug in the previous test and got their results to match, it still does not explain 
+            // why test 2 version performs so much more poorly than the test 3. Sure, they are different but they are also
+            // quite similar.
+
+            // My current hypothesis is this - it might just be the case that the rewards in the very early timesteps might be
+            // destabilizing the net by causing it to overfocus. It could be that is simply needs some time to ruminate before
+            // being graded. So I'll make it so the reward does not get returned until the few steps after the start for this test.
+            let ``bandit prediction test 4(residual layers in depth v2)`` delay_reward_for_n_steps (num_iters: int) optimizer (data: BanditData) =
+                let rewards_matrices = data.reward_matrices
+                let idealized_actions = data.idealized_actions
+                let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
+
+                let reward_layers_inner = RNN1DLayer 128 tanh_
+                let reward_layers_outer = RNN1DLayer reward_size clipped_sigmoid
+
+                /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
+                let residual_reward_layers_reward_stacker 
+                        layer reward_matrices (residual_input,action as ex) context = 
+                    let explicit_reward = map_indices_3d action reward_matrices context
+                    let (residual_output, implicit_reward) = layer ex context
+                    let total_reward = stack_vertical_lazy implicit_reward explicit_reward context
+
+                    if timestep (getRNN1DState context) >= delay_reward_for_n_steps then
+                        let cost = cross_entropy_cost' explicit_reward implicit_reward context
+                        (residual_output, Some cost, total_reward)
+                    else
+                        (residual_output, None, total_reward)
+                    
+
+                let residual_reward_layers (residual_input, input) = context {
+                    let! output = reward_layers_inner input
+                    let! residual_output = ResidualLayer (residual_input,output)
+                    let! output = reward_layers_outer residual_output
+                    return Some residual_output, output
+                    }
+
+                let action_layers_inner = RNN1DLayer 128 tanh_
+                let action_layers_outer = RNN1DLayer num_levers clipped_sigmoid
+
+                let residual_action_layers (residual_input, input) = context {
+                    let! output = action_layers_inner input
+                    let! residual_output = ResidualLayer (residual_input,output)
+                    let! output = action_layers_outer residual_output
+                    return Some residual_output, output
+                    }
+
+                let reward_layers_with_costs rewards_matrices input = 
+                    residual_reward_layers_reward_stacker residual_reward_layers rewards_matrices input
+
+                let lazy_action_layers input context = 
+                    lazy residual_action_layers (force input) context
+                
+                let feedback_section rewards_matrices input = context {
+                    let! residual_output, cost, output = reward_layers_with_costs rewards_matrices input
+                    let! output = lazy_action_layers (lazy (residual_output,force output))
+                    return cost, output
+                    }
+
+                /// Loops the reward and action layers.
+                let recurrect_feedback_section rewards_matrices =
+                    feedback_section rewards_matrices
+                    |> recurrentFeedback 10 (fun (_,reward) -> force reward)
+                    |> wrapChoose (fun (cost,_) -> cost)
+                    |> recurrectCostSum
+
+                let network (rewards_matrices, input) =
+                    recurrect_feedback_section rewards_matrices (None,input)
+
+                use cc = Context<_>.create
+                let d = Array.zip data.reward_matrices data.idealized_actions
+                bandit_test_run d network cc num_iters optimizer
 
             [|
 //            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.025f))
-            //"bandit prediction test 2 (residual layers in depth)", ``bandit prediction test 2(residual layers in depth)`` 100 (ClippedSgd(0.1f,0.01f))
-            "bandit prediction test 3 (old style residual test)", ``bandit prediction test 3(old style residual test)`` 2 (ClippedSgd(0.1f,0.01f))
+//            "bandit prediction test 3 (old style residual test)", ``bandit prediction test 3(old style residual test)`` 100 (ClippedSgd(0.1f,0.025f))
+            "bandit prediction test 4(residual layers in depth v2)", ``bandit prediction test 4(residual layers in depth v2)`` 5 100 (ClippedSgd(0.1f,0.025f))
             |]
 
         
@@ -653,9 +674,9 @@ module private Testing =
                 @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\SpiralQ\SpiralQ\Tests" 
             testArray null
                 [|
-//                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
-//                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
-//                testCases "Reber Grammar RNN Tests" ReberData.create reberTests
+                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
+                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
+                testCases "Reber Grammar RNN Tests" ReberData.create reberTests
                 testCases "Multi-armed Bandit Tests" (BanditData.create 128 8 0 9) banditTests
                 |]
         run tree
