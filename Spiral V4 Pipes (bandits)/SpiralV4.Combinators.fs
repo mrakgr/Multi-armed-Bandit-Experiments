@@ -672,14 +672,14 @@ let inline createGRUSublayer has_bias activation desired_hidden_size (input: d2M
             linear_layer_hadmult [|update_gate,y;(scalar_matrix_add 1.0f -1.0f update_gate context),potential_new_state|] <| context
         | None ->
             let update_gate = linear_layer_matmult [|W_u,x|] b_u >>= sigmoid <| context
-            let reset_gate = linear_layer_matmult [|W_r,x|] b_r >>= sigmoid <| context
+            // reset_gate is not used here.
             let potential_new_state = linear_layer_matmult [|W_n,x|] b_n >>= activation <| context
             linear_layer_hadmult [|scalar_matrix_add 1.0f -1.0f update_gate context, potential_new_state|] <| context
         
 let inline createLSTMSublayer has_bias activation_for_block_input activation_for_block_output desired_hidden_size (input: d2M) (context: Context<_>) =
     let [|W_z;W_i;W_f;W_o|] as ar1 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
     let [|U_z;U_i;U_f;U_o|] as ar2 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
-    let [|P_i;P_f;P_o|] as ar3 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
+    let [|P_i;P_f;P_o|] as ar3 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
     let [|b_z;b_i;b_f;b_o|] as ar4 = 
         let relu_ini = reluInitializer context
         // The forget gate bias gets initialized to 1.0f for easier gradient propagation.
@@ -717,3 +717,4 @@ let inline GRULayer hidden_size activation = create1DRNNLayer hidden_size (creat
 /// Tanh works well as the activation for the input and the output block.
 let inline LSTMLayer hidden_size activation_for_block_input activation_for_block_output = 
     create1DRNNLayer hidden_size (createLSTMSublayer true activation_for_block_input activation_for_block_output)
+    >=> fun (output,cell_state) _ -> output

@@ -660,10 +660,91 @@ module private Testing =
                 let d = Array.zip data.reward_matrices data.idealized_actions
                 bandit_test_run d network cc num_iters optimizer
 
+            let inline ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)`` 
+                    reward_layers_inner reward_layers_outer
+                    action_layers_inner action_layers_outer
+                    delay_reward_for_n_steps (num_iters: int) optimizer (data: BanditData) =
+                let rewards_matrices = data.reward_matrices
+                let idealized_actions = data.idealized_actions
+                let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
+
+                let reward_layers_outer = reward_layers_outer reward_size
+                let action_layers_outer = action_layers_outer num_levers
+
+                /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
+                let residual_reward_layers_reward_stacker 
+                        layer reward_matrices (residual_input,action as ex) context = 
+                    let explicit_reward = map_indices_3d action reward_matrices context
+                    let (residual_output, implicit_reward) = layer ex context
+                    let total_reward = stack_vertical_lazy implicit_reward explicit_reward context
+
+                    if timestep (getRNNState context) >= delay_reward_for_n_steps then
+                        let cost = cross_entropy_cost' explicit_reward implicit_reward context
+                        (residual_output, Some cost, total_reward)
+                    else
+                        (residual_output, None, total_reward)
+                    
+
+                let residual_reward_layers (residual_input, input) = context {
+                    let! output = reward_layers_inner input
+                    let! residual_output = ResidualLayer (residual_input,output)
+                    let! output = reward_layers_outer residual_output
+                    return Some residual_output, output
+                    }
+
+                let residual_action_layers (residual_input, input) = context {
+                    let! output = action_layers_inner input
+                    let! residual_output = ResidualLayer (residual_input,output)
+                    let! output = action_layers_outer residual_output
+                    return Some residual_output, output
+                    }
+
+                let reward_layers_with_costs rewards_matrices input = 
+                    residual_reward_layers_reward_stacker residual_reward_layers rewards_matrices input
+
+                let lazy_action_layers input context = 
+                    lazy residual_action_layers (force input) context
+                
+                let feedback_section rewards_matrices input = context {
+                    let! residual_output, cost, output = reward_layers_with_costs rewards_matrices input
+                    let! output = lazy_action_layers (lazy (residual_output,force output))
+                    return cost, output
+                    }
+
+                /// Loops the reward and action layers.
+                let recurrect_feedback_section rewards_matrices =
+                    feedback_section rewards_matrices
+                    |> recurrentFeedback 10 (fun (_,reward) -> force reward)
+                    |> wrapChoose (fun (cost,_) -> cost)
+                    |> recurrectCostSum
+
+                let network (rewards_matrices, input) =
+                    recurrect_feedback_section rewards_matrices (None,input)
+
+                use cc = Context<_>.create
+                let d = Array.zip data.reward_matrices data.idealized_actions
+                bandit_test_run d network cc num_iters optimizer
+
             [|
 //            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.025f))
 //            "bandit prediction test 3 (old style residual test)", ``bandit prediction test 3(old style residual test)`` 100 (ClippedSgd(0.1f,0.025f))
-            "bandit prediction test 4(residual layers in depth v2)", ``bandit prediction test 4(residual layers in depth v2)`` 5 100 (ClippedSgd(0.1f,0.025f))
+//            "bandit prediction test 4(residual layers in depth v2)", 
+//                ``bandit prediction test 4(residual layers in depth v2)`` 0 300 (ClippedSgd(0.1f,0.025f))
+            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+                    (RNN1DLayer 128 tanh_) (fun reward_size -> RNN1DLayer reward_size clipped_sigmoid)
+                    (RNN1DLayer 128 tanh_) (fun num_levers -> RNN1DLayer num_levers clipped_sigmoid)
+                    0 300 (ClippedSgd(0.1f,0.025f))
+            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+                    (GRULayer 128 tanh_) (fun reward_size -> GRULayer reward_size clipped_sigmoid)
+                    (GRULayer 128 tanh_) (fun num_levers -> GRULayer num_levers clipped_sigmoid)
+                    0 300 (ClippedSgd(0.1f,0.025f))
+            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+                    (LSTMLayer 128 tanh_ tanh_) (fun reward_size -> LSTMLayer reward_size tanh_ clipped_sigmoid)
+                    (LSTMLayer 128 tanh_ tanh_) (fun num_levers -> LSTMLayer num_levers tanh_ clipped_sigmoid)
+                    0 300 (ClippedSgd(0.1f,0.025f))
             |]
 
         
@@ -676,7 +757,7 @@ module private Testing =
                 [|
 //                testCases "Mnist Tests" (MnistData.create 256 mnist_path) mnistTests
 //                testCases "Gradient Checking Tests" GradientCheckingData.create gradientCheckingTests
-                testCases "Reber Grammar RNN Tests" ReberData.create reberTests
+//                testCases "Reber Grammar RNN Tests" ReberData.create reberTests
                 testCases "Multi-armed Bandit Tests" (BanditData.create 128 8 0 9) banditTests
                 |]
         run tree

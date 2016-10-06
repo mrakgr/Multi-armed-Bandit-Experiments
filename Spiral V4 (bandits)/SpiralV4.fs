@@ -2072,7 +2072,7 @@ let inline createStdRNNSublayer has_bias activation desired_hidden_size (input: 
 
 // UPDATE: At first I meant to create state for every kind of RNN, but using dynamic casts for this sort of thing is one place
 // where it makes sense. Because the layers can remember the types if not the state and types can only change in depth, it makes
-// sense to story all the nodes in one dict.
+// sense to store all the nodes in one dict.
 type RNNState<'timestep> =
     {                 // tag * timestep
     RNNDict : Dictionary<int * 'timestep, obj>
