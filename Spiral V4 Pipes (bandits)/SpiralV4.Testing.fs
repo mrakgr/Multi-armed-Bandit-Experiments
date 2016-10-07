@@ -137,7 +137,7 @@ module private Testing =
             cudaRandom.SetPseudoRandomGeneratorSeed(0UL) // I want this to be always deterministic.
             cudaRandom.SetOffset(0UL)
             let inputd2M = d2M.create(size_gradcheck,2) |> fun x -> fillRandomUniformMatrix str x 1.0f 0.0f; x
-            let outputd2M = d2M.create(size_gradcheck,2) // Gets initialized to zero.
+            let outputd2M = d2M.create(size_gradcheck,2) |> fun x -> fillRandomUniformMatrix str x 1.0f 0.0f; x
             {inputd2M = inputd2M; outputd2M=outputd2M}
 
         interface IDisposable with
@@ -328,17 +328,33 @@ module private Testing =
                 t.reward_matrices |> Array.iter dispose
                 t.idealized_actions |> Array.iter dispose
 
+    type private LayerOrSublayer<'input, 'time,'output> =
+    | Layer of ('input -> Context<'time> -> 'output)
+    | RNNSublayer of ('input -> Context<'time> -> ('output option * 'input -> Context<'time> -> 'output))
 
     let run_all_tests() =
         let gradientCheckingTests =
             let epsilon = 0.001f
             let boundary = 0.001f
             // Functional programming strikes again. This function can check any kind of layer for correctness.
-            let inline checkLayer layer_number layer (data: GradientCheckingData) =
+            let inline checkLayer layer_number (layer: LayerOrSublayer<d2M,unit,d2M>) (data: GradientCheckingData) =
                 let input = data.inputd2M
                 let target = data.outputd2M
-                let context = Context<_>.create
-                let _ = train layer GradChecking [|(target,input)|] context false
+                let inp_tar = [|Some target, input|]
+                use context = Context<_>.create
+
+                let layer = 
+                    match layer with
+                    | Layer f -> 
+                        fun (_, x) context -> f x context
+                        >=> squared_error_cost' target
+                    | RNNSublayer f -> 
+                        f input context 
+                        >=> squared_error_cost' target
+                
+                // Does not zero out the adjoints with GradChecking
+                train layer GradChecking inp_tar context false |> ignore
+
                 let getNodes extract_node = 
                     [|for dm in (nodes context).[layer_number] do 
                         match extract_node dm with
@@ -356,7 +372,8 @@ module private Testing =
                         for i=0 to int ar.Size-1 do
                             let i = SizeT i
                             let orig = ar.[i]
-                            let cost() = infer layer GradChecking [|(target,input)|] context false |> fun (_,x) -> x
+                            let cost() = infer layer GradChecking inp_tar context false |> fun (_,x) -> x
+
                             ar.[i] <- orig + epsilon
                             let cost_plus_epsilon = cost()
                             ar.[i] <- orig - epsilon
@@ -366,23 +383,30 @@ module private Testing =
                             yield approx_gradient
                             |]
                     Array.map grad_check nodes
-    //            let difference_between_true_and_approx_gradients =
-    //                Array.map2 (Array.map2 (fun x y -> abs <| x-y)) true_gradients approx_gradients
-    //            let max_difference =
-    //                Array.fold (Array.fold max) Single.NegativeInfinity difference_between_true_and_approx_gradients
+                let difference_between_true_and_approx_gradients =
+                    Array.map2 (Array.map2 (fun x y -> abs <| x-y)) true_gradients approx_gradients
                 let max_difference =
-                    Array.fold2 (Array.fold2(fun m x y -> x-y |> abs |> max m)) Single.NegativeInfinity true_gradients approx_gradients
-    //            printfn "difference_between_true_and_approx_gradients=%A" difference_between_true_and_approx_gradients
-    //            printfn "max_difference=%f" max_difference
+                    Array.fold (Array.fold max) Single.NegativeInfinity difference_between_true_and_approx_gradients
+//                let max_difference =
+//                    Array.fold2 (Array.fold2(fun m x y -> x-y |> abs |> max m)) Single.NegativeInfinity true_gradients approx_gradients
+                printfn "difference_between_true_and_approx_gradients=%A" difference_between_true_and_approx_gradients
+                printfn "max_difference=%f" max_difference
                 max_difference <= boundary |> assertTest "max_difference <= boundary"
+
             let ``feedforward layer test`` = 
-                checkLayer 0 (FFLayer size_gradcheck relu == squared_error_cost')
+                checkLayer 0 (FFLayer size_gradcheck relu |> Layer)
+            let ``standard RNN test`` = 
+                checkLayer 0 (createStdRNNSublayer true tanh_ size_gradcheck |> RNNSublayer)
+            let ``multiplicative_integration RNN test`` =
+                checkLayer 0 (createMI_RNNSublayer tanh_ size_gradcheck |> RNNSublayer)
 //            let ``batch normalization test`` = 
 //                let main = BNLayer()
 //                checkLayer 0 (fun target -> main ^- squaredErrorLayer target)
             [|
             "feedforward layer test", ``feedforward layer test``
+            "standard RNN test", ``standard RNN test``
             //"batch normalization test", ``batch normalization test`` // Note: read the warning in batch_normalization_forward before proceeding with this one.
+            "multiplicative_integration RNN test", ``multiplicative_integration RNN test``
             |]
        
         let mnistTests =
@@ -508,7 +532,9 @@ module private Testing =
                 let idealized_actions = data.idealized_actions
                 let reward_size,num_levers,num_examples = rewards_matrices.[0].rcn
 
+                let reward_layers_inner = reward_layers_inner()
                 let reward_layers_outer = reward_layers_outer reward_size
+                let action_layers_inner = action_layers_inner()
                 let action_layers_outer = action_layers_outer num_levers
 
                 /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
@@ -565,23 +591,49 @@ module private Testing =
                 let d = Array.zip data.reward_matrices data.idealized_actions
                 bandit_test_run d network cc num_iters optimizer
 
+
             [|
-//            "bandit prediction test 1", ``bandit prediction test 1`` 100 (ClippedSgd(0.1f,0.025f))
-            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
-                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
-                    (RNN1DLayer 128 tanh_) (fun reward_size -> RNN1DLayer reward_size clipped_sigmoid)
-                    (RNN1DLayer 128 tanh_) (fun num_levers -> RNN1DLayer num_levers clipped_sigmoid)
-                    0 300 (ClippedSgd(0.1f,0.025f))
-            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
-                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
-                    (GRULayer 128 tanh_) (fun reward_size -> GRULayer reward_size clipped_sigmoid)
-                    (GRULayer 128 tanh_) (fun num_levers -> GRULayer num_levers clipped_sigmoid)
-                    0 300 (ClippedSgd(0.1f,0.025f))
-            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
-                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
-                    (LSTMLayer 128 tanh_ tanh_) (fun reward_size -> LSTMLayer reward_size tanh_ clipped_sigmoid)
-                    (LSTMLayer 128 tanh_ tanh_) (fun num_levers -> LSTMLayer num_levers tanh_ clipped_sigmoid)
-                    0 300 (ClippedSgd(0.1f,0.025f))
+//            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+//                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+//                    (fun () -> GRULayer 128 tanh_) (fun reward_size -> GRULayer reward_size clipped_sigmoid)
+//                    (fun () -> GRULayer 128 tanh_) (fun num_levers -> GRULayer num_levers clipped_sigmoid)
+//                    5 300 (ClippedSgd(0.1f,0.025f))
+//            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+//                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+//                    (fun () -> LSTMLayer 128 tanh_ tanh_) (fun reward_size -> LSTMLayer reward_size tanh_ clipped_sigmoid)
+//                    (fun () -> LSTMLayer 128 tanh_ tanh_) (fun num_levers -> LSTMLayer num_levers tanh_ clipped_sigmoid)
+//                    3 300 (ClippedSgd(0.1f,0.025f))
+//            "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+//                ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+//                    (fun () -> RNN1DLayer 128 tanh_) (fun reward_size -> RNN1DLayer reward_size clipped_sigmoid)
+//                    (fun () -> RNN1DLayer 128 tanh_) (fun num_levers -> RNN1DLayer num_levers clipped_sigmoid)
+//                    0 300 (ClippedSgd(0.1f,0.1f))
+
+//            yield! // The performance of MI with zero delayed steps is trully exemplary. 
+//                   // And unlike the non-MI nets, the performance is not all over the place
+//                   // with different learning rates and delayed steps.
+//                Array.init 1 (fun x ->
+//                    "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+//                        ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+//                            (fun () -> MI_RNN1DLayer 128 tanh_) (fun reward_size -> MI_RNN1DLayer reward_size clipped_sigmoid)
+//                            (fun () -> MI_RNN1DLayer 128 tanh_) (fun num_levers -> MI_RNN1DLayer num_levers clipped_sigmoid)
+//                            x 300 (ClippedSgd(0.03f,0.03f)))
+//            yield! // The GRU is not bad, although it is much slower than the standard MI RNN.
+//                Array.init 5 (fun x ->
+//                "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+//                    ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+//                        (fun () -> MI_GRU1DLayer 128 tanh_) (fun reward_size -> MI_GRU1DLayer reward_size clipped_sigmoid)
+//                        (fun () -> MI_GRU1DLayer 128 tanh_) (fun num_levers -> MI_GRU1DLayer num_levers clipped_sigmoid)
+//                        x 500 (ClippedSgd(0.05f,0.05f))
+//                )
+//            yield! // It seems that the more complex the architecture, the worse it performs. LSTM is quite bad here.
+//                Array.init 1 (fun x ->
+//                "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+//                    ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+//                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun reward_size -> MI_LSTM1DLayer reward_size tanh_ clipped_sigmoid)
+//                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun num_levers -> MI_LSTM1DLayer num_levers tanh_ clipped_sigmoid)
+//                        x 500 (ClippedSgd(0.05f,0.025f))
+                )
             |]
 
         

@@ -7,6 +7,8 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Spiral V4 (bandits)", "Spir
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Spiral V4 Pipes (bandits)", "Spiral V4 Pipes (bandits)\Spiral V4 Pipes (bandits).fsproj", "{97D92324-C158-4C58-BF79-F2D2E1EC98FB}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "OpTensor", "OpTensor\OpTensor.fsproj", "{6E06255E-431E-470D-9622-F3BF604A0803}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{97D92324-C158-4C58-BF79-F2D2E1EC98FB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{97D92324-C158-4C58-BF79-F2D2E1EC98FB}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{97D92324-C158-4C58-BF79-F2D2E1EC98FB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6E06255E-431E-470D-9622-F3BF604A0803}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6E06255E-431E-470D-9622-F3BF604A0803}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6E06255E-431E-470D-9622-F3BF604A0803}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6E06255E-431E-470D-9622-F3BF604A0803}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

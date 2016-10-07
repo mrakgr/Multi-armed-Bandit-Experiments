@@ -215,12 +215,21 @@ type Workspace() =
 
     /// Resizes the workspace if it is less than size and returns it. The size is in 'a.
     member t.ResizeIf<'a when 'a: (new: unit -> 'a) and 'a: struct and 'a :> ValueType>(size: int) =
-        let toGeneric(workspace: CudaDeviceVariable<byte>) = new CudaDeviceVariable<'a>(workspace.DevicePointer,false)
+        let toGeneric(workspace: CudaDeviceVariable<byte>) = new CudaDeviceVariable<'a>(workspace.DevicePointer,false,SizeT (size * sizeof<'a>))
         if size < int workspace.Size then toGeneric workspace
         else
             workspace.Dispose()
             workspace <- new CudaDeviceVariable<byte>(SizeT (size * sizeof<'a>))
             toGeneric workspace
+
+    /// Resizes the workspace if it is less than size and returns it as a d2M.
+    member t.ResizeIfd2M((r,c as rc): int*int) =
+        let x = t.ResizeIf(r*c)
+        {
+        rc = rc
+        diff = PrimalOnly x
+        is_dead = Undefined
+        }
 
     interface IDisposable with
         member t.Dispose() = workspace.Dispose()
@@ -1198,7 +1207,7 @@ let inline gemm
         if beta <> 1.0f then geam str nT nT beta (ext_a, a) 0.0f (ext_a, a) (ext_a, a) 
         cublas.Stream <- str.Stream
         let _status = CudaBlasNativeMethods.cublasSger_v2(cublas.CublasHandle, m, n, ref alpha, (ext_x x).DevicePointer, 1, (ext_y y).DevicePointer, 1, (ext_a a).DevicePointer, m)
-        if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status);
+        if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
 
     // -------
 
@@ -1376,7 +1385,7 @@ let inline private matmult' (prev_output : d2M option) (a:d2M, b:d2M) (context: 
         | Some c ->
             gemm (str context) nT nT 1.0f (P' a) (P' b) 1.0f (P' c)
             c
-    
+
     if (is_inference_only context) = false then
         if hasAdjoint a then 
             let matmult_backward_left () = 
@@ -1409,7 +1418,7 @@ let inline tensor_add' add_to_left alpha (left : ^a) beta (right : ^a) (context:
             left
 
     if left_nchw <> right_nchw then
-        cudnn.SetStream (str context)
+        cudnn.SetStream(str context)
         cudnn.AddTensor(beta,rightDesc,extract_primal' right, alpha,leftDesc,extract_primal' output) // Add right to output.
     else 
         geam (str context) nT nT beta (P' right) alpha (P' output) (P' output)
@@ -2027,7 +2036,7 @@ let inline optimize (optimizer: Optimizer, context: Context<_>) node =
     optimizer.Optimize(node,context)
 
 type LayerType<'input, 'context, 'layer_type> =
-    | Uninitialized of desired_hidden_size: int * create_layer: (int -> 'input -> 'context -> 'layer_type)
+    | Uninitialized of create_layer: ('input -> 'context -> 'layer_type)
     | Initialized of tag: int * node: 'layer_type
 
 /// Returns an unique global tag.
@@ -2037,14 +2046,14 @@ let get_tag =
         tags <- tags+1
         tags
 
-let inline createLayer (desired_hidden_size: int) (create_layer: (int -> ^input -> ^context -> (^input -> ^context -> ^output))) =
-    let mutable node = Uninitialized(desired_hidden_size,create_layer)
+let inline createLayer (create_layer: (^input -> ^context -> (^input -> ^context -> ^output))) =
+    let mutable node = Uninitialized(create_layer)
     fun (input: ^input) (context: ^context) ->
         match node with
         | Initialized(tag,sub_layer) ->
             sub_layer input context
-        | Uninitialized(desired_hidden_size,create_layer) ->
-            let sub_layer = create_layer desired_hidden_size input context
+        | Uninitialized(create_layer) ->
+            let sub_layer = create_layer input context
             node <- Initialized(get_tag(),sub_layer)
             sub_layer input context
 
@@ -2106,9 +2115,8 @@ let inline setRNNDM userstate tag timestep v =
     ((^userstate or ^time) : (static member SetRNNDM: ^userstate * int * ^time * obj -> unit) userstate, tag, timestep, v)
 
 let inline create1DRNNLayer
-        (desired_hidden_size: int)
-        (create_layer: (int -> ^input -> Context<_> -> ((^output option * ^input) -> Context<_> -> ^output))) =
-    let mutable node = Uninitialized(desired_hidden_size,create_layer)
+        (create_layer: ( ^input -> Context<_> -> ((^output option * ^input) -> Context<_> -> ^output))) =
+    let mutable node = Uninitialized(create_layer)
     
     fun (input: ^input) (context: Context<_>) ->
         let inline execute tag (sub_layer: (^output option * ^input) -> Context<_> -> ^output) =
@@ -2120,8 +2128,8 @@ let inline create1DRNNLayer
             output
         match node with
         | Initialized (tag,sub_layer) -> execute tag sub_layer
-        | Uninitialized(desired_hidden_size,create_layer) ->
-            let sub_layer = create_layer desired_hidden_size input context
+        | Uninitialized(create_layer) ->
+            let sub_layer = create_layer input context
             let tag = get_tag()
             node <- Initialized(tag,sub_layer)
             execute tag sub_layer

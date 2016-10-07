@@ -6,6 +6,7 @@ open ManagedCuda
 open ManagedCuda.BasicTypes
 open ManagedCuda.VectorTypes
 open System.Collections.Generic
+open ManagedCuda.CudaDNN
 
 /// Creates an array of float32 zeroes with only index x set to 1.0f
 let scalar_decoder min_bound max_bound (x: int option) = // .NET arrays can be created with min and max bounds specified.
@@ -71,10 +72,10 @@ let group_data_by_seq_length_and_load_to_gpu minibatch_size (data: (float32[] * 
         v)
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
-let inline FFLayer' has_bias hidden_size activation = createLayer hidden_size (createFFSublayer has_bias activation)
+let inline FFLayer' has_bias hidden_size activation = createLayer (createFFSublayer has_bias activation hidden_size)
 /// Creates a 1D recurrent layer with the specified hidden size and activation function. Has an optional flag whether bias should be created.
 let inline RNN1DLayer' has_bias hidden_size activation = 
-    create1DRNNLayer hidden_size (createStdRNNSublayer has_bias activation)
+    create1DRNNLayer (createStdRNNSublayer has_bias activation hidden_size)
 
 /// Creates a feedforward layer with the specified hidden size and activation function. Creates bias by default.
 let inline FFLayer hidden_size activation = FFLayer' true hidden_size activation
@@ -115,7 +116,7 @@ type BN_RNNState<'timestep> =
         }
 
 // Auxiliary layers
-let inline createBNSublayer factor _ (input: ^input) (context: Context<_>) =
+let inline createBNSublayer factor (input: ^input) (context: Context<_>) =
     let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,context) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
     let Bias = input |> ghostCopyBias false
     let RunningMean = input |> ghostCopyBias true
@@ -130,7 +131,7 @@ let inline createBNSublayer factor _ (input: ^input) (context: Context<_>) =
 /// Creates a BN layer using a constant factor. The running mean and variance are initialized to zero by default, as is bias.
 /// The scale is set to 0.1 as per the Recurrent Batch Normalization paper by Cooijmans et al.
 /// Factor values in the range of [0.01,0.1] work well for Mnist.
-let inline BNLayer factor = createLayer 1 (createBNSublayer factor)
+let inline BNLayer factor = createLayer (createBNSublayer factor)
 
 /// A type use to apply the cost function of the same name. It is used as a substitute for higher order functions
 /// which are insufficiently generic. It is the same as the Optimizer type in purpose.
@@ -685,7 +686,7 @@ let inline createLSTMSublayer has_bias activation_for_block_input activation_for
         // The forget gate bias gets initialized to 1.0f for easier gradient propagation.
         // It might be worth trying the same thing with the input gate to the GRU.
         let forget_bias_ini (x: d2M) = x.SetPrimal(1.0f, str context); x
-        [|relu_ini;relu_ini;forget_bias_ini;relu_ini|] 
+        [|relu_ini;relu_ini;forget_bias_ini;relu_ini|]
         |> Array.map (fun ini -> if has_bias then d2M.create(desired_hidden_size,1) |> ini |> Some else None)
 
     [| ar1; ar2; ar3; Array.choose id ar4 |]
@@ -711,10 +712,167 @@ let inline createLSTMSublayer has_bias activation_for_block_input activation_for
 
 /// Creates a 1D GRU layer with the specified hidden size and activation function.
 /// Tanh works well as the activation for the output block.
-let inline GRULayer hidden_size activation = create1DRNNLayer hidden_size (createGRUSublayer true activation)
+let inline GRU1DLayer hidden_size activation = create1DRNNLayer hidden_size (createGRUSublayer true activation)
 
 /// Creates a 1D LSTM layer with the specified hidden size and activation function.
 /// Tanh works well as the activation for the input and the output block.
-let inline LSTMLayer hidden_size activation_for_block_input activation_for_block_output = 
-    create1DRNNLayer hidden_size (createLSTMSublayer true activation_for_block_input activation_for_block_output)
+let inline LSTM1DLayer hidden_size activation_for_block_input activation_for_block_output = 
+    create1DRNNLayer (createLSTMSublayer true activation_for_block_input activation_for_block_output hidden_size)
+    >=> fun (output,cell_state) _ -> output
+
+let private tensor_mult_dsc = new OpTensorDescriptor(cudnn)
+tensor_mult_dsc.SetOpTensorDescriptor(cudnnOpTensorOp.OpTensorMul,defaultType,defaultReluNanOption)
+
+let tensor_mult_right_backwards_name = "tensor_mult_right_backwards"
+let tensor_mult_left_backwards_name = "tensor_mult_left_backwards"
+
+/// c <- broadcast_mult(a,b)
+let tensor_mult (a: d2M) (b: d2M) (c: d2M option) (context: Context<_>) =
+    let run_op_tensor (alpha: float32) (ext_a, a: d2M) beta (ext_b, b: d2M) delta (ext_c, c: d2M) =
+        let a_desc = (mem context).GetTensorDescriptor(a.NCHW)
+        let b_desc = (mem context).GetTensorDescriptor(b.NCHW)
+        let c_desc = (mem context).GetTensorDescriptor(c.NCHW)
+
+        cudnn.SetStream (str context)
+        let _status = CudaDNN.CudaDNNNativeMethods.cudnnOpTensor(cudnn.Handle,tensor_mult_dsc.Desc,ref alpha,a_desc.Desc,ext_a a,ref beta,b_desc.Desc,ext_b b,ref delta,c_desc.Desc,ext_c c)
+        if _status <> cudnnStatus.Success then raise <| new CudaDNNException(_status)
+
+    let c = match c with
+            | Some c -> 
+                run_op_tensor 1.0f (P a) 1.0f (P b) 1.0f (P c)
+                c
+            | None -> 
+                let c = getdMLike' a false context
+                run_op_tensor 1.0f (P a) 1.0f (P b) 0.0f (P c)
+                c
+
+    if (is_inference_only context) = false then
+        if hasAdjoint a then
+            let tensor_mult_left_backwards () =
+                deadness_check c a
+                <| fun _ ->
+                    run_op_tensor 1.0f (A c) 1.0f (P b) 1.0f (A a)
+            push_tape context (tensor_mult_left_backwards_name,tensor_mult_left_backwards)
+
+        if hasAdjoint b then
+            let tensor_mult_right_backwards () =
+                deadness_check c b
+                <| fun _ ->
+                    cudnn.SetStream (str context)
+
+                    let c' = context.Workspace.ResizeIfd2M a.rc // Unlike the add, the mult has an extra step here.
+                    hadamaradMultiplicationModule.Value.A(str context, P a, A c, P c')
+
+                    let a_nchw = nchwBiasAdd a // Ugly hack to get cuDNN's ConvolutionBackwardBias to work with 2D matrices correctly.
+                    let b_nchw = nchwBiasAdd b
+                    let aDesc = (mem context).GetTensorDescriptor a_nchw
+                    let bDesc = (mem context).GetTensorDescriptor b_nchw
+
+                    cudnn.ConvolutionBackwardBias(1.0f,aDesc,extract_primal' c',1.0f,bDesc,extract_adjoint' b)
+            push_tape context (tensor_mult_right_backwards_name,tensor_mult_right_backwards)
+    c
+
+let inline private mi_function (W, x) (Uy) alpha beta1 beta2 b context =
+    match Uy with
+    | Some(U,y) ->
+        let wx = matmult W x context
+        let uy = matmult U y context
+        let wx_uy = hadmult wx uy context
+        let alpha_wx_uy = tensor_mult wx_uy alpha None context
+        tensor_mult uy beta1 (Some alpha_wx_uy) context |> ignore // I do not give these a name as they are bound to alpha_wx_uy
+        tensor_mult wx beta2 (Some alpha_wx_uy) context |> ignore
+        tensor_add' true 1.0f alpha_wx_uy 1.0f b context
+    | None ->
+        let wx = matmult W x context
+        let beta2_wx = tensor_mult wx beta2 None context
+        tensor_add' true 1.0f beta2_wx 1.0f b context
+
+/// MI stands for multiplicative integration from the paper "On Multiplicative Integration with Recurrent Neural Networks" by Yuhuai Wu et all.
+let inline createMI_RNNSublayer activation desired_hidden_size (input: d2M) (context: Context<_>) =
+    let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context
+    let U = d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context
+    
+    let alpha = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.0f,str context); x
+    let beta1 = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x
+    let beta2 = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x
+    let b = d2M.create(desired_hidden_size,1)
+
+    [|W;U;alpha;beta1;beta2;b|]
+    |> Array.map D2M
+    |> add_nodes context
+
+    fun (y: d2M option,x: d2M) context ->
+        match y with
+        | Some y -> mi_function (W,x) (Some(U,y)) alpha beta1 beta2 b >>= activation <| context
+        | None -> mi_function (W,x) None alpha beta1 beta2 b >>= activation <| context
+
+/// Creates a standard RNN layer with multiplicative integration.
+let inline MI_RNN1DLayer desired_hidden_size activation =
+    create1DRNNLayer (createMI_RNNSublayer activation desired_hidden_size)
+
+/// GRU sublayer with multiplicative integration.
+let inline createMI_GRUSublayer activation desired_hidden_size (input: d2M) (context: Context<_>) =
+    let [|W_u;W_r;W_n|] as ar1 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
+    let [|U_u;U_r;U_n|] as ar2 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
+    let [|alpha_u;alpha_r;alpha_n|] as ar3 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.5f,str context); x)
+    let [|beta1_u;beta1_r;beta1_n|] as ar4 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.75f,str context); x)
+    let [|beta2_u;beta2_r;beta2_n|] as ar5 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.75f,str context); x)
+    let [|b_u;b_r;b_n|] as ar6 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1))
+
+    [| ar1; ar2; ar3; ar4; ar5; ar6 |]
+    |> Array.collect (Array.map D2M)
+    |> add_nodes context
+
+    fun (y,x) (context: Context<_>) -> 
+        match y with
+        | Some y ->
+            let update_gate = mi_function (W_u,x) (Some(U_u,y)) alpha_u beta1_u beta2_u b_u >>= sigmoid <| context
+            let reset_gate = mi_function (W_r,x) (Some(U_r,y)) alpha_r beta1_r beta2_r b_r >>= sigmoid <| context
+            let potential_new_state = 
+                let Uy = Some(U_n, hadmult reset_gate y context)
+                mi_function (W_n,x) Uy alpha_n beta1_n beta2_n b_n >>= activation <| context
+            linear_layer_hadmult [|update_gate,y;(scalar_matrix_add 1.0f -1.0f update_gate context),potential_new_state|] <| context
+        | None ->
+            let update_gate = mi_function (W_u,x) None alpha_u beta1_u beta2_u b_u >>= sigmoid <| context
+            // reset_gate is not used here.
+            let potential_new_state = mi_function (W_n,x) None alpha_n beta1_n beta2_n b_n >>= activation <| context
+            linear_layer_hadmult [|scalar_matrix_add 1.0f -1.0f update_gate context, potential_new_state|] <| context
+
+/// Creates a GRU RNN layer with multiplicative integration.
+let inline MI_GRU1DLayer desired_hidden_size activation =
+    create1DRNNLayer (createMI_GRUSublayer activation desired_hidden_size)
+
+let inline createMI_LSTMSublayer activation_for_block_input activation_for_block_output desired_hidden_size (input: d2M) (context: Context<_>) =
+    let [|W_z;W_i;W_f;W_o|] as ar1 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
+    let [|U_z;U_i;U_f;U_o|] as ar2 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
+    let [|alpha_z;alpha_i;alpha_f;alpha_o|] as ar3 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.0f,str context); x)
+    let [|beta1_z;beta1_i;beta1_f;beta1_o|] as ar4 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x)
+    let [|beta2_z;beta2_i;beta2_f;beta2_o|] as ar5 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x)
+    let [|b_z;b_i;b_f;b_o|] as ar6 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1))
+    b_f.SetPrimal(1.0f,str context) // For easier gradient propagation through the forget gate.
+
+    [| ar1; ar2; ar3; ar4; ar5; ar6 |]
+    |> Array.collect (Array.map D2M)
+    |> add_nodes context
+
+    fun (y,x) (context: Context<_>) -> 
+        match y with
+        | Some (y, c) ->
+            let block_input = mi_function (W_z,x) (Some(U_z,y)) alpha_z beta1_z beta2_z b_z >>= activation_for_block_input <| context
+            let input_gate = mi_function (W_i,x) (Some(U_i,y)) alpha_i beta1_i beta2_i b_i >>= sigmoid <| context
+            let forget_gate = mi_function (W_f,x) (Some(U_f,y)) alpha_f beta1_f beta2_f b_f >>= sigmoid <| context
+            let c' = linear_layer_hadmult [|block_input,input_gate;c,forget_gate|] context
+            let output_gate = mi_function (W_o,x) (Some(U_o,y)) alpha_o beta1_o beta2_o b_o >>= sigmoid <| context
+            hadmult (activation_for_block_output c' context) output_gate context, c'
+        | None ->
+            let block_input = mi_function (W_z,x) None alpha_z beta1_z beta2_z b_z >>= activation_for_block_input <| context
+            let input_gate = mi_function (W_i,x) None alpha_i beta1_i beta2_i b_i >>= sigmoid <| context
+            // In nearly forgot that forgetting to remove the forget gate would trigger the deadness check.
+            let c' = hadmult block_input input_gate context
+            let output_gate = mi_function (W_o,x) None alpha_o beta1_o beta2_o b_o >>= sigmoid <| context
+            hadmult (activation_for_block_output c' context) output_gate context, c'
+
+/// Tanh works well as the activation for the input and the output block.
+let inline MI_LSTM1DLayer hidden_size activation_for_block_input activation_for_block_output = 
+    create1DRNNLayer (createMI_LSTMSublayer activation_for_block_input activation_for_block_output hidden_size)
     >=> fun (output,cell_state) _ -> output
