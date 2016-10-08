@@ -22,9 +22,9 @@ let squared_error_cost (a: float32[]) =
     |> fun x -> 0.5f * x / float32 a.Length
 
 let rng = Random()
-let a = Array.init 20 (fun _ -> rng.NextDouble() + 1.0 |> float32)
+let a = [|1.0f..5.0f|]//Array.init 20 (fun _ -> rng.NextDouble() + 1.0 |> float32)
 
 let b,std,mean = forward_layer_norm a
 
-let backward_layer_norm (output_primal: float32[]) (output_adjoint: float32) (input_primal: float32[]) std mean  = 
+//let backward_layer_norm (output_primal: float32[]) (output_adjoint: float32) (input_primal: float32[]) std mean  = 
     

@@ -341,22 +341,22 @@ module private Testing =
                 let input = data.inputd2M
                 let target = data.outputd2M
                 let inp_tar = [|Some target, input|]
-                use context = Context<_>.create
+                use ctx = Context<_>.create
 
                 let layer = 
                     match layer with
                     | Layer f -> 
-                        fun (_, x) context -> f x context
+                        fun (_, x) ctx -> f x ctx
                         >=> squared_error_cost' target
                     | RNNSublayer f -> 
-                        f input context 
+                        f input ctx 
                         >=> squared_error_cost' target
                 
                 // Does not zero out the adjoints with GradChecking
-                train layer GradChecking inp_tar context false |> ignore
+                train layer GradChecking inp_tar ctx false |> ignore
 
                 let getNodes extract_node = 
-                    [|for dm in (nodes context).[layer_number] do 
+                    [|for dm in (nodes ctx).[layer_number] do 
                         match extract_node dm with
                         | Some v -> yield v
                         | None -> ()|]
@@ -372,7 +372,7 @@ module private Testing =
                         for i=0 to int ar.Size-1 do
                             let i = SizeT i
                             let orig = ar.[i]
-                            let cost() = infer layer GradChecking inp_tar context false |> fun (_,x) -> x
+                            let cost() = infer layer GradChecking inp_tar ctx false |> fun (_,x) -> x
 
                             ar.[i] <- orig + epsilon
                             let cost_plus_epsilon = cost()
@@ -413,12 +413,12 @@ module private Testing =
             let inline layerTest network optimizer num_iters (data: MnistData) =
                 let training_set = data.training_set
                 let test_set = data.test_set
-                let context = Context<_>.create
+                let ctx = Context<_>.create
                 printfn "Testing the feedforward net with %A..." optimizer
                 let rec loop iter =
-                    let _,training_cost = train network optimizer training_set context false
+                    let _,training_cost = train network optimizer training_set ctx false
                     printfn "Done with training."
-                    let (test_accuracy, max_accuracy),test_cost = infer network optimizer test_set context true
+                    let (test_accuracy, max_accuracy),test_cost = infer network optimizer test_set ctx true
                     printfn "Training cost is %f at iteration %i" training_cost iter
                     printfn "Test accuracy and cost are (%i/%i, %f) at iteration %i" test_accuracy max_accuracy test_cost iter
                     if iter >= num_iters then 
@@ -472,13 +472,13 @@ module private Testing =
             |]
 
         let banditTests =
-            let inline bandit_test_run set network context (num_iters: int) optimizer =
+            let inline bandit_test_run set network ctx (num_iters: int) optimizer =
                 let results_ar = ResizeArray(num_iters)
 
                 printfn "Testing the bandit for %i iterations with optimizer %A..." num_iters optimizer
                 let stopwatch = Diagnostics.Stopwatch.StartNew()
                 let rec loop iter =
-                    let _,training_cost = train network optimizer set context false
+                    let _,training_cost = train network optimizer set ctx false
                     printfn "Training cost is %f at iteration %i" training_cost iter
                     results_ar.Add(training_cost)
                     if iter >= num_iters then 
@@ -539,13 +539,13 @@ module private Testing =
 
                 /// Stacks explicit reward ontop of predicted reward and runs the cost on the predicted reward as well.
                 let residual_reward_layers_reward_stacker 
-                        layer reward_matrices (residual_input,action as ex) context = 
-                    let explicit_reward = map_indices_3d action reward_matrices context
-                    let (residual_output, implicit_reward) = layer ex context
-                    let total_reward = stack_vertical_lazy implicit_reward explicit_reward context
+                        layer reward_matrices (residual_input,action as ex) ctx = 
+                    let explicit_reward = map_indices_3d action reward_matrices ctx
+                    let (residual_output, implicit_reward) = layer ex ctx
+                    let total_reward = stack_vertical_lazy implicit_reward explicit_reward ctx
 
-                    if timestep (getRNNState context) >= delay_reward_for_n_steps then
-                        let cost = cross_entropy_cost' explicit_reward implicit_reward context
+                    if timestep (getRNNState ctx) >= delay_reward_for_n_steps then
+                        let cost = cross_entropy_cost' explicit_reward implicit_reward ctx
                         (residual_output, Some cost, total_reward)
                     else
                         (residual_output, None, total_reward)
@@ -568,8 +568,8 @@ module private Testing =
                 let reward_layers_with_costs rewards_matrices input = 
                     residual_reward_layers_reward_stacker residual_reward_layers rewards_matrices input
 
-                let lazy_action_layers input context = 
-                    lazy residual_action_layers (force input) context
+                let lazy_action_layers input ctx = 
+                    lazy residual_action_layers (force input) ctx
                 
                 let feedback_section rewards_matrices input = context {
                     let! residual_output, cost, output = reward_layers_with_costs rewards_matrices input
@@ -633,11 +633,10 @@ module private Testing =
 //                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun reward_size -> MI_LSTM1DLayer reward_size tanh_ clipped_sigmoid)
 //                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun num_levers -> MI_LSTM1DLayer num_levers tanh_ clipped_sigmoid)
 //                        x 500 (ClippedSgd(0.05f,0.025f))
-                )
             |]
 
         
-        ctx.Synchronize() // Inits the library.
+        cuda_context.Synchronize() // Inits the library.
         let tree =
             let mnist_path =
                 // If you are anybody other than me, change this to where the Mnist dataset is.

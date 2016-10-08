@@ -97,7 +97,7 @@ type BNState =
 
     static member create = { BNDict = Dictionary() }
 
-let inline getBNState (context: Context<_>) = (^userstate : (member GetBNState: BNState) context.UserState)
+let inline getBNState (ctx: Context<_>) = (^userstate : (member GetBNState: BNState) ctx.UserState)
 let inline getBNFactor (userstate: BNState) tag = userstate.GetBNFactor(tag)
 let inline setBNFactor (userstate: BNState) tag v = userstate.SetBNFactor(tag,v)
 
@@ -116,17 +116,17 @@ type BN_RNNState<'timestep> =
         }
 
 // Auxiliary layers
-let inline createBNSublayer factor (input: ^input) (context: Context<_>) =
-    let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,context) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
+let inline createBNSublayer factor (input: ^input) (ctx: Context<_>) =
+    let Scale = input |> ghostCopyBias false |> setPrimal' (0.1f,ctx) // Initial scale value based on the Recurrent Batch Normalization paper by Cooijmans et al.
     let Bias = input |> ghostCopyBias false
     let RunningMean = input |> ghostCopyBias true
     let RunningVariance = input |> ghostCopyBias true
 //    let mutable factor = 0.0
-    fun (input: ^input) (context: Context<_>) ->
+    fun (input: ^input) (ctx: Context<_>) ->
         let bnMode = ManagedCuda.CudaDNN.cudnnBatchNormMode.BatchNormPerActivation
 //            factor <- factor + 1.0
 //            (1.0/factor)
-        batch_normalization_forward bnMode Scale Bias RunningMean RunningVariance factor input context
+        batch_normalization_forward bnMode Scale Bias RunningMean RunningVariance factor input ctx
 
 /// Creates a BN layer using a constant factor. The running mean and variance are initialized to zero by default, as is bias.
 /// The scale is set to 0.1 as per the Recurrent Batch Normalization paper by Cooijmans et al.
@@ -139,22 +139,22 @@ type CostFunction =
     | SquaredError
     | CrossEntropy
 
-    member inline t.ApplyCostFunction targets activations context =
+    member inline t.ApplyCostFunction targets activations ctx =
         match t with
-        | SquaredError -> squared_error_cost' targets activations context
-        | CrossEntropy -> cross_entropy_cost' targets activations context
+        | SquaredError -> squared_error_cost' targets activations ctx
+        | CrossEntropy -> cross_entropy_cost' targets activations ctx
 
 /// Generic function for net training and inference.
 let inline private run
         (network: ^input -> Context<_> -> Cost) 
         (optimizer: Optimizer)
         (set : ^input []) 
-        (context: Context<_>) 
+        (ctx: Context<_>) 
         test_accuracy =
     Array.fold <| fun (accuracy,max_accuracy,accumulated_cost,iter) example ->
-        (mem context).Reset()
+        (mem ctx).Reset()
 
-        let hits,max_hits,r = network example context |> costAsTuple
+        let hits,max_hits,r = network example ctx |> costAsTuple
 
         let accuracy, max_accuracy =
             if test_accuracy then
@@ -164,19 +164,19 @@ let inline private run
 
         let accumulated_cost = accumulated_cost + r.PrimalValue
 
-        if is_inference_only context = true then
-            if (tape context).Value.Length > 0 then
+        if is_inference_only ctx = true then
+            if (tape ctx).Value.Length > 0 then
                 failwith "Forgot to use the is_inference_only flag in a library function somewhere"
         else
             r.A := 1.0f
             
-            let t = !(tape context)
+            let t = !(tape ctx)
             for name,func in t do
                 func()
 
-            (tape context) := []
+            (tape ctx) := []
 
-            Seq.iter (Array.iter <| fun x -> optimizer.Optimize(x,context)) (nodes context)
+            Seq.iter (Array.iter <| fun x -> optimizer.Optimize(x,ctx)) (nodes ctx)
 
         accuracy, max_accuracy, accumulated_cost, iter+1
     <| (0,0,0.0f,0) <| set
@@ -184,24 +184,24 @@ let inline private run
         ((accuracy, max_accuracy), accumulated_cost / float32 set.Length)
 
 /// Trains the network in the depth direction.
-let inline train network optimizer set context test_accuracy = 
-    run network optimizer set (with_is_inference_only context false) test_accuracy
+let inline train network optimizer set ctx test_accuracy = 
+    run network optimizer set (with_is_inference_only ctx false) test_accuracy
 /// Runs the network without doing backprop.
-let inline infer network optimizer set context test_accuracy = 
-    run network optimizer set (with_is_inference_only context true) test_accuracy
+let inline infer network optimizer set ctx test_accuracy = 
+    run network optimizer set (with_is_inference_only ctx true) test_accuracy
 
 /// Takes a standard net and wraps it so it takes in a recurrent sequence.
 let inline recurrentRepeat
         (network: ^input -> Context<_> -> ^output)
         (sequence: ^input[])
-        (context: Context<_>)
+        (ctx: Context<_>)
         : ^output[] =
     let len = sequence.Length
-    let context = with_userstate 0 context
+    let ctx = with_userstate 0 ctx
     (Array.zeroCreate len,0)
     |> Array.fold ( fun (output_ar,iter) example ->
-        context.UserState <- iter // Sets the timestep.
-        let output = network example context
+        ctx.UserState <- iter // Sets the timestep.
+        let output = network example ctx
         output_ar.[iter] <- output
         (output_ar, iter+1)
         ) <| sequence
@@ -213,13 +213,13 @@ let inline recurrentFeedback
         (selector: ^output -> ^input)
         (network: ^input -> Context<_> -> ^output)
         (sequence: ^input)
-        (context: Context<_>)
+        (ctx: Context<_>)
         : ^output[] =
-    let context = with_userstate (BN_RNNState<_>.create 0) context
+    let ctx = with_userstate (BN_RNNState<_>.create 0) ctx
     let rec loop (output_ar: ^output[],iter,example) =
         if iter <= len-1 then
-            set_timestep (getRNNState context) iter // Sets the timestep.
-            let output = network example context
+            set_timestep (getRNNState ctx) iter // Sets the timestep.
+            let output = network example ctx
             output_ar.[iter] <- output
             if iter = len-1 then output_ar
             else loop (output_ar,iter+1,selector output)
@@ -231,33 +231,33 @@ let inline wrapMap
         (map: ^output -> ^target)
         (network: ^input -> Context<_> -> ^output[])
         (input: ^input)
-        (context: Context<_>)
+        (ctx: Context<_>)
         : ^target[] =
-    network input context |> Array.map map
+    network input ctx |> Array.map map
 
 /// Maps the outputs to targets.
 let inline wrapChoose
         (map: ^output -> ^target option)
         (network: ^input -> Context<_> -> ^output[])
         (input: ^input)
-        (context: Context<_>)
+        (ctx: Context<_>)
         : ^target[] =
-    network input context |> Array.choose map
+    network input ctx |> Array.choose map
 
 /// Map for single outputs.
 let inline wrapMap'
         (map: ^output -> ^target)
         (network: ^input -> Context<_> -> ^output)
         (input: ^input)
-        (context: Context<_>)
+        (ctx: Context<_>)
         : ^target =
-    network input context |> map
+    network input ctx |> map
 
 let inline wrapCostFunc
         (network: ^input -> Context<_> -> ^output)
         (cost_func: ^output -> ^output -> Context<_> -> Cost) 
-        (input, target) context =
-    network input context |> cost_func target <| context
+        (input, target) ctx =
+    network input ctx |> cost_func target <| ctx
 
 let inline (==)
         (network: ^input -> Context<_> -> ^output)
@@ -272,8 +272,8 @@ type CostAccumulator =
     mutable iter : int
     }
 
-    member inline t.SetTimeStepToIter(context: Context<_>) =
-        set_timestep (getRNNState context) t.iter
+    member inline t.SetTimeStepToIter(ctx: Context<_>) =
+        set_timestep (getRNNState ctx) t.iter
 
     member t.AddCostAndIncrementIter(cost: Cost) =
         let hits,max_hits,cost = costAsTuple cost
@@ -287,8 +287,8 @@ type CostAccumulator =
 
 let inline add_cost_and_increment_iter (x: CostAccumulator) cost = x.AddCostAndIncrementIter cost; x
 
-let sum_accumulated_costs context (x: CostAccumulator) =
-    let accumulated_cost = sum_scalars x.cost_ar context
+let sum_accumulated_costs ctx (x: CostAccumulator) =
+    let accumulated_cost = sum_scalars x.cost_ar ctx
     let accuracy = lazy (x.accuracy_ar |> Array.fold (fun s x -> s+x.Value) 0)
     toCost' accuracy x.max_accuracy accumulated_cost
 
@@ -296,27 +296,27 @@ let sum_accumulated_costs context (x: CostAccumulator) =
 let inline recurrectSequence
         (network: ^input -> Context<_> -> Cost)
         (sequence: ^input[])
-        (context: Context<_>)
+        (ctx: Context<_>)
         : Cost =
-    let context = with_userstate (BN_RNNState<_>.create 0) context
+    let ctx = with_userstate (BN_RNNState<_>.create 0) ctx
     (CostAccumulator.create sequence.Length)
     |> Array.fold ( fun accumulator example ->
-        accumulator.SetTimeStepToIter context
-        let output = network example context
+        accumulator.SetTimeStepToIter ctx
+        let output = network example ctx
         accumulator.AddCostAndIncrementIter(output)
         accumulator
         ) <| sequence
-    |> sum_accumulated_costs context
+    |> sum_accumulated_costs ctx
 
 /// Sums an array of costs in the output.
 let inline recurrectCostSum
         (network: ^input -> Context<_> -> Cost[])
         (sequence: ^input)
-        (context: Context<_>)
+        (ctx: Context<_>)
         : Cost =
-    let costs = network sequence context
+    let costs = network sequence ctx
     Array.fold add_cost_and_increment_iter (CostAccumulator.create costs.Length) costs
-    |> sum_accumulated_costs context
+    |> sum_accumulated_costs ctx
 
 // The following modules are for RL so they've been placed here.
 
@@ -527,25 +527,25 @@ let gatherIndex3DModule = lazy DeviceGatherIndex3DModule()
 
 /// Given an input matrix and an index mapping matrix, it gets the max row indices of the input array and then maps 
 /// them to the columns of the index mapping matrix.
-let map_indices (input: d2M) (map: d2M) (context: Context<_>) =
+let map_indices (input: d2M) (map: d2M) (ctx: Context<_>) =
     if rows input <> cols map then failwithf "rows input(%i) <> cols map(%i)" (rows input) (cols map)
-    let indices = (workspace context).ResizeIf<int>(cols input)
-    maxColumnIndexModule.Value.A(str context, P input, indices)
-    let output = getd2M true (rows map, cols input) context
-    gatherIndexModule.Value.A(str context, indices, P map, P output)
+    let indices = (workspace ctx).ResizeIf<int>(cols input)
+    maxColumnIndexModule.Value.A(str ctx, P input, indices)
+    let output = getd2M true (rows map, cols input) ctx
+    gatherIndexModule.Value.A(str ctx, indices, P map, P output)
     output
 
 let inline images x = (^a : (member Images: int) x)
 
 /// Given an input matrix and a 3D index mapping matrix, it gets the max row indices of the input array and then maps 
 /// them to the columns and images of the 3D index mapping matrix.
-let map_indices_3d (input: d2M) (map: d3M) (context: Context<_>) =
+let map_indices_3d (input: d2M) (map: d3M) (ctx: Context<_>) =
     if rows input <> cols map then failwithf "rows input(%i) <> cols map(%i)" (rows input) (cols map)
     if cols input <> images map then failwithf "cols input(%i) <> images map(%i)" (cols input) (images map)
-    let indices = (workspace context).ResizeIf<int>(cols input)
-    maxColumnIndexModule.Value.A(str context, P input, indices)
-    let output = getd2M true (rows map, cols input) context
-    gatherIndex3DModule.Value.A(str context, indices, P map, P output)
+    let indices = (workspace ctx).ResizeIf<int>(cols input)
+    maxColumnIndexModule.Value.A(str ctx, P input, indices)
+    let output = getd2M true (rows map, cols input) ctx
+    gatherIndex3DModule.Value.A(str ctx, indices, P map, P output)
     output
 
 /// Y[slice] <- beta * Y[slice] + alpha * X[slice]
@@ -622,93 +622,93 @@ let add_slice_backward_name = "add_slice_backward"
 /// X[rowStartX..rowStartX+row_stride-1,colStartX..colStartX+col_stride-1]
 let add_slice (rowStartX: int) (colStartX: int) (alpha: float32) (X: d2M)
               (rowStartY: int) (colStartY: int) (beta: float32) (Y: d2M)
-              (row_stride: int) (col_stride: int) (context: Context<_>) =
-    addSliceModule.Value.A(str context,rowStartX,colStartX,alpha,P X,rowStartY,colStartY,beta,P Y,row_stride,col_stride)
+              (row_stride: int) (col_stride: int) (ctx: Context<_>) =
+    addSliceModule.Value.A(str ctx,rowStartX,colStartX,alpha,P X,rowStartY,colStartY,beta,P Y,row_stride,col_stride)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint X && hasAdjoint Y then
             let add_slice_backward () = 
                 deadness_check Y X
                 <| fun _ -> 
-                    addSliceModule.Value.A(str context,rowStartY,colStartY,alpha,A Y,
+                    addSliceModule.Value.A(str ctx,rowStartY,colStartY,alpha,A Y,
                                                      rowStartX,colStartX,1.0f,A X,
                                                      row_stride,col_stride)
-            push_tape context (add_slice_backward_name,add_slice_backward)
+            push_tape ctx (add_slice_backward_name,add_slice_backward)
 
 /// Stacks A and B along the row dimension.
-let stack_vertical (A: d2M) (B: d2M) (context: Context<_>) =
+let stack_vertical (A: d2M) (B: d2M) (ctx: Context<_>) =
     if cols A <> cols B then failwithf "cols A(%i) <> cols B(%i)" (cols A) (cols B)
     let cols = cols A
     let C = d2M.create(rows A + rows B, cols)
-    add_slice 0 0 1.0f A 0 0 0.0f C (rows  A) cols context
-    add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols context
+    add_slice 0 0 1.0f A 0 0 0.0f C (rows  A) cols ctx
+    add_slice 0 0 1.0f B (rows A) 0 0.0f C (rows B) cols ctx
     C
 
-let stack_vertical_lazy (A: d2M) (B: d2M) (context: Context<_>) = 
-    lazy stack_vertical A B context
+let stack_vertical_lazy (A: d2M) (B: d2M) (ctx: Context<_>) = 
+    lazy stack_vertical A B ctx
 
 /// Adds the two input arguments together.
-let inline ResidualLayer (a, b) context =
+let inline ResidualLayer (a, b) ctx =
     match a with
-    | Some a -> add 1.0f a 1.0f b context
+    | Some a -> add 1.0f a 1.0f b ctx
     | None -> b
 
 let inline force (x: Lazy<_>) = x.Value
 
-let inline createGRUSublayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
-    let [|W_u;W_r;W_n|] as ar1 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
-    let [|U_u;U_r;U_n|] as ar2 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
-    let [|b_u;b_r;b_n|] as ar3 = Array.init 3 (fun _ -> if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer context |> Some else None)
+let inline createGRUSublayer has_bias activation desired_hidden_size (input: d2M) (ctx: Context<_>) =
+    let [|W_u;W_r;W_n|] as ar1 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer ctx)
+    let [|U_u;U_r;U_n|] as ar2 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer ctx)
+    let [|b_u;b_r;b_n|] as ar3 = Array.init 3 (fun _ -> if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer ctx |> Some else None)
 
     [| ar1; ar2; Array.choose id ar3 |]
     |> Array.collect (Array.map D2M)
-    |> add_nodes context
+    |> add_nodes ctx
 
-    fun (y,x) (context: Context<_>) -> 
+    fun (y,x) (ctx: Context<_>) -> 
         match y with
         | Some y ->
-            let update_gate = linear_layer_matmult [|W_u,x;U_u,y|] b_u >>= sigmoid <| context
-            let reset_gate = linear_layer_matmult [|W_r,x;U_r,y|] b_r >>= sigmoid <| context
-            let potential_new_state = linear_layer_matmult [|W_n,x;U_n, (hadmult reset_gate y context)|] b_n >>= activation <| context
-            linear_layer_hadmult [|update_gate,y;(scalar_matrix_add 1.0f -1.0f update_gate context),potential_new_state|] <| context
+            let update_gate = linear_layer_matmult [|W_u,x;U_u,y|] b_u >>= sigmoid <| ctx
+            let reset_gate = linear_layer_matmult [|W_r,x;U_r,y|] b_r >>= sigmoid <| ctx
+            let potential_new_state = linear_layer_matmult [|W_n,x;U_n, (hadmult reset_gate y ctx)|] b_n >>= activation <| ctx
+            linear_layer_hadmult [|update_gate,y;(scalar_matrix_add 1.0f -1.0f update_gate ctx),potential_new_state|] <| ctx
         | None ->
-            let update_gate = linear_layer_matmult [|W_u,x|] b_u >>= sigmoid <| context
+            let update_gate = linear_layer_matmult [|W_u,x|] b_u >>= sigmoid <| ctx
             // reset_gate is not used here.
-            let potential_new_state = linear_layer_matmult [|W_n,x|] b_n >>= activation <| context
-            linear_layer_hadmult [|scalar_matrix_add 1.0f -1.0f update_gate context, potential_new_state|] <| context
+            let potential_new_state = linear_layer_matmult [|W_n,x|] b_n >>= activation <| ctx
+            linear_layer_hadmult [|scalar_matrix_add 1.0f -1.0f update_gate ctx, potential_new_state|] <| ctx
         
-let inline createLSTMSublayer has_bias activation_for_block_input activation_for_block_output desired_hidden_size (input: d2M) (context: Context<_>) =
-    let [|W_z;W_i;W_f;W_o|] as ar1 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
-    let [|U_z;U_i;U_f;U_o|] as ar2 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
-    let [|P_i;P_f;P_o|] as ar3 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
+let inline createLSTMSublayer has_bias activation_for_block_input activation_for_block_output desired_hidden_size (input: d2M) (ctx: Context<_>) =
+    let [|W_z;W_i;W_f;W_o|] as ar1 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer ctx)
+    let [|U_z;U_i;U_f;U_o|] as ar2 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer ctx)
+    let [|P_i;P_f;P_o|] as ar3 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer ctx)
     let [|b_z;b_i;b_f;b_o|] as ar4 = 
-        let relu_ini = reluInitializer context
+        let relu_ini = reluInitializer ctx
         // The forget gate bias gets initialized to 1.0f for easier gradient propagation.
         // It might be worth trying the same thing with the input gate to the GRU.
-        let forget_bias_ini (x: d2M) = x.SetPrimal(1.0f, str context); x
+        let forget_bias_ini (x: d2M) = x.SetPrimal(1.0f, str ctx); x
         [|relu_ini;relu_ini;forget_bias_ini;relu_ini|]
         |> Array.map (fun ini -> if has_bias then d2M.create(desired_hidden_size,1) |> ini |> Some else None)
 
     [| ar1; ar2; ar3; Array.choose id ar4 |]
     |> Array.collect (Array.map D2M)
-    |> add_nodes context
+    |> add_nodes ctx
 
-    fun (y,x) (context: Context<_>) -> 
+    fun (y,x) (ctx: Context<_>) -> 
         match y with
         | Some (y, c) ->
-            let block_input = linear_layer_matmult [|W_z,x;U_z,y|] b_z >>= activation_for_block_input <| context
-            let input_gate = linear_layer_matmult [|W_i,x;U_i,y;P_i,c|] b_i >>= sigmoid <| context
-            let forget_gate = linear_layer_matmult [|W_f,x;U_f,y;P_f,c|] b_f >>= sigmoid <| context
-            let c' = linear_layer_hadmult [|block_input,input_gate;c,forget_gate|] context
-            let output_gate = linear_layer_matmult [|W_o,x;U_o,y;P_o,c'|] b_o >>= sigmoid <| context
-            hadmult (activation_for_block_output c' context) output_gate context, c'
+            let block_input = linear_layer_matmult [|W_z,x;U_z,y|] b_z >>= activation_for_block_input <| ctx
+            let input_gate = linear_layer_matmult [|W_i,x;U_i,y;P_i,c|] b_i >>= sigmoid <| ctx
+            let forget_gate = linear_layer_matmult [|W_f,x;U_f,y;P_f,c|] b_f >>= sigmoid <| ctx
+            let c' = linear_layer_hadmult [|block_input,input_gate;c,forget_gate|] ctx
+            let output_gate = linear_layer_matmult [|W_o,x;U_o,y;P_o,c'|] b_o >>= sigmoid <| ctx
+            hadmult (activation_for_block_output c' ctx) output_gate ctx, c'
         | None ->
-            let block_input = linear_layer_matmult [|W_z,x|] b_z >>= activation_for_block_input <| context
-            let input_gate = linear_layer_matmult [|W_i,x|] b_i >>= sigmoid <| context
+            let block_input = linear_layer_matmult [|W_z,x|] b_z >>= activation_for_block_input <| ctx
+            let input_gate = linear_layer_matmult [|W_i,x|] b_i >>= sigmoid <| ctx
             // In nearly forgot that forgetting to remove the forget gate would trigger the deadness check.
-            let c' = linear_layer_hadmult [|block_input,input_gate|] context
-            let output_gate = linear_layer_matmult [|W_o,x;P_o,c'|] b_o >>= sigmoid <| context
-            hadmult (activation_for_block_output c' context) output_gate context, c'
+            let c' = linear_layer_hadmult [|block_input,input_gate|] ctx
+            let output_gate = linear_layer_matmult [|W_o,x;P_o,c'|] b_o >>= sigmoid <| ctx
+            hadmult (activation_for_block_output c' ctx) output_gate ctx, c'
 
 /// Creates a 1D GRU layer with the specified hidden size and activation function.
 /// Tanh works well as the activation for the output block.
@@ -727,13 +727,13 @@ let tensor_mult_right_backwards_name = "tensor_mult_right_backwards"
 let tensor_mult_left_backwards_name = "tensor_mult_left_backwards"
 
 /// c <- broadcast_mult(a,b)
-let tensor_mult (a: d2M) (b: d2M) (c: d2M option) (context: Context<_>) =
+let tensor_mult (a: d2M) (b: d2M) (c: d2M option) (ctx: Context<_>) =
     let run_op_tensor (alpha: float32) (ext_a, a: d2M) beta (ext_b, b: d2M) delta (ext_c, c: d2M) =
-        let a_desc = (mem context).GetTensorDescriptor(a.NCHW)
-        let b_desc = (mem context).GetTensorDescriptor(b.NCHW)
-        let c_desc = (mem context).GetTensorDescriptor(c.NCHW)
+        let a_desc = (mem ctx).GetTensorDescriptor(a.NCHW)
+        let b_desc = (mem ctx).GetTensorDescriptor(b.NCHW)
+        let c_desc = (mem ctx).GetTensorDescriptor(c.NCHW)
 
-        cudnn.SetStream (str context)
+        cudnn.SetStream (str ctx)
         let _status = CudaDNN.CudaDNNNativeMethods.cudnnOpTensor(cudnn.Handle,tensor_mult_dsc.Desc,ref alpha,a_desc.Desc,ext_a a,ref beta,b_desc.Desc,ext_b b,ref delta,c_desc.Desc,ext_c c)
         if _status <> cudnnStatus.Success then raise <| new CudaDNNException(_status)
 
@@ -742,135 +742,135 @@ let tensor_mult (a: d2M) (b: d2M) (c: d2M option) (context: Context<_>) =
                 run_op_tensor 1.0f (P a) 1.0f (P b) 1.0f (P c)
                 c
             | None -> 
-                let c = getdMLike' a false context
+                let c = getdMLike' a false ctx
                 run_op_tensor 1.0f (P a) 1.0f (P b) 0.0f (P c)
                 c
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then
             let tensor_mult_left_backwards () =
                 deadness_check c a
                 <| fun _ ->
                     run_op_tensor 1.0f (A c) 1.0f (P b) 1.0f (A a)
-            push_tape context (tensor_mult_left_backwards_name,tensor_mult_left_backwards)
+            push_tape ctx (tensor_mult_left_backwards_name,tensor_mult_left_backwards)
 
         if hasAdjoint b then
             let tensor_mult_right_backwards () =
                 deadness_check c b
                 <| fun _ ->
-                    cudnn.SetStream (str context)
+                    cudnn.SetStream (str ctx)
 
-                    let c' = context.Workspace.ResizeIfd2M a.rc // Unlike the add, the mult has an extra step here.
-                    hadamaradMultiplicationModule.Value.A(str context, P a, A c, P c')
+                    let c' = ctx.Workspace.ResizeIfd2M a.rc // Unlike the add, the mult has an extra step here.
+                    hadamaradMultiplicationModule.Value.A(str ctx, P a, A c, P c')
 
                     let a_nchw = nchwBiasAdd a // Ugly hack to get cuDNN's ConvolutionBackwardBias to work with 2D matrices correctly.
                     let b_nchw = nchwBiasAdd b
-                    let aDesc = (mem context).GetTensorDescriptor a_nchw
-                    let bDesc = (mem context).GetTensorDescriptor b_nchw
+                    let aDesc = (mem ctx).GetTensorDescriptor a_nchw
+                    let bDesc = (mem ctx).GetTensorDescriptor b_nchw
 
                     cudnn.ConvolutionBackwardBias(1.0f,aDesc,extract_primal' c',1.0f,bDesc,extract_adjoint' b)
-            push_tape context (tensor_mult_right_backwards_name,tensor_mult_right_backwards)
+            push_tape ctx (tensor_mult_right_backwards_name,tensor_mult_right_backwards)
     c
 
-let inline private mi_function (W, x) (Uy) alpha beta1 beta2 b context =
+let inline private mi_function (W, x) (Uy) alpha beta1 beta2 b ctx =
     match Uy with
     | Some(U,y) ->
-        let wx = matmult W x context
-        let uy = matmult U y context
-        let wx_uy = hadmult wx uy context
-        let alpha_wx_uy = tensor_mult wx_uy alpha None context
-        tensor_mult uy beta1 (Some alpha_wx_uy) context |> ignore // I do not give these a name as they are bound to alpha_wx_uy
-        tensor_mult wx beta2 (Some alpha_wx_uy) context |> ignore
-        tensor_add' true 1.0f alpha_wx_uy 1.0f b context
+        let wx = matmult W x ctx
+        let uy = matmult U y ctx
+        let wx_uy = hadmult wx uy ctx
+        let alpha_wx_uy = tensor_mult wx_uy alpha None ctx
+        tensor_mult uy beta1 (Some alpha_wx_uy) ctx |> ignore // I do not give these a name as they are bound to alpha_wx_uy
+        tensor_mult wx beta2 (Some alpha_wx_uy) ctx |> ignore
+        tensor_add' true 1.0f alpha_wx_uy 1.0f b ctx
     | None ->
-        let wx = matmult W x context
-        let beta2_wx = tensor_mult wx beta2 None context
-        tensor_add' true 1.0f beta2_wx 1.0f b context
+        let wx = matmult W x ctx
+        let beta2_wx = tensor_mult wx beta2 None ctx
+        tensor_add' true 1.0f beta2_wx 1.0f b ctx
 
 /// MI stands for multiplicative integration from the paper "On Multiplicative Integration with Recurrent Neural Networks" by Yuhuai Wu et all.
-let inline createMI_RNNSublayer activation desired_hidden_size (input: d2M) (context: Context<_>) =
-    let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context
-    let U = d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context
+let inline createMI_RNNSublayer activation desired_hidden_size (input: d2M) (ctx: Context<_>) =
+    let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer ctx
+    let U = d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer ctx
     
-    let alpha = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.0f,str context); x
-    let beta1 = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x
-    let beta2 = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x
+    let alpha = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.0f,str ctx); x
+    let beta1 = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str ctx); x
+    let beta2 = d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str ctx); x
     let b = d2M.create(desired_hidden_size,1)
 
     [|W;U;alpha;beta1;beta2;b|]
     |> Array.map D2M
-    |> add_nodes context
+    |> add_nodes ctx
 
-    fun (y: d2M option,x: d2M) context ->
+    fun (y: d2M option,x: d2M) ctx ->
         match y with
-        | Some y -> mi_function (W,x) (Some(U,y)) alpha beta1 beta2 b >>= activation <| context
-        | None -> mi_function (W,x) None alpha beta1 beta2 b >>= activation <| context
+        | Some y -> mi_function (W,x) (Some(U,y)) alpha beta1 beta2 b >>= activation <| ctx
+        | None -> mi_function (W,x) None alpha beta1 beta2 b >>= activation <| ctx
 
 /// Creates a standard RNN layer with multiplicative integration.
 let inline MI_RNN1DLayer desired_hidden_size activation =
     create1DRNNLayer (createMI_RNNSublayer activation desired_hidden_size)
 
 /// GRU sublayer with multiplicative integration.
-let inline createMI_GRUSublayer activation desired_hidden_size (input: d2M) (context: Context<_>) =
-    let [|W_u;W_r;W_n|] as ar1 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
-    let [|U_u;U_r;U_n|] as ar2 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
-    let [|alpha_u;alpha_r;alpha_n|] as ar3 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.5f,str context); x)
-    let [|beta1_u;beta1_r;beta1_n|] as ar4 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.75f,str context); x)
-    let [|beta2_u;beta2_r;beta2_n|] as ar5 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.75f,str context); x)
+let inline createMI_GRUSublayer activation desired_hidden_size (input: d2M) (ctx: Context<_>) =
+    let [|W_u;W_r;W_n|] as ar1 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer ctx)
+    let [|U_u;U_r;U_n|] as ar2 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer ctx)
+    let [|alpha_u;alpha_r;alpha_n|] as ar3 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.5f,str ctx); x)
+    let [|beta1_u;beta1_r;beta1_n|] as ar4 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.75f,str ctx); x)
+    let [|beta2_u;beta2_r;beta2_n|] as ar5 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.75f,str ctx); x)
     let [|b_u;b_r;b_n|] as ar6 = Array.init 3 (fun _ -> d2M.create(desired_hidden_size,1))
 
     [| ar1; ar2; ar3; ar4; ar5; ar6 |]
     |> Array.collect (Array.map D2M)
-    |> add_nodes context
+    |> add_nodes ctx
 
-    fun (y,x) (context: Context<_>) -> 
+    fun (y,x) (ctx: Context<_>) -> 
         match y with
         | Some y ->
-            let update_gate = mi_function (W_u,x) (Some(U_u,y)) alpha_u beta1_u beta2_u b_u >>= sigmoid <| context
-            let reset_gate = mi_function (W_r,x) (Some(U_r,y)) alpha_r beta1_r beta2_r b_r >>= sigmoid <| context
+            let update_gate = mi_function (W_u,x) (Some(U_u,y)) alpha_u beta1_u beta2_u b_u >>= sigmoid <| ctx
+            let reset_gate = mi_function (W_r,x) (Some(U_r,y)) alpha_r beta1_r beta2_r b_r >>= sigmoid <| ctx
             let potential_new_state = 
-                let Uy = Some(U_n, hadmult reset_gate y context)
-                mi_function (W_n,x) Uy alpha_n beta1_n beta2_n b_n >>= activation <| context
-            linear_layer_hadmult [|update_gate,y;(scalar_matrix_add 1.0f -1.0f update_gate context),potential_new_state|] <| context
+                let Uy = Some(U_n, hadmult reset_gate y ctx)
+                mi_function (W_n,x) Uy alpha_n beta1_n beta2_n b_n >>= activation <| ctx
+            linear_layer_hadmult [|update_gate,y;(scalar_matrix_add 1.0f -1.0f update_gate ctx),potential_new_state|] <| ctx
         | None ->
-            let update_gate = mi_function (W_u,x) None alpha_u beta1_u beta2_u b_u >>= sigmoid <| context
+            let update_gate = mi_function (W_u,x) None alpha_u beta1_u beta2_u b_u >>= sigmoid <| ctx
             // reset_gate is not used here.
-            let potential_new_state = mi_function (W_n,x) None alpha_n beta1_n beta2_n b_n >>= activation <| context
-            linear_layer_hadmult [|scalar_matrix_add 1.0f -1.0f update_gate context, potential_new_state|] <| context
+            let potential_new_state = mi_function (W_n,x) None alpha_n beta1_n beta2_n b_n >>= activation <| ctx
+            linear_layer_hadmult [|scalar_matrix_add 1.0f -1.0f update_gate ctx, potential_new_state|] <| ctx
 
 /// Creates a GRU RNN layer with multiplicative integration.
 let inline MI_GRU1DLayer desired_hidden_size activation =
     create1DRNNLayer (createMI_GRUSublayer activation desired_hidden_size)
 
-let inline createMI_LSTMSublayer activation_for_block_input activation_for_block_output desired_hidden_size (input: d2M) (context: Context<_>) =
-    let [|W_z;W_i;W_f;W_o|] as ar1 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context)
-    let [|U_z;U_i;U_f;U_o|] as ar2 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context)
-    let [|alpha_z;alpha_i;alpha_f;alpha_o|] as ar3 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.0f,str context); x)
-    let [|beta1_z;beta1_i;beta1_f;beta1_o|] as ar4 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x)
-    let [|beta2_z;beta2_i;beta2_f;beta2_o|] as ar5 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str context); x)
+let inline createMI_LSTMSublayer activation_for_block_input activation_for_block_output desired_hidden_size (input: d2M) (ctx: Context<_>) =
+    let [|W_z;W_i;W_f;W_o|] as ar1 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,input.Rows) |> reluInitializer ctx)
+    let [|U_z;U_i;U_f;U_o|] as ar2 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer ctx)
+    let [|alpha_z;alpha_i;alpha_f;alpha_o|] as ar3 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(1.0f,str ctx); x)
+    let [|beta1_z;beta1_i;beta1_f;beta1_o|] as ar4 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str ctx); x)
+    let [|beta2_z;beta2_i;beta2_f;beta2_o|] as ar5 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1) |> fun x -> x.SetPrimal(0.5f,str ctx); x)
     let [|b_z;b_i;b_f;b_o|] as ar6 = Array.init 4 (fun _ -> d2M.create(desired_hidden_size,1))
-    b_f.SetPrimal(1.0f,str context) // For easier gradient propagation through the forget gate.
+    b_f.SetPrimal(1.0f,str ctx) // For easier gradient propagation through the forget gate.
 
     [| ar1; ar2; ar3; ar4; ar5; ar6 |]
     |> Array.collect (Array.map D2M)
-    |> add_nodes context
+    |> add_nodes ctx
 
-    fun (y,x) (context: Context<_>) -> 
+    fun (y,x) (ctx: Context<_>) -> 
         match y with
         | Some (y, c) ->
-            let block_input = mi_function (W_z,x) (Some(U_z,y)) alpha_z beta1_z beta2_z b_z >>= activation_for_block_input <| context
-            let input_gate = mi_function (W_i,x) (Some(U_i,y)) alpha_i beta1_i beta2_i b_i >>= sigmoid <| context
-            let forget_gate = mi_function (W_f,x) (Some(U_f,y)) alpha_f beta1_f beta2_f b_f >>= sigmoid <| context
-            let c' = linear_layer_hadmult [|block_input,input_gate;c,forget_gate|] context
-            let output_gate = mi_function (W_o,x) (Some(U_o,y)) alpha_o beta1_o beta2_o b_o >>= sigmoid <| context
-            hadmult (activation_for_block_output c' context) output_gate context, c'
+            let block_input = mi_function (W_z,x) (Some(U_z,y)) alpha_z beta1_z beta2_z b_z >>= activation_for_block_input <| ctx
+            let input_gate = mi_function (W_i,x) (Some(U_i,y)) alpha_i beta1_i beta2_i b_i >>= sigmoid <| ctx
+            let forget_gate = mi_function (W_f,x) (Some(U_f,y)) alpha_f beta1_f beta2_f b_f >>= sigmoid <| ctx
+            let c' = linear_layer_hadmult [|block_input,input_gate;c,forget_gate|] ctx
+            let output_gate = mi_function (W_o,x) (Some(U_o,y)) alpha_o beta1_o beta2_o b_o >>= sigmoid <| ctx
+            hadmult (activation_for_block_output c' ctx) output_gate ctx, c'
         | None ->
-            let block_input = mi_function (W_z,x) None alpha_z beta1_z beta2_z b_z >>= activation_for_block_input <| context
-            let input_gate = mi_function (W_i,x) None alpha_i beta1_i beta2_i b_i >>= sigmoid <| context
+            let block_input = mi_function (W_z,x) None alpha_z beta1_z beta2_z b_z >>= activation_for_block_input <| ctx
+            let input_gate = mi_function (W_i,x) None alpha_i beta1_i beta2_i b_i >>= sigmoid <| ctx
             // In nearly forgot that forgetting to remove the forget gate would trigger the deadness check.
-            let c' = hadmult block_input input_gate context
-            let output_gate = mi_function (W_o,x) None alpha_o beta1_o beta2_o b_o >>= sigmoid <| context
-            hadmult (activation_for_block_output c' context) output_gate context, c'
+            let c' = hadmult block_input input_gate ctx
+            let output_gate = mi_function (W_o,x) None alpha_o beta1_o beta2_o b_o >>= sigmoid <| ctx
+            hadmult (activation_for_block_output c' ctx) output_gate ctx, c'
 
 /// Tanh works well as the activation for the input and the output block.
 let inline MI_LSTM1DLayer hidden_size activation_for_block_input activation_for_block_output = 

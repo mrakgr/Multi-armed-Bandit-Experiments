@@ -19,8 +19,8 @@ open System.Runtime.InteropServices
 
 // Initialize the context. Analogous to a CPU process. Cuda tries to offload as much as possible during context creation so there aren't
 // any unexpected delays later.
-let ctx = new CudaContext(false)
-let numSm = ctx.GetDeviceInfo().MultiProcessorCount // The number of streaming multiprocessors on the device.
+let cuda_context = new CudaContext(false)
+let numSm = cuda_context.GetDeviceInfo().MultiProcessorCount // The number of streaming multiprocessors on the device.
 
 // Set the Cuda libraries handles to the above stream.
 let cublas = CudaBlas(PointerMode.Host,AtomicsMode.Allowed) // Better performance for some solver functions with atomics allowed. The Spiral library does not use them though.
@@ -58,7 +58,7 @@ let inline to_dev (host_ar: 't []) =
 let inline to_host (dev_ar: CudaDeviceVariable<'t>) =
     let h_a = Array.zeroCreate<'t> (int dev_ar.Size)
     dev_ar.CopyToHost(h_a)
-    ctx.Synchronize()
+    cuda_context.Synchronize()
     h_a
 
 /// Copies the device array to host. Extends the CudaDeviceVariable class.
@@ -665,7 +665,7 @@ let load_kernel kernel_code kernel_name =
         
     if IO.File.Exists(kernel_path) 
     then
-        ctx.LoadKernelPTX(kernel_path,kernel_name) // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
+        cuda_context.LoadKernelPTX(kernel_path,kernel_name) // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
     else
         let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
         try k.Compile([|"-arch=compute_30"|])
@@ -675,7 +675,7 @@ let load_kernel kernel_code kernel_name =
             reraise()
         let ptx = k.GetPTX()
         IO.File.WriteAllBytes(kernel_path,ptx)
-        ctx.LoadKernelPTX(ptx,kernel_name)
+        cuda_context.LoadKernelPTX(ptx,kernel_name)
 
 let inline map_launcher(str: CudaStream, kernel: CudaKernel, total_size: int, [<ParamArray>] args: obj[]) =
     let block_size = 256
@@ -1316,24 +1316,24 @@ let inline nodes (x: Context<_>) = x.Nodes
 let inline is_inference_only (x: Context<_>) = x.IsInferenceOnly
 
 /// Helper for the Getd2M.
-let inline getd2M is_constant (rc: int*int) (context: Context<_>) =
-    context.Mem.Getd2M(is_constant,rc,context.IsInferenceOnly,context.Str)
+let inline getd2M is_constant (rc: int*int) (ctx: Context<_>) =
+    ctx.Mem.Getd2M(is_constant,rc,ctx.IsInferenceOnly,ctx.Str)
 
 /// Helper for the Getd4M.
-let inline getd4M is_constant (nchw: int*int*int*int) (context: Context<_>) =
-    context.Mem.Getd4M(is_constant,nchw,context.IsInferenceOnly,context.Str)
+let inline getd4M is_constant (nchw: int*int*int*int) (ctx: Context<_>) =
+    ctx.Mem.Getd4M(is_constant,nchw,ctx.IsInferenceOnly,ctx.Str)
 
 /// Gets a dM the same size as the first one from the object pool.
 let inline getdMLike (x: ^a) (p: ObjectPool) is_constant is_inference_only str = // TODO: Like copy, refactor this one too.
     (^a: (member GetFromObjectPool: ObjectPool * bool * bool * CudaStream -> ^a) x, p, is_constant, is_inference_only, str)
 
 /// Gets a dM the same size as the first one from the object pool. The same as the first version except it has less boilerplate.
-let inline getdMLike' (x: ^a) is_constant context =
-    (^a: (member GetFromObjectPool: ObjectPool * bool * bool * CudaStream -> ^a) x, mem context, is_constant, is_inference_only context, str context)
+let inline getdMLike' (x: ^a) is_constant ctx =
+    (^a: (member GetFromObjectPool: ObjectPool * bool * bool * CudaStream -> ^a) x, mem ctx, is_constant, is_inference_only ctx, str ctx)
 
 /// Copies the dM type using the object pool.
-let inline copy (x: ^a) is_constant context =
-    (^a: (member CopyUsingObjectPool: ObjectPool * bool * bool * CudaStream -> ^a) x, mem context, is_constant, is_inference_only context, str context)
+let inline copy (x: ^a) is_constant ctx =
+    (^a: (member CopyUsingObjectPool: ObjectPool * bool * bool * CudaStream -> ^a) x, mem ctx, is_constant, is_inference_only ctx, str ctx)
 
 /// Returns matrix of the same dimensions at the current one without copying the values.
 let inline ghostCopy is_constant (x: ^a) =
@@ -1344,7 +1344,7 @@ let inline ghostCopyBias is_constant (x: ^a) =
     (^a: (member GhostCopyBias: bool -> ^a) x, is_constant)
 
 /// A helper for setting primals. Is mutable.
-let inline setPrimal' (v,context) x = setPrimal x (v, str context); x
+let inline setPrimal' (v,ctx) x = setPrimal x (v, str ctx); x
 
 /// Backwards function names for debugging. Simply adding a reference is much cheaper than instantiating a string on the fly.
 let matmult_backward_left_name = "matmult_backward_left"
@@ -1370,7 +1370,7 @@ let softmax_channel_backward_name = "softmax_channel_backward"
 let clip_backward_name = "clip_backward"
 
 ///// Matrix-matrix multiply.
-let inline private matmult' (prev_output : d2M option) (a:d2M, b:d2M) (context: Context<_>) = 
+let inline private matmult' (prev_output : d2M option) (a:d2M, b:d2M) (ctx: Context<_>) = 
     // Note: This function is generic enough that a,b can be anything.
     // If that is necessary, the type annotation can be removed.
     let c = 
@@ -1378,140 +1378,140 @@ let inline private matmult' (prev_output : d2M option) (a:d2M, b:d2M) (context: 
         | None ->
             let num_rows = rows a
             let num_cols = cols b
-            (mem context).Getd2M(false,(num_rows,num_cols),(is_inference_only context),(str context))
+            (mem ctx).Getd2M(false,(num_rows,num_cols),(is_inference_only ctx),(str ctx))
             |> fun c ->
-                gemm (str context) nT nT 1.0f (P' a) (P' b) 0.0f (P' c)
+                gemm (str ctx) nT nT 1.0f (P' a) (P' b) 0.0f (P' c)
                 c
         | Some c ->
-            gemm (str context) nT nT 1.0f (P' a) (P' b) 1.0f (P' c)
+            gemm (str ctx) nT nT 1.0f (P' a) (P' b) 1.0f (P' c)
             c
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then 
             let matmult_backward_left () = 
                 deadness_check c a <| fun _ -> 
-                    gemm (str context) nT T 1.0f (A' c) (P' b) 1.0f (A' a)
-            push_tape context (matmult_backward_left_name,matmult_backward_left)
+                    gemm (str ctx) nT T 1.0f (A' c) (P' b) 1.0f (A' a)
+            push_tape ctx (matmult_backward_left_name,matmult_backward_left)
 
         if hasAdjoint b then 
             let matmult_backward_right () = 
                 deadness_check c b <| fun _ -> 
-                    gemm (str context) T nT 1.0f (P' a) (A' c) 1.0f (A' b)
-            push_tape context (matmult_backward_right_name,matmult_backward_right)
+                    gemm (str ctx) T nT 1.0f (P' a) (A' c) 1.0f (A' b)
+            push_tape ctx (matmult_backward_right_name,matmult_backward_right)
     c
 
 let inline matmult a b = matmult' None (a, b)
 
-let inline tensor_add' add_to_left alpha (left : ^a) beta (right : ^a) (context: Context<_>) =
+let inline tensor_add' add_to_left alpha (left : ^a) beta (right : ^a) (ctx: Context<_>) =
     let left_nchw = nchw left
     let right_nchw = nchw right
-    let leftDesc = (mem context).GetTensorDescriptor left_nchw
-    let rightDesc = (mem context).GetTensorDescriptor right_nchw
+    let leftDesc = (mem ctx).GetTensorDescriptor left_nchw
+    let rightDesc = (mem ctx).GetTensorDescriptor right_nchw
 
     let output = 
         if add_to_left = false then
-            getdMLike left (mem context) false (is_inference_only context) (str context)
+            getdMLike left (mem ctx) false (is_inference_only ctx) (str ctx)
             |> fun output ->
-                geam (str context) nT nT 1.0f (P' left) 0.0f (P' output) (P' output)
+                geam (str ctx) nT nT 1.0f (P' left) 0.0f (P' output) (P' output)
                 output
         else 
             left
 
     if left_nchw <> right_nchw then
-        cudnn.SetStream(str context)
+        cudnn.SetStream(str ctx)
         cudnn.AddTensor(beta,rightDesc,extract_primal' right, alpha,leftDesc,extract_primal' output) // Add right to output.
     else 
-        geam (str context) nT nT beta (P' right) alpha (P' output) (P' output)
+        geam (str ctx) nT nT beta (P' right) alpha (P' output) (P' output)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint right then 
             let tensor_add_right_backwards () =
                 deadness_check output right
                 <| fun _ ->
                     if left_nchw = right_nchw then
-                        saxpy (str context) beta (A' output) (A' right)
+                        saxpy (str ctx) beta (A' output) (A' right)
                     else
-                        cudnn.SetStream (str context)
+                        cudnn.SetStream (str ctx)
                         let left_nchw = nchwBiasAdd left // Ugly hack to get cuDNN to work with 2D matrices.
                         let right_nchw = nchwBiasAdd right
-                        let leftDesc = (mem context).GetTensorDescriptor left_nchw
-                        let rightDesc = (mem context).GetTensorDescriptor right_nchw
+                        let leftDesc = (mem ctx).GetTensorDescriptor left_nchw
+                        let rightDesc = (mem ctx).GetTensorDescriptor right_nchw
                         cudnn.ConvolutionBackwardBias(beta,leftDesc,extract_adjoint' output,1.0f,rightDesc,extract_adjoint' right)
-            push_tape context (tensor_add_right_backwards_name,tensor_add_right_backwards)
+            push_tape ctx (tensor_add_right_backwards_name,tensor_add_right_backwards)
 
         if add_to_left = false && hasAdjoint left then // No point in adding the adjoint to itself.
             let tensor_add_left_backwards () = 
                 deadness_check output left 
                 <| fun _ -> 
-                    saxpy (str context) alpha (A' output) (A' left)
-            push_tape context (tensor_add_left_backwards_name,tensor_add_left_backwards)
+                    saxpy (str ctx) alpha (A' output) (A' left)
+            push_tape ctx (tensor_add_left_backwards_name,tensor_add_left_backwards)
     output
 
-let inline linear_layer_matmult (mm: (d2M*d2M) []) (bias: d2M option) (context: Context<_>) =
+let inline linear_layer_matmult (mm: (d2M*d2M) []) (bias: d2M option) (ctx: Context<_>) =
     mm
     |> Array.fold (fun prev_output input -> 
-        matmult' prev_output input context |> Some
+        matmult' prev_output input ctx |> Some
         ) None
     |>  function
         | None -> failwith "There must be one input in mm"
         | Some left ->
             match bias with
             | None -> left
-            | Some right -> tensor_add' true 1.0f left 1.0f right context
+            | Some right -> tensor_add' true 1.0f left 1.0f right ctx
 
 /// The activation function. Zeroes out the target primal during the call.
-let inline activation_forward mode (input : ^a) (context: Context<_>) =
+let inline activation_forward mode (input : ^a) (ctx: Context<_>) =
     let input_sizes = nchw input
-    let srcTensorDesc = (mem context).GetTensorDescriptor input_sizes
+    let srcTensorDesc = (mem ctx).GetTensorDescriptor input_sizes
 
-    let output = getdMLike input (mem context) false (is_inference_only context) (str context)
+    let output = getdMLike input (mem ctx) false (is_inference_only ctx) (str ctx)
 
-    cudnn.SetStream (str context)
+    cudnn.SetStream (str ctx)
     cudnn.ActivationForward(mode,1.0f,srcTensorDesc,extract_primal' input,0.0f,srcTensorDesc,extract_primal' output)
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint input then 
             let activation_backward () =
                 deadness_check output input 
                 <| fun _ -> 
-                    cudnn.SetStream (str context)
+                    cudnn.SetStream (str ctx)
                     cudnn.ActivationBackward(mode,1.0f,srcTensorDesc,extract_primal' output,srcTensorDesc,extract_adjoint' output,srcTensorDesc,extract_primal' input,1.0f,srcTensorDesc,extract_adjoint' input)
-            push_tape context (activation_backward_name,activation_backward)
+            push_tape ctx (activation_backward_name,activation_backward)
     output
 
 /// The pooling function. Zeroes out the target primal during the call.
-let inline pooling_forward p (input : d4M) (context: Context<_>) =
-    let poolingDescriptor = (mem context).GetPoolingDescriptor p
+let inline pooling_forward p (input : d4M) (ctx: Context<_>) =
+    let poolingDescriptor = (mem ctx).GetPoolingDescriptor p
     let input_sizes = nchw input
-    let srcTensorDesc = (mem context).GetTensorDescriptor input_sizes
+    let srcTensorDesc = (mem ctx).GetTensorDescriptor input_sizes
     let dest_sizes = poolingDescriptor.GetPooling2dForwardOutputDim srcTensorDesc
 
-    let output = (mem context).Getd4M(false,nchw input,(is_inference_only context),(str context))
+    let output = (mem ctx).Getd4M(false,nchw input,(is_inference_only ctx),(str ctx))
 
-    let dstTensorDesc = (mem context).GetTensorDescriptor dest_sizes
+    let dstTensorDesc = (mem ctx).GetTensorDescriptor dest_sizes
 
-    cudnn.SetStream (str context)
+    cudnn.SetStream (str ctx)
     cudnn.PoolingForward(poolingDescriptor,1.0f,srcTensorDesc,extract_primal' input,0.0f,dstTensorDesc,extract_primal' output)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint input then 
             let pooling_backward () =
                 deadness_check output input 
                 <| fun _ ->
-                    cudnn.SetStream (str context)
+                    cudnn.SetStream (str ctx)
                     cudnn.PoolingBackward(poolingDescriptor,1.0f,srcTensorDesc,extract_primal' output, srcTensorDesc,
                                             extract_adjoint' output,dstTensorDesc,extract_primal' input,1.0f,dstTensorDesc,extract_adjoint' input)
-            push_tape context (pooling_backward_name,pooling_backward)
+            push_tape ctx (pooling_backward_name,pooling_backward)
     output
 
 
-let inline private convolutional_forward' (prev_output: d4M option) (convPar, data : d4M, filter : d4M) (context: Context<_>) =
+let inline private convolutional_forward' (prev_output: d4M option) (convPar, data : d4M, filter : d4M) (ctx: Context<_>) =
     let data_sizes = data.nchw
     let filter_sizes = filter.nchw
 
-    let srcTensorDesc = (mem context).GetTensorDescriptor data_sizes
+    let srcTensorDesc = (mem ctx).GetTensorDescriptor data_sizes
     
-    let filterDesc = (mem context).GetFilterDescriptor filter_sizes
-    let convDesc = (mem context).GetConvolutionDescriptor convPar
+    let filterDesc = (mem ctx).GetFilterDescriptor filter_sizes
+    let convDesc = (mem ctx).GetConvolutionDescriptor convPar
 
     let dims, output = 
         let dims = convDesc.GetConvolution2dForwardOutputDim(srcTensorDesc,filterDesc)
@@ -1521,9 +1521,9 @@ let inline private convolutional_forward' (prev_output: d4M option) (convPar, da
             if dims <> prev_dims then failwith "dims <> prev_dims in linear_layer_conv"
             prev_dims, prev_output
         | None ->
-            dims, (mem context).Getd4M(false,dims,(is_inference_only context),(str context))
+            dims, (mem ctx).Getd4M(false,dims,(is_inference_only ctx),(str ctx))
 
-    let dstTensorDesc = (mem context).GetTensorDescriptor dims
+    let dstTensorDesc = (mem ctx).GetTensorDescriptor dims
 
     let algo = 
         cudnn.GetConvolutionForwardAlgorithm(
@@ -1532,17 +1532,17 @@ let inline private convolutional_forward' (prev_output: d4M option) (convPar, da
     let _ = 
         let workspace = 
             cudnn.GetConvolutionForwardWorkspaceSize(srcTensorDesc, filterDesc, convDesc, dstTensorDesc, algo) 
-            |> int |> (workspace context).ResizeIf
+            |> int |> (workspace ctx).ResizeIf
 
         let beta = 
             match prev_output with
             | None -> 0.0f
             | Some _ -> 1.0f
 
-        cudnn.SetStream (str context)
+        cudnn.SetStream (str ctx)
         cudnn.ConvolutionForward(1.0f,srcTensorDesc,extract_primal' data,filterDesc,extract_primal' filter,convDesc,algo,workspace,beta,dstTensorDesc,extract_primal' output) // Don't zero out the previous output.
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint filter then 
             let convolution_backwards_filter () =
                 deadness_check output filter 
@@ -1554,13 +1554,13 @@ let inline private convolutional_forward' (prev_output: d4M option) (convPar, da
 
                     let workspace =
                         cudnn.GetConvolutionBackwardFilterWorkspaceSize(srcTensorDesc,dstTensorDesc,convDesc,filterDesc,algo) 
-                        |> int |> (workspace context).ResizeIf
+                        |> int |> (workspace ctx).ResizeIf
 
-                    cudnn.SetStream (str context)
+                    cudnn.SetStream (str ctx)
                     cudnn.ConvolutionBackwardFilter(
                         1.0f,srcTensorDesc,extract_primal' data,dstTensorDesc,extract_adjoint' output,
                         convDesc,algo,workspace,1.0f,filterDesc,extract_adjoint' filter)
-            push_tape context (convolution_backwards_filter_name,convolution_backwards_filter)
+            push_tape ctx (convolution_backwards_filter_name,convolution_backwards_filter)
 
         if hasAdjoint data then 
             let convolution_backwards_data () =
@@ -1573,13 +1573,13 @@ let inline private convolutional_forward' (prev_output: d4M option) (convPar, da
 
                     let workspace = 
                         cudnn.GetConvolutionBackwardDataWorkspaceSize(filterDesc,dstTensorDesc,convDesc,srcTensorDesc,algo) 
-                        |> int |> (workspace context).ResizeIf
+                        |> int |> (workspace ctx).ResizeIf
 
-                    cudnn.SetStream (str context)
+                    cudnn.SetStream (str ctx)
                     cudnn.ConvolutionBackwardData(
                         1.0f,filterDesc,extract_primal' filter,dstTensorDesc,
                         extract_adjoint' output,convDesc,1.0f,algo,workspace,srcTensorDesc,extract_adjoint' data)
-            push_tape context (convolution_backwards_data_name,convolution_backwards_data)
+            push_tape ctx (convolution_backwards_data_name,convolution_backwards_data)
 
     output
 
@@ -1589,8 +1589,8 @@ let inline convolution_forward convPar (data : d4M) (filter : d4M) =
     
 let inline batch_normalization_forward 
         bnMode (bnScale : ^a) (bnBias : ^a) (bnRunningMean : ^a) 
-        (bnRunningVariance : ^a) exponentialAverageFactor (input : ^a) (context: Context<_>) =
-    // Warning: Out of all the library functions, this one modifies the running context during the forward pass, so is
+        (bnRunningVariance : ^a) exponentialAverageFactor (input : ^a) (ctx: Context<_>) =
+    // Warning: Out of all the library functions, this one modifies the running ctx during the forward pass, so is
     // dangerously mutable. I had to spend a lot of time figuring out why the gradient check is not working due to that.
         
     // BN in particular is finicky. When I set the exponential factor to low of a constant value (such as 0.001) or
@@ -1601,10 +1601,10 @@ let inline batch_normalization_forward
     // BatchNormalizationForwardInference is not used instead of BatchNormalizationForwardTraining otherwise it won't work.
 
     let input_sizes = nchw input
-    let srcTensorDesc = (mem context).GetTensorDescriptor input_sizes
+    let srcTensorDesc = (mem ctx).GetTensorDescriptor input_sizes
 
     let bnDesc = 
-        (mem context).GetBNDescriptor (input_sizes, bnMode, srcTensorDesc)
+        (mem ctx).GetBNDescriptor (input_sizes, bnMode, srcTensorDesc)
 
     let _ =
         let mutable d,n,c,h,w,sn,sc,sh,sw = cudnnDataType.Double,0,0,0,0,0,0,0,0
@@ -1617,12 +1617,12 @@ let inline batch_normalization_forward
 
     let alpha, beta = 1.0f, 0.0f
     let epsilon = 1e-5
-    let bnSavedMean = getdMLike bnScale (mem context) true (is_inference_only context) (str context)
-    let bnSavedVariance = getdMLike bnScale (mem context) true (is_inference_only context) (str context)
-    let output = getdMLike input (mem context) false (is_inference_only context) (str context)
+    let bnSavedMean = getdMLike bnScale (mem ctx) true (is_inference_only ctx) (str ctx)
+    let bnSavedVariance = getdMLike bnScale (mem ctx) true (is_inference_only ctx) (str ctx)
+    let output = getdMLike input (mem ctx) false (is_inference_only ctx) (str ctx)
 
-    if (is_inference_only context) = false then
-        cudnn.SetStream (str context)
+    if (is_inference_only ctx) = false then
+        cudnn.SetStream (str ctx)
         cudnn.BatchNormalizationForwardTraining(
             bnMode, alpha, beta, srcTensorDesc, extract_primal' input, srcTensorDesc,
             extract_primal' output, bnDesc, extract_primal' bnScale, extract_primal' bnBias,
@@ -1649,18 +1649,18 @@ let inline batch_normalization_forward
                     // It is really annoying how trying to apply batch norm to the first input requires
                     // making use of the workspace.
                     if hasAdjoint input then extract_adjoint' input 
-                    else (workspace context).ResizeIf <| size input
+                    else (workspace ctx).ResizeIf <| size input
 
-                cudnn.SetStream (str context)
+                cudnn.SetStream (str ctx)
                 cudnn.BatchNormalizationBackward(
                     bnMode, dx_alpha, dx_beta, param_alpha, param_beta, srcTensorDesc,
                     extract_primal' input, srcTensorDesc, extract_adjoint' output, srcTensorDesc,
                     input_adjoint, bnDesc, extract_primal' bnScale, extract_adjoint' bnScale,
                     extract_adjoint' bnBias, epsilon, extract_primal' bnSavedMean, extract_primal' bnSavedVariance)
 
-        push_tape context (batch_normalization_backward_name,batch_normalization_backward)
+        push_tape ctx (batch_normalization_backward_name,batch_normalization_backward)
     else
-            cudnn.SetStream (str context)
+            cudnn.SetStream (str ctx)
             cudnn.BatchNormalizationForwardInference(
                 bnMode, alpha, beta, srcTensorDesc,extract_primal' input, srcTensorDesc,
                 extract_primal' output, bnDesc, extract_primal' bnScale, extract_primal' bnBias,
@@ -1670,58 +1670,58 @@ let inline batch_normalization_forward
 
     output
     
-let inline linear_layer_conv (convs: (ConvolutionParameters*d4M*d4M) []) (bias: d4M option) (context: Context<_>) =
+let inline linear_layer_conv (convs: (ConvolutionParameters*d4M*d4M) []) (bias: d4M option) (ctx: Context<_>) =
     let folder prev_output input = 
         match prev_output with
         | Some (output) ->
-            convolutional_forward' (Some output) input context |> Some
+            convolutional_forward' (Some output) input ctx |> Some
         | None ->
-            convolutional_forward' None input context |> Some
+            convolutional_forward' None input ctx |> Some
     
     Array.fold folder None convs
     |>  function
         | Some(left) ->
             match bias with
             | None -> left
-            | Some right -> tensor_add' true 1.0f left 1.0f right context
+            | Some right -> tensor_add' true 1.0f left 1.0f right ctx
         | None -> failwith "linear_layer_conv has to have at least one input"
 
 
 let hadamaradMultiplicationModule = lazy new DeviceBinaryTransformModule("x*y;", "HadMult")
 let hadamaradMultiplicationErrorModule = lazy new DeviceTrinaryTransformModule("x*y+z;", "HadMultError")
 /// Hadamarad (elementwise) multiplication function.
-let inline private hadmult' (prev_output : ^a option) (a: ^a,b: ^a) (context: Context<_>) =
+let inline private hadmult' (prev_output : ^a option) (a: ^a,b: ^a) (ctx: Context<_>) =
     let c = 
         match prev_output with
         | Some c -> 
-            hadamaradMultiplicationErrorModule.Value.A((str context), P a, P b, P c, P c)
+            hadamaradMultiplicationErrorModule.Value.A((str ctx), P a, P b, P c, P c)
             c
         | None -> 
-            getdMLike a (mem context) false (is_inference_only context) (str context)
+            getdMLike a (mem ctx) false (is_inference_only ctx) (str ctx)
             |> fun c -> 
-                hadamaradMultiplicationModule.Value.A((str context), P a, P b, P c)
+                hadamaradMultiplicationModule.Value.A((str ctx), P a, P b, P c)
                 c
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then 
             let hadmult_backward_left () = 
                 deadness_check c a 
                 <| fun _ ->
-                    hadamaradMultiplicationErrorModule.Value.A((str context), P b, A c, A a, A a)
-            push_tape context (hadmult_backward_left_name,hadmult_backward_left)
+                    hadamaradMultiplicationErrorModule.Value.A((str ctx), P b, A c, A a, A a)
+            push_tape ctx (hadmult_backward_left_name,hadmult_backward_left)
         if hasAdjoint b then 
             let hadmult_backward_right () = 
                 deadness_check c b 
                 <| fun _ ->
-                    hadamaradMultiplicationErrorModule.Value.A((str context), P a, A c, A b, A b)
-            push_tape context (hadmult_backward_right_name,hadmult_backward_right)
+                    hadamaradMultiplicationErrorModule.Value.A((str ctx), P a, A c, A b, A b)
+            push_tape ctx (hadmult_backward_right_name,hadmult_backward_right)
     c
 
 let inline hadmult (a: ^a) (b: ^a) = hadmult' None (a, b)
-let inline linear_layer_hadmult (hads: (^a * ^a)[]) (context: Context<_>) = 
+let inline linear_layer_hadmult (hads: (^a * ^a)[]) (ctx: Context<_>) = 
     hads 
     |> Array.fold (fun prev_output input ->
-        hadmult' prev_output input context |> Some 
+        hadmult' prev_output input ctx |> Some 
         ) None
     |>  function
         | None -> failwith "linear_layer_hadmult requires at least one input"
@@ -1731,18 +1731,18 @@ let squareModule = lazy new DeviceUnaryTransformModule("x*x;","Square")
 //y = error
 //z = previous adjoint value
 let squareErrorModule = lazy new DeviceTrinaryTransformModule("2.0f*x*y + z;","SquareError")
-let inline square (a:^a) (context: Context<_>) =
-    let c = getdMLike a (mem context) false (is_inference_only context) (str context)
+let inline square (a:^a) (ctx: Context<_>) =
+    let c = getdMLike a (mem ctx) false (is_inference_only ctx) (str ctx)
 
-    squareModule.Value.A((str context), P a, P c)
+    squareModule.Value.A((str ctx), P a, P c)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then 
             let square_backward () = 
                 deadness_check c a 
                 <| fun _ -> 
-                    squareErrorModule.Value.A((str context), P a, A c, A a, A a)
-            push_tape context (square_backward_name,square_backward)
+                    squareErrorModule.Value.A((str ctx), P a, A c, A a, A a)
+            push_tape ctx (square_backward_name,square_backward)
     c
 
 /// This one is for debugging currently
@@ -1750,33 +1750,33 @@ let squareSumModule = lazy new DeviceUnaryMapSumModule("x*x;", "SquareSum")
 
 let sumModule = lazy new DeviceUnaryMapSumModule("x;", "Sum")
 let sumErrorModule = lazy new DeviceUnaryCoefTransformModule("coef_x + x;", "SumError")
-let inline sum (a: ^a) (context: Context<_>) =
+let inline sum (a: ^a) (ctx: Context<_>) =
     let c = Df.create 0.0f
 
-    c.P := sumModule.Value.A((str context), P a)
+    c.P := sumModule.Value.A((str ctx), P a)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then 
             let sum_backward () = 
                 if !c.A <> 0.0f then 
                     deadIs a Alive
-                    sumErrorModule.Value.A((str context), !c.A, A a, A a)
+                    sumErrorModule.Value.A((str ctx), !c.A, A a, A a)
                 else deadIs a Dead
-            push_tape context (sum_backward_name, sum_backward)
+            push_tape ctx (sum_backward_name, sum_backward)
     c
 
 /// alpha * a
-let inline scale (alpha: float32) (a:Df) (context: Context<_>) =
+let inline scale (alpha: float32) (a:Df) (ctx: Context<_>) =
     let c = Df.create 0.0f
     c.P := lazy (alpha * a.P.Value.Value)
     
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         let scale_backward () = a.A := alpha * !c.A + !a.A
-        push_tape context (scale_backward_name,scale_backward)
+        push_tape ctx (scale_backward_name,scale_backward)
 
     c
 
-let inline sum_scalars (a:Df seq) (context: Context<_>) =
+let inline sum_scalars (a:Df seq) (ctx: Context<_>) =
     let c = Df.create 0.0f
     c.P :=
         lazy 
@@ -1785,9 +1785,9 @@ let inline sum_scalars (a:Df seq) (context: Context<_>) =
                 t <- t + l.P.Value.Value
             t
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         let sum_scalars_backwards () = for l in a do l.A := !c.A + !l.A
-        push_tape context (sum_scalars_backwards_name,sum_scalars_backwards)
+        push_tape ctx (sum_scalars_backwards_name,sum_scalars_backwards)
 
     c
 
@@ -1795,18 +1795,18 @@ let logModule = lazy new DeviceUnaryTransformModule("logf(x);","Log")
 //y=error
 //z=previous adjoint
 let logErrorModule = lazy new DeviceTrinaryTransformModule("y / x + z;","LogError")
-let inline log_ (a:^a) (context: Context<_>) =
-    let c = getdMLike a (mem context) false (is_inference_only context) (str context)
+let inline log_ (a:^a) (ctx: Context<_>) =
+    let c = getdMLike a (mem ctx) false (is_inference_only ctx) (str ctx)
 
-    logModule.Value.A((str context), P a, P c)
+    logModule.Value.A((str ctx), P a, P c)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then
             let log_backward () = 
                 deadness_check c a 
                 <| fun _ -> 
-                    logErrorModule.Value.A((str context), P a, A c, A a, A a)
-            push_tape context (log_backward_name,log_backward)
+                    logErrorModule.Value.A((str ctx), P a, A c, A a, A a)
+            push_tape ctx (log_backward_name,log_backward)
 
     c
 
@@ -1814,60 +1814,60 @@ let inline log_ (a:^a) (context: Context<_>) =
 //coef_y = coef
 let scalarMatrixAddModule = lazy new DeviceBinaryCoefTransformModule("coef_x + coef_y*x;","ScalarMatrixAdd")
 /// o <- scalar + coef*a
-let inline scalar_matrix_add scalar coef (a:^a) (context: Context<_>) =
-    let c = getdMLike a (mem context) false (is_inference_only context) (str context)
+let inline scalar_matrix_add scalar coef (a:^a) (ctx: Context<_>) =
+    let c = getdMLike a (mem ctx) false (is_inference_only ctx) (str ctx)
 
-    scalarMatrixAddModule.Value.A((str context), scalar, P a, coef, P a, P c)
+    scalarMatrixAddModule.Value.A((str ctx), scalar, P a, coef, P a, P c)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then
             let scalar_matrix_add_backward () = 
                 deadness_check c a
                 <| fun _ -> 
-                    saxpy (str context) coef (A' c) (A' a)
-            push_tape context (scalar_matrix_add_backward_name,scalar_matrix_add_backward)
+                    saxpy (str ctx) coef (A' c) (A' a)
+            push_tape ctx (scalar_matrix_add_backward_name,scalar_matrix_add_backward)
     c
 
-let inline add alpha (a: ^a) beta (b: ^a) (context: Context<_>) =
-    let c = getdMLike a (mem context) false (is_inference_only context) (str context)
+let inline add alpha (a: ^a) beta (b: ^a) (ctx: Context<_>) =
+    let c = getdMLike a (mem ctx) false (is_inference_only ctx) (str ctx)
 
-    geam (str context) nT nT alpha (P' a) beta (P' b) (P' c)
+    geam (str ctx) nT nT alpha (P' a) beta (P' b) (P' c)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then
             let add_backward_left () = 
                 deadness_check c a
                 <| fun _ ->
-                    saxpy (str context) alpha (A' c) (A' a)
-            push_tape context (add_backward_left_name, add_backward_left)
+                    saxpy (str ctx) alpha (A' c) (A' a)
+            push_tape ctx (add_backward_left_name, add_backward_left)
         if hasAdjoint b then
             let add_backward_right () = 
                 deadness_check c b
                 <| fun _ ->
-                    saxpy (str context) beta (A' c) (A' b)
-            push_tape context (add_backward_right_name,add_backward_right)
+                    saxpy (str ctx) beta (A' c) (A' b)
+            push_tape ctx (add_backward_right_name,add_backward_right)
     c
 
-let inline softmax_instance_forward (data : ^a) (context: Context<_>) =
+let inline softmax_instance_forward (data : ^a) (ctx: Context<_>) =
     let data_sizes = nchw data
 
-    let srcTensorDesc = (mem context).GetTensorDescriptor data_sizes
-    let output = getdMLike data (mem context) false (is_inference_only context) (str context)
+    let srcTensorDesc = (mem ctx).GetTensorDescriptor data_sizes
+    let output = getdMLike data (mem ctx) false (is_inference_only ctx) (str ctx)
 
     let algo = cudnnSoftmaxAlgorithm.Accurate // Log mode forgets to re-exponentiate at the end.
     let mode = cudnnSoftmaxMode.Instance
 
-    cudnn.SetStream (str context)
+    cudnn.SetStream (str ctx)
     cudnn.SoftmaxForward(algo, mode, 1.0f, srcTensorDesc, extract_primal' data, 0.0f, srcTensorDesc, extract_primal' output)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint data then
             let softmax_channel_backward () =
                 deadness_check output data
                 <| fun _ ->
-                    cudnn.SetStream (str context)
+                    cudnn.SetStream (str ctx)
                     cudnn.SoftmaxBackward(algo,mode,1.0f,srcTensorDesc,extract_primal' output,srcTensorDesc,extract_adjoint' output,1.0f,srcTensorDesc,extract_adjoint' data)
-            push_tape context (softmax_channel_backward_name,softmax_channel_backward)
+            push_tape ctx (softmax_channel_backward_name,softmax_channel_backward)
     output
 
 let inline softmax x = softmax_instance_forward x
@@ -1877,42 +1877,42 @@ let clipErrorModule = lazy new DeviceTrinaryCoefTransformModule("y*((x < coef_x)
 /// o <- clip(min,max,a)+scalar
 /// The clip function. Can be used as Relu by setting max to positive infinity. 
 /// Can be used to make linear clipped sigmoid by setting min,max,scalar to -0.5f,0.5f,0.5f.
-let inline clip min max (a : ^a) scalar (context: Context<_>) =
-    let c = getdMLike a (mem context) false (is_inference_only context) (str context)
+let inline clip min max (a : ^a) scalar (ctx: Context<_>) =
+    let c = getdMLike a (mem ctx) false (is_inference_only ctx) (str ctx)
 
-    clipModule.Value.A((str context), min, P a, max, P a,scalar, P a, P c)
+    clipModule.Value.A((str ctx), min, P a, max, P a,scalar, P a, P c)
 
-    if (is_inference_only context) = false then
+    if (is_inference_only ctx) = false then
         if hasAdjoint a then
             let clip_backward () =
                 deadness_check c a
                 <| fun _ -> 
-                    clipErrorModule.Value.A((str context), min, P a, max, A c, max, A a, A a)
-            push_tape context (clip_backward_name,clip_backward)
+                    clipErrorModule.Value.A((str ctx), min, P a, max, A c, max, A a, A a)
+            push_tape ctx (clip_backward_name,clip_backward)
     c
 
-let inline relu x (context: Context<_>) = 
-    let t = (mem context).GetActivationDescriptor (cudnnActivationMode.Relu, defaultReluNanOption, 0.0)
-    activation_forward t x context
-let inline sigmoid x (context: Context<_>) = 
-    let t = (mem context).GetActivationDescriptor (cudnnActivationMode.Sigmoid, defaultReluNanOption, 0.0)
-    activation_forward t x context
-let inline tanh_ x (context: Context<_>) = 
-    let t = (mem context).GetActivationDescriptor (cudnnActivationMode.Tanh, defaultReluNanOption, 0.0)
-    activation_forward t x context
-let inline clipped_sigmoid x (context: Context<_>) = 
-    let x = sigmoid x context
-    clip 0.0001f 0.9999f x 0.0f context
-let inline clipped_softmax x (context: Context<_>) = 
-    let x = softmax x context
-    clip 0.0001f 0.9999f x 0.0f context
+let inline relu x (ctx: Context<_>) = 
+    let t = (mem ctx).GetActivationDescriptor (cudnnActivationMode.Relu, defaultReluNanOption, 0.0)
+    activation_forward t x ctx
+let inline sigmoid x (ctx: Context<_>) = 
+    let t = (mem ctx).GetActivationDescriptor (cudnnActivationMode.Sigmoid, defaultReluNanOption, 0.0)
+    activation_forward t x ctx
+let inline tanh_ x (ctx: Context<_>) = 
+    let t = (mem ctx).GetActivationDescriptor (cudnnActivationMode.Tanh, defaultReluNanOption, 0.0)
+    activation_forward t x ctx
+let inline clipped_sigmoid x (ctx: Context<_>) = 
+    let x = sigmoid x ctx
+    clip 0.0001f 0.9999f x 0.0f ctx
+let inline clipped_softmax x (ctx: Context<_>) = 
+    let x = softmax x ctx
+    clip 0.0001f 0.9999f x 0.0f ctx
 
-/// Bind for the context passing functions. Is actually the reader monad rather than the state monad
+/// Bind for the ctx passing functions. Is actually the reader monad rather than the state monad
 /// since it is mutable.
 let inline (>>=) (a: Context<_> -> ^a) (f: ^a -> Context<_> -> ^b): Context<_> -> ^b =
-    fun context -> let v = a context in f v context
+    fun ctx -> let v = a ctx in f v ctx
 
-/// Kleisli arrow function for the easier contextual function composition.
+/// Kleisli arrow function for the easier ctxual function composition.
 let inline (>=>) a b x = a x >>= b
 
 // TODO: In a future version of Spiral, make the two operations actually run in parallel by
@@ -1950,12 +1950,12 @@ let inline cross_entropy_cost (target: ^a) (activations: ^a) = context {
 let maxColumnActivationModule = lazy new DeviceMaxColumnActivationModule()
 let accuracyModule = lazy new DeviceBinaryMapSumModule("(x*y == 0.0f) ? 0.0f : 1.0f;","Accuracy")
 /// Gets the accuracy.
-let inline get_accuracy (targets: ^a) (activations : ^a) (context: Context<_>) =
+let inline get_accuracy (targets: ^a) (activations : ^a) (ctx: Context<_>) =
     let a =
         lazy
-            let o = convertdMLikeFromWorkspace targets (workspace context)
-            maxColumnActivationModule.Value.A((str context), P activations, P o)
-            accuracyModule.Value.A((str context), P targets, P o).Value |> round |> int
+            let o = convertdMLikeFromWorkspace targets (workspace ctx)
+            maxColumnActivationModule.Value.A((str ctx), P activations, P o)
+            accuracyModule.Value.A((str ctx), P targets, P o).Value |> round |> int
     (a, cols targets)
 
 type Cost =
@@ -1972,15 +1972,15 @@ let toCost((accuracy,max_accuracy),cost) = {accuracy=accuracy; max_accuracy=max_
 /// Helper for extracting the cost as a tuple from the Cost record.
 let costAsTuple (cost: Cost) = cost.accuracy,cost.max_accuracy,cost.cost
 /// Helper for extracting the cost as a tuple from the Cost record.
-//let costAsTuple (cost,context: Context<_>) = cost.accuracy, cost.max_accuracy, cost.cost
+//let costAsTuple (cost,ctx: Context<_>) = cost.accuracy, cost.max_accuracy, cost.cost
 
 /// Squared error cost that also returns the accuracy.
-let inline squared_error_cost' (targets: ^a) (activations : ^a) (context: Context<_>) =
-    para2 (get_accuracy targets) (squared_error_cost targets) activations context |> toCost
+let inline squared_error_cost' (targets: ^a) (activations : ^a) (ctx: Context<_>) =
+    para2 (get_accuracy targets) (squared_error_cost targets) activations ctx |> toCost
 
 /// Cross entropy cost that also returns the accuracy.
-let inline cross_entropy_cost' (targets: ^a) (activations : ^a) (context: Context<_>) =
-    para2 (get_accuracy targets) (cross_entropy_cost targets) activations context |> toCost
+let inline cross_entropy_cost' (targets: ^a) (activations : ^a) (ctx: Context<_>) =
+    para2 (get_accuracy targets) (cross_entropy_cost targets) activations ctx |> toCost
 
 let find_max_index (action_values : float32[]) =
     let mutable max = Single.NegativeInfinity
@@ -1991,9 +1991,9 @@ let find_max_index (action_values : float32[]) =
     index
 
 /// As it says on the tin. TODO: Make initializers for other activation functions.
-let inline reluInitializer (context: Context<_>) (a: ^a) =
+let inline reluInitializer (ctx: Context<_>) (a: ^a) =
     let scale = (1.0f / sqrt(addDims a |> float32))
-    fillRandomUniformMatrix (str context) a scale 0.0f
+    fillRandomUniformMatrix (str ctx) a scale 0.0f
     a
 
 /// As F# does not have passing by name, the way to get that functionality is to pass messages in the form of
@@ -2003,40 +2003,40 @@ type Optimizer =
     | Sgd of learning_rate: float32
     | ClippedSgd of clipping_threshold: float32 * learning_rate: float32
 
-    member inline t.Optimize (node : DM, context: Context<_>) =
+    member inline t.Optimize (node : DM, ctx: Context<_>) =
         let inline opt (node: ^a) =
             match t with
             | GradChecking -> () // Does nothing. This is here so the adjoints do not get zeroed out.
             | Sgd(learning_rate) -> 
-                saxpy (str context) -learning_rate (A' node) (P' node)
-                extract_adjoint' node |> fun x -> x.MemsetAsync(0u,(str context).Stream)
+                saxpy (str ctx) -learning_rate (A' node) (P' node)
+                extract_adjoint' node |> fun x -> x.MemsetAsync(0u,(str ctx).Stream)
             | ClippedSgd(clipping_threshold, learning_rate) -> 
-                gradclipModule.Value.A((str context), clipping_threshold, A node,A node)
-                saxpy (str context) -learning_rate (A' node) (P' node)
-                extract_adjoint' node |> fun x -> x.MemsetAsync(0u,(str context).Stream)
+                gradclipModule.Value.A((str ctx), clipping_threshold, A node,A node)
+                saxpy (str ctx) -learning_rate (A' node) (P' node)
+                extract_adjoint' node |> fun x -> x.MemsetAsync(0u,(str ctx).Stream)
         match node with
         | D2M x -> if x.HasAdjoint then opt x
         | D4M x -> if x.HasAdjoint then opt x
 
-let inline createFFSublayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
-    let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context
-    let b = if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer context |> Some else None
+let inline createFFSublayer has_bias activation desired_hidden_size (input: d2M) (ctx: Context<_>) =
+    let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer ctx
+    let b = if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer ctx |> Some else None
     let a = activation
 
     match b with
     | Some b -> [|W;b|]
     | None -> [|W|] 
     |> Array.map D2M
-    |> add_nodes context
+    |> add_nodes ctx
 
     fun (x: d2M) -> linear_layer_matmult [|W,x|] b >>= a
 
 /// Applies the optimizer to an individual node (such as DM)
-let inline optimize (optimizer: Optimizer, context: Context<_>) node =
-    optimizer.Optimize(node,context)
+let inline optimize (optimizer: Optimizer, ctx: Context<_>) node =
+    optimizer.Optimize(node,ctx)
 
-type LayerType<'input, 'context, 'layer_type> =
-    | Uninitialized of create_layer: ('input -> 'context -> 'layer_type)
+type LayerType<'input, 'ctx, 'layer_type> =
+    | Uninitialized of create_layer: ('input -> 'ctx -> 'layer_type)
     | Initialized of tag: int * node: 'layer_type
 
 /// Returns an unique global tag.
@@ -2046,27 +2046,27 @@ let get_tag =
         tags <- tags+1
         tags
 
-let inline createLayer (create_layer: (^input -> ^context -> (^input -> ^context -> ^output))) =
+let inline createLayer (create_layer: (^input -> ^ctx -> (^input -> ^ctx -> ^output))) =
     let mutable node = Uninitialized(create_layer)
-    fun (input: ^input) (context: ^context) ->
+    fun (input: ^input) (ctx: ^ctx) ->
         match node with
         | Initialized(tag,sub_layer) ->
-            sub_layer input context
+            sub_layer input ctx
         | Uninitialized(create_layer) ->
-            let sub_layer = create_layer input context
+            let sub_layer = create_layer input ctx
             node <- Initialized(get_tag(),sub_layer)
-            sub_layer input context
+            sub_layer input ctx
 
-let inline createStdRNNSublayer has_bias activation desired_hidden_size (input: d2M) (context: Context<_>) =
-    let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer context
-    let U = d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer context
-    let b = if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer context |> Some else None
+let inline createStdRNNSublayer has_bias activation desired_hidden_size (input: d2M) (ctx: Context<_>) =
+    let W = d2M.create(desired_hidden_size,input.Rows) |> reluInitializer ctx
+    let U = d2M.create(desired_hidden_size,desired_hidden_size) |> reluInitializer ctx
+    let b = if has_bias then d2M.create(desired_hidden_size,1) |> reluInitializer ctx |> Some else None
 
     match b with
     | Some b -> [|W;U;b|] 
     | None -> [|W;U|] 
     |> Array.map D2M
-    |> add_nodes context
+    |> add_nodes ctx
 
     fun (y: d2M option,x: d2M) ->
         match y with
@@ -2106,7 +2106,7 @@ type RNNState<'timestep> =
         Timestep = x
         }
 
-let inline getRNNState (context: Context<_>) = (^userstate : (member GetRNNState: RNNState<_>) context.UserState)
+let inline getRNNState (ctx: Context<_>) = (^userstate : (member GetRNNState: RNNState<_>) ctx.UserState)
 let inline timestep userstate = (^userstate : (member Timestep: ^time) userstate)
 let inline set_timestep userstate v = (^userstate : (member set_Timestep: ^time -> unit) userstate, v)
 let inline getRNNDM userstate tag timestep = 
@@ -2118,18 +2118,18 @@ let inline create1DRNNLayer
         (create_layer: ( ^input -> Context<_> -> ((^output option * ^input) -> Context<_> -> ^output))) =
     let mutable node = Uninitialized(create_layer)
     
-    fun (input: ^input) (context: Context<_>) ->
+    fun (input: ^input) (ctx: Context<_>) ->
         let inline execute tag (sub_layer: (^output option * ^input) -> Context<_> -> ^output) =
-            let state = getRNNState context
+            let state = getRNNState ctx
             let step: int = state |> timestep
             let v = getRNNDM state tag (step-1)
-            let output = sub_layer (v,input) context
+            let output = sub_layer (v,input) ctx
             setRNNDM state tag step output
             output
         match node with
         | Initialized (tag,sub_layer) -> execute tag sub_layer
         | Uninitialized(create_layer) ->
-            let sub_layer = create_layer input context
+            let sub_layer = create_layer input ctx
             let tag = get_tag()
             node <- Initialized(tag,sub_layer)
             execute tag sub_layer
