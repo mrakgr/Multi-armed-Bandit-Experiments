@@ -1070,13 +1070,12 @@ type DeviceMaxColumnActivationModule() =
               
             __device__ inline floatType blockReduce(floatType value){
 	            __shared__ floatType temp[32];
-                if (threadIdx.x < 32) temp[threadIdx.x] = INIT; 
+                if (threadIdx.x < 32) temp[threadIdx.x] = INIT; // Just in case there are less than 32 warps.
                 floatType out_partial = warpReduce(value);
                 __syncthreads();
 	            if (threadIdx.x % 32 == 0) temp[threadIdx.x / 32] = out_partial;
                 __syncthreads();
-	            if (threadIdx.x < 32) out_partial = warpReduce(temp[threadIdx.x]);
-                return out_partial;
+	            if (threadIdx.x < 32) return warpReduce(temp[threadIdx.x]);
             }
 
             // Device code
@@ -1919,10 +1918,17 @@ let inline (>=>) a b x = a x >>= b
 // passing in different streams and waiting on them using events. This would be a more controlable
 // that what I tried in V3 of the library where I did not observe any speedups from concurrency worth noting.
 /// Runs the operations in parallel and collects the results.
-let inline para2 f1 f2 (a0: ^a) (c: Context<_>) =
-    let a1 = f1 a0 c
-    let a2 = f2 a0 c
-    a1,a2
+//let inline para2 f1 f2 (a0: ^a) (c: Context<_>) =
+//    let a1 = f1 a0 c
+//    let a2 = f2 a0 c
+//    a1,a2
+
+// The above function will be commented out for now. There is absolutely nothing wrong with it, but
+// learning the finally tagless style made me realize that the above signature is the tagless form,
+// which could be potentially dangerous since in that form, nodes will get re-evaluated multiple times
+// without memoization.
+
+// This is not a problem with costs for obvious reasons, but if I used para2 carelessly I could get in trouble.
 
 let inline squared_error_cost (target: ^a) (activations: ^a) =
     add 1.0f target -1.0f activations 
@@ -1971,16 +1977,14 @@ let toCost' accuracy max_accuracy cost = {accuracy=accuracy; max_accuracy=max_ac
 let toCost((accuracy,max_accuracy),cost) = {accuracy=accuracy; max_accuracy=max_accuracy; cost=cost}
 /// Helper for extracting the cost as a tuple from the Cost record.
 let costAsTuple (cost: Cost) = cost.accuracy,cost.max_accuracy,cost.cost
-/// Helper for extracting the cost as a tuple from the Cost record.
-//let costAsTuple (cost,ctx: Context<_>) = cost.accuracy, cost.max_accuracy, cost.cost
 
 /// Squared error cost that also returns the accuracy.
 let inline squared_error_cost' (targets: ^a) (activations : ^a) (ctx: Context<_>) =
-    para2 (get_accuracy targets) (squared_error_cost targets) activations ctx |> toCost
+    (get_accuracy targets activations ctx, squared_error_cost targets activations ctx) |> toCost
 
 /// Cross entropy cost that also returns the accuracy.
 let inline cross_entropy_cost' (targets: ^a) (activations : ^a) (ctx: Context<_>) =
-    para2 (get_accuracy targets) (cross_entropy_cost targets) activations ctx |> toCost
+    (get_accuracy targets activations ctx, cross_entropy_cost targets activations ctx) |> toCost
 
 let find_max_index (action_values : float32[]) =
     let mutable max = Single.NegativeInfinity

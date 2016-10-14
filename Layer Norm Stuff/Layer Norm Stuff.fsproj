@@ -5,14 +5,16 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>97d92324-c158-4c58-bf79-f2d2e1ec98fb</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <RootNamespace>Spiral_V4_Pipes__bandits_</RootNamespace>
-    <AssemblyName>Spiral_V4_Pipes__bandits_</AssemblyName>
+    <ProjectGuid>70b709e1-82a1-4e31-9679-28bf4eebc62e</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Layer_Norm_Stuff</RootNamespace>
+    <AssemblyName>Layer_Norm_Stuff</AssemblyName>
     <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
-    <TargetFSharpCoreVersion>4.4.0.0</TargetFSharpCoreVersion>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
-    <Name>Spiral V4 Pipes (bandits)</Name>
+    <TargetFSharpCoreVersion>4.4.0.0</TargetFSharpCoreVersion>
+    <Name>Layer Norm Stuff</Name>
+    <NuGetPackageImportStamp>
+    </NuGetPackageImportStamp>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -22,9 +24,9 @@
     <OutputPath>bin\Debug\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <WarningLevel>3</WarningLevel>
-    <DocumentationFile>bin\Debug\Spiral_V4_Pipes__bandits_.XML</DocumentationFile>
-    <Prefer32Bit>false</Prefer32Bit>
-    <PlatformTarget>x64</PlatformTarget>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DocumentationFile>bin\Debug\Layer_Norm_Stuff.XML</DocumentationFile>
+    <Prefer32Bit>true</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -33,9 +35,9 @@
     <OutputPath>bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <WarningLevel>3</WarningLevel>
-    <DocumentationFile>bin\Release\Spiral_V4_Pipes__bandits_.XML</DocumentationFile>
-    <Prefer32Bit>false</Prefer32Bit>
-    <PlatformTarget>x64</PlatformTarget>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DocumentationFile>bin\Release\Layer_Norm_Stuff.XML</DocumentationFile>
+    <Prefer32Bit>true</Prefer32Bit>
   </PropertyGroup>
   <PropertyGroup>
     <MinimumVisualStudioVersion Condition="'$(MinimumVisualStudioVersion)' == ''">11</MinimumVisualStudioVersion>
@@ -55,10 +57,18 @@
   <Import Project="$(FSharpTargetsPath)" />
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
-    <None Include="script.fsx" />
+    <None Include="App.config" />
+    <None Include="layer_norm.fsx" />
     <Content Include="packages.config" />
-    <Compile Include="SpiralV4.Combinators.fs" />
-    <Compile Include="SpiralV4.Testing.fs" />
+    <None Include="Scripts\load-references-release.fsx" />
+    <None Include="Scripts\load-project-release.fsx" />
+    <None Include="Scripts\layer_norm.fsx" />
+    <None Include="Scripts\layer_norm_backwards.fsx" />
+    <None Include="Scripts\phantom_types.fsx" />
+    <None Include="Scripts\phantom_types_v2.fsx" />
+    <None Include="Scripts\phantom_types_v3.fsx" />
+    <None Include="Scripts\finally_tagless_v0.fsx" />
+    <Compile Include="mean.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
@@ -85,12 +95,16 @@
       <HintPath>..\packages\ManagedCuda-75-x64.7.5.7\lib\net45\x64\CudaSparse.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="FSharp.Charting">
-      <HintPath>..\packages\FSharp.Charting.0.90.14\lib\net40\FSharp.Charting.dll</HintPath>
+    <Reference Include="DiffSharp">
+      <HintPath>..\packages\DiffSharp.0.7.7\lib\net46\DiffSharp.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="FSharp.Quotations.Evaluator">
+      <HintPath>..\packages\FSharp.Quotations.Evaluator.1.0.6\lib\net40\FSharp.Quotations.Evaluator.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="ManagedCuda">
-      <HintPath>..\packages\ManagedCuda-75-x64.7.5.7\lib\net45\x64\ManagedCuda.dll</HintPath>
+      <HintPath>..\packages\ManagedCuda-75-Standalone.7.5.7\lib\net45\ManagedCuda.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="mscorlib" />
@@ -105,17 +119,9 @@
       <HintPath>..\packages\ManagedCuda-75-x64.7.5.7\lib\net45\x64\NVRTC.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="PresentationCore" />
-    <Reference Include="PresentationFramework" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
-    <Reference Include="System.Drawing" />
     <Reference Include="System.Numerics" />
-    <Reference Include="System.Windows.Forms" />
-    <Reference Include="System.Windows.Forms.DataVisualization" />
-    <Reference Include="System.Xaml" />
-    <Reference Include="UIAutomationTypes" />
-    <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Spiral V4 %28bandits%29\Spiral V4 %28bandits%29.fsproj">
@@ -123,7 +129,19 @@
       <Project>{70bc3679-e519-4513-9dec-7424ca234c4b}</Project>
       <Private>True</Private>
     </ProjectReference>
+    <ProjectReference Include="..\Spiral V4 Pipes %28bandits%29\Spiral V4 Pipes %28bandits%29.fsproj">
+      <Name>Spiral V4 Pipes (bandits)</Name>
+      <Project>{97d92324-c158-4c58-bf79-f2d2e1ec98fb}</Project>
+      <Private>True</Private>
+    </ProjectReference>
   </ItemGroup>
+  <Import Project="..\packages\DiffSharp.0.7.7\build\DiffSharp.targets" Condition="Exists('..\packages\DiffSharp.0.7.7\build\DiffSharp.targets')" />
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\DiffSharp.0.7.7\build\DiffSharp.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\DiffSharp.0.7.7\build\DiffSharp.targets'))" />
+  </Target>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

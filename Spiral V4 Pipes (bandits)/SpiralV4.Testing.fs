@@ -626,13 +626,14 @@ module private Testing =
 //                        (fun () -> MI_GRU1DLayer 128 tanh_) (fun num_levers -> MI_GRU1DLayer num_levers clipped_sigmoid)
 //                        x 500 (ClippedSgd(0.05f,0.05f))
 //                )
-//            yield! // It seems that the more complex the architecture, the worse it performs. LSTM is quite bad here.
-//                Array.init 1 (fun x ->
-//                "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
-//                    ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
-//                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun reward_size -> MI_LSTM1DLayer reward_size tanh_ clipped_sigmoid)
-//                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun num_levers -> MI_LSTM1DLayer num_levers tanh_ clipped_sigmoid)
-//                        x 500 (ClippedSgd(0.05f,0.025f))
+            yield! // It seems that the more complex the architecture, the worse it performs. LSTM is quite bad here.
+                Array.init 3 (fun x ->
+                "bandit prediction test 5(residual layers in depth & GRU & LSTM in time)", 
+                    ``bandit prediction test 5(residual layers in depth & GRU & LSTM in time)``
+                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun reward_size -> MI_LSTM1DLayer reward_size tanh_ clipped_sigmoid)
+                        (fun () -> MI_LSTM1DLayer 128 tanh_ tanh_) (fun num_levers -> MI_LSTM1DLayer num_levers tanh_ clipped_sigmoid)
+                        x 300 (ClippedSgd(0.05f,0.025f))
+                )
             |]
 
         
