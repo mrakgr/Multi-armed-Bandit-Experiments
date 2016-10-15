@@ -660,6 +660,18 @@ let inline divup a b = (a-1)/b+1 // Integer division with rounding up. (a+b-1)/b
 let kernels_dir = IO.Path.Combine(__SOURCE_DIRECTORY__,"Cuda Kernels")
 IO.Directory.CreateDirectory(kernels_dir) |> ignore // Creates the Cuda Kernels directory if it does not exist. WriteAllBytes would otherwise throw an exception.
 
+let compile_kernel kernel_code kernel_name = 
+    let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
+    let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
+    try k.Compile([|"-arch=compute_30"|])
+    with 
+    | :? NVRTCException as x -> 
+        printfn "%s" (k.GetLogAsString())
+        reraise()
+    let ptx = k.GetPTX()
+    IO.File.WriteAllBytes(kernel_path,ptx)
+    cuda_context.LoadKernelPTX(ptx,kernel_name)
+
 let load_kernel kernel_code kernel_name = 
     let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
         
@@ -667,15 +679,7 @@ let load_kernel kernel_code kernel_name =
     then
         cuda_context.LoadKernelPTX(kernel_path,kernel_name) // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
     else
-        let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
-        try k.Compile([|"-arch=compute_30"|])
-        with 
-        | :? NVRTCException as x -> 
-            printfn "%s" (k.GetLogAsString())
-            reraise()
-        let ptx = k.GetPTX()
-        IO.File.WriteAllBytes(kernel_path,ptx)
-        cuda_context.LoadKernelPTX(ptx,kernel_name)
+        compile_kernel kernel_code kernel_name
 
 let inline map_launcher(str: CudaStream, kernel: CudaKernel, total_size: int, [<ParamArray>] args: obj[]) =
     let block_size = 256
@@ -1050,6 +1054,7 @@ let max_column_launcher(str: CudaStream, kernel: CudaKernel, num_rows: int, num_
 
 /// o <- max_col(x)
 /// Sets all except one of the max of a column to zero.
+/// TODO: Replace this one with the new kernel. It has a faulty block reduce operation.
 type DeviceMaxColumnActivationModule() = 
     let kernel_name = "MaxColumnActivationKernel"
     let kernel_code = 
