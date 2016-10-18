@@ -68,6 +68,8 @@
     <None Include="Scripts\phantom_types_v2.fsx" />
     <None Include="Scripts\phantom_types_v3.fsx" />
     <None Include="Scripts\finally_tagless_v0.fsx" />
+    <None Include="Scripts\phantom_types_v4.fsx" />
+    <None Include="Scripts\quotations.fsx" />
     <Compile Include="ReduceModule.fs" />
   </ItemGroup>
   <ItemGroup>

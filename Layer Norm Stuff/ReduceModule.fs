@@ -167,7 +167,7 @@ type DeviceColumnReduceModule(reduce_op: ReduceOperation, final_op: FinalOperati
                     valueType result = blockReduce(value);
                     finalType final_result;
                     ";final_op.FinalOp reduce_op "result" "final_result" "num_rows";"
-                    O[col] = final_result;
+                    if (threadIdx.x == 0) O[col] = final_result;
                 }
             }
         }
