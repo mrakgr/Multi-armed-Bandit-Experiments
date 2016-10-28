@@ -4,14 +4,16 @@ open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open Microsoft.FSharp.Quotations.DerivedPatterns
 
-let println expr =
-    let rec print_type_c (x: Type)= 
-        if x = typeof<Int32> then "int"
-        elif x = typeof<Single> then "float"
-        elif x.IsGenericType && (x.GetGenericTypeDefinition() = typeof<System.Tuple<_,_>>.GetGenericTypeDefinition()) then 
-            sprintf "%s_%s" (x.GetGenericArguments().[0] |> print_type_c) (x.GetGenericArguments().[1] |> print_type_c)
-        else failwithf "Not supported(%A)" x
+let rec print_type_c (x: Type)= 
+    if x = typeof<Int32> then "int"
+    elif x = typeof<Single> then "float"
+    elif x.IsGenericType && (x.GetGenericTypeDefinition() = typeof<FSharpFunc<_,_>>.GetGenericTypeDefinition()) then 
+        sprintf "/*function*/%s lamda(%s)" (x.GetGenericArguments().[1] |> print_type_c) (x.GetGenericArguments().[0] |> print_type_c)
+    elif x.IsGenericType && (x.GetGenericTypeDefinition() = typeof<System.Tuple<_,_>>.GetGenericTypeDefinition()) then 
+        sprintf "%s_%s" (x.GetGenericArguments().[0] |> print_type_c) (x.GetGenericArguments().[1] |> print_type_c)
+    else failwithf "Not supported(%A)" x
 
+let println expr =
     let rec print expr: string =
         match expr with
         | Application(expr1, expr2) ->
@@ -101,10 +103,24 @@ let println expr =
     printfn "%s" (print expr)
     printfn ""
 
+let print_lambda expr = 
+    let rec print expr =
+        match expr with
+        | Lambda(param, body) ->
+            // Lambda expression.
+            [|
+            //sprintf "fun (%s:%s) -> " param.Name (param.Type.ToString())
+            print_type_c param.Type
+            //print body
+            |] |> String.concat ""
+        | x -> failwith "expected a lambda"
+    print expr
+
 let a =
     <@
-        let x = 5,4
-        x
+        fun (x,y,z) -> x+y+z
     @>
 
+printfn "%A" a.Type
 println a
+

@@ -2,4 +2,4 @@
 #I __SOURCE_DIRECTORY__
 #load "load-references-release.fsx"
 #load "../AssemblyInfo.fs"
-      "../ReduceModule.fs"
+      "../File1.fs"

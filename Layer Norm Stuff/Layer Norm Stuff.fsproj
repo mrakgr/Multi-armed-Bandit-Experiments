@@ -70,7 +70,11 @@
     <None Include="Scripts\finally_tagless_v0.fsx" />
     <None Include="Scripts\phantom_types_v4.fsx" />
     <None Include="Scripts\quotations.fsx" />
-    <Compile Include="ReduceModule.fs" />
+    <None Include="Scripts\lambda_du.fsx" />
+    <None Include="Scripts\quotations_v1.fsx" />
+    <None Include="ReduceModule_v0.fsx" />
+    <None Include="ReduceModule_v1.fsx" />
+    <Compile Include="File1.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
