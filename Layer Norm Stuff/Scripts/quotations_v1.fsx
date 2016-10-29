@@ -4,6 +4,8 @@ open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open Microsoft.FSharp.Quotations.DerivedPatterns
 
+typeof< _ * _ >.GetGenericArguments() |> Array.map (fun x -> x.Name)
+
 let rec print_type_c (x: Type)= 
     if x = typeof<Int32> then "int"
     elif x = typeof<Single> then "float"
