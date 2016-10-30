@@ -22,30 +22,47 @@ type Ty =
 | TyFloat32
 | TyBool
 | TyTuple of Ty[]
-
-let rec flatten_tytuple =
-    function
-    | TyTuple(x) -> x
-    | x -> [|x|]
+| TyFunc of call_type: Ty * return_type: Ty
 
 type ParsedFunc =
 | PFAdd of ParsedExpr * ParsedExpr
+| PFMult of ParsedExpr * ParsedExpr
+| PFLessThan of ParsedExpr * ParsedExpr
+| PFLessThanOrEqual of ParsedExpr * ParsedExpr
+| PFEquality of ParsedExpr * ParsedExpr
+| PFGreaterThan of ParsedExpr * ParsedExpr
+| PFGreaterThanOrEqual of ParsedExpr * ParsedExpr
+| PFUnroll
+| PFSyncthreads
+| PFShuffleXor of ParsedExpr * ParsedExpr
+| PFShuffleUp of ParsedExpr * ParsedExpr
+| PFShuffleDown of ParsedExpr * ParsedExpr
+| PFShuffleSource of ParsedExpr * ParsedExpr
 
 and ParsedExpr =
 | PVar of string * Ty
 | PLet of (string * Ty) * ParsedExpr * ParsedExpr
 | PTupleGet of ParsedExpr * int
 | PCall of ParsedFunc
+| PFunction of arguments: (string * Ty) * body: ParsedExpr
+| PValue of string
+| PIfThenElse of ParsedExpr * ParsedExpr * ParsedExpr
+| PWhileLoop of ParsedExpr * ParsedExpr
+| PVarSet of string * ParsedExpr
+| PSequential of ParsedExpr * ParsedExpr
+| PForIntegerRangeLoop of string * ParsedExpr * ParsedExpr * ParsedExpr
 
-type MapRedocolMap =
-| MapLoad of arguments: (string * Ty) * body: ParsedExpr
+type ParserState =
+| ParseLambdaOrStatements
+| ParseStatementsOnly
 
 type Context =
     {
-    tuple_definitions: HashSet<Ty[]> // Accumulates witnesssed tuples for later convertion to C structs.
+    tuple_definitions: HashSet<Ty> // Accumulates witnesssed tuples for later convertion to C structs.
+    state : ParserState
     }
 
-let add_tuple_definition_to_context (ctx: Context) (def: Ty[]) =
+let add_tuple_definition_to_context (ctx: Context) (def: Ty) =
     ctx.tuple_definitions.Add def |> ignore
     def
 
@@ -67,11 +84,13 @@ let rec parse_type (x: Type) (ctx: Context) =
     elif x.IsGenericType then 
         let gen_type_def = x.GetGenericTypeDefinition() 
 
-        if Array.exists ((=) gen_type_def) tuple_types then // Only checks for tuples. Nested lambdas are not permitted as I am compiling to C.
+        if gen_type_def = typeof<FSharpFunc<_,_>>.GetGenericTypeDefinition() then
+            let args = x.GetGenericArguments()
+            TyFunc(parse_type args.[0] ctx, parse_type args.[1] ctx)
+        elif Array.exists ((=) gen_type_def) tuple_types then // Only checks for tuples. Nested lambdas are not permitted as I am compiling to C.
             Array.map (fun x -> parse_type x ctx) (x.GetGenericArguments())
-            |> Array.collect flatten_tytuple
-            |> add_tuple_definition_to_context ctx
             |> TyTuple
+            |> add_tuple_definition_to_context ctx
 
         else failwithf "Not supported(%A)" x
     else failwithf "Not supported(%A)" x
@@ -83,26 +102,98 @@ type Result<'a> =
 let name_type_of_param (param: Var) (ctx: Context) =
     param.Name,parse_type param.Type ctx
 
-let rec parse_exprs_without_lambda (exp: Expr) (ctx: Context) =
-    let inline p e = parse_exprs_without_lambda e ctx
+let rec parse_exprs (exp: Expr) (ctx: Context) =
+    let inline p e = parse_exprs e ctx
     match exp with
-    | Let(param, init, body) -> 
+    | Lambda(param, body) ->
+        match ctx.state with
+        | ParseLambdaOrStatements -> PFunction(name_type_of_param param ctx, parse_exprs body {ctx with state = ParseStatementsOnly})
+        | ParseStatementsOnly -> failwith "Nested lambdas disallowed."
+    | Let(param, init, body) ->
         PLet(name_type_of_param param ctx, p init, p body)
-    | TupleGet(expr,x) -> PTupleGet(p expr,x)
+    | TupleGet(expr,x) ->
+        PTupleGet(p expr,x)
     | Call(exprOpt, methodInfo, exprList) ->
-        match methodInfo.Name with
-        | "op_Addition" -> let [x;y] = exprList in PCall(PFAdd(p x,p y))
+        match methodInfo.DeclaringType.Name, methodInfo.Name with
+        | _, "op_Addition" -> let [x;y] = exprList in PCall(PFAdd(p x,p y))
+        | _, "op_Multiply" -> let [x;y] = exprList in PCall(PFMult(p x,p y))
+        | _, "op_LessThan" -> let [x;y] = exprList in PCall(PFLessThan(p x,p y))
+        | _, "op_LessThanOrEqual" -> let [x;y] = exprList in PCall(PFLessThanOrEqual(p x,p y))
+        | _, "op_Equality" -> let [x;y] = exprList in PCall(PFEquality(p x,p y))
+        | _, "op_GreaterThan" -> let [x;y] = exprList in PCall(PFGreaterThan(p x,p y))
+        | _, "op_GreaterThanOrEqual" -> let [x;y] = exprList in PCall(PFGreaterThanOrEqual(p x,p y))
+        | _, "_unroll" -> PCall(PFUnroll)
+        | _, "_syncthreads" -> PCall(PFSyncthreads)
+        | "Shuffle", "Source" -> let [a;b] = exprList in PCall(PFShuffleSource(p a, p b))
+        | "Shuffle", "Up" -> let [a;b] = exprList in PCall(PFShuffleUp(p a, p b))
+        | "Shuffle", "Down" -> let [a;b] = exprList in PCall(PFShuffleDown(p a, p b))
+        | "Shuffle", "Xor" -> let [a;b] = exprList in PCall(PFShuffleXor(p a, p b))
     | Var(x) -> PVar <| name_type_of_param x ctx
+    | Value(ob,ty) -> 
+        match ob with
+        | :? float32 as x when x = Single.MaxValue -> PValue("__int_as_float(0x7f800000)")
+        | :? float32 as x when x = Single.MinValue -> PValue("__int_as_float(0xff800000)")
+        | :? float as x when x = Double.MaxValue -> PValue("__int_as_float(0x7ff0000000000000)")
+        | :? float as x when x = Double.MinValue -> PValue("__int_as_float(0xfff0000000000000)")
+        | _ -> PValue(string ob)
+    | PropertyGet(_,x,_) ->
+        match x.DeclaringType.Name with
+        | "ThreadIdx" -> PVar("threadIdx"+"."+x.Name,TyInt)
+        | "BlockIdx" -> PVar("blockIdx"+"."+x.Name,TyInt)
+        | "BlockDim" -> PVar("blockDim"+"."+x.Name,TyInt)
+        | "GridDim" -> PVar("gridDim"+"."+x.Name,TyInt)
+        | _ -> PVar(x.Name,TyInt)
         
+    | IfThenElse(a,b,c) -> PIfThenElse(p a, p b, p c)
+    | WhileLoop(a,b) -> PWhileLoop(p a, p b)
+    | VarSet(a,b) -> PVarSet(a.Name, p b)
+    | Sequential(a,b) -> PSequential(p a, p b)
+    | ForIntegerRangeLoop(a,b,c,d) -> PForIntegerRangeLoop(a.Name,p b, p c, p d)
+    | x -> failwithf "%A" x
 
-let parse_lambda (exp: Expr) (ctx: Context) =
-    match exp with
-    | Lambda(param, body) -> MapLoad(name_type_of_param param ctx, parse_exprs_without_lambda body ctx) |> Ok
-    | _ -> ExpectedNotFoundError "Lambda"
+// Global ids
+module ThreadIdx =
+    let x = 0
+    let y = 0
+    let z = 0
 
-let add = <@ fun (x, y) -> x+y @>
+module BlockIdx =
+    let x = 0
+    let y = 0
+    let z = 0
 
-let ctx = {tuple_definitions=HashSet(HashIdentity.Structural)}
-parse_lambda add ctx
+// Block and grid sizes
+module BlockDim =
+    let x = 0
+    let y = 0
+    let z = 0
 
-ctx
+module GridDim =
+    let x = 0
+    let y = 0
+    let z = 0
+
+type Shuffle =
+    static member Source(var: int, srcLane: int) = 0
+    static member Source(var: float32, srcLane: int) = 0.0f
+    static member Xor(var: int, laneMask: int) = 0
+    static member Xor(var: float32, laneMask: int) = 0.0f
+    static member Up(var: int, delta: uint32) = 0
+    static member Up(var: float32, delta: uint32) = 0.0f
+    static member Down(var: int, delta: uint32) = 0
+    static member Down(var: float32, delta: uint32) = 0.0f
+    
+let _unroll() = ()
+let _syncthreads() = ()
+
+let test =
+    <@
+    _unroll() 
+    for i=0 to 10 do
+        _syncthreads()
+    Shuffle.Xor(0,1)
+    @>
+
+let ctx = {tuple_definitions=HashSet(HashIdentity.Structural); state = ParseLambdaOrStatements}
+let p = parse_exprs (test ) ctx
+
