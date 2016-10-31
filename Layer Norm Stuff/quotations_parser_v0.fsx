@@ -18,15 +18,20 @@ open Microsoft.FSharp.Quotations.Patterns
 open Microsoft.FSharp.Quotations.DerivedPatterns
 
 type Ty =
+| TyUnit
 | TyInt
 | TyFloat32
 | TyBool
 | TyTuple of Ty[]
 | TyFunc of call_type: Ty * return_type: Ty
+| TyArray of Ty
+| TySharedArray of Ty
 
 type ParsedFunc =
 | PFAdd of ParsedExpr * ParsedExpr
 | PFMult of ParsedExpr * ParsedExpr
+| PFDiv of ParsedExpr * ParsedExpr
+| PFMod of ParsedExpr * ParsedExpr
 | PFLessThan of ParsedExpr * ParsedExpr
 | PFLessThanOrEqual of ParsedExpr * ParsedExpr
 | PFEquality of ParsedExpr * ParsedExpr
@@ -51,6 +56,10 @@ and ParsedExpr =
 | PVarSet of string * ParsedExpr
 | PSequential of ParsedExpr * ParsedExpr
 | PForIntegerRangeLoop of string * ParsedExpr * ParsedExpr * ParsedExpr
+| PDeclareArray of string * Ty * ParsedExpr
+| PGetArray of string * ParsedExpr
+| PSetArray of string * ParsedExpr * ParsedExpr
+| PApplication of string * ParsedExpr list
 
 type ParserState =
 | ParseLambdaOrStatements
@@ -77,9 +86,39 @@ let tuple_types = // All the possible tuple types. Tuple nesting is no problem f
     typeof<System.Tuple<_,_,_,_,_,_,_,_>>.GetGenericTypeDefinition()
     |]
 
+
+open System.Runtime.InteropServices
+
+#nowarn "9"
+[<StructLayout(LayoutKind.Sequential)>]
+type CudaArray<'a> =
+    struct
+    val Length: int
+    val Pointer: nativeint
+    new (a: int) = {Length=a; Pointer = nativeint 0}
+    end
+
+    member this.Item
+        with get(a: int): 'a = failwith "Not implemented in native code"
+        and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
+
+[<StructLayout(LayoutKind.Sequential)>]
+type CudaSharedArray<'a> =
+    struct
+    val Length: int
+    val Pointer: nativeint
+    new (a: int) = {Length=a; Pointer = nativeint 0}
+    end
+
+    member this.Item
+        with get(a: int): 'a = failwith "Not implemented in native code"
+        and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
+
+
 let rec parse_type (x: Type) (ctx: Context) = 
-    if x = typeof<int> then TyInt
+    if x = typeof<unit> then TyUnit
     elif x = typeof<float32> then TyFloat32
+    elif x = typeof<int> then TyInt
     elif x = typeof<bool> then TyBool
     elif x.IsGenericType then 
         let gen_type_def = x.GetGenericTypeDefinition() 
@@ -91,16 +130,19 @@ let rec parse_type (x: Type) (ctx: Context) =
             Array.map (fun x -> parse_type x ctx) (x.GetGenericArguments())
             |> TyTuple
             |> add_tuple_definition_to_context ctx
-
+        elif gen_type_def = typeof<CudaArray<_>>.GetGenericTypeDefinition() then
+            let arg_typ = x.GetGenericArguments().[0]
+            TyArray(parse_type arg_typ ctx)
+        elif gen_type_def = typeof<CudaSharedArray<_>>.GetGenericTypeDefinition() then
+            let arg_typ = x.GetGenericArguments().[0]
+            TySharedArray(parse_type arg_typ ctx)
         else failwithf "Not supported(%A)" x
     else failwithf "Not supported(%A)" x
 
-type Result<'a> =
-| Ok of 'a
-| ExpectedNotFoundError of string
-
 let name_type_of_param (param: Var) (ctx: Context) =
-    param.Name,parse_type param.Type ctx
+    param.Name, parse_type param.Type ctx
+
+let (|PropertyInfoName|) (x: Reflection.PropertyInfo) = x.Name
 
 let rec parse_exprs (exp: Expr) (ctx: Context) =
     let inline p e = parse_exprs e ctx
@@ -109,14 +151,25 @@ let rec parse_exprs (exp: Expr) (ctx: Context) =
         match ctx.state with
         | ParseLambdaOrStatements -> PFunction(name_type_of_param param ctx, parse_exprs body {ctx with state = ParseStatementsOnly})
         | ParseStatementsOnly -> failwith "Nested lambdas disallowed."
+    | Let(param, NewObject(a,[Value(v,_)]), body) ->
+        let v = v :?> int
+        let gen_type = param.Type.GetGenericTypeDefinition()
+        if gen_type = typeof<CudaArray<_>>.GetGenericTypeDefinition() then
+            let arg_typ = param.Type.GetGenericArguments().[0]
+            PDeclareArray(param.Name,TyArray(parse_type arg_typ ctx), p body)
+        elif gen_type = typeof<CudaSharedArray<_>>.GetGenericTypeDefinition() then
+            let arg_typ = param.Type.GetGenericArguments().[0]
+            PDeclareArray(param.Name,TySharedArray(parse_type arg_typ ctx), p body)
+        else failwithf "Object creation not supported created(%A)." param.Name
     | Let(param, init, body) ->
         PLet(name_type_of_param param ctx, p init, p body)
-    | TupleGet(expr,x) ->
-        PTupleGet(p expr,x)
+    | TupleGet(expr,x) -> PTupleGet(p expr,x)
     | Call(exprOpt, methodInfo, exprList) ->
         match methodInfo.DeclaringType.Name, methodInfo.Name with
         | _, "op_Addition" -> let [x;y] = exprList in PCall(PFAdd(p x,p y))
         | _, "op_Multiply" -> let [x;y] = exprList in PCall(PFMult(p x,p y))
+        | _, "op_Division" -> let [x;y] = exprList in PCall(PFDiv(p x,p y))
+        | _, "op_Modulus" -> let [x;y] = exprList in PCall(PFMod(p x,p y))
         | _, "op_LessThan" -> let [x;y] = exprList in PCall(PFLessThan(p x,p y))
         | _, "op_LessThanOrEqual" -> let [x;y] = exprList in PCall(PFLessThanOrEqual(p x,p y))
         | _, "op_Equality" -> let [x;y] = exprList in PCall(PFEquality(p x,p y))
@@ -128,6 +181,7 @@ let rec parse_exprs (exp: Expr) (ctx: Context) =
         | "Shuffle", "Up" -> let [a;b] = exprList in PCall(PFShuffleUp(p a, p b))
         | "Shuffle", "Down" -> let [a;b] = exprList in PCall(PFShuffleDown(p a, p b))
         | "Shuffle", "Xor" -> let [a;b] = exprList in PCall(PFShuffleXor(p a, p b))
+        | _,_ -> failwith "Call not supported."
     | Var(x) -> PVar <| name_type_of_param x ctx
     | Value(ob,ty) -> 
         match ob with
@@ -135,20 +189,26 @@ let rec parse_exprs (exp: Expr) (ctx: Context) =
         | :? float32 as x when x = Single.MinValue -> PValue("__int_as_float(0xff800000)")
         | :? float as x when x = Double.MaxValue -> PValue("__int_as_float(0x7ff0000000000000)")
         | :? float as x when x = Double.MinValue -> PValue("__int_as_float(0xfff0000000000000)")
+        | :? unit -> PValue ";"
         | _ -> PValue(string ob)
+    | PropertyGet(Some ar,PropertyInfoName "Item",[value]) ->
+        PGetArray(string ar,p value)
     | PropertyGet(_,x,_) ->
         match x.DeclaringType.Name with
         | "ThreadIdx" -> PVar("threadIdx"+"."+x.Name,TyInt)
         | "BlockIdx" -> PVar("blockIdx"+"."+x.Name,TyInt)
         | "BlockDim" -> PVar("blockDim"+"."+x.Name,TyInt)
         | "GridDim" -> PVar("gridDim"+"."+x.Name,TyInt)
-        | _ -> PVar(x.Name,TyInt)
-        
+        | _ -> failwithf "Property get not supported(%A)." x.Name
     | IfThenElse(a,b,c) -> PIfThenElse(p a, p b, p c)
     | WhileLoop(a,b) -> PWhileLoop(p a, p b)
     | VarSet(a,b) -> PVarSet(a.Name, p b)
     | Sequential(a,b) -> PSequential(p a, p b)
     | ForIntegerRangeLoop(a,b,c,d) -> PForIntegerRangeLoop(a.Name,p b, p c, p d)
+    | PropertySet(Some ar,PropertyInfoName "Item",[index],value) ->
+        PSetArray(string ar, p index, p value)
+    | Application(a,NewTuple args) -> // Function call
+        PApplication(string a, List.map p args)
     | x -> failwithf "%A" x
 
 // Global ids
@@ -188,10 +248,10 @@ let _syncthreads() = ()
 
 let test =
     <@
-    _unroll() 
-    for i=0 to 10 do
-        _syncthreads()
-    Shuffle.Xor(0,1)
+    let add (x,y) = x % y
+    let main(ar: CudaArray<int>) =
+        add (ar.[0], ar.[1])
+    ()
     @>
 
 let ctx = {tuple_definitions=HashSet(HashIdentity.Structural); state = ParseLambdaOrStatements}
