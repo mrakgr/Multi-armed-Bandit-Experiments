@@ -76,6 +76,7 @@
     <None Include="ReduceModule_v1.fsx" />
     <Compile Include="File1.fs" />
     <None Include="quotations_parser_v0.fsx" />
+    <None Include="cuda_codegen_v0.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
