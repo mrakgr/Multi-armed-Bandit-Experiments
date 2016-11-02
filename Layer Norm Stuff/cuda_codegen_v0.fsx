@@ -185,10 +185,10 @@ let codegen (exp: ParsedExpr, ctx: Context) =
 
 let test =
     <@
-    let add (x,y) = x % y
+    let ops (x,y) = x % y, x / y, x * y
     let main(ar: CudaGlobalArray<int>) =
         let q = CudaSharedArray(32)
-        add (q.[0], q.[1])
+        ops (q.[0], q.[1])
     ()
     @>
 

@@ -63,24 +63,12 @@ and ParsedExpr =
 | PApplication of string * ParsedExpr list
 | PReturn of ParsedExpr
 
-let add_return_to_max exp =
-    let rec max_seq_depth (cur: int) = 
-        let inline p e = max_seq_depth (cur+1) e
-        function
-        | PLet(_,_,c) -> max (p c) cur
-        | PSequential(_,b) -> max (p b) cur
-        | PDeclareArray(_,_,c) -> max (p c) cur
-        | _ -> cur-1
-
-    let rec loop (max: int) cur =
-        let inline p e = loop max (cur+1) e
-        function
-        | x when cur-1 = max -> PReturn x
-        | PLet(a,b,c) -> PLet(a,b,p c)
-        | PSequential(a,b) -> PSequential(a,p b)
-        | PDeclareArray(a,b,c) -> PDeclareArray(a,b,p c)
-        | x -> failwithf "Not supposed to get here(max=%i,cur=%i,%A)." max cur x
-    loop (max_seq_depth 0 exp) 0 exp
+let rec add_return_to_max =
+    function
+    | PLet(a,b,c) -> PLet(a,b,add_return_to_max c)
+    | PSequential(a,b) -> PSequential(a,add_return_to_max b)
+    | PDeclareArray(a,b,c) -> PDeclareArray(a,b,add_return_to_max c)
+    | x -> PReturn x
 
 type ParserState =
 | ParseLambdaOrStatements
