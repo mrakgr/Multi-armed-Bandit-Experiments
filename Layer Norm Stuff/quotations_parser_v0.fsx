@@ -27,6 +27,9 @@ type Ty =
 | TyGlobalArray of Ty
 | TyLocalArray of length: int * Ty
 | TySharedArray of length: int * Ty
+| TyGlobal2dArray of Ty
+| TyLocal2dArray of num_cols: int * num_rows: int * Ty
+| TyShared2dArray of num_cols: int * num_rows: int * Ty
 
 type ParsedFunc =
 | PFAdd of ParsedExpr * ParsedExpr
@@ -104,8 +107,9 @@ open System.Runtime.InteropServices
 [<StructLayout(LayoutKind.Sequential)>]
 type CudaGlobalArray<'a> =
     struct
+    val length: int
     val Pointer: nativeint
-    new (a: int) = {Pointer = nativeint 0}
+    new (a: int) = {length = a; Pointer = nativeint 0}
     end
 
     member t.Length: int = failwith "Not implemented in native code."
@@ -117,9 +121,9 @@ type CudaGlobalArray<'a> =
 [<StructLayout(LayoutKind.Sequential)>]
 type CudaLocalArray<'a> =
     struct
-    val Length: int
+    val length: int
     val Pointer: nativeint
-    new (a: int) = {Length=a; Pointer = nativeint 0}
+    new (a: int) = {length=a; Pointer = nativeint 0}
     end
 
     member this.Item
@@ -129,15 +133,53 @@ type CudaLocalArray<'a> =
 [<StructLayout(LayoutKind.Sequential)>]
 type CudaSharedArray<'a> =
     struct
-    val Length: int
+    val length: int
     val Pointer: nativeint
-    new (a: int) = {Length=a; Pointer = nativeint 0}
+    new (a: int) = {length=a; Pointer = nativeint 0}
     end
 
     member this.Item
         with get(a: int): 'a = failwith "Not implemented in native code"
         and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
 
+[<StructLayout(LayoutKind.Sequential)>]
+type CudaGlobal2dArray<'a> =
+    struct
+    val num_cols: int
+    val num_rows: int
+    val Pointer: nativeint
+    new (a,b) = {num_cols=a; num_rows = b; Pointer = nativeint 0}
+    end
+
+    member this.Item
+        with get(a: int, b: int): 'a = failwith "Not implemented in native code"
+        and set(a: int, b: int) (value:'a): unit = failwith "Not implemented in native code"
+
+[<StructLayout(LayoutKind.Sequential)>]
+type CudaLocal2dArray<'a> =
+    struct
+    val num_cols: int
+    val num_rows: int
+    val Pointer: nativeint
+    new (a,b) = {num_cols=a; num_rows = b; Pointer = nativeint 0}
+    end
+
+    member this.Item
+        with get(a: int, b: int): 'a = failwith "Not implemented in native code"
+        and set(a: int, b: int) (value:'a): unit = failwith "Not implemented in native code"
+
+[<StructLayout(LayoutKind.Sequential)>]
+type CudaShared2dArray<'a> =
+    struct
+    val num_cols: int
+    val num_rows: int
+    val Pointer: nativeint
+    new (a,b) = {num_cols=a; num_rows = b; Pointer = nativeint 0}
+    end
+
+    member this.Item
+        with get(a: int, b: int): 'a = failwith "Not implemented in native code"
+        and set(a: int, b: int) (value:'a): unit = failwith "Not implemented in native code"
 
 let rec parse_type (x: Type) (ctx: Context) = 
     if x = typeof<unit> then TyUnit
@@ -157,6 +199,10 @@ let rec parse_type (x: Type) (ctx: Context) =
         elif gen_type_def = typeof<CudaGlobalArray<_>>.GetGenericTypeDefinition() then
             let arg_typ = x.GetGenericArguments().[0]
             TyGlobalArray(parse_type arg_typ ctx)
+            |> add_definition_to_context ctx
+        elif gen_type_def = typeof<CudaGlobal2dArray<_>>.GetGenericTypeDefinition() then
+            let arg_typ = x.GetGenericArguments().[0]
+            TyGlobal2dArray(parse_type arg_typ ctx)
             |> add_definition_to_context ctx
         else failwithf "Not supported(%A)" x
     else failwithf "Not supported(%A)" x
@@ -182,7 +228,7 @@ let parse_exprs (exp: Expr) =
             | ParseStatements | ParseExpressionsOnly -> failwith "Nested lambdas disallowed."
         | Let(_,_,_) when ctx.state = ParseExpressionsOnly ->
             failwith "Let statements not allowed inside if statements."
-        | Let(param, NewObject(_,[Int32 v]), body) ->
+        | Let(param, NewObject(_,[Int32 v]), body) -> // For 1d arrays
             let gen_type = param.Type.GetGenericTypeDefinition()
             if gen_type = typeof<CudaLocalArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
@@ -190,6 +236,15 @@ let parse_exprs (exp: Expr) =
             elif gen_type = typeof<CudaSharedArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
                 PDeclareArray(param.Name,TySharedArray(v, ty arg_typ), p body)
+            else failwithf "Object creation not supported(%A)." param.Name
+        | Let(param, NewObject(_,[Int32 num_cols; Int32 num_rows]), body) -> // For 2d arrays
+            let gen_type = param.Type.GetGenericTypeDefinition()
+            if gen_type = typeof<CudaLocal2dArray<_>>.GetGenericTypeDefinition() then
+                let arg_typ = param.Type.GetGenericArguments().[0]
+                PDeclareArray(param.Name,TyLocal2dArray(num_cols, num_rows, ty arg_typ), p body)
+            elif gen_type = typeof<CudaShared2dArray<_>>.GetGenericTypeDefinition() then
+                let arg_typ = param.Type.GetGenericArguments().[0]
+                PDeclareArray(param.Name,TyShared2dArray(num_cols, num_rows, ty arg_typ), p body)
             else failwithf "Object creation not supported(%A)." param.Name
         | Let(param, init, body) ->
             PLet(name_type_of_param param ctx, p init, p body)
