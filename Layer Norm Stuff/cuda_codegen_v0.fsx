@@ -34,6 +34,7 @@ let codegen (exp: ParsedExpr, ctx: Context) =
         let generate_definition (x: Ty) =
             match x with
             | TyTuple x' ->
+                // Declares the type.
                 ind()
                 ppln "typedef struct {"
                 Array.iteri <| fun i typ ->
@@ -44,6 +45,31 @@ let codegen (exp: ParsedExpr, ctx: Context) =
                 pp "} "
                 pp (print_type x)
                 ppln ";"
+                // The make tuple functions.
+                ind()
+                pp (print_type x)
+                pp " make_tuple_"
+                pp (Array.map print_type x' |> String.concat "_")
+                pp "("
+                for i=0 to x'.Length-1 do
+                    if i = 0 then
+                        pp (print_type x'.[i])
+                        pp " arg0"
+                    else
+                        pp ", "
+                        pp (print_type x'.[i])
+                        pp (sprintf " arg%i" i)
+                ppln "){"
+                ind'()
+                pp (print_type x)
+                ppln " r;"
+                for i=0 to x'.Length-1 do
+                    ind'()
+                    ppln (sprintf "r.arg%i = arg%i;" i i)
+                ind'()
+                ppln "return r;"
+                ind()
+                ppln "}"
             | TyGlobalArray x' ->
                 ind()
                 ppln "typedef struct {"
@@ -94,8 +120,13 @@ let codegen (exp: ParsedExpr, ctx: Context) =
         | PFunction(_,_) -> failwith "Should be a part of the let statement."
         | PLet((name,TyFunc(call_types, ret_typ)),PFunction((_,_),body),rest) -> // For functions.
             indent()
+            if name = "main" 
+            then pp "__global__"
+            else pp "__device__"
             pp (print_type ret_typ)
-            pp " ("
+            pp " "
+            pp name
+            pp "("
             pp (print_type call_types)
             ppln " tupledArg){"
             gg body
@@ -176,6 +207,12 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             if args.IsEmpty = false then g (args.Head)
             List.iter (fun arg -> pp ", "; g arg) args.Tail
             pp ")"
+        | PNewTuple args ->
+            let typ = args |> List.map (snd >> print_type) |> String.concat "_"
+            pp (sprintf "make_tuple_%s(" typ)
+            g (List.head args |> fst)
+            List.iter (fun (x,_) -> pp ", "; g x) args.Tail
+            
     ppln "//Kernel code:"
     ppln "extern \"C\" {"
     generate_definitions 4 ctx

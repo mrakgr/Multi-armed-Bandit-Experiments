@@ -62,6 +62,7 @@ and ParsedExpr =
 | PSetArray of string * ParsedExpr * ParsedExpr
 | PApplication of string * ParsedExpr list
 | PReturn of ParsedExpr
+| PNewTuple of (ParsedExpr * Ty) list
 
 let rec add_return_to_max =
     function
@@ -72,7 +73,8 @@ let rec add_return_to_max =
 
 type ParserState =
 | ParseLambdaOrStatements
-| ParseStatementsOnly
+| ParseStatements
+| ParseExpressionsOnly
 
 type Context =
     {
@@ -170,21 +172,24 @@ let parse_exprs (exp: Expr) =
          state = ParseLambdaOrStatements}
     let rec loop (exp: Expr) (ctx: Context) =
         let inline p e = loop e ctx
+        let inline ty e = parse_type e ctx
         match exp with
         | Lambda(param, body) ->
             match ctx.state with
             | ParseLambdaOrStatements -> 
-                let x = loop body {ctx with state = ParseStatementsOnly} |> add_return_to_max
+                let x = loop body {ctx with state = ParseStatements} |> add_return_to_max
                 PFunction(name_type_of_param param ctx, x)
-            | ParseStatementsOnly _ -> failwith "Nested lambdas disallowed."
+            | ParseStatements | ParseExpressionsOnly -> failwith "Nested lambdas disallowed."
+        | Let(_,_,_) when ctx.state = ParseExpressionsOnly ->
+            failwith "Let statements not allowed inside if statements."
         | Let(param, NewObject(_,[Int32 v]), body) ->
             let gen_type = param.Type.GetGenericTypeDefinition()
             if gen_type = typeof<CudaLocalArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
-                PDeclareArray(param.Name,TyLocalArray(v, parse_type arg_typ ctx), p body)
+                PDeclareArray(param.Name,TyLocalArray(v, ty arg_typ), p body)
             elif gen_type = typeof<CudaSharedArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
-                PDeclareArray(param.Name,TySharedArray(v, parse_type arg_typ ctx), p body)
+                PDeclareArray(param.Name,TySharedArray(v, ty arg_typ), p body)
             else failwithf "Object creation not supported(%A)." param.Name
         | Let(param, init, body) ->
             PLet(name_type_of_param param ctx, p init, p body)
@@ -228,12 +233,17 @@ let parse_exprs (exp: Expr) =
         | IfThenElse(a,b,c) -> PIfThenElse(p a, p b, p c)
         | WhileLoop(a,b) -> PWhileLoop(p a, p b)
         | VarSet(a,b) -> PVarSet(a.Name, p b)
+        | Sequential(_,_) when ctx.state = ParseExpressionsOnly ->
+            failwith "Sequential statements not allowed inside if statements."
         | Sequential(a,b) -> PSequential(p a, p b)
         | ForIntegerRangeLoop(a,b,c,d) -> PForIntegerRangeLoop(a.Name,p b, p c, p d)
         | PropertySet(Some ar,PropertyInfoName "Item",[index],value) ->
             PSetArray(string ar, p index, p value)
         | Application(a,NewTuple args) -> // Function call
             PApplication(string a, List.map p args)
+        | NewTuple args ->
+            List.map (fun x -> p x, ty x.Type) args
+            |> PNewTuple
         | x -> failwithf "%A" x
     loop exp ctx, ctx
 // Global ids
