@@ -42,64 +42,36 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             match x with
             | TyTuple x' ->
                 // Declares the type.
-                ind()
-                ppln "typedef struct {"
+                ind(); ppln "typedef struct {"
                 Array.iteri <| fun i typ ->
-                    ind'()
-                    ppln (sprintf "%s arg%i;" (print_type typ) i)
+                    ind'(); ppln (sprintf "%s arg%i;" (print_type typ) i)
                 <| x'
-                ind()
-                pp "} "
-                pp (print_type x)
-                ppln ";"
+                ind(); pp "} "; pp (print_type x); ppln ";"
                 // The make tuple functions.
-                ind()
-                pp "__device__ "
-                pp (print_type x)
+                ind(); pp "__device__ "; pp (print_type x)
                 pp " make_tuple_"
                 pp (Array.map print_type x' |> String.concat "_")
-                pp "("
-                for i=0 to x'.Length-1 do
-                    if i = 0 then
-                        pp (print_type x'.[i])
-                        pp " arg0"
-                    else
-                        pp ", "
-                        pp (print_type x'.[i])
-                        pp (sprintf " arg%i" i)
+                pp "("; pp (print_type x'.[0]); pp " arg0"
+                for i=1 to x'.Length-1 do
+                    pp ", "; pp (print_type x'.[i]); pp (sprintf " arg%i" i)
                 ppln "){"
-                ind'()
-                pp (print_type x)
-                ppln " r;"
+                ind'(); pp (print_type x); ppln " r;"
                 for i=0 to x'.Length-1 do
-                    ind'()
-                    ppln (sprintf "r.arg%i = arg%i;" i i)
-                ind'()
-                ppln "return r;"
-                ind()
-                ppln "}"
+                    ind'(); ppln (sprintf "r.arg%i = arg%i;" i i)
+                ind'(); ppln "return r;"
+                ind(); ppln "}"
             | TyGlobalArray x' ->
-                ind()
-                ppln "typedef struct {"
-                ind'()
-                ppln "int length;"
-                ind'()
-                ppln (sprintf "%s *pointer;" (print_type x'))
-                ind()
-                pp "} "
-                pp (print_type x)
-                ppln ";"
+                ind(); ppln "#pragma pack(1)"
+                ind(); ppln "typedef struct {"
+                ind'(); ppln "int length;"
+                ind'(); ppln (sprintf "%s *pointer;" (print_type x'))
+                ind(); pp "} "; pp (print_type x); ppln ";"
             | TyGlobal2dArray x' ->
-                ind()
-                ppln "typedef struct {"
-                ind'()
-                ppln "int num_cols; int num_rows;"
-                ind'()
-                ppln (sprintf "%s *pointer;" (print_type x'))
-                ind()
-                pp "} "
-                pp (print_type x)
-                ppln ";"
+                ind(); ppln "#pragma pack(1)"
+                ind(); ppln "typedef struct {"
+                ind'(); ppln "int num_cols; int num_rows;"
+                ind'(); ppln (sprintf "%s *pointer;" (print_type x'))
+                ind(); pp "} "; pp (print_type x); ppln ";"
             | x -> failwithf "Not supposed to be called on this(%A)." x
         Seq.iter generate_definition ctx.definitions
 
@@ -201,9 +173,6 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             pp ")"
                 
 
-            
-
-            
     ppln "//Kernel code:"
     ppln "extern \"C\" {"
     generate_definitions 4 ctx
