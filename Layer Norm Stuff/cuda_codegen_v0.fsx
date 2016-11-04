@@ -13,9 +13,11 @@ let rec print_type =
     | TyFunc(_,ret) -> print_type ret
     | TyGlobalArray x -> 
         sprintf "global_array_%s" (print_type x)
-    | TySharedArray(len,x) ->
+    | TyGlobal2dArray x -> 
+        sprintf "global_array_2d_%s" (print_type x)
+    | TySharedArray(_,x) | TyShared2dArray(_,_,x) ->
         sprintf "__shared__ %s" (print_type x)
-    | TyLocalArray(len,x) -> 
+    | TyLocalArray(_,x) | TyLocal2dArray(_,_,x) ->         
         print_type x
     | TyTuple(x) -> sprintf "tuple_%s__" (Array.map print_type x |> String.concat "_")
     | TyUnit -> "void"
@@ -75,6 +77,17 @@ let codegen (exp: ParsedExpr, ctx: Context) =
                 ppln "typedef struct {"
                 ind'()
                 ppln "int legth;"
+                ind'()
+                ppln (sprintf "%s *pointer;" (print_type x'))
+                ind()
+                pp "} "
+                pp (print_type x)
+                ppln ";"
+            | TyGlobal2dArray x' ->
+                ind()
+                ppln "typedef struct {"
+                ind'()
+                ppln "int num_cols; int num_rows;"
                 ind'()
                 ppln (sprintf "%s *pointer;" (print_type x'))
                 ind()
@@ -183,9 +196,11 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             pp (print_type typ)
             pp " "
             pp var
-            pp "["
-            match typ with | TyLocalArray(n,_) | TySharedArray(n,_) -> pp (string n)
-            pp "]"
+            match typ with 
+            | TyLocalArray(n,_) | TySharedArray(n,_) -> 
+                pp (sprintf "[%i]" n)
+            | TyLocal2dArray(nc,nr,_) | TyShared2dArray(nc,nr,_) ->
+                pp (sprintf "[%i][%i]" nc nr)
             ppln ";"
             g rest
         | PGetArray(name,i) ->
