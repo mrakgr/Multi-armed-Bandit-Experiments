@@ -10,6 +10,9 @@
 // From here on out, I will go straight towards my goal. No more Haskell, no more Idris, no more wandering
 // around looking for a better deal. I am now absolutely sure that there is not any.
 
+[<AutoOpen>]
+module SpiralV4.Flame.QuotationsParser
+
 open System
 open System.Collections.Generic
 
@@ -66,13 +69,16 @@ and ParsedExpr =
 | PApplication of string * ParsedExpr list
 | PReturn of ParsedExpr
 | PNewTuple of (ParsedExpr * Ty) list
+| PPropertyGet of ParsedExpr * string * ParsedExpr list
 
-let rec add_return_to_max =
-    function
+let rec add_return_to_max x =
+    match x with
     | PLet(a,b,c) -> PLet(a,b,add_return_to_max c)
     | PSequential(a,b) -> PSequential(a,add_return_to_max b)
     | PDeclareArray(a,b,c) -> PDeclareArray(a,b,add_return_to_max c)
-    | x -> PReturn x
+    | PPropertyGet _ | PNewTuple _ | PApplication _ | PGetArray _
+    | PIfThenElse _ | PValue _ | PCall _ | PTupleGet _ | PVar _ -> PReturn x
+    | x -> x
 
 type ParserState =
 | ParseLambdaOrStatements
@@ -104,15 +110,14 @@ let tuple_types = // All the possible tuple types. Tuple nesting is no problem f
 open System.Runtime.InteropServices
 
 #nowarn "9"
-[<StructLayout(LayoutKind.Sequential)>]
 type CudaGlobalArray<'a> =
-    struct
-    val length: int
-    val Pointer: nativeint
-    new (a: int) = {length = a; Pointer = nativeint 0}
-    end
+    {
+    length: int
+    pointer: nativeint
+    }
 
-    member t.Length: int = failwith "Not implemented in native code."
+    static member create(a: int) = {length = a; pointer = nativeint 0}
+    static member create(a: int, p: nativeint) = {length = a; pointer = p}
 
     member this.Item
         with get(a: int): 'a = failwith "Not implemented in native code"
@@ -122,8 +127,8 @@ type CudaGlobalArray<'a> =
 type CudaLocalArray<'a> =
     struct
     val length: int
-    val Pointer: nativeint
-    new (a: int) = {length=a; Pointer = nativeint 0}
+    val pointer: nativeint
+    new (a: int) = {length=a; pointer = nativeint 0}
     end
 
     member this.Item
@@ -134,8 +139,8 @@ type CudaLocalArray<'a> =
 type CudaSharedArray<'a> =
     struct
     val length: int
-    val Pointer: nativeint
-    new (a: int) = {length=a; Pointer = nativeint 0}
+    val pointer: nativeint
+    new (a: int) = {length=a; pointer = nativeint 0}
     end
 
     member this.Item
@@ -144,12 +149,14 @@ type CudaSharedArray<'a> =
 
 [<StructLayout(LayoutKind.Sequential)>]
 type CudaGlobal2dArray<'a> =
-    struct
-    val num_cols: int
-    val num_rows: int
-    val Pointer: nativeint
-    new (a,b) = {num_cols=a; num_rows = b; Pointer = nativeint 0}
-    end
+    {
+    num_cols: int
+    num_rows: int
+    pointer: nativeint
+    }
+
+    static member create(a,b) = {num_cols=a; num_rows = b; pointer = nativeint 0}
+    static member create(a,b,c) = {num_cols=a; num_rows = b; pointer = c}
 
     member this.Item
         with get(a: int, b: int): 'a = failwith "Not implemented in native code"
@@ -160,8 +167,8 @@ type CudaLocal2dArray<'a> =
     struct
     val num_cols: int
     val num_rows: int
-    val Pointer: nativeint
-    new (a,b) = {num_cols=a; num_rows = b; Pointer = nativeint 0}
+    val pointer: nativeint
+    new (a,b) = {num_cols=a; num_rows = b; pointer = nativeint 0}
     end
 
     member this.Item
@@ -173,8 +180,8 @@ type CudaShared2dArray<'a> =
     struct
     val num_cols: int
     val num_rows: int
-    val Pointer: nativeint
-    new (a,b) = {num_cols=a; num_rows = b; Pointer = nativeint 0}
+    val pointer: nativeint
+    new (a,b) = {num_cols=a; num_rows = b; pointer = nativeint 0}
     end
 
     member this.Item
@@ -278,6 +285,8 @@ let parse_exprs (exp: Expr) =
             | _ -> PValue(string ob)
         | PropertyGet(Some ar,PropertyInfoName "Item",[value]) ->
             PGetArray(string ar,p value)
+        | PropertyGet(Some v,PropertyInfoName prop_name,exprs) ->
+            PPropertyGet(p v, prop_name, List.map p exprs)
         | PropertyGet(_,x,_) ->
             match x.DeclaringType.Name with
             | "ThreadIdx" -> PVar("threadIdx"+"."+x.Name,TyInt)

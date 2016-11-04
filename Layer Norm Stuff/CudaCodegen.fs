@@ -1,9 +1,14 @@
-﻿#load "quotations_parser_v0.fsx"
+﻿[<AutoOpen>]
+module SpiralV4.Flame.CudaCodegen
+
 open System
 open System.Text
 open System.Collections.Generic
 open Microsoft.FSharp.Quotations
-open Quotations_parser_v0
+#if INTERACTIVE
+#load "QuotationsParser.fsx"
+#endif
+open QuotationsParser
 
 let rec print_type =
     function
@@ -49,6 +54,7 @@ let codegen (exp: ParsedExpr, ctx: Context) =
                 ppln ";"
                 // The make tuple functions.
                 ind()
+                pp "__device__ "
                 pp (print_type x)
                 pp " make_tuple_"
                 pp (Array.map print_type x' |> String.concat "_")
@@ -76,7 +82,7 @@ let codegen (exp: ParsedExpr, ctx: Context) =
                 ind()
                 ppln "typedef struct {"
                 ind'()
-                ppln "int legth;"
+                ppln "int length;"
                 ind'()
                 ppln (sprintf "%s *pointer;" (print_type x'))
                 ind()
@@ -105,9 +111,7 @@ let codegen (exp: ParsedExpr, ctx: Context) =
         match exp with
         | PReturn x ->
             indent()
-            pp "return "
-            g x
-            ppln ";"
+            pp "return "; g x; ppln ";"
             indent()
         | PVar(var,_) -> pp var
         | PTupleGet(a,n) ->
@@ -131,71 +135,40 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             | PFShuffleDown(a,b) -> pp "__shfl_down("; g a; pp ", "; g b; pp ")"
             | PFShuffleSource(a,b) -> pp "__shfl("; g a; pp ", "; g b; pp ")"
         | PFunction(_,_) -> failwith "Should be a part of the let statement."
-        | PLet((name,TyFunc(call_types, ret_typ)),PFunction((_,_),body),rest) -> // For functions.
+        | PLet((name,TyFunc(call_types, ret_typ)),PFunction((arg_name,_),body),rest) -> // For functions.
             indent()
-            if name = "main" 
-            then pp "__global__"
-            else pp "__device__"
-            pp (print_type ret_typ)
-            pp " "
-            pp name
-            pp "("
-            pp (print_type call_types)
-            ppln " tupledArg){"
+            if name = "kernel_main" 
+            then pp "__global__ "
+            else pp "__device__ "
+            pp (print_type ret_typ); pp " "; pp name; pp "("; pp (print_type call_types); pp " "; pp arg_name; ppln "){"
             gg body
-            ppln "}"
+            indent(); ppln "}"
             g rest
         | PLet((var,typ),body,rest) -> // For standard let statements.
             indent()
-            pp (print_type typ)
-            pp " "
-            pp var
-            pp " = "
-            gg body
-            ppln ";"
+            pp (print_type typ); pp " "; pp var; pp " = "; gg body; ppln ";"
             g rest          
         | PValue(x) -> pp x
         | PIfThenElse(a,b,c) ->
-            pp "(("
-            gg a
-            pp ") ? ("
-            gg b
-            pp ") : ("
-            gg c
-            pp "))"
+            pp "(("; gg a; pp ") ? ("; gg b; pp ") : ("; gg c; pp "))"
         | PWhileLoop(a,b) ->
-            indent()
-            pp "while ("
-            gg a
-            ppln ") {"
-            gg b
-            ppln "}"
+            indent(); pp "while ("; gg a; ppln ") {"
+            gg b; 
+            indent(); ppln "}"
         | PVarSet(name,b) ->
             indent()
-            pp name
+            pp name; pp " = "; g b; ppln ";"
         | PSequential(a,b) ->
             g a
             g b
         | PForIntegerRangeLoop(name,lower_bound,upper_bound,body) ->
             indent()
-            pp "for("
-            pp name
-            pp " = "
-            g lower_bound
-            pp "; "
-            pp name
-            pp " <= "
-            g upper_bound
-            pp "; "
-            pp name
-            ppln "++){"
+            pp "for("; pp name; pp " = "; g lower_bound; pp "; "; pp name; pp " <= "; g upper_bound; pp "; "; pp name; ppln "++){"
             gg body
             ppln "}"
         | PDeclareArray(var,typ,rest) ->
             indent()
-            pp (print_type typ)
-            pp " "
-            pp var
+            pp (print_type typ); pp " "; pp var
             match typ with 
             | TyLocalArray(n,_) | TySharedArray(n,_) -> 
                 pp (sprintf "[%i]" n)
@@ -204,21 +177,12 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             ppln ";"
             g rest
         | PGetArray(name,i) ->
-            pp name
-            pp "["
-            g i
-            pp "]"
+            pp name; pp ".pointer["; g i; pp "]"
         | PSetArray(name,i,ex) ->
             indent()
-            pp name
-            pp "["
-            g i
-            pp "] = "
-            g ex
-            pp ";"
+            pp name; pp ".pointer["; g i; pp "] = "; g ex; ppln ";"
         | PApplication(name,args) ->
-            pp name
-            pp "("
+            pp name; pp "("
             if args.IsEmpty = false then g (args.Head)
             List.iter (fun arg -> pp ", "; g arg) args.Tail
             pp ")"
@@ -227,6 +191,18 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             pp (sprintf "make_tuple_%s(" typ)
             g (List.head args |> fst)
             List.iter (fun (x,_) -> pp ", "; g x) args.Tail
+            pp ")"
+        | PPropertyGet(v,name,[]) ->
+            g v; pp "."; pp name 
+        | PPropertyGet(v,name,args) ->
+            g v; pp "."; pp name; pp "("; 
+            g args.Head
+            List.iter (fun x -> pp ", "; g x) args.Tail
+            pp ")"
+                
+
+            
+
             
     ppln "//Kernel code:"
     ppln "extern \"C\" {"
@@ -235,13 +211,13 @@ let codegen (exp: ParsedExpr, ctx: Context) =
     ppln "}"
     program.ToString()
 
-let test =
-    <@
-    let ops (x,y) = x % y, x / y, x * y
-    let main(ar: CudaGlobalArray<int>) =
-        let q = CudaSharedArray(32)
-        ops (q.[0], q.[1])
-    ()
-    @>
-
-codegen (parse_exprs test) |> printfn "%s"
+//let test =
+//    <@
+//    let ops (x,y) = x % y, x / y, x * y
+//    let main(ar: CudaGlobalArray<int>) =
+//        let q = CudaSharedArray(32)
+//        ops (q.[0], q.[1])
+//    ()
+//    @>
+//
+//codegen (parse_exprs test) |> printfn "%s"
