@@ -1,0 +1,96 @@
+﻿//Kernel code:
+extern "C" {
+    typedef struct {
+        float arg0;
+        int arg1;
+    } tuple_float_int__;
+    __device__ tuple_float_int__ make_tuple_float_int(float arg0, int arg1){
+        tuple_float_int__ r;
+        r.arg0 = arg0;
+        r.arg1 = arg1;
+        return r;
+    }
+    typedef struct {
+        float arg0;
+        float arg1;
+    } tuple_float_float__;
+    __device__ tuple_float_float__ make_tuple_float_float(float arg0, float arg1){
+        tuple_float_float__ r;
+        r.arg0 = arg0;
+        r.arg1 = arg1;
+        return r;
+    }
+    #pragma pack(1)
+    typedef struct {
+        int num_cols; int num_rows;
+        float *pointer;
+    } global_array_2d_float;
+    #pragma pack(1)
+    typedef struct {
+        int length;
+        float *pointer;
+    } global_array_float;
+    typedef struct {
+        global_array_2d_float arg0;
+        global_array_float arg1;
+    } tuple_global_array_2d_float_global_array_float__;
+    __device__ tuple_global_array_2d_float_global_array_float__ make_tuple_global_array_2d_float_global_array_float(global_array_2d_float arg0, global_array_float arg1){
+        tuple_global_array_2d_float_global_array_float__ r;
+        r.arg0 = arg0;
+        r.arg1 = arg1;
+        return r;
+    }
+    __device__ float map_load(float x){
+        return x;
+            }
+    __device__ float shuffle(tuple_float_int__ tupledArg){
+        float v = tupledArg.arg0;
+        int i = tupledArg.arg1;
+        return __shfl_xor(v, i);
+            }
+    __device__ float redo(tuple_float_float__ tupledArg){
+        float a = tupledArg.arg0;
+        float b = tupledArg.arg1;
+        return (a + b);
+            }
+    __device__ float map_out(float x){
+        return x;
+            }
+    __device__ float warp_reduce(float value){
+        float v = value;
+    #pragma unroll
+        for(int i = 1; i <= 4; i++){
+            v = redo(make_tuple_float_float(shuffle(make_tuple_float_int(v, (i << i))), v));
+}
+        return v;
+            }
+    __device__ float block_reduce(float v){
+        __shared__ float temp[32];
+        if ((threadIdx.x < 32)){
+            temp[threadIdx.x] = 0;
+        } else {;}
+        float out_partial = warp_reduce(v);
+    __syncthreads();
+        if (((threadIdx.x % 32) == 0)){
+            temp[(threadIdx.x / 32)] = out_partial;
+        } else {;}
+    __syncthreads();
+        return warp_reduce(temp[(threadIdx.x % 32)]);
+            }
+    __global__ void MapRedocolTest(global_array_2d_float x, global_array_float o){
+        int col = blockIdx.x;
+        while ((col < x.num_cols)) {
+            int row = threadIdx.x;
+            float v = 0;
+            while ((row < x.num_rows)) {
+                v = redo(make_tuple_float_float(map_load(x.pointer[col*x.pointer.num_rows+row]), v));
+                row = (row + blockDim.x);
+            }
+            float final_result = map_out(block_reduce(v));
+            if ((threadIdx.x == 0)){
+                o.pointer[col] = final_result;
+            } else {;}
+            col = (col + gridDim.x);
+        }
+    }
+;}

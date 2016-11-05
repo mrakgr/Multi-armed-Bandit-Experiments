@@ -3,6 +3,8 @@
 // Looking at it broadly, I can try compiling the same with NVCC and I can try fidling with the PTX by hand just to see if
 // everything is in order.
 
+// Edit: Solved it: http://stackoverflow.com/questions/40423722/how-to-properly-pass-arguments-as-structs-to-nvrtc/40427350#40427350
+
 open System
 open SpiralV4
 open SpiralV4.Flame

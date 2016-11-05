@@ -101,13 +101,16 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             | PFEquality(a,b) -> pp "("; g a; pp " == "; g b; pp ")"
             | PFGreaterThan(a,b) -> pp "("; g a; pp " > "; g b; pp ")"
             | PFGreaterThanOrEqual(a,b) -> pp "("; g a; pp " >= "; g b; pp ")"
-            | PFUnroll -> pp "#pragma unroll"
-            | PFSyncthreads -> pp "__syncthreads();"
+            | PFLeftShift(a,b) -> pp "("; g a; pp " << "; g b; pp ")"
+            | PFRightShift(a,b) -> pp "("; g a; pp " >> "; g b; pp ")"
+            | PFUnroll -> pp "#pragma unroll\n"
+            | PFSyncthreads -> pp "__syncthreads();\n"
             | PFShuffleXor(a,b) -> pp "__shfl_xor("; g a; pp ", "; g b; pp ")"
             | PFShuffleUp(a,b) -> pp "__shfl_up("; g a; pp ", "; g b; pp ")"
             | PFShuffleDown(a,b) -> pp "__shfl_down("; g a; pp ", "; g b; pp ")"
             | PFShuffleSource(a,b) -> pp "__shfl("; g a; pp ", "; g b; pp ")"
-        | PFunction(_,_) -> failwith "Should be a part of the let statement."
+            | PFIndent x -> indent(); generate_code indentation (PCall x) 
+        | PDeforestedFunction(_,_) | PFunction(_,_) -> failwith "Should be a part of the let statement."
         | PLet((name,TyDeforestedFunc(_, ret_typ)),PDeforestedFunction(args_name_ty,body),rest) -> // For the main function funtion.
             indent()
             pp "__global__ "
@@ -118,7 +121,7 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             |> pp
             ppln "){"
             gg body
-            indent(); ppln "}"
+            ppln "}"
             g rest
         | PLet((name,TyFunc(call_types, ret_typ)),PFunction((arg_name,_),body),rest) -> // For functions.
             indent()
@@ -127,7 +130,7 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             else pp "__device__ "
             pp (print_type ret_typ); pp " "; pp name; pp "("; pp (print_type call_types); pp " "; pp arg_name; ppln "){"
             gg body
-            indent(); ppln "}"
+            ppln "}"
             g rest
         | PLet((var,typ),body,rest) -> // For standard let statements.
             indent()
@@ -135,7 +138,11 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             g rest          
         | PValue(x) -> pp x
         | PIfThenElse(a,b,c) ->
-            pp "(("; gg a; pp ") ? ("; gg b; pp ") : ("; gg c; pp "))"
+            pp "(("; g a; pp ") ? ("; gg b; pp ") : ("; gg c; pp "))"
+        | PUnitIfThenElse(a,b,c) ->
+            indent(); pp "if ("; g a; ppln "){"
+            gg b; indent(); pp "} else {"
+            gg c; ppln "}"
         | PWhileLoop(a,b) ->
             indent(); pp "while ("; gg a; ppln ") {"
             gg b; 
@@ -146,26 +153,32 @@ let codegen (exp: ParsedExpr, ctx: Context) =
         | PSequential(a,b) ->
             g a
             g b
-        | PForIntegerRangeLoop(name,lower_bound,upper_bound,body) ->
+        | PForIntegerRangeLoop((name,ty),lower_bound,upper_bound,body) ->
             indent()
-            pp "for("; pp name; pp " = "; g lower_bound; pp "; "; pp name; pp " <= "; g upper_bound; pp "; "; pp name; ppln "++){"
+            pp "for("; pp (print_type ty); pp " "; pp name; pp " = "; g lower_bound; pp "; "; pp name; pp " <= "; g upper_bound; pp "; "; pp name; ppln "++){"
             gg body
             ppln "}"
-        | PDeclareArray(var,typ,rest) ->
+        | PDeclareArray((var,typ),rest) ->
             indent()
             pp (print_type typ); pp " "; pp var
-            match typ with 
-            | TyLocalArray(n,_) | TySharedArray(n,_) -> 
+            match typ with
+            | TyLocalArray(n,_) | TySharedArray(n,_) ->
                 pp (sprintf "[%i]" n)
             | TyLocal2dArray(nc,nr,_) | TyShared2dArray(nc,nr,_) ->
                 pp (sprintf "[%i][%i]" nc nr)
+            | _ -> failwith "Impossible."
             ppln ";"
             g rest
-        | PGetArray(name,i) ->
-            pp name; pp ".pointer["; g i; pp "]"
-        | PSetArray(name,i,ex) ->
+        | PGetArray(name, accessor, i) ->
+            pp name; pp accessor; pp "["; g i; pp "]"
+        | PGet2dArray(name, accessor, col, row) ->
+            pp name; pp accessor; pp "["; g col; pp "*"; pp name; pp ".num_rows+"; g row; pp "]"
+        | PSetArray(name, accessor, i, rest) ->
             indent()
-            pp name; pp ".pointer["; g i; pp "] = "; g ex; ppln ";"
+            pp name; pp accessor; pp "["; g i; pp "] = "; g rest; ppln ";"
+        | PSet2dArray(name, accessor, col, row, rest) ->
+            indent()
+            pp name; pp accessor; pp "["; g col; pp "*"; pp name; pp ".num_rows+"; g row; pp "] = "; g rest; ppln ";"
         | PApplication(name,args) ->
             pp name; pp "("
             if args.IsEmpty = false then g (args.Head)
@@ -193,13 +206,5 @@ let codegen (exp: ParsedExpr, ctx: Context) =
     ppln "}"
     program.ToString()
 
-//let test =
-//    <@
-//    let ops (x,y) = x % y, x / y, x * y
-//    let main(ar: CudaGlobalArray<int>) =
-//        let q = CudaSharedArray(32)
-//        ops (q.[0], q.[1])
-//    ()
-//    @>
-//
-//codegen (parse_exprs test) |> printfn "%s"
+/// Compiles and renames kernel_main in the expression to the kernel_main_name argument.
+let compile kernel_main_name kernel = codegen (parse_exprs kernel_main_name kernel)

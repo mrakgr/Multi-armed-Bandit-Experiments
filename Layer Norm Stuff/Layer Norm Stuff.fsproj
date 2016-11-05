@@ -59,6 +59,7 @@
     <Compile Include="AssemblyInfo.fs" />
     <None Include="App.config" />
     <None Include="layer_norm.fsx" />
+    <None Include="PTXTest.fsx" />
     <Content Include="packages.config" />
     <None Include="Scripts\load-references-release.fsx" />
     <None Include="Scripts\load-project-release.fsx" />
@@ -77,8 +78,8 @@
     <None Include="Script1.fsx" />
     <Compile Include="QuotationsParser.fs" />
     <Compile Include="CudaCodegen.fs" />
-    <Compile Include="MapTest.fs" />
-    <None Include="PTXTest.fsx" />
+    <Compile Include="Tests.fs" />
+    <Content Include="TextFile1.txt" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

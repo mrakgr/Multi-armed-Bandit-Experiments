@@ -4,4 +4,4 @@
 #load "../AssemblyInfo.fs"
       "../QuotationsParser.fs"
       "../CudaCodegen.fs"
-      "../MapTest.fs"
+      "../Tests.fs"

@@ -45,12 +45,15 @@ type ParsedFunc =
 | PFEquality of ParsedExpr * ParsedExpr
 | PFGreaterThan of ParsedExpr * ParsedExpr
 | PFGreaterThanOrEqual of ParsedExpr * ParsedExpr
+| PFLeftShift of ParsedExpr * ParsedExpr
+| PFRightShift of ParsedExpr * ParsedExpr
 | PFUnroll
 | PFSyncthreads
 | PFShuffleXor of ParsedExpr * ParsedExpr
 | PFShuffleUp of ParsedExpr * ParsedExpr
 | PFShuffleDown of ParsedExpr * ParsedExpr
 | PFShuffleSource of ParsedExpr * ParsedExpr
+| PFIndent of ParsedFunc
 
 and ParsedExpr =
 | PVar of string * Ty
@@ -63,21 +66,24 @@ and ParsedExpr =
 | PWhileLoop of ParsedExpr * ParsedExpr
 | PVarSet of string * ParsedExpr
 | PSequential of ParsedExpr * ParsedExpr
-| PForIntegerRangeLoop of string * ParsedExpr * ParsedExpr * ParsedExpr
-| PDeclareArray of string * Ty * ParsedExpr
-| PGetArray of string * ParsedExpr
-| PSetArray of string * ParsedExpr * ParsedExpr
+| PForIntegerRangeLoop of (string * Ty) * ParsedExpr * ParsedExpr * ParsedExpr
+| PDeclareArray of (string * Ty) * ParsedExpr
+| PGetArray of name: string * pointer_accessor: string * idx: ParsedExpr
+| PGet2dArray of name: string * pointer_accessor: string * row: ParsedExpr * col: ParsedExpr
+| PSetArray of name: string * pointer_accessor: string * idx: ParsedExpr * rest: ParsedExpr
+| PSet2dArray of name: string * pointer_accessor: string  * row: ParsedExpr * col: ParsedExpr * rest: ParsedExpr
 | PApplication of string * ParsedExpr list
 | PReturn of ParsedExpr
 | PNewTuple of (ParsedExpr * Ty) list
 | PPropertyGet of ParsedExpr * string * ParsedExpr list
 | PDeforestedFunction of arguments: (string * Ty) list * body: ParsedExpr
+| PUnitIfThenElse of ParsedExpr * ParsedExpr * ParsedExpr
 
 let rec add_return_to_max x =
     match x with
     | PLet(a,b,c) -> PLet(a,b,add_return_to_max c)
     | PSequential(a,b) -> PSequential(a,add_return_to_max b)
-    | PDeclareArray(a,b,c) -> PDeclareArray(a,b,add_return_to_max c)
+    | PDeclareArray(a,c) -> PDeclareArray(a,add_return_to_max c)
     | PPropertyGet _ | PNewTuple _ | PApplication _ | PGetArray _
     | PIfThenElse _ | PValue _ | PCall _ | PTupleGet _ | PVar _ -> PReturn x
     | x -> x
@@ -112,6 +118,19 @@ let tuple_types = // All the possible tuple types. Tuple nesting is no problem f
 open System.Runtime.InteropServices
 
 #nowarn "9"
+[<StructLayout(LayoutKind.Sequential,Pack=1)>]
+type CudaLocalArray<'a> =
+    struct
+    val length: int
+    val pointer: nativeint
+    new (a: int) = {length=a; pointer = nativeint 0}
+    new (a: int, p: nativeint) = {length = a; pointer = p}
+    end
+
+    member this.Item
+        with get(a: int): 'a = failwith "Not implemented in native code"
+        and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
+
 type CudaGlobalArray<'a> =
     {
     length: int
@@ -121,18 +140,7 @@ type CudaGlobalArray<'a> =
     static member create(a: int) = {length = a; pointer = nativeint 0}
     static member create(a: int, p: nativeint) = {length = a; pointer = p}
 
-    member this.Item
-        with get(a: int): 'a = failwith "Not implemented in native code"
-        and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
-
-[<StructLayout(LayoutKind.Sequential,Pack=1)>]
-type CudaLocalArray<'a> =
-    struct
-    val length: int
-    val pointer: nativeint
-    new (a: int) = {length=a; pointer = nativeint 0}
-    new (a: int, p: nativeint) = {length = a; pointer = p}
-    end
+    member x.Conv = CudaLocalArray(x.length,x.pointer) |> box
 
     member this.Item
         with get(a: int): 'a = failwith "Not implemented in native code"
@@ -150,6 +158,20 @@ type CudaSharedArray<'a> =
         with get(a: int): 'a = failwith "Not implemented in native code"
         and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
 
+[<StructLayout(LayoutKind.Sequential,Pack=1)>]
+type CudaLocal2dArray<'a> =
+    struct
+    val num_cols: int
+    val num_rows: int
+    val pointer: nativeint
+    new (num_col,num_rows) = {num_cols=num_col; num_rows = num_rows; pointer = nativeint 0}
+    new (num_col,num_rows,p) = {num_cols=num_col; num_rows = num_rows; pointer = p}
+    end
+
+    member this.Item
+        with get(a: int, b: int): 'a = failwith "Not implemented in native code"
+        and set(a: int, b: int) (value:'a): unit = failwith "Not implemented in native code"
+
 type CudaGlobal2dArray<'a> =
     {
     num_cols: int
@@ -160,18 +182,7 @@ type CudaGlobal2dArray<'a> =
     static member create(a,b) = {num_cols=a; num_rows = b; pointer = nativeint 0}
     static member create(a,b,c) = {num_cols=a; num_rows = b; pointer = c}
 
-    member this.Item
-        with get(a: int, b: int): 'a = failwith "Not implemented in native code"
-        and set(a: int, b: int) (value:'a): unit = failwith "Not implemented in native code"
-
-[<StructLayout(LayoutKind.Sequential,Pack=1)>]
-type CudaLocal2dArray<'a> =
-    struct
-    val num_cols: int
-    val num_rows: int
-    val pointer: nativeint
-    new (a,b) = {num_cols=a; num_rows = b; pointer = nativeint 0}
-    end
+    member x.Conv = CudaLocal2dArray(x.num_cols,x.num_rows,x.pointer) |> box
 
     member this.Item
         with get(a: int, b: int): 'a = failwith "Not implemented in native code"
@@ -237,7 +248,7 @@ let rec deforest_kernel_main_and_rename_it kernel_main_name (x: ParsedExpr) =
 
     | PLet(a,b,c) -> PLet(a,b,deforest_kernel_main_and_rename_it kernel_main_name c)
     | PSequential(a,b) -> PSequential(a,deforest_kernel_main_and_rename_it kernel_main_name b)
-    | PDeclareArray(a,b,c) -> PDeclareArray(a,b,deforest_kernel_main_and_rename_it kernel_main_name c)
+    | PDeclareArray(a,c) -> PDeclareArray(a,deforest_kernel_main_and_rename_it kernel_main_name c)
     | x -> x
 
 let (|PropertyInfoName|) (x: Reflection.PropertyInfo) = x.Name
@@ -262,19 +273,19 @@ let parse_exprs kernel_main_name (exp: Expr) =
             let gen_type = param.Type.GetGenericTypeDefinition()
             if gen_type = typeof<CudaLocalArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
-                PDeclareArray(param.Name,TyLocalArray(v, ty arg_typ), p body)
+                PDeclareArray((param.Name,TyLocalArray(v, ty arg_typ)), p body)
             elif gen_type = typeof<CudaSharedArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
-                PDeclareArray(param.Name,TySharedArray(v, ty arg_typ), p body)
+                PDeclareArray((param.Name,TySharedArray(v, ty arg_typ)), p body)
             else failwithf "Object creation not supported(%A)." param.Name
         | Let(param, NewObject(_,[Int32 num_cols; Int32 num_rows]), body) -> // For 2d arrays
             let gen_type = param.Type.GetGenericTypeDefinition()
             if gen_type = typeof<CudaLocal2dArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
-                PDeclareArray(param.Name,TyLocal2dArray(num_cols, num_rows, ty arg_typ), p body)
+                PDeclareArray((param.Name,TyLocal2dArray(num_cols, num_rows, ty arg_typ)), p body)
             elif gen_type = typeof<CudaShared2dArray<_>>.GetGenericTypeDefinition() then
                 let arg_typ = param.Type.GetGenericArguments().[0]
-                PDeclareArray(param.Name,TyShared2dArray(num_cols, num_rows, ty arg_typ), p body)
+                PDeclareArray((param.Name,TyShared2dArray(num_cols, num_rows, ty arg_typ)), p body)
             else failwithf "Object creation not supported(%A)." param.Name
         | Let(param, init, body) ->
             PLet(name_type_of_param param ctx, p init, p body)
@@ -290,13 +301,15 @@ let parse_exprs kernel_main_name (exp: Expr) =
             | _, "op_Equality" -> let [x;y] = exprList in PCall(PFEquality(p x,p y))
             | _, "op_GreaterThan" -> let [x;y] = exprList in PCall(PFGreaterThan(p x,p y))
             | _, "op_GreaterThanOrEqual" -> let [x;y] = exprList in PCall(PFGreaterThanOrEqual(p x,p y))
-            | _, "_unroll" -> PCall(PFUnroll)
-            | _, "_syncthreads" -> PCall(PFSyncthreads)
+            | _, "op_LeftShift" -> let [x;y] = exprList in PCall(PFLeftShift(p x,p y))
+            | _, "op_RightShift" -> let [x;y] = exprList in PCall(PFRightShift(p x,p y))
+            | _, "_unroll" -> PCall(PFIndent PFUnroll)
+            | _, "_syncthreads" -> PCall(PFIndent PFSyncthreads)
             | "Shuffle", "Source" -> let [a;b] = exprList in PCall(PFShuffleSource(p a, p b))
             | "Shuffle", "Up" -> let [a;b] = exprList in PCall(PFShuffleUp(p a, p b))
             | "Shuffle", "Down" -> let [a;b] = exprList in PCall(PFShuffleDown(p a, p b))
             | "Shuffle", "Xor" -> let [a;b] = exprList in PCall(PFShuffleXor(p a, p b))
-            | _,_ -> failwith "Call not supported."
+            | x,y -> failwithf "Call not supported(%s,%s)." x y
         | Var(x) -> PVar <| name_type_of_param x ctx
         | Value(ob,ty) -> 
             match ob with
@@ -306,8 +319,16 @@ let parse_exprs kernel_main_name (exp: Expr) =
             | :? float as x when x = Double.MinValue -> PValue("__int_as_float(0xfff0000000000000)")
             | :? unit -> PValue ";"
             | _ -> PValue(string ob)
-        | PropertyGet(Some ar,PropertyInfoName "Item",[value]) ->
-            PGetArray(string ar,p value)
+        | PropertyGet(Some ar,PropertyInfoName "Item",[index]) ->
+            let accessor = 
+                if ar.Type.GetGenericTypeDefinition() = typeof<CudaGlobalArray<_>>.GetGenericTypeDefinition() 
+                then ".pointer" else ""
+            PGetArray(string ar, accessor, p index)
+        | PropertyGet(Some ar,PropertyInfoName "Item",[col;row]) ->
+            let accessor = 
+                if ar.Type.GetGenericTypeDefinition() = typeof<CudaGlobal2dArray<_>>.GetGenericTypeDefinition() 
+                then ".pointer" else ""
+            PGet2dArray(string ar, accessor, p col,p row)
         | PropertyGet(Some v,PropertyInfoName prop_name,exprs) ->
             PPropertyGet(p v, prop_name, List.map p exprs)
         | PropertyGet(_,x,_) ->
@@ -317,23 +338,35 @@ let parse_exprs kernel_main_name (exp: Expr) =
             | "BlockDim" -> PVar("blockDim"+"."+x.Name,TyInt)
             | "GridDim" -> PVar("gridDim"+"."+x.Name,TyInt)
             | _ -> failwithf "Property get not supported(%A)." x.Name
+        | IfThenElse(a,b,c) when b.Type = typeof<unit> -> PUnitIfThenElse(p a,p b,p c)
         | IfThenElse(a,b,c) -> PIfThenElse(p a, p b, p c)
         | WhileLoop(a,b) -> PWhileLoop(p a, p b)
         | VarSet(a,b) -> PVarSet(a.Name, p b)
         | Sequential(_,_) when ctx.state = ParseExpressionsOnly ->
             failwith "Sequential statements not allowed inside if statements."
         | Sequential(a,b) -> PSequential(p a, p b)
-        | ForIntegerRangeLoop(a,b,c,d) -> PForIntegerRangeLoop(a.Name,p b, p c, p d)
-        | PropertySet(Some ar,PropertyInfoName "Item",[index],value) ->
-            PSetArray(string ar, p index, p value)
-        | Application(a,NewTuple args) -> // Function call
-            PApplication(string a, List.map p args)
+        | ForIntegerRangeLoop(a,b,c,d) -> PForIntegerRangeLoop((a.Name,ty a.Type),p b, p c, p d)
+        | PropertySet(Some ar,PropertyInfoName "Item",[index],rest) ->
+            let accessor = 
+                if ar.Type.GetGenericTypeDefinition() = typeof<CudaGlobalArray<_>>.GetGenericTypeDefinition() 
+                then ".pointer" else ""
+            PSetArray(string ar, accessor, p index, p rest)
+        | PropertySet(Some ar,PropertyInfoName "Item",[col;row],rest) ->
+            let accessor = 
+                if ar.Type.GetGenericTypeDefinition() = typeof<CudaGlobal2dArray<_>>.GetGenericTypeDefinition() 
+                then ".pointer" else ""
+            PSet2dArray(string ar, accessor, p col, p row, p rest)
+//        | Application(a,NewTuple args) -> // Function call optimization...this is not typesafe. I'll do it properly in Idris.
+//            PApplication(string a, List.map p args)
+        | Application(a,arg) -> // Function call
+            PApplication(string a, [p arg])
         | NewTuple args ->
             List.map (fun x -> p x, ty x.Type) args
             |> PNewTuple
         | x -> failwithf "%A" x
     let result = loop exp ctx
     deforest_kernel_main_and_rename_it kernel_main_name result, ctx // Has another deforestation pass at the end.
+
 // Global ids
 module ThreadIdx =
     let x = 0
@@ -369,4 +402,5 @@ type Shuffle =
 let _unroll() = ()
 let _syncthreads() = ()
    
-
+type Ar = CudaGlobalArray<float32>
+type Ar2d = CudaGlobal2dArray<float32>
