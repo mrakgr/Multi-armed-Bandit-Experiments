@@ -27,6 +27,7 @@ type Ty =
 | TyBool
 | TyTuple of Ty[]
 | TyFunc of call_type: Ty * return_type: Ty
+| TyDeforestedFunc of call_types: Ty[] * return_type: Ty
 | TyGlobalArray of Ty
 | TyLocalArray of length: int * Ty
 | TySharedArray of length: int * Ty
@@ -70,6 +71,7 @@ and ParsedExpr =
 | PReturn of ParsedExpr
 | PNewTuple of (ParsedExpr * Ty) list
 | PPropertyGet of ParsedExpr * string * ParsedExpr list
+| PDeforestedFunction of arguments: (string * Ty) list * body: ParsedExpr
 
 let rec add_return_to_max x =
     match x with
@@ -123,19 +125,20 @@ type CudaGlobalArray<'a> =
         with get(a: int): 'a = failwith "Not implemented in native code"
         and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
 
-[<StructLayout(LayoutKind.Sequential)>]
+[<StructLayout(LayoutKind.Sequential,Pack=1)>]
 type CudaLocalArray<'a> =
     struct
     val length: int
     val pointer: nativeint
     new (a: int) = {length=a; pointer = nativeint 0}
+    new (a: int, p: nativeint) = {length = a; pointer = p}
     end
 
     member this.Item
         with get(a: int): 'a = failwith "Not implemented in native code"
         and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
 
-[<StructLayout(LayoutKind.Sequential)>]
+[<StructLayout(LayoutKind.Sequential,Pack=1)>]
 type CudaSharedArray<'a> =
     struct
     val length: int
@@ -147,7 +150,6 @@ type CudaSharedArray<'a> =
         with get(a: int): 'a = failwith "Not implemented in native code"
         and set(a: int) (value:'a): unit = failwith "Not implemented in native code"
 
-[<StructLayout(LayoutKind.Sequential)>]
 type CudaGlobal2dArray<'a> =
     {
     num_cols: int
@@ -162,7 +164,7 @@ type CudaGlobal2dArray<'a> =
         with get(a: int, b: int): 'a = failwith "Not implemented in native code"
         and set(a: int, b: int) (value:'a): unit = failwith "Not implemented in native code"
 
-[<StructLayout(LayoutKind.Sequential)>]
+[<StructLayout(LayoutKind.Sequential,Pack=1)>]
 type CudaLocal2dArray<'a> =
     struct
     val num_cols: int
@@ -175,7 +177,7 @@ type CudaLocal2dArray<'a> =
         with get(a: int, b: int): 'a = failwith "Not implemented in native code"
         and set(a: int, b: int) (value:'a): unit = failwith "Not implemented in native code"
 
-[<StructLayout(LayoutKind.Sequential)>]
+[<StructLayout(LayoutKind.Sequential,Pack=1)>]
 type CudaShared2dArray<'a> =
     struct
     val num_cols: int
@@ -217,9 +219,30 @@ let rec parse_type (x: Type) (ctx: Context) =
 let name_type_of_param (param: Var) (ctx: Context) =
     param.Name, parse_type param.Type ctx
 
+/// Untuples the main function and renames it.
+let rec deforest_kernel_main_and_rename_it kernel_main_name (x: ParsedExpr) = 
+    match x with
+    | PLet(("kernel_main",TyFunc(TyTuple tup_typ, ret_typ)),PFunction(("tupledArg",_),body),rest) ->
+        let l = tup_typ.Length
+        let rec remove_unpacker_let_statemets_and_return_them_in_a_list i (x: ParsedExpr) (args_name_ty: (string * Ty) list) =
+            if i < l then
+                match x with
+                | PLet((arg_name,arg_ty),_,rest) -> 
+                    remove_unpacker_let_statemets_and_return_them_in_a_list (i+1) rest ((arg_name,arg_ty)::args_name_ty)
+                | _ -> failwith "Not supposed to get here."
+            else
+                List.rev args_name_ty, x
+        let x, body = remove_unpacker_let_statemets_and_return_them_in_a_list 0 body []
+        PLet((kernel_main_name,TyDeforestedFunc(tup_typ, ret_typ)),PDeforestedFunction(x,body),rest)
+
+    | PLet(a,b,c) -> PLet(a,b,deforest_kernel_main_and_rename_it kernel_main_name c)
+    | PSequential(a,b) -> PSequential(a,deforest_kernel_main_and_rename_it kernel_main_name b)
+    | PDeclareArray(a,b,c) -> PDeclareArray(a,b,deforest_kernel_main_and_rename_it kernel_main_name c)
+    | x -> x
+
 let (|PropertyInfoName|) (x: Reflection.PropertyInfo) = x.Name
 
-let parse_exprs (exp: Expr) =
+let parse_exprs kernel_main_name (exp: Expr) =
     let ctx = 
         {definitions=HashSet(HashIdentity.Structural)
          state = ParseLambdaOrStatements}
@@ -309,7 +332,8 @@ let parse_exprs (exp: Expr) =
             List.map (fun x -> p x, ty x.Type) args
             |> PNewTuple
         | x -> failwithf "%A" x
-    loop exp ctx, ctx
+    let result = loop exp ctx
+    deforest_kernel_main_and_rename_it kernel_main_name result, ctx // Has another deforestation pass at the end.
 // Global ids
 module ThreadIdx =
     let x = 0
@@ -344,6 +368,5 @@ type Shuffle =
     
 let _unroll() = ()
 let _syncthreads() = ()
-
-
+   
 

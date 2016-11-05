@@ -15,7 +15,8 @@ let rec print_type =
     | TyInt -> "int"
     | TyBool -> "bool"
     | TyFloat32 -> "float"
-    | TyFunc(_,ret) -> print_type ret
+    | TyDeforestedFunc(_,ret) | TyFunc(_,ret) -> 
+        print_type ret
     | TyGlobalArray x -> 
         sprintf "global_array_%s" (print_type x)
     | TyGlobal2dArray x -> 
@@ -107,6 +108,18 @@ let codegen (exp: ParsedExpr, ctx: Context) =
             | PFShuffleDown(a,b) -> pp "__shfl_down("; g a; pp ", "; g b; pp ")"
             | PFShuffleSource(a,b) -> pp "__shfl("; g a; pp ", "; g b; pp ")"
         | PFunction(_,_) -> failwith "Should be a part of the let statement."
+        | PLet((name,TyDeforestedFunc(_, ret_typ)),PDeforestedFunction(args_name_ty,body),rest) -> // For the main function funtion.
+            indent()
+            pp "__global__ "
+            pp (print_type ret_typ); pp " "; pp name; pp "("; 
+            args_name_ty
+            |> List.map(fun (name,ty) -> sprintf "%s %s" (print_type ty) name)
+            |> String.concat ", "
+            |> pp
+            ppln "){"
+            gg body
+            indent(); ppln "}"
+            g rest
         | PLet((name,TyFunc(call_types, ret_typ)),PFunction((arg_name,_),body),rest) -> // For functions.
             indent()
             if name = "kernel_main" 
