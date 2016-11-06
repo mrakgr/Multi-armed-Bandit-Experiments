@@ -23,8 +23,8 @@ let d2MtoCuda2dArray (x: d2M): CudaGlobal2dArray<float32> =
 
 let inline test_launcher(str: CudaStream, kernel: CudaKernel, x, o: Ar) =
     let inline f x = (^a: (member Conv: obj) x)
-    kernel.GridDimensions <- dim3(1)
-    kernel.BlockDimensions <- dim3(32)
+    kernel.GridDimensions <- dim3(24)
+    kernel.BlockDimensions <- dim3(128)
     let args: obj [] = [|f x; f o|]
     kernel.RunAsync(str.Stream, args)
 
