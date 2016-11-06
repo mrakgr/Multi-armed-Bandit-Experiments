@@ -1,6 +1,7 @@
-﻿// V1 Note: Screw LLVM. I just need to get this done. Someway or another as it always does,
-// the mental block I was having with turning F# quotations to C resolved itself and I think
-// I can proceed forward.
+﻿// V2 Note: This one is just for timing. Since I finally finished the compiler, it is time to time it.
+// I need to find out if the JIT is doing its thing or if the quotations approach is hopeless.
+
+// Edit: Shit. It is horrible. The new compiler is horrible because all the boxing and unboxing.
 
 open System
 open SpiralV4
@@ -166,8 +167,8 @@ type DeviceColumnReduceModule(reduce_op: ReduceOperation, final_op: FinalOperati
 
 cuda_context.Synchronize()
 
-let op = MaxIndexReduceOp
-let final_op = MeanFinalOp
+let op = AddReduceOp
+let final_op = NoFinalOp
 
 let k = DeviceColumnReduceModule(op,final_op)
 let ctx = Context<_>.create
@@ -179,88 +180,10 @@ let getd2M (x: d2M) =
     let t = x.GPV.Gather()
     Array2D.init x.Rows x.Columns (fun row col -> t.[col*x.Rows + row])
 
-type Float32Indx =
-    struct
-    val value : float32
-    val index : int
-    new (a1,a2) = {value=a1;index=a2}
-    end
+let o = d2M.create((1,cols))
 
-    override t.ToString() = sprintf "(%f,%i)" t.value t.index
-
-    static member (-) (a: Float32Indx,b: Float32Indx) = a.value - b.value
-
-let inline col_reduce map_op reduce_op neutral_elem (x: 'a[,]) = // Amazingly I got this one right on the first try. Proof that I am able to juggle these dimensions properly now.
-    Array.init (Array2D.length2 x) (fun col -> Seq.fold (fun s row -> reduce_op s (map_op col row x.[row,col])) neutral_elem {0..Array2D.length1 x - 1})
-
-let a' = getd2M a
-printfn "%A" a'
-
-let inline compare_with_host_reduce (o: CudaDeviceVariable<'a>) (host_reduce: 'a[]) =
-    let o' = o.Gather()
-    printfn "%A" o'
-    printfn "%A" host_reduce
-    let diff = Array.map2 (fun a b -> abs(a-b)) o' host_reduce |> Array.max
-    printfn "%A" diff
-
-let inline complete_col_reduce f o neutral_elem comp_func map_func =
-    k.A(ctx.Str,P a,o)
-    col_reduce 
-        f
-        comp_func 
-        neutral_elem 
-        a'
-    |> Array.map map_func
-    |> compare_with_host_reduce o
-
-match op with
-| MaxReduceOp | MinReduceOp | AddReduceOp | MulReduceOp -> 
-    let only_x _ _ x = x
-    use o = new CudaDeviceVariable<float32>(SizeT cols)
-    let map_func = 
-        match final_op with
-        | FirstFinalOp | SecondFinalOp -> failwith "Invalid"
-        | NoFinalOp -> fun x -> x
-        | SquareFinalOp -> fun x -> x*x
-        | MeanFinalOp -> fun x -> x / float32 a.Rows
-    match op with
-    | MaxIndexReduceOp | MinIndexReduceOp -> failwith "Invalid"
-    | MaxReduceOp -> complete_col_reduce only_x o Single.NegativeInfinity max map_func
-    | MinReduceOp -> complete_col_reduce only_x o Single.PositiveInfinity min map_func
-    | AddReduceOp -> complete_col_reduce only_x o 0.0f (+) map_func
-    | MulReduceOp -> complete_col_reduce only_x o 1.0f (*) map_func
-| MaxIndexReduceOp | MinIndexReduceOp -> 
-    let comp_func =
-        match op with
-        | MaxReduceOp | MinReduceOp | AddReduceOp | MulReduceOp -> failwith "Invalid"
-        | MaxIndexReduceOp ->
-            fun (a: Float32Indx) (b: Float32Indx) ->
-                if a.value > b.value then a else b
-        | MinIndexReduceOp ->
-            fun (a: Float32Indx) (b: Float32Indx) ->
-                if a.value < b.value then a else b
-
-    let f col row x = Float32Indx(x,row)
-    let neutral_elem = 
-        match op with
-        | MaxReduceOp | MinReduceOp | AddReduceOp | MulReduceOp -> failwith "Invalid"
-        | MaxIndexReduceOp ->
-            Float32Indx(Single.NegativeInfinity,0)
-        | MinIndexReduceOp ->
-            Float32Indx(Single.PositiveInfinity,0)
-    match final_op with
-    | NoFinalOp ->
-        use o = new CudaDeviceVariable<Float32Indx>(SizeT cols)
-        complete_col_reduce f o neutral_elem comp_func (fun x -> x)
-    | SquareFinalOp ->
-        use o = new CudaDeviceVariable<Float32Indx>(SizeT cols)
-        complete_col_reduce f o neutral_elem comp_func (fun x -> Float32Indx(x.value*x.value,x.index))
-    | FirstFinalOp ->
-        use o = new CudaDeviceVariable<float32>(SizeT cols)
-        complete_col_reduce f o neutral_elem comp_func (fun x -> x.value)
-    | SecondFinalOp ->
-        use o = new CudaDeviceVariable<int>(SizeT cols)
-        complete_col_reduce f o neutral_elem comp_func (fun x -> x.index)
-    | MeanFinalOp ->
-        use o = new CudaDeviceVariable<Float32Indx>(SizeT cols)
-        complete_col_reduce f o neutral_elem comp_func (fun x -> Float32Indx(x.value / float32 a.Rows, x.index))
+let watch = Diagnostics.Stopwatch.StartNew()
+for i=1 to 10000 do
+    k.A(ctx.Str,P a,o.GPV)
+    cuda_context.Synchronize()
+printfn "Time elapsed: %A" watch.Elapsed

@@ -113,19 +113,22 @@ let mapredocolmap_test() =
 
     let cuda_kernel = compile_kernel prog kernel_main_name
 
-    let cols, rows = 10, 3
+    let cols, rows = 128, 128
     let a = d2M.create((rows,cols)) 
             |> fun x -> fillRandomUniformMatrix ctx.Str x 1.0f 0.0f; x 
     let a' = d2MtoCuda2dArray a
 
-    printfn "%A" (getd2M a)
+    //printfn "%A" (getd2M a)
 
     let o = d2M.create((1,cols))
     let o' = d2MtoCudaArray o
 
-    test_launcher(ctx.Str,cuda_kernel,a',o')
-    cuda_context.Synchronize()
+    let watch = Diagnostics.Stopwatch.StartNew()
+    for i=1 to 10000 do
+        test_launcher(ctx.Str,cuda_kernel,a',o')
+        cuda_context.Synchronize()
+    printfn "Time elapsed: %A" watch.Elapsed
 
-    printfn "%A" (o.GPV.Gather())
+    //printfn "%A" (o.GPV.Gather())
 
 mapredocolmap_test()

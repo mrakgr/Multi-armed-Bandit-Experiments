@@ -79,6 +79,7 @@
     <Compile Include="QuotationsParser.fs" />
     <Compile Include="CudaCodegen.fs" />
     <Compile Include="Tests.fs" />
+    <None Include="ReduceModule_v2.fsx" />
     <Content Include="TextFile1.txt" />
   </ItemGroup>
   <ItemGroup>
