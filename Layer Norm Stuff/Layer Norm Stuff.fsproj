@@ -81,6 +81,7 @@
     <Compile Include="Tests.fs" />
     <None Include="ReduceModule_v2.fsx" />
     <Content Include="TextFile1.txt" />
+    <Compile Include="FunctionalCompiler.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
