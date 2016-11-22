@@ -22,8 +22,8 @@ let d2MtoCuda2dArray (x: d2M): CudaGlobal2dArray<float32> =
 
 let inline test_launcher(str: CudaStream, kernel: CudaKernel, x, o: Ar) =
     let inline f x = (^a: (member Conv: obj) x)
-    kernel.GridDimensions <- dim3(1)
-    kernel.BlockDimensions <- dim3(32)
+    kernel.GridDimensions <- dim3(24)
+    kernel.BlockDimensions <- dim3(128)
     let args: obj [] = [|f x; f o|]
     kernel.RunAsync(str.Stream, args)
 
@@ -130,37 +130,4 @@ let mapredocolmap_test() =
 
     //printfn "%A" (o.GPV.Gather())
 
-/// Not a part of the compiler project. Just a little test to see if NVRTC can compile lambdas.
-/// Edit: No, no it can't.
-let lambda_test() =
-    let kernel_main_name = "addKernel"
-
-    let prog = 
-        """
-__global__ void addKernel(int *c, const int *a, const int *b)
-{
-    int i = threadIdx.x;
-	auto lamb = [](int x) {return x + 1; };
-    c[i] = a[i] + b[i];
-}
-        """
-
-    let cuda_kernel = compile_kernel prog kernel_main_name
-
-    let cols, rows = 3, 3
-    let a = d2M.create((rows,cols)) 
-            |> fun x -> fillRandomUniformMatrix ctx.Str x 1.0f 0.0f; x 
-    let a' = d2MtoCuda2dArray a
-
-    //printfn "%A" (getd2M a)
-
-    let o = d2M.create((rows,cols))
-    let o' = d2MtoCudaArray o
-
-    let watch = Diagnostics.Stopwatch.StartNew()
-    for i=1 to 1 do
-        test_launcher(ctx.Str,cuda_kernel,a',o')
-        cuda_context.Synchronize()
-    printfn "Time elapsed: %A" watch.Elapsed
-
-lambda_test()
+mapredocolmap_test()
