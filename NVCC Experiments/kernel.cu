@@ -12,7 +12,7 @@ extern "C" {
 	{
 		int i = threadIdx.x;
 		auto lamb = [](int x) {return x + 1; }; // Works.
-		auto t = thrust::make_tuple(1, 2, 3);
+		//auto t = thrust::make_tuple(1, 2, 3);
 		c[i] = a[i] + b[i];
 	}
 }

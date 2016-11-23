@@ -657,13 +657,27 @@ let inline addDims x =
 
 let inline divup a b = (a-1)/b+1 // Integer division with rounding up. (a+b-1)/b is another variant on this.
 
+let visual_studio_path = //"C:/Program Files (x86)/Microsoft Visual Studio 14.0" usually.
+    let x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")
+    if x <> null then IO.Directory.GetParent(x).Parent.Parent.FullName
+    else failwith "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
+
+let cuda_toolkit_path = 
+    let x = System.Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
+    if x <> null then x
+    else failwith "CUDA_PATH_V8_0 environment variable not found. Make sure VS2015 is installed."
 let kernels_dir = IO.Path.Combine(__SOURCE_DIRECTORY__,"Cuda Kernels")
 IO.Directory.CreateDirectory(kernels_dir) |> ignore // Creates the Cuda Kernels directory if it does not exist. WriteAllBytes would otherwise throw an exception.
 
 let compile_kernel kernel_code kernel_name = 
     let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
     let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
-    try k.Compile([|"-arch=compute_30"|])
+    try k.Compile(
+            [|
+            "-arch=compute_30"
+            "--std=c++11" // Surprisingly, NVRTC does support C++11 which means lambdas. Unfortunately, it does not support Thrust, so no tuples.
+                          // ...So it is still pretty useless all things considered.
+            |])
     with 
     | :? NVRTCException as x -> 
         printfn "%s" (k.GetLogAsString())
