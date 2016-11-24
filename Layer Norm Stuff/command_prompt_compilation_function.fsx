@@ -1,4 +1,6 @@
-﻿open System
+﻿// A backup of the unused compile_kernel function.
+
+open System
 open System.Diagnostics
 open System.IO
 
@@ -62,3 +64,4 @@ let compile_kernel_using_nvcc_command_prompt kernel_code kernel_name =
 
     command_shell.WaitForExit()
     File.ReadAllText(target_path)
+

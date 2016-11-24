@@ -79,12 +79,13 @@
     <None Include="ReduceModule_v1.fsx" />
     <None Include="Script1.fsx" />
     <None Include="ReduceModule_v2.fsx" />
-    <Compile Include="QuotationsParser.fs" />
-    <Compile Include="CudaCodegen.fs" />
-    <Compile Include="Tests.fs" />
     <None Include="nvcc_invoker_v0.fsx" />
     <None Include="watcher_test.fsx" />
     <None Include="timer_test.fsx" />
+    <None Include="command_prompt_compilation_function.fsx" />
+    <Compile Include="QuotationsParser.fs" />
+    <Compile Include="CudaCodegen.fs" />
+    <Compile Include="Tests.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
