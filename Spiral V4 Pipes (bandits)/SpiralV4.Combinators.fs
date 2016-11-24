@@ -366,7 +366,7 @@ type DeviceMaxColumnIndexModule() =
 
         "|] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_a: ^a -> CUdeviceptr, a: ^a),
@@ -406,7 +406,7 @@ type DeviceGatherIndexModule() =
 
         "|] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 indices: CudaDeviceVariable<int>,
@@ -507,7 +507,7 @@ type DeviceGatherIndex3DModule() =
 
         "|] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 indices: CudaDeviceVariable<int>,
@@ -585,7 +585,7 @@ type DeviceAddSliceModule() =
 
         "|] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
 
     /// Zero based indexing.
     member t.A(str: CudaStream, 

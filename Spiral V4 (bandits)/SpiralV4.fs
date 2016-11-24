@@ -14,6 +14,8 @@ open ManagedCuda.NVRTC
 open ManagedCuda.CudaDNN
 
 open System
+open System.Diagnostics
+open System.IO
 open System.Collections.Generic
 open System.Runtime.InteropServices
 
@@ -669,14 +671,14 @@ let cuda_toolkit_path =
 let kernels_dir = IO.Path.Combine(__SOURCE_DIRECTORY__,"Cuda Kernels")
 IO.Directory.CreateDirectory(kernels_dir) |> ignore // Creates the Cuda Kernels directory if it does not exist. WriteAllBytes would otherwise throw an exception.
 
-let compile_kernel kernel_code kernel_name = 
+let compile_kernel_nvrtc kernel_code kernel_name = 
     let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
     let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
     try k.Compile(
             [|
             "-arch=compute_30"
             "--std=c++11" // Surprisingly, NVRTC does support C++11 which means lambdas. Unfortunately, it does not support Thrust, so no tuples.
-                          // ...So it is still pretty useless all things considered.
+                          // ...So it is still pretty useless all things considered compared to NVCC.
             |])
     with 
     | :? NVRTCException as x -> 
@@ -686,7 +688,56 @@ let compile_kernel kernel_code kernel_name =
     IO.File.WriteAllBytes(kernel_path,ptx)
     cuda_context.LoadKernelPTX(ptx,kernel_name)
 
-let load_kernel kernel_code kernel_name = 
+let compile_kernel_using_nvcc_bat_router kernel_code kernel_name =
+    let nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
+    use p = 
+        let procStartInfo = 
+            ProcessStartInfo(
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                FileName = nvcc_router_path)
+
+        let outputHandler f (_sender:obj) (args:DataReceivedEventArgs) = f args.Data
+        let p = new Process(StartInfo = procStartInfo)
+        let print_to_standard_output = outputHandler <| fun x -> printfn "%s" x
+        //p.OutputDataReceived.AddHandler(DataReceivedEventHandler (print_to_standard_output))
+        p.ErrorDataReceived.AddHandler(DataReceivedEventHandler (print_to_standard_output))
+        p
+
+    let quote x = sprintf "\"%s\"" x
+    let call x = sprintf "call %s" x
+    let quoted_vs_path_to_vcvars = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64\vcvarsx86_amd64.bat") |> quote
+    let quoted_vs_path_to_cl = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64") |> quote
+    let quoted_cuda_toolkit_path_to_include = Path.Combine(cuda_toolkit_path,"include") |> quote
+    let quoted_kernels_dir = kernels_dir |> quote
+    let target_path = Path.Combine(kernels_dir,kernel_name+".ptx")
+    let quoted_target_path = target_path |> quote
+    let input_path = Path.Combine(kernels_dir,"_temp.cu")
+    let quoted_input_path = input_path |> quote
+    
+    File.WriteAllText(input_path,kernel_code)
+
+    let _ = 
+        use nvcc_router_file = File.OpenWrite(nvcc_router_path)
+        use nvcc_router_stream = new StreamWriter(nvcc_router_file)
+
+        nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
+        nvcc_router_stream.WriteLine(
+            sprintf 
+                """nvcc -gencode=arch=compute_30,code=\"sm_30,compute_30\" --use-local-env --cl-version 2015 -ccbin %s  -I%s --keep-dir %s -maxrregcount=0  --machine 64 -ptx -cudart static  -o %s %s"""
+                quoted_vs_path_to_cl quoted_cuda_toolkit_path_to_include quoted_kernels_dir quoted_target_path quoted_input_path)
+
+    if p.Start() = false then failwith "NVCC failed to run."
+    p.BeginOutputReadLine()
+    p.BeginErrorReadLine()
+    p.WaitForExit()
+
+    if p.ExitCode <> 0 then failwithf "NVCC failed compilation with code %i" p.ExitCode
+
+    cuda_context.LoadKernelPTX(target_path,kernel_name)
+
+let load_kernel compile_kernel (kernel_code: string) (kernel_name: string) = 
     let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
         
     if IO.File.Exists(kernel_path) 
@@ -694,6 +745,9 @@ let load_kernel kernel_code kernel_name =
         cuda_context.LoadKernelPTX(kernel_path,kernel_name) // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
     else
         compile_kernel kernel_code kernel_name
+
+let load_kernel_nvrtc kernel_code kernel_name = load_kernel compile_kernel_nvrtc kernel_code kernel_name
+let load_kernel_nvcc kernel_code kernel_name = load_kernel compile_kernel_using_nvcc_bat_router kernel_code kernel_name
 
 let inline map_launcher(str: CudaStream, kernel: CudaKernel, total_size: int, [<ParamArray>] args: obj[]) =
     let block_size = 256
@@ -730,7 +784,7 @@ type DeviceUnaryTransformModule(op: string, unique_name : string) =
 
         " |] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
@@ -767,7 +821,7 @@ type DeviceBinaryTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
     
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
@@ -805,7 +859,7 @@ type DeviceTrinaryTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
@@ -872,7 +926,7 @@ type DeviceUnaryMapSumModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member val O = new CudaDeviceVariable<float32>(SizeT 1)
     member inline t.A
             (str: CudaStream,
@@ -926,7 +980,7 @@ type DeviceBinaryMapSumModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member val O = new CudaDeviceVariable<float32>(SizeT 1)
     member inline t.A
             (str: CudaStream,
@@ -966,7 +1020,7 @@ type DeviceUnaryCoefTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 coef_x: float32, (ext_x: ^a -> CUdeviceptr, x: ^a), 
@@ -1007,7 +1061,7 @@ type DeviceBinaryCoefTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 coef_x: float32, (ext_x: ^a -> CUdeviceptr, x: ^a), 
@@ -1048,7 +1102,7 @@ type DeviceTrinaryCoefTransformModule(op: string, unique_name) =
 
         " |] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 coef_x: float32, (ext_x: ^a -> CUdeviceptr, x: ^a), 
@@ -1129,7 +1183,7 @@ type DeviceMaxColumnActivationModule() =
 
         "|] |> String.concat ""
 
-    member val Kernel = load_kernel kernel_code kernel_name
+    member val Kernel = load_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
