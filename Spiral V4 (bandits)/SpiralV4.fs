@@ -384,6 +384,15 @@ and d2M =
     /// Cast to DM.
     member t.CastToDM = D2M t
 
+    /// Returns the contents of the primal in a 1D array to host.
+    member t.GatherPrimal =
+        t.GPV.Gather()
+
+    /// Returns the contents of the primal in a 2D array to host.
+    member t.ToFloat32Array2D =
+        let x = t.GatherPrimal
+        Array2D.init t.Rows t.Columns <| fun r c -> x.[c*t.Rows+r]
+
     interface IDisposable with
         member t.Dispose() = t.diff |> dispose
 
@@ -684,7 +693,7 @@ and add that directory to the global enviroment by creating the CUB_PATH variabl
 let kernels_dir = IO.Path.Combine(__SOURCE_DIRECTORY__,"Cuda Kernels")
 IO.Directory.CreateDirectory(kernels_dir) |> ignore // Creates the Cuda Kernels directory if it does not exist. WriteAllBytes would otherwise throw an exception.
 
-let compile_kernel_nvrtc kernel_code kernel_name = 
+let compile_kernel_nvrtc (kernel_code: string) (kernel_name: string) = 
     let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
     let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
     try k.Compile(
@@ -701,7 +710,7 @@ let compile_kernel_nvrtc kernel_code kernel_name =
     IO.File.WriteAllBytes(kernel_path,ptx)
     cuda_context.LoadKernelPTX(ptx,kernel_name)
 
-let compile_kernel_using_nvcc_bat_router kernel_code kernel_name =
+let inline compile_kernel_using_nvcc_bat_router (kernel_code: string) (kernel_name: string) =
     let nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
     use p = 
         let procStartInfo = 
@@ -761,8 +770,8 @@ let load_kernel compile_kernel (kernel_code: string) (kernel_name: string) =
     else
         compile_kernel kernel_code kernel_name
 
-let load_kernel_nvrtc kernel_code kernel_name = load_kernel compile_kernel_nvrtc kernel_code kernel_name
-let load_kernel_nvcc kernel_code kernel_name = load_kernel compile_kernel_using_nvcc_bat_router kernel_code kernel_name
+let inline load_kernel_nvrtc kernel_code kernel_name = load_kernel compile_kernel_nvrtc kernel_code kernel_name
+let inline load_kernel_nvcc kernel_code kernel_name = load_kernel compile_kernel_using_nvcc_bat_router kernel_code kernel_name
 
 let inline map_launcher(str: CudaStream, kernel: CudaKernel, total_size: int, [<ParamArray>] args: obj[]) =
     let block_size = 256
@@ -1128,8 +1137,12 @@ type DeviceTrinaryCoefTransformModule(op: string, unique_name) =
         let n = Size x
         map_launcher(str, t.Kernel, n, [|coef_x; ext_x x; coef_y; ext_y y; coef_z; ext_z z; ext_o o; n|])
 
-let max_column_launcher(str: CudaStream, kernel: CudaKernel, num_rows: int, num_columns: int, args: obj[]) =
-    let block_size = min 128 num_rows |> max 32
+/// Launcher for the max column kernels with the block size specified.
+let inline max_column_launcher (block_size: int option) (str: CudaStream, kernel: CudaKernel, num_rows: int, num_columns: int, args: obj[]) =
+    let block_size = 
+        match block_size with
+        | Some v -> min v num_rows |> max 32
+        | None -> min 128 num_rows |> max 32
 
     kernel.GridDimensions <- dim3(num_columns)
     kernel.BlockDimensions <- dim3(block_size)
@@ -1205,7 +1218,7 @@ type DeviceMaxColumnActivationModule() =
                 (ext_o: ^a -> CUdeviceptr, o: ^a)) = 
         GuardSizes2(x,o)
         let r,c = rc x
-        max_column_launcher(str, t.Kernel, r, c, [|ext_x x; ext_o o; r; c|])
+        max_column_launcher None (str, t.Kernel, r, c, [|ext_x x; ext_o o; r; c|])
 
 // The gradient clipping module.
 let gradclipModule = lazy DeviceUnaryCoefTransformModule("(x < -coef_x) ? -coef_x : (x > coef_x ? coef_x : x);", "GradClip") // Unique names like GradClip are necessary for load and saving to drive. Be very careful of collisions.

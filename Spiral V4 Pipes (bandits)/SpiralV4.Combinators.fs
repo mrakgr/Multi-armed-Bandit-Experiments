@@ -374,7 +374,7 @@ type DeviceMaxColumnIndexModule() =
         let r,c = rc a
         let r' = int o.Size
         if c <> r' then failwithf "c(%i) <> r'(%i)" c r'
-        max_column_launcher(str, t.Kernel, r, c, [|ext_a a; o.DevicePointer; r; c|])
+        max_column_launcher None (str, t.Kernel, r, c, [|ext_a a; o.DevicePointer; r; c|])
 
 /// o <- gather(indices,x)
 /// Gathers the columns from x given the indices to o.
@@ -417,7 +417,7 @@ type DeviceGatherIndexModule() =
         let r',c' = rc o
         if c' <> size_indices then failwithf "c'(%i) <> size_indices(%i)" c' size_indices
         if r <> r' then failwithf "r(%i) <> r'(%i)" r r'
-        max_column_launcher(str, t.Kernel, r, size_indices, [|indices.DevicePointer; ext_a a; ext_o o; r; c|])
+        max_column_launcher None (str, t.Kernel, r, size_indices, [|indices.DevicePointer; ext_a a; ext_o o; r; c|])
 
 type d3M =
     {
@@ -518,7 +518,7 @@ type DeviceGatherIndex3DModule() =
         let r',c' = rc o
         if c' <> size_indices then failwithf "c'(%i) <> size_indices(%i)" c' size_indices
         if r <> r' then failwithf "r(%i) <> r'(%i)" r r'
-        max_column_launcher(str, t.Kernel, r, size_indices, [|indices.DevicePointer; ext_a a; ext_o o; r; c|])
+        max_column_launcher None (str, t.Kernel, r, size_indices, [|indices.DevicePointer; ext_a a; ext_o o; r; c|])
 
 
 let maxColumnIndexModule = lazy DeviceMaxColumnIndexModule()

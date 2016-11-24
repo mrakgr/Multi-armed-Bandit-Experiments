@@ -156,7 +156,7 @@ type DeviceColumnReduceModule(reduce_op: ReduceOperation, final_op: FinalOperati
         "|] |> String.concat ""
     do printfn "%s" kernel_code
 
-    member val Kernel = compile_kernel kernel_code kernel_name
+    member val Kernel = compile_kernel_nvrtc kernel_code kernel_name
     member inline t.A
             (str: CudaStream,
                 (ext_x: ^a -> CUdeviceptr, x: ^a),
