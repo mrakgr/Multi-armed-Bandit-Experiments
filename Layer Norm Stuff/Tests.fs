@@ -1,4 +1,6 @@
-﻿open System
+﻿module Tests
+
+open System
 open SpiralV4
 open SpiralV4.Flame
 open ManagedCuda
@@ -126,7 +128,7 @@ let mapredocolmap_test() =
     cuda_context.Synchronize()
 
     let watch = Diagnostics.Stopwatch.StartNew()
-    for i=1 to 10000 do
+    for i=1 to 100000 do
         test_launcher(ctx.Str,cuda_kernel,a',o')
         cuda_context.Synchronize()
     printfn "Time elapsed: %A" watch.Elapsed
@@ -135,81 +137,26 @@ let mapredocolmap_test() =
 
 //mapredocolmap_test()
 
-/// o <- op_col(x)
-/// Applies a reduce along the inner dimension of a matrix.
-type DeviceColumnReduceModule(map_load_op, reduce_op, neutral_elem, map_store_op, block_size) = 
-    let kernel_name = "DeviceColumnReduceKernel"
-    let kernel_code = 
-        [|
-        """
-        #include "thrust/tuple.h"
-        #include "cub/cub.cuh"
-
-        //Kernel code:
-        extern "C" {
-            // Device code
-            __global__ void """;kernel_name;"""(const int num_cols, const int num_rows, const float* A, float* O)
-            {
-                typedef cub::BlockReduce<float, """;string block_size;"""> BlockReduceT;
-                __shared__ typename BlockReduceT::TempStorage temp_storage;
-
-                const auto reduce_op = """;reduce_op;"""
-                const auto neutral_elem = """;neutral_elem;"""
-                const auto map_store_op = """;map_store_op;"""
-                for (int col = blockIdx.x; col < num_cols; col += gridDim.x)
-                {
-                    auto value = neutral_elem;
-                    for (int row = threadIdx.x; row < num_rows; row += blockDim.x)
-                    {
-                        const auto map_load_op = """;map_load_op;"""
-                        auto tmp = map_load_op(A[col*num_rows+row]);
-                        value = reduce_op(tmp,value);
-                    }
-
-                    auto result = BlockReduceT(temp_storage).Reduce(value,reduce_op);
-                    if (threadIdx.x == 0) O[col] = map_store_op(result);
-                }
-            }
-        }
-        """
-        |] |> String.concat ""
-
-    member val Kernel = compile_kernel_using_nvcc_bat_router kernel_code kernel_name
-    member val block_size = block_size // I will get an implementation error unless I do this.
-    member inline t.A
-            (str: CudaStream,
-                (ext_x: ^a -> CUdeviceptr, x: ^a),
-                (o: CudaDeviceVariable<_>)) = 
-        let r,c = rc x
-        if int o.Size <> c then failwithf "if int o.Size(%i) <> c(%i)" (int o.Size) c
-
-        max_column_launcher (Some t.block_size) (str, t.Kernel, r, c, [|c; r; ext_x x; o.DevicePointer|])
-
-
-let cub_test (map_load_op, map_load_op_host) (reduce_op,reduce_op_host) (neutral_elem,neutral_elem_host) (map_store_op,map_store_op_host) block_size =
-    let m = DeviceColumnReduceModule(map_load_op, reduce_op, neutral_elem, map_store_op, block_size)
-
-    let state = Context.create
-
-    let cols, rows = 128, 128
-    use a = d2M.create((rows,cols)) 
-            |> fun x -> fillRandomUniformMatrix ctx.Str x 1.0f 0.0f; x 
-
-    //printfn "%A" (getd2M a)
-
-    use o = d2M.create((1,cols))
-    m.A(ctx.Str,P a,o.GPV) // Warm up the JIT
-    cuda_context.Synchronize()
-
-    for i=1 to 100000 do
-        m.A(ctx.Str,P a,o.GPV)
-        cuda_context.Synchronize()
-
-    let watch = Diagnostics.Stopwatch.StartNew()
-    for i=1 to 100000 do
-        m.A(ctx.Str,P a,o.GPV)
-        cuda_context.Synchronize()
-    printfn "Time elapsed: %A" watch.Elapsed
+//let cub_test (map_load_op, map_load_op_host) (reduce_op,reduce_op_host) (neutral_elem,neutral_elem_host) (map_store_op,map_store_op_host) block_size =
+//    let m = DeviceMapColumnReduceMapModule(map_load_op, reduce_op, neutral_elem, map_store_op, block_size)
+//
+//    let state = Context.create
+//
+//    let cols, rows = 128, 128
+//    use a = d2M.create((rows,cols)) 
+//            |> fun x -> fillRandomUniformMatrix ctx.Str x 1.0f 0.0f; x 
+//
+//    //printfn "%A" (getd2M a)
+//
+//    use o = d2M.create((1,cols))
+//    m.A(ctx.Str,P a,o.GPV) // Warm up the JIT
+//    cuda_context.Synchronize()
+//
+//    let watch = Diagnostics.Stopwatch.StartNew()
+//    for i=1 to 100000 do
+//        m.A(ctx.Str,P a,o.GPV)
+//        cuda_context.Synchronize()
+//    printfn "Time elapsed: %A" watch.Elapsed
 
 //    let inline col_reduce map_load_op reduce_op neutral_elem map_store_op (x: 'a[,]) = // Amazingly I got this one right on the first try. Proof that I am able to juggle these dimensions properly now.
 //        Array.init (Array2D.length2 x) <| fun col -> 
@@ -228,13 +175,13 @@ let cub_test (map_load_op, map_load_op_host) (reduce_op,reduce_op_host) (neutral
 //    let host_reduce: float32[] = col_reduce map_load_op_host reduce_op_host neutral_elem_host map_store_op_host a'
 //    compare_with_host_reduce device_reduce host_reduce
 
-let _ =
-    let id = "[](auto x){return x;};"
-    let map_load_op, map_load_op_host = id, fun _ _ x -> x
-    let reduce_op, reduce_op_host = "[](auto x, auto y){return x+y;};", (+)
-    let neutral_elem, neutral_elem_host = "__int_as_float(0x00000000);", 0.0f
-    let map_store_op, map_store_op_host = id, fun x -> x
-    let block_size = 128
-
-    cub_test (map_load_op, map_load_op_host) (reduce_op,reduce_op_host) (neutral_elem,neutral_elem_host) (map_store_op,map_store_op_host) block_size
+//let _ =
+//    let id = "[](auto x){return x;};"
+//    let map_load_op, map_load_op_host = id, fun _ _ x -> x
+//    let reduce_op, reduce_op_host = "[](auto x, auto y){return x+y;};", (+)
+//    let neutral_elem, neutral_elem_host = "__int_as_float(0x00000000);", 0.0f
+//    let map_store_op, map_store_op_host = id, fun x -> x
+//    let block_size = 128
+//
+//    cub_test (map_load_op, map_load_op_host) (reduce_op,reduce_op_host) (neutral_elem,neutral_elem_host) (map_store_op,map_store_op_host) block_size
                 

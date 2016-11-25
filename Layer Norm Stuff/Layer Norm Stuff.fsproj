@@ -86,6 +86,7 @@
     <Compile Include="CudaCodegen.fs" />
     <None Include="ReduceModule_v2.fsx" />
     <Compile Include="Tests.fs" />
+    <Compile Include="ReduceModule_v3.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

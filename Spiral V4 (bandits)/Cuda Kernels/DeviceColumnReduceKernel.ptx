@@ -11,7 +11,7 @@
 .address_size 64
 
 	// .globl	DeviceColumnReduceKernel
-.global .align 1 .b8 _ZN62_INTERNAL_40_tmpxft_00001b40_00000000_8__temp_cpp1_ii_9b2de5006thrust6system6detail10sequential3seqE[1];
+.global .align 1 .b8 _ZN62_INTERNAL_40_tmpxft_00001654_00000000_8__temp_cpp1_ii_9b2de5006thrust6system6detail10sequential3seqE[1];
 // DeviceColumnReduceKernel$__cuda_local_var_537673_75_non_const_temp_storage has been demoted
 
 .visible .entry DeviceColumnReduceKernel(

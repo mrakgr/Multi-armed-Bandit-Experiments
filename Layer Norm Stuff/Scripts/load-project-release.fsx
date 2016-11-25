@@ -5,3 +5,4 @@
       "../QuotationsParser.fs"
       "../CudaCodegen.fs"
       "../Tests.fs"
+      "../ReduceModule_v3.fs"

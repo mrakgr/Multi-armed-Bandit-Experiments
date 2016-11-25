@@ -740,9 +740,11 @@ let inline compile_kernel_using_nvcc_bat_router (kernel_code: string) (kernel_na
     let input_path = Path.Combine(kernels_dir,"_temp.cu")
     let quoted_input_path = input_path |> quote
     
+    if File.Exists input_path then File.Delete input_path
     File.WriteAllText(input_path,kernel_code)
 
     let _ = 
+        if File.Exists nvcc_router_path then File.Delete nvcc_router_path
         use nvcc_router_file = File.OpenWrite(nvcc_router_path)
         use nvcc_router_stream = new StreamWriter(nvcc_router_file)
 

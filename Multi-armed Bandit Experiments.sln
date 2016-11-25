@@ -15,6 +15,8 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Functional Compiler", "Func
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NVCC Experiments", "NVCC Experiments\NVCC Experiments.vcxproj", "{C9C8BE15-076D-482D-B79F-D761FF3972CA}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Spiral V5", "Spiral V5\Spiral V5.fsproj", "{192FD48F-C1E9-4BD8-93C7-64615CC8919A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -91,6 +93,18 @@ Global
 		{C9C8BE15-076D-482D-B79F-D761FF3972CA}.Release|x64.Build.0 = Release|x64
 		{C9C8BE15-076D-482D-B79F-D761FF3972CA}.Release|x86.ActiveCfg = Release|Win32
 		{C9C8BE15-076D-482D-B79F-D761FF3972CA}.Release|x86.Build.0 = Release|Win32
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Debug|x64.Build.0 = Debug|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Debug|x86.Build.0 = Debug|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Release|x64.ActiveCfg = Release|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Release|x64.Build.0 = Release|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Release|x86.ActiveCfg = Release|Any CPU
+		{192FD48F-C1E9-4BD8-93C7-64615CC8919A}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
