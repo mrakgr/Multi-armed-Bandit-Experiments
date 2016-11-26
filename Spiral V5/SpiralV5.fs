@@ -139,34 +139,28 @@ let load_kernel compile_kernel (kernel_code: string) (kernel_name: string) =
 let inline load_kernel_nvrtc kernel_code kernel_name = load_kernel compile_kernel_nvrtc kernel_code kernel_name
 let inline load_kernel_nvcc kernel_code kernel_name = load_kernel compile_kernel_using_nvcc_bat_router kernel_code kernel_name
 
-[<Flags>]
-type CudaTypeFlags =
-| CudaConstantType = 1
-| CudaSharedType = 2
-| CudaRestrictedType = 4 // methods arguments
-| CudaGlobalType = 8 // methods only
-| CudaDeviceType = 16 // methods only
-| CudaPointerType = 32
-| CudaPointerPointerType = 64
+type CudaVar =
+| CudaConst of subtype: CudaVar
+| CudaVoid of name: string
+| CudaFloat of name: string 
+| CudaInt of name: string
+| CudaAuto of name: string
+| CudaThrustTuple of subtype: CudaVar list
+| CudaArray1d of subtype: CudaVar
+| CudaArray2d of subtype: CudaVar
+// The following are types only to be used in __global__ functions called from the host side.
+// While inside the kernel I can use Thrust tuples, from the F# side I'd rather just unzip them and pass them as a separate argument.
+// Otherwise not only would I need to create a specialized struct type for each and every tuple type, but I would also need to
+// deal with inter-language struct packing issues. I'll pass on that.
+// In the method declaration the names of the subarguments will automatically get unfolded.
 
-type CudaType =
-    | CudaVoid of flags: CudaTypeFlags
-    | CudaFloat of flags: CudaTypeFlags
-    | CudaInt of flags: CudaTypeFlags
-    | CudaAuto of flags: CudaTypeFlags
+// Meant to be used with array groups. Every array in the group is assumed to be of the same dimension.
+| CudaGroup of num: int * subtype: CudaVar 
+// Two groups, input group is expected to be const while the output is a mutable array.
+// All the arrays in both the groups are to have same dimensions.
+| CudaIOGroup of subtype_in: CudaVar * subtype_out: CudaVar 
 
-    member t.Flag = match t with CudaVoid x | CudaFloat x | CudaInt x | CudaAuto x -> x
-    member t.IsPointer = t.Flag &&& CudaTypeFlags.CudaPointerType <> enum<_>(0)
-
-type CudaConstraint = 
-// This one is a bit special. It contrains the outer dimensions of an argument to some variable for easy later access
-// using VarAr2d and such. When using DeclAr2d, the constraints are added implicitly to the environment.
-| Constraint of var: CudaExpr
-
-and CudaModuleArgument =
-| Arg of typ: CudaType * name: string * CudaConstraint list
-
-and CudaExpr =
+type CudaExpr =
 // Main AST definitions.
 | Seq of CudaExpr list
 | Include of string
