@@ -177,6 +177,7 @@ type CudaExpr =
 | IfVoid of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr
 | NoExpr // Does nothing. Can be inserted into the else part of IfVoid so the else does not get printed.
 | If of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr // For ?: C style conditionals.
+| Lambda of args: CudaVar list * body: CudaExpr
 
 // Primitive operations on expressions.
 | Add of CudaExpr * CudaExpr
@@ -237,6 +238,47 @@ let codegen (exp: CudaExpr) =
             | CudaAuto -> pp "auto "       
             | CudaThrustTuple(subtypes) ->
                 pp "thrust::tuple<"; List.fold (fun prefix x -> pp prefix; print_type x; ", ") "" subtypes |> ignore; pp "> "
+
+        let rec print_arguments (args: CudaVar list) (env: CudaEnvironment) prefix: CudaEnvironment =
+            pp prefix
+            match args with
+            | h :: t ->
+                match h with
+                | CudaVar(name,typ) -> 
+                    print_type typ; pp name
+                    print_arguments t (env.AddVar(name,h)) ", "
+                | CudaArray1d(name, subtype, bound_size: string) ->
+                    match env.variables.TryFind bound_size with
+                    | Some(CudaVar(_, CudaConst CudaInt)) ->
+                        print_type subtype; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                    | Some x -> failwithf "Type checking for CudaArray1d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A" x
+                    | None ->
+                        let env = print_arguments [CudaVar(bound_size, CudaConst CudaInt)] env ""
+                        print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                | CudaArray2d(name, subtype, bound_size1, bound_size2) ->
+                    let vars_to_print =
+                        let f bound_size =
+                            match env.variables.TryFind bound_size with
+                            | Some(CudaVar(_, CudaConst CudaInt)) -> []
+                            | Some x -> failwithf "Type checking for CudaArray2d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A.\nName of the size bound variable is %s" x bound_size
+                            | None -> [CudaVar(bound_size, CudaConst CudaInt)]
+                        [f bound_size1; f bound_size2] |> List.concat
+                    let env = print_arguments vars_to_print env ""
+                    print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                | CudaArrayGroup(num, subvar) ->
+                    Seq.fold (fun l i ->
+                        match subvar with
+                        | CudaVar(name,typ) -> 
+                            CudaVar (name + string i, typ) :: l
+                        | CudaArray1d(name,typ,bound_size) ->
+                            CudaArray1d (name + string i, typ, bound_size) :: l
+                        | CudaArray2d(name,typ,bound_size1,bound_size2) ->
+                            CudaArray2d (name + string i, typ, bound_size1, bound_size2) :: l
+                        | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+                        ) [] {1..num}
+                    |> fun args -> print_arguments (List.rev args) env ""
+            | [] -> env
+
         match exp with
         | Seq(h::t) ->
             ind()
@@ -255,49 +297,17 @@ let codegen (exp: CudaExpr) =
             gen' x env.PlusIndent
             ind(); ppln "}"
         | Method(annotation,return_type, name, args, body) ->
-            let rec print_arguments (args: CudaVar list) (env: CudaEnvironment) prefix: CudaEnvironment =
-                pp prefix
-                match args with
-                | h :: t ->
-                    match h with
-                    | CudaVar(name,typ) -> 
-                        print_type typ; pp name
-                        print_arguments t (env.AddVar(name,h)) ", "
-                    | CudaArray1d(name, subtype, bound_size: string) ->
-                        match env.variables.TryFind bound_size with
-                        | Some(CudaVar(_, CudaConst CudaInt)) ->
-                            print_type subtype; pp name; print_arguments t (env.AddVar(name,h)) ", "
-                        | Some x -> failwithf "Type checking for CudaArray1d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A" x
-                        | None ->
-                            let env = print_arguments [CudaVar(bound_size, CudaConst CudaInt)] env ""
-                            print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
-                    | CudaArray2d(name, subtype, bound_size1, bound_size2) ->
-                        let vars_to_print =
-                            let f bound_size =
-                                match env.variables.TryFind bound_size with
-                                | Some(CudaVar(_, CudaConst CudaInt)) -> []
-                                | Some x -> failwithf "Type checking for CudaArray2d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A.\nName of the size bound variable is %s" x bound_size
-                                | None -> [CudaVar(bound_size, CudaConst CudaInt)]
-                            [f bound_size1; f bound_size2] |> List.concat
-                        let env = print_arguments vars_to_print env ""
-                        print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
-                    | CudaArrayGroup(num, subvar) ->
-                        Seq.fold (fun l i ->
-                            match subvar with
-                            | CudaVar(name,typ) -> 
-                                CudaVar (name + string i, typ) :: l
-                            | CudaArray1d(name,typ,bound_size) ->
-                                CudaArray1d (name + string i, typ, bound_size) :: l
-                            | CudaArray2d(name,typ,bound_size1,bound_size2) ->
-                                CudaArray2d (name + string i, typ, bound_size1, bound_size2) :: l
-                            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
-                            ) [] {1..num}
-                        |> fun args -> print_arguments (List.rev args) env ""
-                | [] -> env
             match annotation with
             | CudaGlobal -> pp "__global__ "
             | CudaDevice -> pp "__device__ "
             pp name; pp name; pp "("
+            let env' = print_arguments args env ""
+            ppln ") {"
+            gen' body env'.PlusIndent
+            ind(); ppln "}"
+        | Lambda(args, body) ->
+            pp "[=]"
+            pp "("
             let env' = print_arguments args env ""
             ppln ") {"
             gen' body env'.PlusIndent
