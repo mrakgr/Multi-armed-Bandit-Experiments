@@ -1,0 +1,239 @@
+﻿#load "SpiralV5.fsx"
+open SpiralV5
+
+open ManagedCuda
+open ManagedCuda.BasicTypes
+open ManagedCuda.VectorTypes
+open ManagedCuda.CudaBlas
+open ManagedCuda.CudaRand
+open ManagedCuda.NVRTC
+open ManagedCuda.CudaDNN
+
+open System
+open System.Diagnostics
+open System.IO
+open System.Collections.Generic
+open System.Runtime.InteropServices
+
+let cuda_codegen (exp: CudaExpr) =
+    let env = {indentation=0; variables=Map.empty; mutable_separator=";\n"}
+    let program = Text.StringBuilder()
+    let pp (x: string) = 
+        program.Append x |> ignore
+    let ppln (x: string) = 
+        program.AppendLine x |> ignore
+    let rec gen' (exp: CudaExpr) env =
+        let ind() = program.Append (String.replicate env.indentation " ") |> ignore
+        match exp with Seq _ -> () | _ -> ind()
+        gen exp env
+    and gen (exp: CudaExpr) env =
+        let ind() = program.Append (String.replicate env.indentation " ") |> ignore
+        let ind'() = program.Append (String.replicate (env.indentation+4) " ") |> ignore
+
+        let rec print_type typ =
+            match typ with
+            | CudaConst(subtype: CudaType) ->
+                pp "const "; print_type subtype
+            | CudaShared subtype ->
+                pp "__shared__ "; print_type subtype
+            | CudaVoid -> pp "void "
+            | CudaFloat -> pp "float "
+            | CudaInt -> pp "int "
+            | CudaAuto -> pp "auto "       
+            | CudaThrustTuple(subtypes) ->
+                pp "thrust::tuple<"; List.fold (fun prefix x -> pp prefix; print_type x; ", ") "" subtypes |> ignore; pp "> "
+
+        let rec print_arguments (args: CudaVar list) (env: CudaEnvironment) prefix: CudaEnvironment =
+            match args with
+            | h :: t ->
+                pp prefix
+                match h with
+                | CudaVar(name,typ) -> 
+                    print_type typ; pp name
+                    print_arguments t (env.AddVar(name,h)) ", "
+                | CudaArray1d(name, subtype, bound_size: string) ->
+                    match env.variables.TryFind bound_size with
+                    | Some(CudaVar(_, CudaConst CudaInt)) ->
+                        print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                    | Some x -> failwithf "Type checking for CudaArray1d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A" x
+                    | None ->
+                        let env = print_arguments [CudaVar(bound_size, CudaConst CudaInt)] env ""
+                        pp ", "; print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                | CudaArray2d(name, subtype, bound_size1, bound_size2) ->
+                    let vars_to_print =
+                        let f bound_size =
+                            match env.variables.TryFind bound_size with
+                            | Some(CudaVar(_, CudaConst CudaInt)) -> []
+                            | Some x -> failwithf "Type checking for CudaArray2d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A.\nName of the size bound variable is %s" x bound_size
+                            | None -> [CudaVar(bound_size, CudaConst CudaInt)]
+                        [f bound_size1; f bound_size2] |> List.concat
+                    let env = print_arguments vars_to_print env ""
+                    if vars_to_print.IsEmpty = false then pp ", "
+                    print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                | CudaArrayGroup(num, subvar) ->
+                    Seq.fold (fun l i ->
+                        match subvar with
+                        | CudaVar(name,typ) -> 
+                            CudaVar (name + string i, typ) :: l
+                        | CudaArray1d(name,typ,bound_size) ->
+                            CudaArray1d (name + string i, typ, bound_size) :: l
+                        | CudaArray2d(name,typ,bound_size1,bound_size2) ->
+                            CudaArray2d (name + string i, typ, bound_size1, bound_size2) :: l
+                        | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+                        ) [] {1..num}
+                    |> fun args -> print_arguments (List.rev args) env ""
+            | [] -> env
+
+        let rec print_initializer prefix (env: CudaEnvironment) l: CudaEnvironment = 
+            match l with
+            | (CudaVar(name,typ) as h, ex) :: t -> 
+                pp prefix
+                let env = env.AddVar(name, h)
+                print_type typ; pp name; pp " = "; gen ex env
+                print_initializer ", " env t
+            | [] -> env
+            | _ -> failwith "Only CudaVar allowed in the For initializer."
+
+        let print_var env = function 
+            | Var _ | VarAr1d _ | VarAr2d _ as x -> gen x env
+            | _ -> failwith "This expression must a Var kind."
+
+        match exp with
+        // Main expressions
+        | Seq(h::t) ->
+            ind()
+            gen h env
+            gen (Seq t) env
+        | Seq [] ->
+            ()
+        | Include x ->
+            pp "#include "
+            ppln x
+        | Define x ->
+            pp "#define "
+            ppln x
+        | ExternCBlock x ->
+            ppln """extern "C" {"""
+            gen x env.PlusIndent
+            ind(); ppln "}"
+        | Method(annotation,return_type, name, args, body) ->
+            match annotation with
+            | CudaGlobal -> pp "__global__ "
+            | CudaDevice -> pp "__device__ "
+            pp name; pp "("
+            let env' = print_arguments args env ""
+            ppln ") {"
+            gen' body env'.PlusIndent
+            ind(); ppln "}"
+        | Lambda(args, body) ->
+            pp "[=]"
+            pp "("
+            let env' = print_arguments args env ""
+            ppln ") {"
+            gen' body env'.PlusIndent
+            ind(); ppln "}"
+        | Var x -> pp x
+        | Value x -> pp x
+        | Let(CudaVar(name,typ) as var, initializer, in_) ->
+            print_type typ; pp name; 
+            match initializer with
+            | NoExpr -> ppln ";"
+            | _ -> pp " = "; gen initializer env; ppln ";"
+            gen' in_ (env.AddVar(name,var))
+        | Let(CudaArray1d(name,typ,size) as var, initializer, in_) ->
+            print_type typ; pp name; pp "["; pp size; ppln "]"
+            match initializer with
+            | NoExpr -> ppln ";"
+            | _ -> failwith "Initializers not allowed for arrays."
+            gen' in_ (env.AddVar(name,var))
+        | Let(CudaArray2d(name,typ,size1,size2) as var, initializer, in_) ->
+            print_type typ; pp name; pp "["; pp size1; pp " * "; pp size2; ppln "]"
+            match initializer with
+            | NoExpr -> ppln ";"
+            | _ -> failwith "Initializers not allowed for arrays."
+            gen' in_ (env.AddVar(name,var))
+        | Let(CudaArrayGroup _,_,_) ->
+            failwith "Array groups are only allowed in method declarations."
+        | VarAr1d(name: string, accessor: CudaExpr) ->
+            pp name; pp "["; gen accessor  env; pp "]"
+        | VarAr2d(name: string, col: CudaExpr, row: CudaExpr) ->
+            let size2 =
+                match env.variables.TryFind(name) with
+                | Some(CudaArray2d(name,typ,size1,size2))  -> size2
+                | _ -> failwithf "CudaArray2d (%A) variable not found in the environment." name
+            pp name; pp "["; gen col  env; pp " * "; pp size2; pp " + "; gen row  env; pp "]"
+        | For(initializer: (CudaVar * CudaExpr) list, cond: CudaExpr, incrementor: CudaExpr list, body: CudaExpr) ->
+            pp "for ("; 
+            let env = (print_initializer "" env initializer).WithSeparator "" 
+            // TODO: This whole thing is a mess. Make a proper initializer list.
+            pp "; "
+            gen cond env; pp "; "
+            Seq.fold (fun prefix x -> pp prefix; gen x env; ", ") "" incrementor |> ignore
+            ppln "){"
+            gen' body env.PlusIndent
+            ind(); ppln "}"
+        | While(cond: CudaExpr, body: CudaExpr) ->
+            pp "while ("; gen cond env; ppln "){"
+            gen body env.PlusIndent
+            ind(); ppln "}"
+        | Return x ->
+            gen x env; ppln ";"
+        | Call(name, l) ->
+            pp name; pp "("
+            let rec print_call_args l =
+                match l with
+                | h :: [] -> gen h env
+                | h :: t -> gen h env; pp ", "; print_call_args t
+                | [] -> ()
+            print_call_args l
+            pp ")"
+        | IfVoid(c, t, NoExpr) ->
+            pp "if ("; gen c env; ppln "){"
+            ind(); gen t env.PlusIndent
+            ind(); ppln "}"
+        | IfVoid(c, t, f) ->
+            pp "if ("; gen c env; ppln "){"
+            ind(); gen t env.PlusIndent
+            ind(); ppln "} else {"
+            ind(); gen f env.PlusIndent; ppln "}"
+        | NoExpr -> () // Does nothing. Can be inserted into the else part of IfVoid so the else does not get printed.
+        | If(c, t, f) -> pp "("; gen c env; pp ") ? "; gen t env; pp " : "; gen f env
+        // Primitive operations on expressions.
+        | Add(a,b) -> pp "("; gen a env; pp " + "; gen b env; pp ")"
+        | Mult(a,b) -> pp "("; gen a env; pp " * "; gen b env; pp ")"
+        | Div(a,b) -> pp "("; gen a env; pp " / "; gen b env; pp ")"
+        | Mod(a,b) -> pp "("; gen a env; pp " % "; gen b env; pp ")"
+        | LT(a,b) -> pp "("; gen a env; pp " < "; gen b env; pp ")"
+        | LTE(a,b) -> pp "("; gen a env; pp " <= "; gen b env; pp ")"
+        | EQ(a,b) -> pp "("; gen a env; pp " == "; gen b env; pp ")"
+        | GT(a,b) -> pp "("; gen a env; pp " > "; gen b env; pp ")"
+        | GTE(a,b) -> pp "("; gen a env; pp " >= "; gen b env; pp ")"
+        | LeftShift(a,b) -> pp "("; gen a env; pp " << "; gen b env; pp ")"
+        | RightShift(a,b) -> pp "("; gen a env; pp " >> "; gen b env; pp ")"
+        | Unroll -> ppln "#pragma unroll"
+        | Syncthreads -> ppln "__syncthreads();"
+        | ShuffleXor(a,b) -> pp "cub::ShflIndex("; gen a env; pp ", (threadIdx.x % 32) ^^ "; gen b env; pp ")"
+        | ShuffleUp(a,b) -> pp "cub::ShflUp("; gen a env; pp ", "; gen b env; pp ")"
+        | ShuffleDown(a,b) -> pp "cub::ShflDown("; gen a env; pp ", "; gen b env; pp ")"
+        | ShuffleSource(a,b) -> pp "cub::ShflIndex("; gen a env; pp ", "; gen b env; pp ")"
+        // Mutable operations.
+        | MSet(var,ex) -> pp "("; print_var env var; pp " = "; gen ex env; pp ")"; pp env.mutable_separator
+        | MAdd(var,ex) -> pp "("; print_var env var; pp " += "; gen ex env; pp ")"; pp env.mutable_separator
+            
+    gen exp env
+    program.ToString()
+
+
+cuda_codegen <|
+    Seq [
+        Include <| quote "thrust/tuple.h"
+        Include <| quote "cub/cub.cuh"
+        ExternCBlock <| Seq [
+            Method(CudaGlobal,CudaVoid,"MapKernel",[CudaArray1d("x",CudaFloat,"n");CudaArray1d("o",CudaFloat,"n")],
+                For([CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"], LT(Var "i",Var "n"),[MAdd(Var "i",Value "1")],
+                    Seq [MSet(VarAr1d("x",Var "i"),VarAr1d("o",Var "i"))]
+                    )
+                )
+            ]
+        ]
+|> printfn "%s"
