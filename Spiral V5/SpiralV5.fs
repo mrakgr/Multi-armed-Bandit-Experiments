@@ -139,26 +139,24 @@ let load_kernel compile_kernel (kernel_code: string) (kernel_name: string) =
 let inline load_kernel_nvrtc kernel_code kernel_name = load_kernel compile_kernel_nvrtc kernel_code kernel_name
 let inline load_kernel_nvcc kernel_code kernel_name = load_kernel compile_kernel_using_nvcc_bat_router kernel_code kernel_name
 
-type CudaVar =
-| CudaConst of subtype: CudaVar
-| CudaVoid of name: string
-| CudaFloat of name: string 
-| CudaInt of name: string
-| CudaAuto of name: string
-| CudaThrustTuple of subtype: CudaVar list
-| CudaArray1d of subtype: CudaVar
-| CudaArray2d of subtype: CudaVar
-// The following are types only to be used in __global__ functions called from the host side.
-// While inside the kernel I can use Thrust tuples, from the F# side I'd rather just unzip them and pass them as a separate argument.
-// Otherwise not only would I need to create a specialized struct type for each and every tuple type, but I would also need to
-// deal with inter-language struct packing issues. I'll pass on that.
-// In the method declaration the names of the subarguments will automatically get unfolded.
+type CudaType =
+| CudaConst of subtype: CudaType
+| CudaShared of subtype: CudaType
+| CudaVoid
+| CudaFloat
+| CudaInt
+| CudaAuto
+| CudaThrustTuple of subtype: CudaType list
 
-// Meant to be used with array groups. Every array in the group is assumed to be of the same dimension.
-| CudaGroup of num: int * subtype: CudaVar 
-// Two groups, input group is expected to be const while the output is a mutable array.
-// All the arrays in both the groups are to have same dimensions.
-| CudaIOGroup of subtype_in: CudaVar * subtype_out: CudaVar 
+type CudaVar =
+| CudaVar of name: string * typ: CudaType
+| CudaArray1d of name: string * subtype: CudaType * bound_size: string
+| CudaArray2d of name: string * subtype: CudaType * bound_size1: string * bound_size2: string
+| CudaArrayGroup of num: int * subtype: CudaVar 
+
+type CudaMethodAnnotation =
+| CudaGlobal
+| CudaDevice
 
 type CudaExpr =
 // Main AST definitions.
@@ -166,12 +164,10 @@ type CudaExpr =
 | Include of string
 | Define of string
 | ExternCBlock of CudaExpr
-| Method of return_type: CudaType * name: string * args: CudaModuleArgument list * body: CudaExpr
+| Method of CudaMethodAnnotation * return_type: CudaType * name: string * args: CudaVar list * body: CudaExpr
 | Var of string
 | Value of string
-| DeclVar of typ: CudaType * name: string * initializer: CudaExpr
-| DeclAr1d of typ: CudaType * name: string * size: CudaExpr // For declaring local 1D arrays
-| DeclAr2d of typ: CudaType * name: string * size1: CudaExpr * size2: CudaExpr
+| Let of var: CudaVar * initializer: CudaExpr * in_: CudaExpr
 | VarAr1d of name: string * accessor: CudaExpr
 | VarAr2d of name: string * accessor1: CudaExpr * accessor2: CudaExpr // The environment will track the size of the array and multiply accessor1 by size2.
 | For of initializer: CudaExpr * cond: CudaExpr * incrementor: CudaExpr * body: CudaExpr
@@ -204,11 +200,15 @@ type CudaExpr =
 type CudaEnvironment =
     {
     indentation: int
-    variables: Map<string, CudaType * CudaConstraint list>
+    variables: Map<string, CudaVar>
     }
 
     /// Immutably increments the indentation by 4.
     member t.PlusIndent = {t with indentation = t.indentation+4}
+    member t.AddVar(k,v) = 
+        if t.variables.ContainsKey k 
+        then failwith "Variable already exists in the environment. Duplicates are not allowed. Only arrays can have their sizes rebound."
+        else {t with variables = t.variables.Add(k,v)}
 
 let codegen (exp: CudaExpr) =
     let env = {indentation=0;variables=Map.empty}
@@ -217,45 +217,26 @@ let codegen (exp: CudaExpr) =
         program.Append x |> ignore
     let ppln (x: string) = 
         program.AppendLine x |> ignore
-    let rec gen (exp: CudaExpr) env =
-        let ind() =
-            program.Append (String.replicate env.indentation " ") |> ignore
-        let ind'() =
-            program.Append (String.replicate (env.indentation+4) " ") |> ignore
+    let rec gen' (exp: CudaExpr) env =
+        let ind'() = program.Append (String.replicate (env.indentation+4) " ") |> ignore
+        match exp with Seq _ -> ind'() | _ -> ()
+        gen exp env
+    and gen (exp: CudaExpr) env =
+        let ind() = program.Append (String.replicate env.indentation " ") |> ignore
+        let ind'() = program.Append (String.replicate (env.indentation+4) " ") |> ignore
 
-        let match_flags_prefix_method_return x = 
-            if x &&& CudaTypeFlags.CudaConstantType <> enum<_>(0) then pp "const "
-            if x &&& CudaTypeFlags.CudaSharedType <> enum<_>(0) then failwith "Method's return type can't be __shared__."
-            if x &&& CudaTypeFlags.CudaRestrictedType <> enum<_>(0) then failwith "Method's return type can't be restricted."
-            if x &&& CudaTypeFlags.CudaGlobalType <> enum<_>(0) then pp "__global__ "
-            if x &&& CudaTypeFlags.CudaDeviceType <> enum<_>(0) then pp "__device__ "
-        let match_flags_prefix_method_argument x = 
-            if x &&& CudaTypeFlags.CudaConstantType <> enum<_>(0) then pp "const "
-            if x &&& CudaTypeFlags.CudaSharedType <> enum<_>(0) then pp "__shared__ "
-            if x &&& CudaTypeFlags.CudaRestrictedType <> enum<_>(0) then pp "__restricted__ "
-            if x &&& CudaTypeFlags.CudaGlobalType <> enum<_>(0) then failwith "Method's argument type can't be __global__."
-            if x &&& CudaTypeFlags.CudaDeviceType <> enum<_>(0) then failwith "Method's argument type can't be __device__."
-        let match_flags_prefix_local x = 
-            if x &&& CudaTypeFlags.CudaConstantType <> enum<_>(0) then pp "const "
-            if x &&& CudaTypeFlags.CudaSharedType <> enum<_>(0) then pp "__shared__ "
-            if x &&& CudaTypeFlags.CudaRestrictedType <> enum<_>(0) then pp "Local variable's type can't be __restricted__ "
-            if x &&& CudaTypeFlags.CudaGlobalType <> enum<_>(0) then pp "Local variable's type can't be __global__ "
-            if x &&& CudaTypeFlags.CudaDeviceType <> enum<_>(0) then pp "Local variable's type can't be __device__ "
-        let match_flags_postfix x = 
-            if x &&& CudaTypeFlags.CudaPointerType <> enum<_>(0) then pp "* "
-            if x &&& CudaTypeFlags.CudaPointerPointerType <> enum<_>(0) then pp "** "
-
-        let print_type match_flags_prefix match_flags_postfix x =
-            let x, flags = 
-                match x with
-                | CudaVoid flags -> "void ", flags
-                | CudaFloat flags -> "float ", flags
-                | CudaInt flags -> "int ", flags
-                | CudaAuto flags -> "auto ", flags
-            match_flags_prefix flags
-            pp x
-            match_flags_postfix flags
-        
+        let rec print_type typ =
+            match typ with
+            | CudaConst(subtype: CudaType) ->
+                pp "const "; print_type subtype
+            | CudaShared subtype ->
+                pp "__shared__ "; print_type subtype
+            | CudaVoid -> pp "void "
+            | CudaFloat -> pp "float "
+            | CudaInt -> pp "int "
+            | CudaAuto -> pp "auto "       
+            | CudaThrustTuple(subtypes) ->
+                pp "thrust::tuple<"; List.fold (fun prefix x -> pp prefix; print_type x; ", ") "" subtypes |> ignore; pp "> "
         match exp with
         | Seq(h::t) ->
             ind()
@@ -271,53 +252,86 @@ let codegen (exp: CudaExpr) =
             ppln x
         | ExternCBlock x ->
             ppln """extern "C" {"""
-            match x with
-            | Seq _ -> ()
-            | _ -> ind'()
-            gen x env.PlusIndent
+            gen' x env.PlusIndent
             ind(); ppln "}"
-        | Method(return_type, name, args, body) ->
-            let rec print_arguments = function
-                | (Arg(typ,name,constraints)) :: t -> // TODO: Deal with contraints tomorrow.
-                    print_type match_flags_prefix_method_argument match_flags_postfix typ
-                    pp name
-                    if t.IsEmpty = false then pp ", "
-                | [] -> ()
-            let rec print_contraints = function
-                | (Arg(typ,name,constraints)) :: t -> // TODO: Deal with contraints tomorrow.
-                    if typ.IsPointer then
-                        let rec subprint = function
-                            | h :: t -> 
-                                ind(); pp "__"; pp name
-                                subprint t
-                            | [] -> ()
-                        
-                    
-                | [] -> ()
-
-            print_type match_flags_prefix_method_return match_flags_postfix return_type
-            pp name; pp "("; print_arguments args; ppln ") {"
-
-            gen body env.PlusIndent
+        | Method(annotation,return_type, name, args, body) ->
+            let rec print_arguments (args: CudaVar list) (env: CudaEnvironment) prefix: CudaEnvironment =
+                pp prefix
+                match args with
+                | h :: t ->
+                    match h with
+                    | CudaVar(name,typ) -> 
+                        print_type typ; pp name
+                        print_arguments t (env.AddVar(name,h)) ", "
+                    | CudaArray1d(name, subtype, bound_size: string) ->
+                        match env.variables.TryFind bound_size with
+                        | Some(CudaVar(_, CudaConst CudaInt)) ->
+                            print_type subtype; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                        | Some x -> failwithf "Type checking for CudaArray1d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A" x
+                        | None ->
+                            let env = print_arguments [CudaVar(bound_size, CudaConst CudaInt)] env ""
+                            print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                    | CudaArray2d(name, subtype, bound_size1, bound_size2) ->
+                        let vars_to_print =
+                            let f bound_size =
+                                match env.variables.TryFind bound_size with
+                                | Some(CudaVar(_, CudaConst CudaInt)) -> []
+                                | Some x -> failwithf "Type checking for CudaArray2d failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A.\nName of the size bound variable is %s" x bound_size
+                                | None -> [CudaVar(bound_size, CudaConst CudaInt)]
+                            [f bound_size1; f bound_size2] |> List.concat
+                        let env = print_arguments vars_to_print env ""
+                        print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                    | CudaArrayGroup(num, subvar) ->
+                        Seq.fold (fun l i ->
+                            match subvar with
+                            | CudaVar(name,typ) -> 
+                                CudaVar (name + string i, typ) :: l
+                            | CudaArray1d(name,typ,bound_size) ->
+                                CudaArray1d (name + string i, typ, bound_size) :: l
+                            | CudaArray2d(name,typ,bound_size1,bound_size2) ->
+                                CudaArray2d (name + string i, typ, bound_size1, bound_size2) :: l
+                            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+                            ) [] {1..num}
+                        |> fun args -> print_arguments (List.rev args) env ""
+                | [] -> env
+            match annotation with
+            | CudaGlobal -> pp "__global__ "
+            | CudaDevice -> pp "__device__ "
+            pp name; pp name; pp "("
+            let env' = print_arguments args env ""
+            ppln ") {"
+            gen' body env'.PlusIndent
             ind(); ppln "}"
         | Var x -> pp x
         | Value x -> pp x
-        | DeclVar(typ, name, initializer) ->
-            print_type match_flags_prefix_local match_flags_postfix typ
-            pp name; pp " = "; gen initializer env; ppln ";"
-        | DeclAr1d(typ, name, size) -> //TODO: Contraints. Decide to whether to keep track of them in env.
-            print_type match_flags_prefix_local match_flags_postfix typ
-            pp "const auto __"; pp name; pp "_size = "; gen size env; ppln ";"
-            ind(); pp name; pp "["; gen size env; ppln "];"
-        | DeclAr2d(typ, name, size1, size2) -> //TODO: Contraints. Decide to whether to keep track of them in env.
-            print_type match_flags_prefix_local match_flags_postfix typ
-            pp "const auto __"; pp name; pp "_size1 = "; gen size1 env; ppln ";"
-            ind(); pp "const auto __"; pp name; pp "_size2 = "; gen size2 env; ppln ";"
-            ind(); pp name; pp "["; gen size1 env; pp " * "; gen size2 env; ppln "];"
+        | Let(CudaVar(name,typ) as var, initializer, in_) ->
+            print_type typ; pp name; 
+            match initializer with
+            | NoExpr -> ppln ";"
+            | _ -> pp " = "; gen initializer env; ppln ";"
+            gen' in_ (env.AddVar(name,var))
+        | Let(CudaArray1d(name,typ,size) as var, initializer, in_) ->
+            print_type typ; pp name; pp "["; pp size; ppln "]"
+            match initializer with
+            | NoExpr -> ppln ";"
+            | _ -> failwith "Initializers not allowed for arrays."
+            gen' in_ (env.AddVar(name,var))
+        | Let(CudaArray2d(name,typ,size1,size2) as var, initializer, in_) ->
+            print_type typ; pp name; pp "["; pp size1; pp " * "; pp size2; ppln "]"
+            match initializer with
+            | NoExpr -> ppln ";"
+            | _ -> failwith "Initializers not allowed for arrays."
+            gen' in_ (env.AddVar(name,var))
+        | Let(CudaArrayGroup _,_,_) ->
+            failwith "Array groups are only allowed in method declarations."
         | VarAr1d(name: string, accessor: CudaExpr) ->
-            pp name; pp "["; gen accessor  env; pp "]" // TODO: Optionally I might want to provide default values for out of bound accesses or throw error. Deal with that.
-        | VarAr2d(name: string, accessor1: CudaExpr, accessor2: CudaExpr) -> //TODO: Contraints. Decide to whether to keep track of them in env.
-            pp name; pp "["; gen accessor1  env; pp " * __"; pp name; pp "_size2 + "; gen accessor2  env; pp "]"
+            pp name; pp "["; gen accessor  env; pp "]"
+        | VarAr2d(name: string, accessor1: CudaExpr, accessor2: CudaExpr) ->
+            let size2 =
+                match env.variables.TryFind(name) with
+                | Some(CudaArray2d(name,typ,size1,size2))  -> size2
+                | _ -> failwithf "CudaArray2d (%A) variable not found in the environment." name
+            pp name; pp "["; gen accessor1  env; pp " * "; pp size2; pp " + "; gen accessor2  env; pp "]"
         | For(initializer: CudaExpr, cond: CudaExpr, incrementor: CudaExpr, body: CudaExpr) ->
             pp "for ("; gen initializer env; pp ", "; gen cond env; pp ", "; gen incrementor env; ppln "){"
             gen body env.PlusIndent
@@ -366,7 +380,6 @@ let codegen (exp: CudaExpr) =
         | ShuffleUp(a,b) -> pp "cub::ShflUp("; gen a env; pp ", "; gen b env; pp ")"
         | ShuffleDown(a,b) -> pp "cub::ShflDown("; gen a env; pp ", "; gen b env; pp ")"
         | ShuffleSource(a,b) -> pp "cub::ShflIndex("; gen a env; pp ", "; gen b env; pp ")"
-
             
     gen exp env
     program.ToString()
