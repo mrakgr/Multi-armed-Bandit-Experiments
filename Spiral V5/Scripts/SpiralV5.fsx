@@ -1,5 +1,4 @@
-﻿
-// V4 made me reach my limit in terms of coding style. I am going to focus on maximizing expressive power and embracing dynamism
+﻿// V4 made me reach my limit in terms of that particular coding style. I am going to focus on maximizing expressive power and embracing dynamism
 // in this iteration. I will not make an effort to make sure all the type checking passes muster in this version.
 // Unlike last time, this time I will start directly from the Cuda modules. The theme of SpiralV5 is interfacing with the outside world.
 
@@ -161,48 +160,67 @@ type CudaMethodAnnotation =
 | CudaDevice
 
 type CudaExpr =
-// Main AST definitions.
-| Seq of CudaExpr list
-| Include of string
-| Define of string
-| ExternCBlock of CudaExpr
-| Method of CudaMethodAnnotation * return_type: CudaType * name: string * args: CudaVar list * body: CudaExpr
-| Var of string
-| Value of string
-| Let of var: CudaVar * initializer: CudaExpr * in_: CudaExpr
-| VarAr1d of name: string * accessor: CudaExpr
-| VarAr2d of name: string * col: CudaExpr * row: CudaExpr // The environment will track the size of the array and multiply accessor1 by size2.
-| For of initializer: (CudaVar * CudaExpr) list * cond: CudaExpr * incrementor: CudaExpr list * body: CudaExpr
-| While of cond: CudaExpr * body: CudaExpr
-| Return of CudaExpr
-| Call of name: string * CudaExpr list
-| IfVoid of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr
-| NoExpr // Does nothing. Can be inserted into the else part of IfVoid so the else does not get printed.
-| If of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr // For ?: C style conditionals.
-| Lambda of args: CudaVar list * body: CudaExpr
+    // Main AST definitions.
+    | Seq of CudaExpr list
+    | Include of string
+    | Define of string
+    | ExternCBlock of CudaExpr
+    | Method of CudaMethodAnnotation * return_type: CudaType * name: string * args: CudaVar list * body: CudaExpr
+    | Var of string
+    | Value of string
+    | Let of var: CudaVar * initializer: CudaExpr * in_: CudaExpr
+    | VarAr1d of name: string * accessor: CudaExpr
+    | VarAr2d of name: string * col: CudaExpr * row: CudaExpr // The environment will track the size of the array and multiply accessor1 by size2.
+    | For of initializer: (CudaVar * CudaExpr) list * cond: CudaExpr * incrementor: CudaExpr list * body: CudaExpr
+    | While of cond: CudaExpr * body: CudaExpr
+    | Return of CudaExpr
+    | Call of name: string * CudaExpr list
+    | IfVoid of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr
+    | NoExpr // Does nothing. Can be inserted into the else part of IfVoid so the else does not get printed.
+    | If of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr // For ?: C style conditionals.
+    | Lambda of args: CudaVar list * body: CudaExpr
 
-// Primitive operations on expressions.
-| Add of CudaExpr * CudaExpr
-| Mult of CudaExpr * CudaExpr
-| Div of CudaExpr * CudaExpr
-| Mod of CudaExpr * CudaExpr
-| LT of CudaExpr * CudaExpr
-| LTE of CudaExpr * CudaExpr
-| EQ of CudaExpr * CudaExpr
-| GT of CudaExpr * CudaExpr
-| GTE of CudaExpr * CudaExpr
-| LeftShift of CudaExpr * CudaExpr
-| RightShift of CudaExpr * CudaExpr
-| Unroll
-| Syncthreads
-| ShuffleXor of CudaExpr * CudaExpr
-| ShuffleUp of CudaExpr * CudaExpr
-| ShuffleDown of CudaExpr * CudaExpr
-| ShuffleSource of CudaExpr * CudaExpr
+    // Primitive operations on expressions.
+    | Add of CudaExpr * CudaExpr
+    | Sub of CudaExpr * CudaExpr
+    | Mult of CudaExpr * CudaExpr
+    | Div of CudaExpr * CudaExpr
+    | Mod of CudaExpr * CudaExpr
+    | LT of CudaExpr * CudaExpr
+    | LTE of CudaExpr * CudaExpr
+    | EQ of CudaExpr * CudaExpr
+    | GT of CudaExpr * CudaExpr
+    | GTE of CudaExpr * CudaExpr
+    | LeftShift of CudaExpr * CudaExpr
+    | RightShift of CudaExpr * CudaExpr
+    | Unroll
+    | Syncthreads
+    | ShuffleXor of CudaExpr * CudaExpr
+    | ShuffleUp of CudaExpr * CudaExpr
+    | ShuffleDown of CudaExpr * CudaExpr
+    | ShuffleSource of CudaExpr * CudaExpr
+    | Log of CudaExpr
+    | Exp of CudaExpr
+    | Tanh of CudaExpr
+    | Neg of CudaExpr
 
-// Mutable operations.
-| MSet of var: CudaExpr * body: CudaExpr
-| MAdd of var: CudaExpr * body: CudaExpr
+    // Mutable operations.
+    | MSet of var: CudaExpr * body: CudaExpr
+    | MAdd of var: CudaExpr * body: CudaExpr
+
+    static member (+)(x,y) = Add(x,y)
+    static member (-)(x,y) = Sub(x,y)
+    static member (~-)(x) = Neg(x)
+    static member (*)(x,y) = Mult(x,y)
+    static member (/)(x,y) = Div(x,y)
+    static member (%)(x,y) = Mod(x,y)
+    static member (.<)(x,y) = LT(x,y)
+    static member (.<=)(x,y) = LTE(x,y)
+    static member (.=)(x,y) = EQ(x,y)
+    static member (.>)(x,y) = GT(x,y)
+    static member (.>=)(x,y) = GTE(x,y)
+    static member (<<<)(x,y) = LeftShift(x,y)
+    static member (>>>)(x,y) = RightShift(x,y)
 
 type CudaEnvironment =
     {
@@ -217,4 +235,6 @@ type CudaEnvironment =
         if t.variables.ContainsKey k 
         then failwith "Variable already exists in the environment. Duplicates are not allowed. Only arrays can have their sizes rebound."
         else {t with variables = t.variables.Add(k,v)}
+
+    /// The separator for mutable expressions.
     member t.WithSeparator x = {t with mutable_separator=x}

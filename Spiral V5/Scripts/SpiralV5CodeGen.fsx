@@ -82,6 +82,7 @@ let cuda_codegen (exp: CudaExpr) =
                         | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
                         ) [] {1..num}
                     |> fun args -> print_arguments (List.rev args) env ""
+                    |> fun env -> print_arguments t env ", "
             | [] -> env
 
         let rec print_initializer prefix (env: CudaEnvironment) l: CudaEnvironment = 
@@ -164,13 +165,11 @@ let cuda_codegen (exp: CudaExpr) =
             pp name; pp "["; gen col  env; pp " * "; pp size2; pp " + "; gen row  env; pp "]"
         | For(initializer: (CudaVar * CudaExpr) list, cond: CudaExpr, incrementor: CudaExpr list, body: CudaExpr) ->
             pp "for ("; 
-            let env = (print_initializer "" env initializer).WithSeparator "" 
-            // TODO: This whole thing is a mess. Make a proper initializer list.
-            pp "; "
-            gen cond env; pp "; "
+            let env = (print_initializer "" env initializer).WithSeparator ""
+            pp "; "; gen cond env; pp "; "
             Seq.fold (fun prefix x -> pp prefix; gen x env; ", ") "" incrementor |> ignore
             ppln "){"
-            gen' body env.PlusIndent
+            gen' body (env.PlusIndent.WithSeparator ";\n")
             ind(); ppln "}"
         | While(cond: CudaExpr, body: CudaExpr) ->
             pp "while ("; gen cond env; ppln "){"
@@ -197,9 +196,10 @@ let cuda_codegen (exp: CudaExpr) =
             ind(); ppln "} else {"
             ind(); gen f env.PlusIndent; ppln "}"
         | NoExpr -> () // Does nothing. Can be inserted into the else part of IfVoid so the else does not get printed.
-        | If(c, t, f) -> pp "("; gen c env; pp ") ? "; gen t env; pp " : "; gen f env
+        | If(c, t, f) -> pp "("; gen c env; pp ") ? "; gen t env; pp " : "; gen f env; pp ")"
         // Primitive operations on expressions.
         | Add(a,b) -> pp "("; gen a env; pp " + "; gen b env; pp ")"
+        | Sub(a,b) -> pp "("; gen a env; pp " - "; gen b env; pp ")"
         | Mult(a,b) -> pp "("; gen a env; pp " * "; gen b env; pp ")"
         | Div(a,b) -> pp "("; gen a env; pp " / "; gen b env; pp ")"
         | Mod(a,b) -> pp "("; gen a env; pp " % "; gen b env; pp ")"
@@ -216,24 +216,57 @@ let cuda_codegen (exp: CudaExpr) =
         | ShuffleUp(a,b) -> pp "cub::ShflUp("; gen a env; pp ", "; gen b env; pp ")"
         | ShuffleDown(a,b) -> pp "cub::ShflDown("; gen a env; pp ", "; gen b env; pp ")"
         | ShuffleSource(a,b) -> pp "cub::ShflIndex("; gen a env; pp ", "; gen b env; pp ")"
+        | Log(a) -> pp "log("; gen a env; pp ")"
+        | Exp(a) -> pp "exp("; gen a env; pp ")"
+        | Tanh(a) -> pp "tanh("; gen a env; pp ")"
+        | Neg(a) -> pp "(-"; gen a env; pp ")"
         // Mutable operations.
-        | MSet(var,ex) -> pp "("; print_var env var; pp " = "; gen ex env; pp ")"; pp env.mutable_separator
-        | MAdd(var,ex) -> pp "("; print_var env var; pp " += "; gen ex env; pp ")"; pp env.mutable_separator
+        | MSet(var,ex) -> print_var env var; pp " = "; gen ex env; pp env.mutable_separator
+        | MAdd(var,ex) -> print_var env var; pp " += "; gen ex env; pp env.mutable_separator
             
     gen exp env
     program.ToString()
 
+let group1dar_to_varar group accessor =
+    match group with
+    | CudaArrayGroup(n,ar) ->
+        List.map (fun i ->
+            match ar with
+            | CudaArray1d(v,_,_) -> VarAr1d(v + string i,accessor)
+            | _ -> failwith "Works only on 1d arrays."
+            ) [1..n]
+    | _ -> failwith "Works only on array groups"
 
-cuda_codegen <|
-    Seq [
-        Include <| quote "thrust/tuple.h"
-        Include <| quote "cub/cub.cuh"
-        ExternCBlock <| Seq [
-            Method(CudaGlobal,CudaVoid,"MapKernel",[CudaArray1d("x",CudaFloat,"n");CudaArray1d("o",CudaFloat,"n")],
-                For([CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"], LT(Var "i",Var "n"),[MAdd(Var "i",Value "1")],
-                    Seq [MSet(VarAr1d("x",Var "i"),VarAr1d("o",Var "i"))]
+let map_module num_in num_out name f =
+    let in_group = CudaArrayGroup(num_in,CudaArray1d("x",CudaFloat,"n"))
+    let out_group = CudaArrayGroup(num_out,CudaArray1d("o",CudaFloat,"n"))
+    cuda_codegen <|
+        Seq [
+            Include <| quote "thrust/tuple.h"
+            Include <| quote "cub/cub.cuh"
+            ExternCBlock <| Seq [
+                Method(CudaGlobal,CudaVoid,name,[in_group; out_group],
+                    For([CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"], LT(Var "i",Var "n"),[MAdd(Var "i",Value "gridDim.x*blockDim.x")],
+                        f (group1dar_to_varar out_group (Var "i")) (group1dar_to_varar in_group (Var "i"))
+                        )
                     )
-                )
+                ]
             ]
-        ]
-|> printfn "%s"
+
+let unary_map_module name f = 
+    map_module 1 1 name (fun [o] [x] -> MSet(o,f x))
+let binary_map_module name f = 
+    map_module 2 1 name (fun [o] [x1;x2] -> MSet(o,f x1 x2))
+
+let zero = Value "0"
+let one = Value "1"
+let neg_inf = Value "__int_as_float(0xff800000)"
+let pos_inf = Value "__int_as_float(0x7f800000)"
+
+let square = unary_map_module "Square" <| fun x -> x * x
+let sigmoid = unary_map_module "Sigmoid" <| fun x -> one / (one + Exp(Neg x))
+let tanh = unary_map_module "Tanh" <| fun x -> Tanh(x)
+let relu = unary_map_module "Relu" <| fun x -> If(x .> zero, x, zero)
+let hadmult = binary_map_module "HadMult" <| fun x1 x2 -> x1 * x2
+
+printfn "%s" relu
