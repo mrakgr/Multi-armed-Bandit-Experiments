@@ -280,6 +280,68 @@ type CudaDeviceVariable<'t when 't: struct and 't: (new: unit -> 't) and 't:> Sy
     member inline this.Gather() =
         to_host this
 
+let defaultLayout = cudnnTensorFormat.NCHW
+let defaultType = cudnnDataType.Float
+let defaultMaxPoolingNanOption = cudnnNanPropagation.PropagateNan
+let defaultReluNanOption = cudnnNanPropagation.PropagateNan
+
+type TensorDescriptor with
+    /// Extended method that works according to the bound defaultLayout and defaultType variables.
+    member inline t.SetTensor4dDescriptor(n,c,h,w) = t.SetTensor4dDescriptor(defaultLayout,defaultType,n,c,h,w)
+
+type FilterDescriptor with
+    /// Extended method that works according to the bound defaultType variable.
+    member inline t.SetFilter4dDescriptor(n,c,h,w) = t.SetFilter4dDescriptor(defaultType,defaultLayout,n,c,h,w)
+
+type ConvolutionParameters = {
+    pad_h : int
+    pad_w : int
+    stride_h : int
+    stride_w : int
+    upscale_h : int
+    upscale_w : int
+    mode : cudnnConvolutionMode
+    }
+
+type PoolingParameters =
+    {
+    mode : cudnnPoolingMode
+    windowHeight : int
+    windowWidth : int
+    verticalPadding : int
+    horizontalPadding : int
+    verticalStride : int
+    horizontalStride : int
+    }
+
+type PoolingDescriptor with
+    member inline t.SetPooling2dDescriptor (p : PoolingParameters) =
+        t.SetPooling2dDescriptor(p.mode,defaultMaxPoolingNanOption,p.windowHeight,p.windowWidth,p.verticalPadding,p.horizontalPadding,p.verticalStride,p.horizontalStride)
+
+    member inline t.GetPooling2dForwardOutputDim s =
+        let mutable n,c,h,w = 0,0,0,0
+        t.GetPooling2dForwardOutputDim(s,&n,&c,&h,&w)
+        n,c,h,w
+
+let defaultConvPar = 
+    {
+    pad_h = 0
+    pad_w = 0
+    stride_h = 1
+    stride_w = 1
+    upscale_h = 1
+    upscale_w = 1
+    mode = cudnnConvolutionMode.Convolution
+    }
+
+type ConvolutionDescriptor with
+    member inline t.SetConvolution2dDescriptor (p : ConvolutionParameters) =
+        t.SetConvolution2dDescriptor(p.pad_h,p.pad_w,p.stride_h,p.stride_w,p.upscale_h,p.upscale_w,p.mode, defaultType)
+    member inline t.GetConvolution2dForwardOutputDim (s,f) =
+        let mutable n,c,h,w = 0,0,0,0
+        t.GetConvolution2dForwardOutputDim(s,f,&n,&c,&h,&w)
+        n,c,h,w
+
 type DeadFlagType =
 | Undefined
 | Dead
@@ -365,6 +427,11 @@ type DM =
         | D1M(_,diff,_) | D2M(_,diff,_) | D3M(_,diff,_) | D4M(_,diff,_) -> diff
         | Df _ -> failwith "Invalid call. Df does not have a diff field."
 
+    member t.is_dead =
+        match t with
+        | D1M(_,_,is_dead) | D2M(_,_,is_dead) | D3M(_,_,is_dead) | D4M(_,_,is_dead) -> is_dead
+        | Df _ -> failwith "Invalid call. Df does not have a is_dead field."
+
     static member private create_dm size_f constructor_f size is_constant =
         let diff = 
             let s = size_f size
@@ -416,13 +483,13 @@ type DM =
         | false -> t.diff := t.diff.Value.ResizePrimalAndAdjoint new_size
 
     /// Resizes the object. Does not free memory when resizing downwards.
-    member t.ReplaceIf (size : int, is_constant) =
+    static member ReplaceIf(t, size : int, is_constant) =
         DM.replace_if (fun t size -> t |> function D1M(s,_,_) -> s := size) id t size is_constant
-    member t.ReplaceIf (size : int * int, is_constant) =
+    static member ReplaceIf(t, size : int * int, is_constant) =
         DM.replace_if (fun t size -> t |> function D2M(s,_,_) -> s := size) size_cr t size is_constant
-    member t.ReplaceIf (size : int * int * int, is_constant) =
+    static member ReplaceIf(t, size : int * int * int, is_constant) =
         DM.replace_if (fun t size -> t |> function D3M(s,_,_) -> s := size) size_ncr t size is_constant
-    member t.ReplaceIf (size : int * int * int * int, is_constant) =
+    static member ReplaceIf(t, size : int * int * int * int, is_constant) =
         DM.replace_if (fun t size -> t |> function D4M(s,_,_) -> s := size) size_nchw t size is_constant
 
     /// Sets the adjoint to a value.
@@ -435,11 +502,34 @@ type DM =
         let v = BitConverter.ToUInt32(BitConverter.GetBytes(x),0)
         t.diff.Value.P.MemsetAsync(v,str.Stream)
 
+    /// Returns whether the function has an adjoint
+    member t.HasAdjoint = t.diff.Value.HasAdjoint
+
     interface IDisposable with
         member t.Dispose() = t.diff.Value |> dispose
 
+type Workspace() = 
+    let mutable workspace: CudaDeviceVariable<byte> = CudaDeviceVariable.Null
+
+    /// Resizes the workspace if it is less than size and returns it. The size is in 'a.
+    member t.ResizeIf<'a when 'a: (new: unit -> 'a) and 'a: struct and 'a :> ValueType>(size: int) =
+        let toGeneric(workspace: CudaDeviceVariable<byte>) = new CudaDeviceVariable<'a>(workspace.DevicePointer,false,SizeT (size * sizeof<'a>))
+        if size < int workspace.Size then toGeneric workspace
+        else
+            workspace.Dispose()
+            workspace <- new CudaDeviceVariable<byte>(SizeT (size * sizeof<'a>))
+            toGeneric workspace
+
+    /// Resizes the workspace if it is less than size and returns it as a d2M.
+    member t.ResizeIfD2M((r,c as rc): int*int) =
+        let x = t.ResizeIf(r*c)
+        D2M(ref rc, ref <| PrimalOnly x, ref Undefined)
+
+    interface IDisposable with
+        member t.Dispose() = workspace.Dispose()
+
 /// The new object pool. Zeroes out the adjoints concurrently on the forward phase.
-and ObjectPool() =
+type ObjectPool() =
     let dMPool = ResizeArray()
     let dMp = ref 0
 
@@ -470,20 +560,21 @@ and ObjectPool() =
             pool.Add(k, t)
             t
 
-    member t.Getd2M (is_constant, (rc : (int*int)), is_inference_only, str: CudaStream): d2M =
-        let t' = ObjectPool.GetFromPool d2MPool d2Mp (fun _ -> d2M.create'(rc,is_constant))
-        t'.ReplaceIf(rc,is_constant)
-        t'.is_dead <- Undefined
-        if is_inference_only = false && t'.HasAdjoint then t'.diff.A.MemsetAsync(0u,str.Stream)
+    static member get_dM pool pointer is_constant size creation_f replace_if_f is_inference_only (str: CudaStream): DM =
+        let t': DM = ObjectPool.GetFromPool pool pointer (fun _ -> creation_f(size,is_constant))
+        replace_if_f(t',size,is_constant)
+        t'.is_dead := Undefined
+        if is_inference_only = false && t'.HasAdjoint then t'.diff.Value.A.MemsetAsync(0u,str.Stream)
         t'
 
-    member t.Getd4M (is_constant, (nchw : (int*int*int*int)), is_inference_only, str: CudaStream): d4M =
-        let t' = ObjectPool.GetFromPool d4MPool d4Mp (fun _ -> d4M.create'(nchw,is_constant))
-
-        t'.ReplaceIf(nchw,is_constant)
-        t'.is_dead <- Undefined
-        if is_inference_only = false && t'.HasAdjoint then t'.diff.A.MemsetAsync(0u,str.Stream)
-        t'
+    member t.GetdM (is_constant, (size : int), is_inference_only, str: CudaStream): DM =
+        ObjectPool.get_dM dMPool dMp is_constant size DM.create DM.ReplaceIf is_inference_only str
+    member t.GetdM (is_constant, (size : (int*int)), is_inference_only, str: CudaStream): DM =
+        ObjectPool.get_dM dMPool dMp is_constant size DM.create DM.ReplaceIf is_inference_only str
+    member t.GetdM (is_constant, (size : (int*int*int)), is_inference_only, str: CudaStream): DM =
+        ObjectPool.get_dM dMPool dMp is_constant size DM.create DM.ReplaceIf is_inference_only str
+    member t.GetdM (is_constant, (size : (int*int*int*int)), is_inference_only, str: CudaStream): DM =
+        ObjectPool.get_dM dMPool dMp is_constant size DM.create DM.ReplaceIf is_inference_only str
 
     member t.GetTensorDescriptor (nchw : int*int*int*int) = 
         ObjectPool.GetFromDict tensorDescriptorPool nchw (fun _ -> new TensorDescriptor()) (fun (t: TensorDescriptor) x -> x |> t.SetTensor4dDescriptor)
@@ -502,8 +593,7 @@ and ObjectPool() =
 
     // Resets the pointer in the object pool
     member t.Reset() =
-        d2Mp := 0
-        d4Mp := 0
+        dMp := 0
 
     interface IDisposable with
         member __.Dispose() =
@@ -513,8 +603,7 @@ and ObjectPool() =
                 let pool = ex pool
                 for x in pool do dispose x
             let inline dis x = dis' id x
-            dis d2MPool
-            dis d4MPool
+            dis dMPool
 
             let inline dis x = 
                 dis' (fun v -> (^a: (member Values: ^b) v)) x
@@ -527,87 +616,4 @@ and ObjectPool() =
 
 let T = Operation.Transpose
 let nT = Operation.NonTranspose
-
-
-let defaultLayout = cudnnTensorFormat.NCHW
-let defaultType = cudnnDataType.Float
-let defaultMaxPoolingNanOption = cudnnNanPropagation.PropagateNan
-let defaultReluNanOption = cudnnNanPropagation.PropagateNan
-
-type TensorDescriptor with
-    /// Extended method that works according to the bound defaultLayout and defaultType variables.
-    member inline t.SetTensor4dDescriptor(n,c,h,w) = t.SetTensor4dDescriptor(defaultLayout,defaultType,n,c,h,w)
-
-type FilterDescriptor with
-    /// Extended method that works according to the bound defaultType variable.
-    member inline t.SetFilter4dDescriptor(n,c,h,w) = t.SetFilter4dDescriptor(defaultType,defaultLayout,n,c,h,w)
-
-type ConvolutionParameters = {
-    pad_h : int
-    pad_w : int
-    stride_h : int
-    stride_w : int
-    upscale_h : int
-    upscale_w : int
-    mode : cudnnConvolutionMode
-    }
-
-type PoolingParameters =
-    {
-    mode : cudnnPoolingMode
-    windowHeight : int
-    windowWidth : int
-    verticalPadding : int
-    horizontalPadding : int
-    verticalStride : int
-    horizontalStride : int
-    }
-
-type PoolingDescriptor with
-    member inline t.SetPooling2dDescriptor (p : PoolingParameters) =
-        t.SetPooling2dDescriptor(p.mode,defaultMaxPoolingNanOption,p.windowHeight,p.windowWidth,p.verticalPadding,p.horizontalPadding,p.verticalStride,p.horizontalStride)
-
-    member inline t.GetPooling2dForwardOutputDim s =
-        let mutable n,c,h,w = 0,0,0,0
-        t.GetPooling2dForwardOutputDim(s,&n,&c,&h,&w)
-        n,c,h,w
-
-let defaultConvPar = 
-    {
-    pad_h = 0
-    pad_w = 0
-    stride_h = 1
-    stride_w = 1
-    upscale_h = 1
-    upscale_w = 1
-    mode = cudnnConvolutionMode.Convolution
-    }
-
-type ConvolutionDescriptor with
-    member inline t.SetConvolution2dDescriptor (p : ConvolutionParameters) =
-        t.SetConvolution2dDescriptor(p.pad_h,p.pad_w,p.stride_h,p.stride_w,p.upscale_h,p.upscale_w,p.mode, defaultType)
-    member inline t.GetConvolution2dForwardOutputDim (s,f) =
-        let mutable n,c,h,w = 0,0,0,0
-        t.GetConvolution2dForwardOutputDim(s,f,&n,&c,&h,&w)
-        n,c,h,w
-
-type Workspace() = 
-    let mutable workspace: CudaDeviceVariable<byte> = CudaDeviceVariable.Null
-
-    /// Resizes the workspace if it is less than size and returns it. The size is in 'a.
-    member t.ResizeIf<'a when 'a: (new: unit -> 'a) and 'a: struct and 'a :> ValueType>(size: int) =
-        let toGeneric(workspace: CudaDeviceVariable<byte>) = new CudaDeviceVariable<'a>(workspace.DevicePointer,false,SizeT (size * sizeof<'a>))
-        if size < int workspace.Size then toGeneric workspace
-        else
-            workspace.Dispose()
-            workspace <- new CudaDeviceVariable<byte>(SizeT (size * sizeof<'a>))
-            toGeneric workspace
-
-    /// Resizes the workspace if it is less than size and returns it as a d2M.
-    member t.ResizeIfD2M((r,c as rc): int*int) =
-        let x = t.ResizeIf(r*c)
-        D2M(ref rc, PrimalOnly x, ref Undefined)
-
-    interface IDisposable with
-        member t.Dispose() = workspace.Dispose()
 
