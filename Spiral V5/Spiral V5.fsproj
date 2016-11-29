@@ -57,10 +57,12 @@
     <Compile Include="AssemblyInfo.fs" />
     <None Include="App.config" />
     <Content Include="packages.config" />
+    <Content Include="TextFile1.txt" />
     <None Include="Scripts\load-references-release.fsx" />
     <None Include="Scripts\load-project-release.fsx" />
     <None Include="Scripts\SpiralV5.fsx" />
     <None Include="Scripts\SpiralV5CodeGen.fsx" />
+    <None Include="Scripts\SpiralV5DM.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
