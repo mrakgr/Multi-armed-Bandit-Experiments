@@ -61,7 +61,7 @@
     <None Include="Scripts\load-references-release.fsx" />
     <None Include="Scripts\load-project-release.fsx" />
     <None Include="Scripts\SpiralV5.fsx" />
-    <None Include="Scripts\SpiralV5CodeGen.fsx" />
+    <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
     <None Include="Scripts\SpiralV5DM.fsx" />
   </ItemGroup>
   <ItemGroup>

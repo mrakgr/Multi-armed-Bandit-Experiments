@@ -15,6 +15,106 @@ open System.IO
 open System.Collections.Generic
 open System.Runtime.InteropServices
 
+type CudaType =
+| CudaConst of subtype: CudaType
+| CudaShared of subtype: CudaType
+| CudaVoid
+| CudaFloat
+| CudaInt
+| CudaAuto
+| CudaThrustTuple of subtype: CudaType list
+
+type CudaVar =
+| CudaVar of name: string * typ: CudaType
+| CudaArray1d of name: string * subtype: CudaType * bound_size: string
+| CudaArray2d of name: string * subtype: CudaType * bound_size1: string * bound_size2: string
+| CudaArrayGroup of num: int * subtype: CudaVar 
+
+type CudaMethodAnnotation =
+| CudaGlobal
+| CudaDevice
+
+type CudaExpr =
+    // Main AST definitions.
+    | Seq of CudaExpr list
+    | Include of string
+    | Define of string
+    | ExternCBlock of CudaExpr
+    | Method of CudaMethodAnnotation * return_type: CudaType * name: string * args: CudaVar list * body: CudaExpr
+    | Var of string
+    | Value of string
+    | Let of var: CudaVar * initializer: CudaExpr * in_: CudaExpr
+    | VarAr1d of name: string * accessor: CudaExpr
+    | VarAr2d of name: string * col: CudaExpr * row: CudaExpr // The environment will track the size of the array and multiply accessor1 by size2.
+    | For of initializer: (CudaVar * CudaExpr) list * cond: CudaExpr * incrementor: CudaExpr list * body: CudaExpr
+    | While of cond: CudaExpr * body: CudaExpr
+    | Return of CudaExpr
+    | Call of name: string * CudaExpr list
+    | IfVoid of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr
+    | NoExpr // Does nothing. Can be inserted into the else part of IfVoid so the else does not get printed.
+    | If of cond: CudaExpr * true_: CudaExpr * false_: CudaExpr // For ?: C style conditionals.
+    | Lambda of args: CudaVar list * body: CudaExpr
+
+    // Primitive operations on expressions.
+    | Add of CudaExpr * CudaExpr
+    | Sub of CudaExpr * CudaExpr
+    | Mult of CudaExpr * CudaExpr
+    | Div of CudaExpr * CudaExpr
+    | Mod of CudaExpr * CudaExpr
+    | LT of CudaExpr * CudaExpr
+    | LTE of CudaExpr * CudaExpr
+    | EQ of CudaExpr * CudaExpr
+    | GT of CudaExpr * CudaExpr
+    | GTE of CudaExpr * CudaExpr
+    | LeftShift of CudaExpr * CudaExpr
+    | RightShift of CudaExpr * CudaExpr
+    | Unroll
+    | Syncthreads
+    | ShuffleXor of CudaExpr * CudaExpr
+    | ShuffleUp of CudaExpr * CudaExpr
+    | ShuffleDown of CudaExpr * CudaExpr
+    | ShuffleSource of CudaExpr * CudaExpr
+    | Log of CudaExpr
+    | Exp of CudaExpr
+    | Tanh of CudaExpr
+    | Neg of CudaExpr
+
+    // Mutable operations.
+    | MSet of var: CudaExpr * body: CudaExpr
+    | MAdd of var: CudaExpr * body: CudaExpr
+
+    static member (+)(x,y) = Add(x,y)
+    static member (-)(x,y) = Sub(x,y)
+    static member (~-)(x) = Neg(x)
+    static member (*)(x,y) = Mult(x,y)
+    static member (/)(x,y) = Div(x,y)
+    static member (%)(x,y) = Mod(x,y)
+    static member (.<)(x,y) = LT(x,y)
+    static member (.<=)(x,y) = LTE(x,y)
+    static member (.=)(x,y) = EQ(x,y)
+    static member (.>)(x,y) = GT(x,y)
+    static member (.>=)(x,y) = GTE(x,y)
+    static member (<<<)(x,y) = LeftShift(x,y)
+    static member (>>>)(x,y) = RightShift(x,y)
+
+type CudaEnvironment =
+    {
+    indentation: int
+    variables: Map<string, CudaVar>
+    mutable_separator: string
+    }
+
+    /// Immutably increments the indentation by 4.
+    member t.PlusIndent = {t with indentation = t.indentation+4}
+    member t.AddVar(k,v) = 
+        if t.variables.ContainsKey k 
+        then failwith "Variable already exists in the environment. Duplicates are not allowed. Only arrays can have their sizes rebound."
+        else {t with variables = t.variables.Add(k,v)}
+
+    /// The separator for mutable expressions.
+    member t.WithSeparator x = {t with mutable_separator=x}
+
+
 let cuda_codegen (exp: CudaExpr) =
     let env = {indentation=0; variables=Map.empty; mutable_separator=";\n"}
     let program = Text.StringBuilder()
@@ -253,10 +353,12 @@ let map_module num_in num_out name f =
                 ]
             ]
 
-let unary_map_module name f = 
-    map_module 1 1 name (fun [o] [x] -> MSet(o,f x))
-let binary_map_module name f = 
-    map_module 2 1 name (fun [o] [x1;x2] -> MSet(o,f x1 x2))
+let unary_map_module name f =
+    map_module 1 1 name (fun [o] [x] -> MSet(o, f x))
+let binary_map_module name f =
+    map_module 2 1 name (fun [o] [x1;x2] -> MSet(o, f x1 x2))
+let ternary_map_module name f =
+    map_module 3 1 name (fun [o] [x1;x2;x3] -> MSet(o, f x1 x2 x3))
 
 let zero = Value "0"
 let one = Value "1"
@@ -268,5 +370,3 @@ let sigmoid = unary_map_module "Sigmoid" <| fun x -> one / (one + Exp(Neg x))
 let tanh = unary_map_module "Tanh" <| fun x -> Tanh(x)
 let relu = unary_map_module "Relu" <| fun x -> If(x .> zero, x, zero)
 let hadmult = binary_map_module "HadMult" <| fun x1 x2 -> x1 * x2
-
-printfn "%s" relu
