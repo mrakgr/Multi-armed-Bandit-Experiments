@@ -320,6 +320,8 @@ let cuda_codegen (exp: CudaExpr) =
         | Exp(a) -> pp "exp("; gen a env; pp ")"
         | Tanh(a) -> pp "tanh("; gen a env; pp ")"
         | Neg(a) -> pp "(-"; gen a env; pp ")"
+        // Cub operations
+        //| BlockReduce(x) -> pp 
         // Mutable operations.
         | MSet(var,ex) -> print_var env var; pp " = "; gen ex env; pp env.mutable_separator
         | MAdd(var,ex) -> print_var env var; pp " += "; gen ex env; pp env.mutable_separator
@@ -340,6 +342,22 @@ let group1dar_to_varar group accessor =
 let map_module num_in num_out name f =
     let in_group = CudaArrayGroup(num_in,CudaArray1d("x",CudaFloat,"n"))
     let out_group = CudaArrayGroup(num_out,CudaArray1d("o",CudaFloat,"n"))
+    cuda_codegen <|
+        Seq [
+            Include <| quote "thrust/tuple.h"
+            Include <| quote "cub/cub.cuh"
+            ExternCBlock <| Seq [
+                Method(CudaGlobal,CudaVoid,name,[in_group; out_group],
+                    For([CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"], LT(Var "i",Var "n"),[MAdd(Var "i",Value "gridDim.x*blockDim.x")],
+                        f (group1dar_to_varar out_group (Var "i")) (group1dar_to_varar in_group (Var "i"))
+                        )
+                    )
+                ]
+            ]
+
+let map_sum_module num_in num_out name f =
+    let in_group = CudaArrayGroup(num_in,CudaArray2d("x",CudaFloat,"num_cols","num_rows"))
+    let out_group = CudaArrayGroup(num_out,CudaArray1d("o",CudaFloat,"num_cols"))
     cuda_codegen <|
         Seq [
             Include <| quote "thrust/tuple.h"
