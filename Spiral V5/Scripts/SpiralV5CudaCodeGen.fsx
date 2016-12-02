@@ -28,7 +28,7 @@ type CudaVar =
 | CudaVar of name: string * typ: CudaType
 | CudaArray1d of name: string * subtype: CudaType * bound_size: string
 | CudaArray2d of name: string * subtype: CudaType * bound_size1: string * bound_size2: string
-| CudaArrayGroup of num: int * subtype: CudaVar 
+| CudaGroup of num: int * subtype: CudaVar list
 
 type CudaMethodAnnotation =
 | CudaGlobal
@@ -43,8 +43,8 @@ type CudaExpr =
     | Var of string
     | Value of string
     | Let of var: CudaVar * initializer: CudaExpr * in_: CudaExpr list
-    | VarAr1d of name: string * accessor: CudaExpr
-    | VarAr2d of name: string * col: CudaExpr * row: CudaExpr // The environment will track the size of the array and multiply accessor1 by size2.
+    | VarAr1d of name: CudaExpr * accessor: CudaExpr
+    | VarAr2d of name: CudaExpr * col: CudaExpr * row: CudaExpr // The environment will track the size of the array and multiply accessor1 by size2.
     | For of initializer: (CudaVar * CudaExpr) list * cond: CudaExpr * incrementor: CudaExpr list * body: CudaExpr list
     | While of cond: CudaExpr * body: CudaExpr list
     | Return of CudaExpr
@@ -167,16 +167,19 @@ let cuda_codegen (exp: CudaExpr list) =
                     let env = print_arguments vars_to_print env ""
                     if vars_to_print.IsEmpty = false then pp ", "
                     print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
-                | CudaArrayGroup(num, subvar) ->
-                    Seq.fold (fun l i ->
-                        match subvar with
-                        | CudaVar(name,typ) -> 
-                            CudaVar (name + string i, typ) :: l
-                        | CudaArray1d(name,typ,bound_size) ->
-                            CudaArray1d (name + string i, typ, bound_size) :: l
-                        | CudaArray2d(name,typ,bound_size1,bound_size2) ->
-                            CudaArray2d (name + string i, typ, bound_size1, bound_size2) :: l
-                        | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+                | CudaGroup(num, subvars) ->
+                    Seq.fold (fun (l: CudaVar list) i ->
+                        List.map (fun subvar ->
+                            match subvar with
+                            | CudaVar(name,typ) -> 
+                                CudaVar (name + string i, typ)
+                            | CudaArray1d(name,typ,bound_size) ->
+                                CudaArray1d (name + string i, typ, bound_size)
+                            | CudaArray2d(name,typ,bound_size1,bound_size2) ->
+                                CudaArray2d (name + string i, typ, bound_size1, bound_size2)
+                            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+                            ) subvars
+                        @ l
                         ) [] {1..num}
                     |> fun args -> print_arguments (List.rev args) env ""
                     |> fun env -> print_arguments t env ", "
@@ -250,16 +253,22 @@ let cuda_codegen (exp: CudaExpr list) =
             | NoExpr -> ppln ";"
             | _ -> failwith "Initializers not allowed for arrays."
             print_seq in_ (env.AddVar(name,var))
-        | Let(CudaArrayGroup _,_,_) ->
+        | Let(CudaGroup _,_,_) ->
             failwith "Array groups are only allowed in method declarations."
-        | VarAr1d(name: string, accessor: CudaExpr) ->
+        | VarAr1d(Var name, accessor: CudaExpr) ->
             pp name; pp "["; gen accessor  env; pp "]"
-        | VarAr2d(name: string, col: CudaExpr, row: CudaExpr) ->
+        | VarAr1d _ ->
+            failwith "VarAr1d requires Var as a input."
+        | VarAr2d(Var name, col: CudaExpr, row: CudaExpr) ->
             let size2 =
                 match env.variables.TryFind(name) with
                 | Some(CudaArray2d(name,typ,size1,size2))  -> size2
-                | _ -> failwithf "CudaArray2d (%A) variable not found in the environment." name
+                | _ -> 
+                    printfn "%A" env.variables
+                    failwithf "CudaArray2d (%A) variable not found in the environment." name
             pp name; pp "["; gen col  env; pp " * "; pp size2; pp " + "; gen row  env; pp "]"
+        | VarAr2d _ ->
+            failwith "VarAr1d requires Var as a input."
         | For(initializer: (CudaVar * CudaExpr) list, cond: CudaExpr, incrementor: CudaExpr list, body: CudaExpr list) ->
             pp "for ("; 
             let env = (print_initializer "" env initializer).WithSeparator ""
@@ -328,48 +337,53 @@ let cuda_codegen (exp: CudaExpr list) =
         gen x env
     program.ToString()
 
-let group1dar_to_varar group accessor =
+let group_to_explist group (ar1d_accessor: CudaExpr option) (ar2d_accessor: (CudaExpr * CudaExpr) option) =
     match group with
-    | CudaArrayGroup(n,ar) ->
-        match ar with
-        | CudaArray1d(v,_,_) -> 
-            List.map (fun i -> VarAr1d(v + string i,accessor)) [1..n]
-        | _ -> failwith "Works only on 1d arrays."
-    | _ -> failwith "Works only on array groups"
-
-let group2dar_to_varar group accessor1 accessor2 =
-    match group with
-    | CudaArrayGroup(n,ar) ->
-        match ar with
-        | CudaArray2d(v,_,_,_) ->
-            List.map (fun i -> VarAr2d(v + string i,accessor1,accessor2)) [1..n]
-        | _ -> failwith "Works only on 2d arrays."
-    | _ -> failwith "Works only on array groups"
+    | CudaGroup(num,subvars) ->
+        Seq.fold (fun l i ->
+            List.map (fun subvar ->
+                match subvar with
+                | CudaVar(name,typ) -> Var(name + string i)
+                | CudaArray1d(name,typ,bound_size) -> 
+                    match ar1d_accessor with
+                    | Some ar1d_accessor -> VarAr1d(Var(name + string i), ar1d_accessor)
+                    | None -> failwith "Accessor for 1d arrays is required."
+                | CudaArray2d(name,typ,bound_size1,bound_size2) ->
+                    match ar2d_accessor with
+                    | Some(a, b) -> VarAr2d(Var(name + string i), a, b)
+                    | None -> failwith "Accessor for 2d arrays is required."
+                | x -> failwithf "%A not supported as a subtype of CudaGroup."  x
+                ) subvars
+            @ l
+            ) [] {1..num}
+    | _ -> failwith "Must input a CudaGroup."
 
 let zero = Value "0"
 let one = Value "1"
 let neg_inf = Value "__int_as_float(0xff800000)"
 let pos_inf = Value "__int_as_float(0x7f800000)"
 
-let map_module num_in num_out name f =
-    let in_group = CudaArrayGroup(num_in,CudaArray1d("x",CudaFloat,"n"))
-    let out_group = CudaArrayGroup(num_out,CudaArray1d("o",CudaFloat,"n"))
+let map_module num_in args_in num_out args_out name f =
+    //[CudaArray1d("x",CudaFloat,"n")]
+    //[CudaArray1d("o",CudaFloat,"n")]
+    let in_group = CudaGroup(num_in,args_in)
+    let out_group = CudaGroup(num_out,args_out)
     cuda_codegen <|
         [
-            Include <| quote "thrust/tuple.h"
-            Include <| quote "cub/cub.cuh"
-            ExternCBlock <| [
-                Method(CudaGlobal,CudaVoid,name,[in_group; out_group],
-                    [For([CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"], LT(Var "i",Var "n"),[MAdd(Var "i",Value "gridDim.x*blockDim.x")],
-                        [f (group1dar_to_varar out_group (Var "i")) (group1dar_to_varar in_group (Var "i"))]
-                        )
-                    ])
-                ]
+        Include <| quote "thrust/tuple.h"
+        Include <| quote "cub/cub.cuh"
+        ExternCBlock <| [
+            Method(CudaGlobal,CudaVoid,name,[in_group; out_group],
+                [For([CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"], LT(Var "i",Var "n"),[MAdd(Var "i",Value "gridDim.x*blockDim.x")],
+                    [f (group_to_explist out_group (Var "i" |> Some) None) (group_to_explist in_group (Var "i" |> Some) None)]
+                    )
+                ])
             ]
+        ]
 
 let map_redocol_map_module map_load_op reduce_op map_store_op block_size num_in num_out name =
-    let in_group = CudaArrayGroup(num_in,CudaArray2d("x",CudaFloat,"num_cols","num_rows"))
-    let out_group = CudaArrayGroup(num_out,CudaArray1d("o",CudaFloat,"num_cols"))
+    let in_group = CudaGroup(num_in,[CudaArray2d("x",CudaFloat,"num_cols","num_rows")])
+    let out_group = CudaGroup(num_out,[CudaArray1d("o",CudaFloat,"num_cols")])
     cuda_codegen <|
         [
         Include <| quote "thrust/tuple.h"
@@ -383,27 +397,34 @@ let map_redocol_map_module map_load_op reduce_op map_store_op block_size num_in 
                 For([CudaVar("col",CudaInt),Value "blockIdx.x"],Var "col" .< Var "num_cols",[MAdd(Var "col",Value "gridDim.x")],[
                     Let(CudaVar("row",CudaInt),Value "threadIdx.x",[
                     Let(CudaVar("map_load_op",CudaConst CudaAuto),map_load_op,[
-                    Let(CudaVar("value", CudaAuto),Call("map_load_op",group2dar_to_varar in_group (Var "col") (Var "row")),[
+                    Let(CudaVar("value", CudaAuto),Call("map_load_op", group_to_explist in_group None (Some (Var "col", Var "row"))),[
                     MAdd(Var "row",Value "blockDim.x")
                     While(Var "row" .< Var "num_rows",[
-                        MSet(Var "value",Call("reduce_op",[Var "value";Call("map_load_op",group2dar_to_varar in_group (Var "col") (Var "row"))]))
+                        MSet(Var "value",Call("reduce_op",[Var "value";Call("map_load_op",group_to_explist in_group None (Some ((Var "col"), (Var "row"))))]))
                         MAdd(Var "row",Value "blockDim.x")
                         ])
-                    ])
                     Let(CudaVar("result",CudaConst CudaAuto),BlockReduce(Value "temp_storage",Var "value", Var "reduce_op"),[
                     IfVoid(Value "threadIdx.x" .= zero,
-                        map_store_op (group1dar_to_varar out_group (Var "col")) (Var "result"),
+                        map_store_op (group_to_explist in_group None (Some (Var "col", Var "row"))) (Var "result"),
                         [])
                     ])])])
                 ])])])
-            ]]
+            ])]]
 
 let map_module_1_1 name f =
-    map_module 1 1 name (fun [o] [x] -> MSet(o, f x))
+    map_module 1 [CudaArray1d("x",CudaFloat,"n")] 1 [CudaArray1d("o",CudaFloat,"n")] name (fun [o] [x] -> MSet(o, f x))
 let map_module_2_1 name f =
-    map_module 2 1 name (fun [o] [x1;x2] -> MSet(o, f x1 x2))
+    map_module 2 [CudaArray1d("x",CudaFloat,"n")] 1 [CudaArray1d("o",CudaFloat,"n")] name (fun [o] [x1;x2] -> MSet(o, f x1 x2))
 let map_module_3_1 name f =
-    map_module 3 1 name (fun [o] [x1;x2;x3] -> MSet(o, f x1 x2 x3))
+    map_module 3 [CudaArray1d("x",CudaFloat,"n")] 1 [CudaArray1d("o",CudaFloat,"n")] name (fun [o] [x1;x2;x3] -> MSet(o, f x1 x2 x3))
+
+let mapcoef_module_1_1 name f =
+    map_module 1 [CudaVar("coef_x",CudaConst CudaFloat); CudaArray1d("x",CudaFloat,"n")] 1 [CudaArray1d("o",CudaFloat,"n")] name (fun [o] [coef_x;x] -> MSet(o, f coef_x x))
+let mapcoef_module_2_1 name f =
+    map_module 2 [CudaVar("coef_x",CudaConst CudaFloat); CudaArray1d("x",CudaFloat,"n")] 1 [CudaArray1d("o",CudaFloat,"n")] name (fun [o] [coef_x1;x1;coef_x2;x2] -> MSet(o, f coef_x1 x1 coef_x2 x2))
+let mapcoef_module_3_1 name f =
+    map_module 3 [CudaVar("coef_x",CudaConst CudaFloat); CudaArray1d("x",CudaFloat,"n")] 1 [CudaArray1d("o",CudaFloat,"n")] name (fun [o] [coef_x1;x1;coef_x2;x2;coef_x3;x3] -> MSet(o, f coef_x1 x1 coef_x2 x2 coef_x3 x3))
+
 let unary_op op = Lambda([CudaVar("x",CudaAuto)],op (Var "x"))
 let binary_op op = Lambda([CudaVar("x1",CudaAuto);CudaVar("x2",CudaAuto)], op (Var "x1") (Var "x2"))
 let nary_op num op =
@@ -420,4 +441,7 @@ let relu = map_module_1_1 "Relu" <| fun x -> If(x .> zero, x, zero)
 let hadmult = map_module_2_1 "HadMult" <| fun x1 x2 -> x1 * x2
 let colsum = map_redocol_map_module_1_1 "Colsum" id (+) id
 
-printfn "%s" colsum
+// let gradclipModule = lazy DeviceUnaryCoefTransformModule("(x < -coef_x) ? -coef_x : (x > coef_x ? coef_x : x);", "GradClip")
+let gradclip = mapcoef_module_1_1 "GradClip" <| fun coef_x x -> If(x .< -coef_x,-coef_x,If(x .> coef_x,coef_x,x))
+
+printfn "%s" gradclip
