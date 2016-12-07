@@ -2,7 +2,3 @@
 #I __SOURCE_DIRECTORY__
 #load "load-references-debug.fsx"
 #load "../AssemblyInfo.fs"
-      "../QuotationsParser.fs"
-      "../CudaCodegen.fs"
-      "../Tests.fs"
-      "../ReduceModule_v3.fs"
