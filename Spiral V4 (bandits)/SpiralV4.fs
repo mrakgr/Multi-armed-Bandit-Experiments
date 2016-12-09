@@ -218,7 +218,7 @@ type Workspace() =
     /// Resizes the workspace if it is less than size and returns it. The size is in 'a.
     member t.ResizeIf<'a when 'a: (new: unit -> 'a) and 'a: struct and 'a :> ValueType>(size: int) =
         let toGeneric(workspace: CudaDeviceVariable<byte>) = new CudaDeviceVariable<'a>(workspace.DevicePointer,false,SizeT (size * sizeof<'a>))
-        if size < int workspace.Size then toGeneric workspace
+        if size <= int workspace.Size then toGeneric workspace
         else
             workspace.Dispose()
             workspace <- new CudaDeviceVariable<byte>(SizeT (size * sizeof<'a>))
