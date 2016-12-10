@@ -392,9 +392,8 @@ module CudaCompiler =
             include_ "cub/cub.cuh"
             externCBlock [
                 method_ CudaGlobal CudaVoid name [in_group; out_group] [
-                    for_ [CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"] (Var "i" .< Var "n") [Var "i" += Value "gridDim.x*blockDim.x"] [
-                        f (group_to_explist out_group [Var "i"]) (group_to_explist in_group [Var "i"])
-                        ]
+                    for_ [CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"] (Var "i" .< Var "n") [Var "i" += Value "gridDim.x*blockDim.x"]
+                        (f (group_to_explist out_group [Var "i"]) (group_to_explist in_group [Var "i"]))
                     ]
                 ]
             ]
@@ -431,18 +430,23 @@ module CudaCompiler =
                     
 
     let map_module_1_1 name f =
-        map_module 1 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x] -> MSet(o, f x))
+        map_module 1 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x] -> [MSet(o, f x)])
     let map_module_2_1 name f =
-        map_module 2 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;x2] -> MSet(o, f x1 x2))
+        map_module 2 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;x2] -> [MSet(o, f x1 x2)])
     let map_module_3_1 name f =
-        map_module 3 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;x2;x3] -> MSet(o, f x1 x2 x3))
+        map_module 3 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;x2;x3] -> [MSet(o, f x1 x2 x3)])
+
+    let map_backwards_module_2_1 name f =
+        map_module 2 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;x2] -> [MAdd(o, f x1 x2)])
+    let map_backwards_module_3_1 name f =
+        map_module 3 [CudaArray("x",CudaFloat,["n"])] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;x2;x3] -> [MAdd(o, f x1 x2 x3)])
 
     let mapcoef_module_1_1 name f =
-        map_module 1 [CudaArray("x",CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x;coef_x] -> MSet(o, f x coef_x))
+        map_module 1 [CudaArray("x",CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x;coef_x] -> [MSet(o, f x coef_x)])
     let mapcoef_module_2_1 name f =
-        map_module 2 [CudaArray("x",CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;coef_x1;x2;coef_x2] -> MSet(o, f x1 coef_x1 x2 coef_x2))
+        map_module 2 [CudaArray("x",CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;coef_x1;x2;coef_x2] -> [MSet(o, f x1 coef_x1 x2 coef_x2)])
     let mapcoef_module_3_1 name f =
-        map_module 3 [CudaArray("x",CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;coef_x1;x2;coef_x2;x3;coef_x3] -> MSet(o, f x1 coef_x1 x2 coef_x2 x3 coef_x3))
+        map_module 3 [CudaArray("x",CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 1 [CudaArray("o",CudaFloat,["n"])] name (fun [o] [x1;coef_x1;x2;coef_x2;x3;coef_x3] -> [MSet(o, f x1 coef_x1 x2 coef_x2 x3 coef_x3)])
 
     let unary_op op = Lambda([CudaVar("x",CudaAuto)],op (Var "x"))
     let binary_op op = Lambda([CudaVar("x1",CudaAuto);CudaVar("x2",CudaAuto)], op (Var "x1") (Var "x2"))
@@ -452,14 +456,4 @@ module CudaCompiler =
         Lambda(args, op <| to_var args)
     let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
         map_redocol_map_module (unary_op <| fun x -> [Return <| map_load_op x]) (binary_op <| fun x y -> [Return <| reduce_op x y]) (fun [o1] value -> [MSet(o1, map_store_op value)]) "128" 1 1 name
-
-    let square = map_module_1_1 "Square" <| fun x -> x * x
-    let sigmoid = map_module_1_1 "Sigmoid" <| fun x -> one / (one + Exp(Neg x))
-    let tanh = map_module_1_1 "Tanh" <| fun x -> Tanh(x)
-    let relu = map_module_1_1 "Relu" <| fun x -> if_ (x .> zero) x zero
-    let hadmult = map_module_2_1 "HadMult" <| fun x1 x2 -> x1 * x2
-    let colsum = map_redocol_map_module_1_1 "Colsum" id (+) id
-
-    // let gradclipModule = lazy DeviceUnaryCoefTransformModule("(x < -coef_x) ? -coef_x : (x > coef_x ? coef_x : x);", "GradClip")
-    let gradclip = mapcoef_module_1_1 "GradClip" <| fun x coef_x -> if_ (x .< -coef_x) -coef_x (if_ (x .> coef_x) coef_x x)
 

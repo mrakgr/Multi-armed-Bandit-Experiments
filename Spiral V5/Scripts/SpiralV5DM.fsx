@@ -43,15 +43,17 @@ type CudaDeviceVariable<'t when 't: struct and 't: (new: unit -> 't) and 't:> Sy
     member inline this.Gather() =
         to_host this
 
+let total_size_of size = Array.reduce (*) size
+
 type DM<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>
         (size: int[], data: CudaDeviceVariable<'t>[]) =
     member val Size = size with get, set
     member val Data = data with get, set
 
+    member t.TotalSize = total_size_of size
+
     interface IDisposable with
         member t.Dispose() = for var in t.Data do var.Dispose()
-
-let total_size_of size = Array.reduce (*) size
 
 /// Zeroes out the fields on the first allocation.
 let new_var (total_size: int) =
@@ -229,7 +231,7 @@ and ObjectPool() =
     member t.GetWorkspace<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>(size: int) =
         let total_size = sizeof<'t> * size
         workspace.ResizeIf([|total_size|],1)
-        let x = workspace.Data.[0]
+        let x = workspace.P
         new CudaDeviceVariable<'t>(x.DevicePointer,false,SizeT total_size)
 
     member t.GetWorkspaceAsDM<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>(size: int[], num_vars: int) =

@@ -7,6 +7,7 @@ open SpiralV5CudaCodeGen
 
 open ManagedCuda
 open ManagedCuda.BasicTypes
+open ManagedCuda.VectorTypes
 open ManagedCuda.CudaBlas
 
 // Unlike in the last iteration of the library, I need the ids to make sure that the expressions are evaluated only once.
@@ -26,7 +27,7 @@ type SpiralExp =
 | Sigmoid of id: int * SpiralExp
 | ClippedSigmoid of id: int * min: float32 * max: float32 * SpiralExp // TODO: Make optimized implementation
 | SoftmaxInstance of id: int * SpiralExp
-| SoftmaxChannel of id: int * SpiralExp // TODO: I forgot what these two are supposed to be doing.
+| SoftmaxChannel of id: int * SpiralExp // TODO: I forgot what these two softmaxes are supposed to be doing.
 | Clip of id: int * min: float32 * max: float32 * SpiralExp
 // Normalization functions
 | BatchNorm of id: int * SpiralExp
@@ -162,7 +163,37 @@ let inline gemm
         cublas.Stream <- str.Stream
         cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
+let map_launcher (str: CudaStream) (kernel: Lazy<CudaKernel>) (total_size: int) ([<ParamArray>] args: obj[]) =
+    let block_size = 256
+    let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
+    kernel.Value.GridDimensions <- dim3(gridSize)
+    kernel.Value.BlockDimensions <- dim3(block_size)
+    kernel.Value.RunAsync(str.Stream, args)
+
+open CudaCompiler
+
+let square = map_module_1_1 "Square" <| fun x -> x * x
+let sigmoid = map_module_1_1 "Sigmoid" <| fun x -> one / (one + Exp(Neg x))
+let tanh = map_module_1_1 "Tanh" <| fun x -> Tanh(x)
+let relu = 
+    let name = "Relu"
+    map_module_1_1 name <| fun x -> if_ (x .> zero) x zero
+let relu_backward =
+    let name = "ReluBackward"
+    map_backwards_module_2_1 name <| fun er inp -> if_ (inp .> zero) er zero
+printfn "%s" relu_backward
+let hadmult = map_module_2_1 "HadMult" <| fun x1 x2 -> x1 * x2
+let colsum = map_redocol_map_module_1_1 "Colsum" id (+) id
+
+let gradclip = mapcoef_module_1_1 "GradClip" <| fun x coef_x -> if_ (x .< -coef_x) -coef_x (if_ (x .> coef_x) coef_x x)
+
 let rec eval (env: SpiralEnv) x =
+    let eval' x = eval env x
+    let if_not_evaluated id f =
+        match env.Nodes.TryGetValue id with
+        | true, v -> v
+        | false, _ -> f()
+            
     let eval2d x er =
         let x: DM<float32> = eval env x
         let sx: int * int =
@@ -176,9 +207,7 @@ let rec eval (env: SpiralEnv) x =
     | BaseNode x -> x
     // Basic operations
     | Matmult(id,a,b) ->
-        match env.Nodes.TryGetValue id with
-        | true, v -> v
-        | false, _ ->
+        if_not_evaluated id <| fun _ ->
             let er = "Input to matmult must be 2D."
             let ((cols_a,rows_a as sa), a), ((cols_b,rows_b as sb), b) = eval2d a er, eval2d b er
             let cols_c,rows_c as sc = cols_b, rows_a
@@ -198,6 +227,26 @@ let rec eval (env: SpiralEnv) x =
                     let matmult_backward_right () = 
                         gemm env.Str T nT 1.0f (sa, a.P) (sc, c.A) 1.0f (sb, b.A)
                     env.PushTape matmult_backward_right
+            c
+
+    | Relu(id, x) ->
+        if_not_evaluated id <| fun _ ->
+            let x = eval' x
+            let c = env.Mem.GetDM(x.Size,2, env)
+            map_launcher env.Str relu x.TotalSize [|x.TotalSize;x.P.DevicePointer;c.P.DevicePointer|]
+
+            env.Nodes.Add(id,c)
+
+//            if env.IsInferenceOnly = false then
+//                if c.HasAdjoint then 
+//                    let relu_backward () = 
+//                        gemm env.Str nT T 1.0f (sc,c.A) (sb, b.P) 1.0f (sa, a.A)
+//                    env.PushTape matmult_backward_left
 
             c
-        
+//    | Tanh(id, x) ->
+//        if_not_evaluated id <| fun _ ->
+//            let x = eval x
+//    | Sigmoid(id, x) ->
+//        if_not_evaluated id <| fun _ ->
+//            let x = eval x
