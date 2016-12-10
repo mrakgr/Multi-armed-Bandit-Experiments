@@ -63,8 +63,7 @@
     <None Include="Scripts\SpiralV5.fsx" />
     <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
     <None Include="Scripts\SpiralV5DM.fsx" />
-    <None Include="Scripts\load-references-debug.fsx" />
-    <None Include="Scripts\load-project-debug.fsx" />
+    <None Include="Scripts\SpiralV5AST.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

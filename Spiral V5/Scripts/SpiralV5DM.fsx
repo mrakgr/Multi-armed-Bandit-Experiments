@@ -65,10 +65,17 @@ let makeDMf32(size: int[], num_vars: int) =
 
 let primal (x: DM<_>) = let i=0 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have a primal."
 let adjoint (x: DM<_>) = let i=1 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an adjoint."
+let has_adjoint (x: DM<_>) = let i=1 in i < x.Data.Length
 let aux1 (x: DM<_>) = let i=2 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux1."
 let aux2 (x: DM<_>) = let i=3 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux2."
 
 type DM with 
+    member x.P = primal x
+    member x.A = adjoint x
+    member x.HasAdjoint = has_adjoint x
+    member x.Aux1 = aux1 x
+    member x.Aux2 = aux2 x
+
     /// Resizes the DM.
     /// Does the least amount of work possible.
     member x.ResizeIf (dims: int[], num_vars: int) = 
@@ -153,7 +160,21 @@ type ConvolutionDescriptor with
         t.GetConvolution2dForwardOutputDim(s,f,&n,&c,&h,&w)
         n,c,h,w
 
-type ObjectPool() =
+open System.Collections.Generic
+type SpiralEnv =
+    {
+    // Memory (mutable)
+    Str : CudaStream
+    Mem : ObjectPool
+    Tape : Stack<unit -> unit>
+    Nodes : Dictionary<int,DM<float32>>
+    // State (immutable)
+    IsInferenceOnly : bool
+    }
+
+    member t.PushTape x = t.Tape.Push x
+
+and ObjectPool() =
     let dMPool = ResizeArray()
     let mutable dMp = 0
 
@@ -190,11 +211,14 @@ type ObjectPool() =
             (fun _ -> new TensorDescriptor()) 
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member t.GetDM(size: int[], num_vars: int) =
+    member t.GetDM(size: int[], num_vars: int, env: SpiralEnv) =
         if dMPool.Count > dMp then
             let t: DM<float32> = dMPool.[dMp]
             dMp <- dMp+1
             t.ResizeIf(size, num_vars)
+            // The optimizers can only zero out the adjoints in the base nodes.
+            // The object pool has to take up the slack for the rest.
+            if env.IsInferenceOnly = false && t.HasAdjoint then t.A.MemsetAsync(0u,env.Str.Stream) 
             t
         else
             let t = makeDMf32(size,num_vars)
