@@ -170,22 +170,6 @@ let map_launcher (str: CudaStream) (kernel: Lazy<CudaKernel>) (total_size: int) 
     kernel.Value.BlockDimensions <- dim3(block_size)
     kernel.Value.RunAsync(str.Stream, args)
 
-open CudaCompiler
-
-let square = map_module_1_1 "Square" <| fun x -> x * x
-let sigmoid = map_module_1_1 "Sigmoid" <| fun x -> one / (one + Exp(Neg x))
-let tanh = map_module_1_1 "Tanh" <| fun x -> Tanh(x)
-let relu = 
-    let name = "Relu"
-    map_module_1_1 name <| fun x -> if_ (x .> zero) x zero
-let relu_backward =
-    let name = "ReluBackward"
-    map_backwards_module_2_1 name <| fun er inp -> if_ (inp .> zero) er zero
-printfn "%s" relu_backward
-let hadmult = map_module_2_1 "HadMult" <| fun x1 x2 -> x1 * x2
-let colsum = map_redocol_map_module_1_1 "Colsum" id (+) id
-
-let gradclip = mapcoef_module_1_1 "GradClip" <| fun x coef_x -> if_ (x .< -coef_x) -coef_x (if_ (x .> coef_x) coef_x x)
 
 let rec eval (env: SpiralEnv) x =
     let eval' x = eval env x

@@ -1,6 +1,7 @@
 ﻿#load "SpiralV5CudaCodeGen.fsx"
 
 open SpiralV5
+open SpiralV5CudaCodeGen
 
 open ManagedCuda
 open ManagedCuda.BasicTypes

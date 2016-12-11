@@ -75,6 +75,7 @@
     <None Include="Scripts\quotations_v1.fsx" />
     <None Include="Scripts\load-references-debug.fsx" />
     <None Include="Scripts\load-project-debug.fsx" />
+    <None Include="Scripts\advent_v0.fsx" />
     <None Include="ReduceModule_v0.fsx" />
     <None Include="ReduceModule_v1.fsx" />
     <None Include="Script1.fsx" />
