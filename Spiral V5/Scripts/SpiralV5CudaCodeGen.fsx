@@ -539,23 +539,35 @@ let square_backward =
 // tanh_backward. Their derivatives need the output primals and not the inputs.
 
 let sigmoid = 
-    let name = "Sigmoid"
-    map_module_1_1 name <| fun x -> one / (one + Exp(-x))
+    lazy
+        let name = "Sigmoid"
+        map_module_1_1 name <| fun x -> one / (one + Exp(-x))
+        |> load_kernel_nvcc name
 let sigmoid_backward =
-    let name = "SigmoidBackward"
-    map_backwards_module_2_1 name <| fun er out -> er * out * (one - out)
+    lazy
+        let name = "SigmoidBackward"
+        map_backwards_module_2_1 name <| fun er out -> er * out * (one - out)
+        |> load_kernel_nvcc name
 let tanh = 
-    let name = "Tanh"
-    map_module_1_1 name <| fun x -> Tanh(x)
+    lazy
+        let name = "Tanh"
+        map_module_1_1 name <| fun x -> Tanh(x)
+        |> load_kernel_nvcc name
 let tanh_backward =
-    let name = "TanhBackward"
-    map_backwards_module_2_1 name <| fun er out -> er * (one - out * out)
+    lazy
+        let name = "TanhBackward"
+        map_backwards_module_2_1 name <| fun er out -> er * (one - out * out)
+        |> load_kernel_nvcc name
 let relu = 
-    let name = "Relu"
-    map_module_1_1 name <| fun x -> if_ (x .> zero) x zero
+    lazy
+        let name = "Relu"
+        map_module_1_1 name <| fun x -> if_ (x .> zero) x zero
+        |> load_kernel_nvcc name
 let relu_backward =
-    let name = "ReluBackward"
-    map_backwards_module_2_1 name <| fun er inp -> if_ (inp .> zero) er zero
+    lazy
+        let name = "ReluBackward"
+        map_backwards_module_2_1 name <| fun er inp -> if_ (inp .> zero) er zero
+        |> load_kernel_nvcc name
 
 let hadmult = 
     let name = "HadMult"
@@ -567,7 +579,6 @@ let hadmult_backward =
         (fun er x1 x2 -> er*x1) // Adjoinst for the right input (x2)
 
 let sum = map_redo_map_module_1_1 "Sum" id (+) (id)
-printfn "%s" sum
 
 let colsum = map_redocol_map_module_1_1 "Colsum" id (+) id
 let gradclip = mapcoef_module_1_1 "GradClip" <| fun x coef_x -> if_ (x .< -coef_x) -coef_x (if_ (x .> coef_x) coef_x x)

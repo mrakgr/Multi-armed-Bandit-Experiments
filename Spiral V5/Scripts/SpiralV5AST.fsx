@@ -164,12 +164,11 @@ let inline gemm
         cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
 let map_launcher (str: CudaStream) (kernel: Lazy<CudaKernel>) (total_size: int) ([<ParamArray>] args: obj[]) =
-    let block_size = 256
+    let block_size = map_launcher_block_size
     let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
     kernel.Value.GridDimensions <- dim3(gridSize)
     kernel.Value.BlockDimensions <- dim3(block_size)
     kernel.Value.RunAsync(str.Stream, args)
-
 
 let rec eval (env: SpiralEnv) x =
     let eval' x = eval env x
@@ -186,6 +185,23 @@ let rec eval (env: SpiralEnv) x =
             | _ -> failwith er
         sx, x
 
+    /// Relu, Tanh and Sigmoid have so much in common that it is worth factoring them out.
+    /// The would be identical if not for the fact that the backwards steps for tanh and sigmoid need
+    /// the outputs rather than input as one of the backwards call arguments.
+    let activation_f id x forward backward ex =
+        let x = eval' x
+        let c = env.Mem.GetDM(x.Size,x.NumVars, env)
+        map_launcher env.Str forward x.TotalSize [|x.TotalSize;x.P.DevicePointer;c.P.DevicePointer|]
+
+        env.Nodes.Add(id,c)
+
+        if env.IsInferenceOnly = false then
+            if c.HasAdjoint then 
+                let relu_backward () = 
+                    map_launcher env.Str backward x.TotalSize [|x.TotalSize;c.A.DevicePointer;ex (c,x);x.A.DevicePointer|]
+                env.PushTape relu_backward
+        c
+
     match x with
     // Root nodes
     | BaseNode x -> x
@@ -195,8 +211,9 @@ let rec eval (env: SpiralEnv) x =
             let er = "Input to matmult must be 2D."
             let ((cols_a,rows_a as sa), a), ((cols_b,rows_b as sb), b) = eval2d a er, eval2d b er
             let cols_c,rows_c as sc = cols_b, rows_a
-            let c = env.Mem.GetDM([|cols_c; rows_c|],2, env)
+            let c = env.Mem.GetDM([|cols_c; rows_c|],max a.NumVars b.NumVars, env)
             let aP, bP, cP = primal a, primal b, primal c
+
             gemm env.Str nT nT 1.0f (sa,aP) (sb,bP) 0.0f (sc,cP)
 
             env.Nodes.Add(id,c)
@@ -215,22 +232,10 @@ let rec eval (env: SpiralEnv) x =
 
     | Relu(id, x) ->
         if_not_evaluated id <| fun _ ->
-            let x = eval' x
-            let c = env.Mem.GetDM(x.Size,2, env)
-            map_launcher env.Str relu x.TotalSize [|x.TotalSize;x.P.DevicePointer;c.P.DevicePointer|]
-
-            env.Nodes.Add(id,c)
-
-//            if env.IsInferenceOnly = false then
-//                if c.HasAdjoint then 
-//                    let relu_backward () = 
-//                        gemm env.Str nT T 1.0f (sc,c.A) (sb, b.P) 1.0f (sa, a.A)
-//                    env.PushTape matmult_backward_left
-
-            c
-//    | Tanh(id, x) ->
-//        if_not_evaluated id <| fun _ ->
-//            let x = eval x
-//    | Sigmoid(id, x) ->
-//        if_not_evaluated id <| fun _ ->
-//            let x = eval x
+            activation_f id x relu relu_backward (fun (c,x) -> x.P.DevicePointer)
+    | Tanh(id, x) ->
+        if_not_evaluated id <| fun _ ->
+            activation_f id x tanh tanh_backward (fun (c,x) -> c.P.DevicePointer)
+    | Sigmoid(id, x) ->
+        if_not_evaluated id <| fun _ ->
+            activation_f id x tanh tanh_backward (fun (c,x) -> c.P.DevicePointer)

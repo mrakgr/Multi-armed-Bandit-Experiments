@@ -52,6 +52,7 @@ type DM<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>
     member val Data = data with get, set
 
     member t.TotalSize = total_size_of size
+    member t.NumVars = t.Data.Length
 
     interface IDisposable with
         member t.Dispose() = for var in t.Data do var.Dispose()
