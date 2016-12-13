@@ -89,6 +89,8 @@ let aux2 (x: DM<_>) = let i=3 in if i < x.Data.Length then x.Data.[i] else failw
 type DM with 
     member x.P = primal x
     member x.A = adjoint x
+    member x.P' = x.Size, primal x
+    member x.A' = x.Size, adjoint x
     member x.HasAdjoint = has_adjoint x
     member x.Aux1 = aux1 x
     member x.Aux2 = aux2 x

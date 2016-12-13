@@ -223,7 +223,7 @@ let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
     let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
     kernel.GridDimensions <- dim3(gridSize)
     kernel.BlockDimensions <- dim3(block_size)
-    kernel_caller str kernel sig_ args_in args_out
+    kernel_caller str kernel sig_ (CInt total_size :: args_in) args_out
 
 let default_num_vars = 2
 
@@ -248,14 +248,14 @@ let rec eval (env: SpiralEnv) x =
     let activation_f id x forward backward ex =
         let x = eval' x
         let c = env.Mem.GetDM(x.Size,default_num_vars, env)
-        map_launcher env.Str forward x.TotalSize [|x.TotalSize;x.P.DevicePointer;c.P.DevicePointer|]
+        map_launcher env.Str forward [x.P'] [c.P']
 
         env.Nodes.Add(id,c)
 
         if env.IsInferenceOnly = false then
             if c.HasAdjoint then 
                 let relu_backward () = 
-                    map_launcher env.Str backward x.TotalSize [|x.TotalSize;c.A.DevicePointer;ex (c,x);x.A.DevicePointer|]
+                    map_launcher env.Str backward [c.A'; ex (c,x)] [x.A']
                 env.PushTape relu_backward
         c
 
@@ -289,10 +289,10 @@ let rec eval (env: SpiralEnv) x =
 
     | Relu(id, x) ->
         if_not_evaluated id <| fun _ ->
-            activation_f id x relu relu_backward (fun (c,x) -> x.P.DevicePointer)
+            activation_f id x relu relu_backward (fun (c,x) -> x.P')
     | Tanh(id, x) ->
         if_not_evaluated id <| fun _ ->
-            activation_f id x tanh tanh_backward (fun (c,x) -> c.P.DevicePointer)
+            activation_f id x tanh tanh_backward (fun (c,x) -> c.P')
     | Sigmoid(id, x) ->
         if_not_evaluated id <| fun _ ->
-            activation_f id x tanh tanh_backward (fun (c,x) -> c.P.DevicePointer)
+            activation_f id x tanh tanh_backward (fun (c,x) -> c.P')
