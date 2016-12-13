@@ -163,12 +163,67 @@ let inline gemm
         cublas.Stream <- str.Stream
         cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
-let map_launcher (str: CudaStream) (kernel: Lazy<CudaKernel>) (total_size: int) ([<ParamArray>] args: obj[]) =
+type CallerVar =
+| CInt of int
+| CF32 of float32
+| CArrayInt of CudaDeviceVariable<int>
+| CArrayF32 of CudaDeviceVariable<float32>
+
+let kernel_caller (str: CudaStream) (kernel: CudaKernel) (signs: CudaVar list) (args_in: CallerVar list) (args_out: CallerVar list) =
+    let signs_in, signs_out = List.splitAt args_in.Length signs
+
+    List.iter2 (fun arg sign ->
+        match arg, sign with
+        | CInt _, CudaVar(_, CudaConst CudaInt) -> ()
+        | CF32 _, CudaVar(_, CudaConst CudaFloat) -> ()
+        | CArrayInt _, CudaArray(_, CudaConst CudaInt, _) -> ()
+        | CArrayF32 _, CudaArray(_, CudaConst CudaFloat, _) -> ()
+        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+        ) args_in signs_in
+
+    List.iter2 (fun arg sign ->
+        match arg, sign with
+        | CInt _, CudaVar(_, CudaInt) -> ()
+        | CF32 _, CudaVar(_, CudaFloat) -> ()
+        | CArrayInt _, CudaArray(_, CudaInt, _) -> ()
+        | CArrayF32 _, CudaArray(_, CudaFloat, _) -> ()
+        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+        ) args_out signs_out
+
+    let f x = x |> List.map (function
+        | CInt x -> box x
+        | CF32 x -> box x
+        | CArrayInt x -> box x
+        | CArrayF32 x -> box x
+        )
+
+    let a1 = f args_in
+    let a2 = f args_out
+
+    kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
+
+let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) 
+        (args_in: (int[] * VarF32) list) 
+        (args_out: (int[] * VarF32) list) =
+    // Checks whether all the sizes are the same.
+    args_in @ args_out
+    |> List.toArray
+    |> Array.map fst
+    |> guardSizes
+
+    let f x = x |> List.map (fun (ex,x) -> CArrayF32 x)
+
+    let total_size = args_in.Head |> fst |> total_size_of
+
+    let args_in = f args_in
+    let args_out = f args_out
+
+    let kernel, sig_ = ks.Value
     let block_size = map_launcher_block_size
     let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
-    kernel.Value.GridDimensions <- dim3(gridSize)
-    kernel.Value.BlockDimensions <- dim3(block_size)
-    kernel.Value.RunAsync(str.Stream, args)
+    kernel.GridDimensions <- dim3(gridSize)
+    kernel.BlockDimensions <- dim3(block_size)
+    kernel_caller str kernel sig_ args_in args_out
 
 let default_num_vars = 2
 

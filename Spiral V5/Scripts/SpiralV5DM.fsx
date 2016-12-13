@@ -46,6 +46,19 @@ type CudaDeviceVariable<'t when 't: struct and 't: (new: unit -> 't) and 't:> Sy
 
 let total_size_of size = Array.reduce (*) size
 
+/// The float scalar type
+type Df = 
+    {
+    P : Lazy<float32> ref // primal
+    A : float32 ref // adjoint
+    }
+
+    /// Shorthand for t.P.Value.Value
+    member t.Pr = t.P.Value.Value
+
+    static member inline create P =
+        {P=ref (lazy P);A=ref 0.0f}
+
 type DM<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>
         (size: int[], data: CudaDeviceVariable<'t>[]) =
     member val Size = size with get, set
