@@ -170,6 +170,8 @@ let map_launcher (str: CudaStream) (kernel: Lazy<CudaKernel>) (total_size: int) 
     kernel.Value.BlockDimensions <- dim3(block_size)
     kernel.Value.RunAsync(str.Stream, args)
 
+let default_num_vars = 2
+
 let rec eval (env: SpiralEnv) x =
     let eval' x = eval env x
     let if_not_evaluated id f =
@@ -190,7 +192,7 @@ let rec eval (env: SpiralEnv) x =
     /// the outputs rather than input as one of the backwards call arguments.
     let activation_f id x forward backward ex =
         let x = eval' x
-        let c = env.Mem.GetDM(x.Size,x.NumVars, env)
+        let c = env.Mem.GetDM(x.Size,default_num_vars, env)
         map_launcher env.Str forward x.TotalSize [|x.TotalSize;x.P.DevicePointer;c.P.DevicePointer|]
 
         env.Nodes.Add(id,c)
@@ -211,7 +213,7 @@ let rec eval (env: SpiralEnv) x =
             let er = "Input to matmult must be 2D."
             let ((cols_a,rows_a as sa), a), ((cols_b,rows_b as sb), b) = eval2d a er, eval2d b er
             let cols_c,rows_c as sc = cols_b, rows_a
-            let c = env.Mem.GetDM([|cols_c; rows_c|],max a.NumVars b.NumVars, env)
+            let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
             let aP, bP, cP = primal a, primal b, primal c
 
             gemm env.Str nT nT 1.0f (sa,aP) (sb,bP) 0.0f (sc,cP)

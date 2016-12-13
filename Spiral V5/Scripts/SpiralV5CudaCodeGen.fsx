@@ -149,39 +149,53 @@ let cuda_codegen (exp: CudaExpr list) =
             | CudaThrustTuple(subtypes) ->
                 pp "thrust::tuple<"; List.fold (fun prefix x -> pp prefix; print_type x; ", ") "" subtypes |> ignore; pp "> "
 
-        let rec print_arguments (args: CudaVar list) (env: CudaEnvironment) prefix: CudaEnvironment =
-            match args with
-            | h :: t ->
+        /// Unfolds the method arguments and returns them in a list along with the new environment.
+        let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
+            let rec loop (args: CudaVar list) (env: CudaEnvironment) acc =
+                match args with
+                | [] -> acc, env
+                | h :: t ->
+                    match h with
+                    | CudaVar(name,typ) -> 
+                        loop t (env.AddVar(name,h)) (h :: acc)
+                    | CudaArray(name, subtype, bound_size) ->
+                        let vars_to_print =
+                            let f bound_size =
+                                match env.variables.TryFind bound_size with
+                                | Some(CudaVar(_, CudaConst CudaInt)) -> None
+                                | Some x -> failwithf "Type checking for CudaArray failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A.\nName of the size bound variable is %s" x bound_size
+                                | None -> Some <| CudaVar(bound_size, CudaConst CudaInt)
+                            List.choose (fun bound_size -> f bound_size) bound_size
+                        let acc, env = loop vars_to_print env acc
+                        loop t (env.AddVar(name,h)) (h :: acc)
+                    | CudaGroup(num, subvars) ->
+                        Seq.fold (fun (l: CudaVar list) i ->
+                            l @ List.map (fun subvar ->
+                                match subvar with
+                                | CudaVar(name,typ) -> 
+                                    CudaVar (name + string i, typ)
+                                | CudaArray(name,typ,bound_size) ->
+                                    CudaArray (name + string i, typ, bound_size)
+                                | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+                                ) subvars
+                            ) [] {1..num}
+                        |> fun args -> loop args env acc
+            let acc, env = loop args env []
+            List.rev acc, env
+
+        let print_arguments (args: CudaVar list) (env: CudaEnvironment) prefix: CudaEnvironment =
+            let acc, env = get_method_arguments (args: CudaVar list) (env: CudaEnvironment)
+            List.fold (fun prefix h ->
                 pp prefix
                 match h with
-                | CudaVar(name,typ) -> 
-                    print_type typ; pp name
-                    print_arguments t (env.AddVar(name,h)) ", "
+                | CudaVar(name,typ) -> print_type typ; pp name; ", "
                 | CudaArray(name, subtype, bound_size) ->
-                    let vars_to_print =
-                        let f bound_size =
-                            match env.variables.TryFind bound_size with
-                            | Some(CudaVar(_, CudaConst CudaInt)) -> None
-                            | Some x -> failwithf "Type checking for CudaArray failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A.\nName of the size bound variable is %s" x bound_size
-                            | None -> Some <| CudaVar(bound_size, CudaConst CudaInt)
-                        List.choose (fun bound_size -> f bound_size) bound_size
-                    let env = print_arguments vars_to_print env ""
-                    if vars_to_print.IsEmpty = false then pp ", "
-                    print_type subtype; pp "*"; pp name; print_arguments t (env.AddVar(name,h)) ", "
+                    print_type subtype; pp "*"; pp name; ", "
                 | CudaGroup(num, subvars) ->
-                    Seq.fold (fun (l: CudaVar list) i ->
-                        l @ List.map (fun subvar ->
-                            match subvar with
-                            | CudaVar(name,typ) -> 
-                                CudaVar (name + string i, typ)
-                            | CudaArray(name,typ,bound_size) ->
-                                CudaArray (name + string i, typ, bound_size)
-                            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
-                            ) subvars
-                        ) [] {1..num}
-                    |> fun args -> print_arguments args env ""
-                    |> fun env -> print_arguments t env ", "
-            | [] -> env
+                    failwith "This case should have been unfolded inside the get_method_arguments call." // Should never hit.
+                ) "" acc
+            |> ignore
+            env
 
         let rec print_initializer prefix (env: CudaEnvironment) l: CudaEnvironment = 
             match l with
