@@ -10,6 +10,8 @@ open ManagedCuda.BasicTypes
 open ManagedCuda.VectorTypes
 open ManagedCuda.CudaBlas
 
+let default_num_vars = 2
+
 // Unlike in the last iteration of the library, I need the ids to make sure that the expressions are evaluated only once.
 type SpiralExp =
 // Root nodes
@@ -17,7 +19,6 @@ type SpiralExp =
 // Basic operations
 | Matmult of id: int * SpiralExp * SpiralExp
 | SeqMatmult of id: int * (SpiralExp * SpiralExp) list
-| Add of id: int * SpiralExp * SpiralExp
 | BAdd of id: int * matrix: SpiralExp * vector: SpiralExp // Addition with broadcasting.
 | Hadmult of id: int * SpiralExp * SpiralExp
 | SeqHadmult of id: int * (SpiralExp * SpiralExp) list // TODO: Make optimized implementation.
@@ -48,9 +49,10 @@ type SpiralExp =
 
 type VarF32 = CudaDeviceVariable<float32>
 
-let guardSizes (x: 'a[]) = 
-    for i=1 to x.Length-1 do
-        if x.[i-1] <> x.[i] then failwithf "%A <> %A" x.[i-1] x.[i]
+let guardSizes (x: seq<'a>) =
+    let h = Seq.head x
+    let t = Seq.tail x
+    Seq.iter (fun e -> if h <> e then failwithf "%A <> %A" h e) t
 
 let T = Operation.Transpose
 let nT = Operation.NonTranspose
@@ -58,12 +60,12 @@ let nT = Operation.NonTranspose
 // y <- alpha * x + y
 let saxpy 
         (str: CudaStream) 
-        (alpha:float32) ((c: int,r: int as sx), x: VarF32) (sy, y: VarF32) =
+        (alpha:float32) (sx: int, x: VarF32) (sy, y: VarF32) =
     guardSizes [|sx;sy|]
     cublas.Stream <- str.Stream
 
     // The previous version of the library had a bug here because the size was not passed in explicitly.
-    let _status = CudaBlasNativeMethods.cublasSaxpy_v2(cublas.CublasHandle, c*r, ref alpha, x.DevicePointer, 1, y.DevicePointer, 1)
+    let _status = CudaBlasNativeMethods.cublasSaxpy_v2(cublas.CublasHandle, sx, ref alpha, x.DevicePointer, 1, y.DevicePointer, 1)
     Debug.WriteLine(String.Format("{0:G}, {1}: {2}", DateTime.Now, "cublasSaxpy_v2", _status))
     if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
 
@@ -163,6 +165,59 @@ let inline gemm
         cublas.Stream <- str.Stream
         cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
+let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv) =
+    let aDesc = env.Mem.GetTensorDescriptor sa
+    let bDesc = env.Mem.GetTensorDescriptor sb
+
+    cudnn.SetStream(env.Str)
+    cudnn.AddTensor(beta, bDesc, b, alpha, aDesc, a) // The output is a
+
+let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv) =
+    let tensor_add_right_backwards () =
+        cudnn.SetStream env.Str
+        let errDesc = env.Mem.GetTensorDescriptor serr
+        let inpDesc = env.Mem.GetTensorDescriptor sb
+        cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
+    
+    env.PushTape tensor_add_right_backwards
+
+let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv) =
+    let tensor_add_left_backwards () = saxpy env.Str alpha (serr,err) (sa,a_adj)
+    env.PushTape(tensor_add_left_backwards)
+
+let add_tensor matchn s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
+    let sa_total = total_size_of a.Size
+    let sa = matchn a.Size
+    let sb = matchn b.Size
+    
+    let c = env.Mem.GetDM(a.Size,default_num_vars,env)
+    
+    c.P.AsyncCopyToDevice(a.P.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * sa_total),env.Str)
+
+    add_tensor_4d_forward alpha (s_to_4d sa,c.P) beta (s_to_4d sb,b.P) env
+
+    if env.IsInferenceOnly = false then
+        add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
+        add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
+
+let add_tensor_4d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
+    let match4 (x: int[]) =
+        match x with
+        | [|a;b;c;d|] -> a,b,c,d
+        | _ -> failwith "Expected 4 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
+
+    add_tensor match4 id id alpha a beta b env
+    
+let add_tensor_2d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
+    let match2 (x: int[]) =
+        match x with
+        | [|a;b|] -> a,b
+        | _ -> failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
+    
+    let s_to_4d (c,r) = (c,1,r,1)
+    let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
+    add_tensor match2 s_to_4d s_to_4d_backwards alpha a beta b env
+
 type CallerVar =
 | CInt of int
 | CF32 of float32
@@ -225,8 +280,6 @@ let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
     kernel.BlockDimensions <- dim3(block_size)
     kernel_caller str kernel sig_ (CInt total_size :: args_in) args_out
 
-let default_num_vars = 2
-
 let rec eval (env: SpiralEnv) x =
     let eval' x = eval env x
     let if_not_evaluated id f =
@@ -259,13 +312,24 @@ let rec eval (env: SpiralEnv) x =
                 env.PushTape relu_backward
         c
 
+    let matmult_backwards (sa,a: DM<_>) (sb,b: DM<_>) (sc,c: DM<_>) (env: SpiralEnv) =
+        if a.HasAdjoint then 
+            let matmult_backward_left () = 
+                gemm env.Str nT T 1.0f (sc,c.A) (sb, b.P) 1.0f (sa, a.A)
+            env.PushTape matmult_backward_left
+
+        if b.HasAdjoint then 
+            let matmult_backward_right () = 
+                gemm env.Str T nT 1.0f (sa, a.P) (sc, c.A) 1.0f (sb, b.A)
+            env.PushTape matmult_backward_right
+
     match x with
     // Root nodes
     | BaseNode x -> x
     // Basic operations
     | Matmult(id,a,b) ->
         if_not_evaluated id <| fun _ ->
-            let er = "Input to matmult must be 2D."
+            let er = "Input to Matmult must be 2D."
             let ((cols_a,rows_a as sa), a), ((cols_b,rows_b as sb), b) = eval2d a er, eval2d b er
             let cols_c,rows_c as sc = cols_b, rows_a
             let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
@@ -274,18 +338,42 @@ let rec eval (env: SpiralEnv) x =
             gemm env.Str nT nT 1.0f (sa,aP) (sb,bP) 0.0f (sc,cP)
 
             env.Nodes.Add(id,c)
+            
+            if env.IsInferenceOnly = false then
+                matmult_backwards (sa,a) (sb,b) (sc,c) env
+
+            c
+
+    | SeqMatmult(id,l) -> 
+        if_not_evaluated id <| fun _ ->
+            let er = "Input to SeqMatmult must be 2D."
+            let l = l |> List.map (fun (x,y) -> eval2d x er, eval2d y er)
+            let sc = l |> List.map (fun (((_,rows_a),_),((cols_b,_),_)) -> cols_b, rows_a)
+            guardSizes sc
+            let cols_c, rows_c as sc = List.head sc
+            let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
+            for (sa,a),(sb,b) in l do gemm env.Str nT nT 1.0f (sa,a.P) (sb,b.P) 0.0f (sc,c.P)
+
+            env.Nodes.Add(id,c)
 
             if env.IsInferenceOnly = false then
-                if a.HasAdjoint then 
-                    let matmult_backward_left () = 
-                        gemm env.Str nT T 1.0f (sc,c.A) (sb, b.P) 1.0f (sa, a.A)
-                    env.PushTape matmult_backward_left
+                for (sa,a),(sb,b) in l do
+                    matmult_backwards (sa,a) (sb,b) (sc,c) env
 
-                if b.HasAdjoint then 
-                    let matmult_backward_right () = 
-                        gemm env.Str T nT 1.0f (sa, a.P) (sc, c.A) 1.0f (sb, b.A)
-                    env.PushTape matmult_backward_right
             c
+
+    | Add(id,a,b) ->
+        if_not_evaluated id <| fun _ ->
+            let a,b = eval' a, eval' b
+            let sa, sb = a.Size, b.Size
+            guardSizes [sa;sb]
+            let c = env.Mem.GetDM(sa,default_num_vars, env)
+            ()
+            
+//    | Add of id: int * SpiralExp * SpiralExp
+//    | BAdd of id: int * matrix: SpiralExp * vector: SpiralExp // Addition with broadcasting.
+//    | Hadmult of id: int * SpiralExp * SpiralExp
+//    | SeqHadmult of id: int * (SpiralExp * SpiralExp) list // TODO: Make optimized implementation.
 
     | Relu(id, x) ->
         if_not_evaluated id <| fun _ ->
@@ -296,3 +384,5 @@ let rec eval (env: SpiralEnv) x =
     | Sigmoid(id, x) ->
         if_not_evaluated id <| fun _ ->
             activation_f id x tanh tanh_backward (fun (c,x) -> c.P')
+ 
+        

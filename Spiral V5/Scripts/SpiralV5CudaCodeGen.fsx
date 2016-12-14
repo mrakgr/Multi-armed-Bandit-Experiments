@@ -544,7 +544,7 @@ let nary_op num op =
     Lambda(args, op <| to_var args)
 
 let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
-    map_redocol_map_module 
+    map_redocol_map_module
         1 [CudaArray("x",CudaConst CudaFloat,["num_cols";"num_rows"])] 
         1 [CudaArray("o",CudaFloat,["num_cols"])] name 
         (unary_op <| fun x -> [Return <| map_load_op x]) 

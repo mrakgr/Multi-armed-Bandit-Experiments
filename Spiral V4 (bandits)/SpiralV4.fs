@@ -656,7 +656,7 @@ let inline hasAdjoint x = (^a : (member HasAdjoint: bool) x)
 let inline nchw x =
     (^a: (member NCHW: int * int * int * int) x)
 
-/// Helper for the buggy add_tensor function.
+/// Helper for the buggy tensor_add function.
 let inline nchwBiasAdd x =
     (^a: (member NCHWBiasAdd: int * int * int * int) x)
 
@@ -1521,7 +1521,7 @@ let inline tensor_add' add_to_left alpha (left : ^a) beta (right : ^a) (ctx: Con
 
     if left_nchw <> right_nchw then
         cudnn.SetStream(str ctx)
-        cudnn.AddTensor(beta,rightDesc,extract_primal' right, alpha,leftDesc,extract_primal' output) // Add right to output.
+        cudnn.AddTensor(beta,rightDesc,extract_primal' right,alpha,leftDesc,extract_primal' output) // Add right to output.
     else 
         geam (str ctx) nT nT beta (P' right) alpha (P' output) (P' output)
 
