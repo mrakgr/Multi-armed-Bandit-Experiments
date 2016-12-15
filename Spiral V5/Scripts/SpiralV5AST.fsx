@@ -177,9 +177,19 @@ let like_dm (a: DM<float32>) (env: SpiralEnv) =
     let c = env.Mem.GetDM(a.Size,default_num_vars,env)
     c
 
+let match2 fail (x: int[]) =
+    match x with
+    | [|a;b|] -> a,b
+    | _ -> fail()//failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size    
+
+let match4 fail (x: int[]) =
+    match x with
+    | [|a;b;c;d|] -> a,b,c,d
+    | _ -> fail()//failwith "Expected 4 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
+
 /// An umbrella function that does simple addition if all the dimensions sizes are the same and broadcast addition if they are 4d or 2d.
 /// Raises an error otherwise.
-let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
+let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
     let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv) =
         let aDesc = env.Mem.GetTensorDescriptor sa
         let bDesc = env.Mem.GetTensorDescriptor sb
@@ -212,23 +222,15 @@ let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<fl
             add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
             add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
-    let match4 (x: int[]) =
-        match x with
-        | [|a;b;c;d|] -> a,b,c,d
-        | _ -> failwith "Expected 4 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
-
     let add_tensor_4d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
-        add_tensor match4 id id alpha a beta b c env
-
-    let match2 (x: int[]) =
-        match x with
-        | [|a;b|] -> a,b
-        | _ -> failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size    
+        let fail() = failwith "Expected 4 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
+        add_tensor (match4 fail) id id alpha a beta b c env
 
     let add_tensor_2d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
         let s_to_4d (c,r) = (c,1,r,1)
         let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
-        add_tensor match2 s_to_4d s_to_4d_backwards alpha a beta b c env
+        let fail() = failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size    
+        add_tensor (match2 fail) s_to_4d s_to_4d_backwards alpha a beta b c env
 
     let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv) =
         geam env.Str nT nT alpha (s, a) beta (s, b) (s, c)
@@ -253,6 +255,8 @@ let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<fl
     elif a.Size.Length = 4 then add_tensor_4d alpha a beta b c env
     elif a.Size.Length = 2 then add_tensor_2d alpha a beta b c env
     else failwith "Tensor dimension(%i) not supported." a.Size.Length
+
+    c
         
 
 type CallerVar =
@@ -317,21 +321,13 @@ let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
     kernel.BlockDimensions <- dim3(block_size)
     kernel_caller str kernel sig_ (CInt total_size :: args_in) args_out
 
-let rec eval (env: SpiralEnv) x =
+let rec eval (env: SpiralEnv) x: DM<float32> =
     let eval' x = eval env x
     let if_not_evaluated id f =
         match env.Nodes.TryGetValue id with
         | true, v -> v
         | false, _ -> f()
             
-    let eval2d x er =
-        let x: DM<float32> = eval env x
-        let sx: int * int =
-            match x.Size with
-            | [|cols_a;rows_a|] -> cols_a, rows_a
-            | _ -> failwith er
-        sx, x
-
     /// Relu, Tanh and Sigmoid have so much in common that it is worth factoring them out.
     /// The would be identical if not for the fact that the backwards steps for tanh and sigmoid need
     /// the outputs rather than input as one of the backwards call arguments.
@@ -343,7 +339,7 @@ let rec eval (env: SpiralEnv) x =
         env.Nodes.Add(id,c)
 
         if env.IsInferenceOnly = false then
-            if c.HasAdjoint then 
+            if c.HasAdjoint then
                 let relu_backward () = 
                     map_launcher env.Str backward [c.A'; ex (c,x)] [x.A']
                 env.PushTape relu_backward
@@ -360,54 +356,52 @@ let rec eval (env: SpiralEnv) x =
                 gemm env.Str T nT 1.0f (sa, a.P) (sc, c.A) 1.0f (sb, b.A)
             env.PushTape matmult_backward_right
 
+    let seqmatmult (l: (DM<float32> * DM<float32>) list) (env: SpiralEnv) =
+        let l = l |> List.mapi (fun i (a,b) ->
+            let fail() = failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A, index=%i." a.Size b.Size i
+            let sa = match2 fail a.Size
+            let sb = match2 fail b.Size
+            (sa,a), (sb,b))
+        let sc = l |> List.map (fun (((_,rows_a),_),((cols_b,_),_)) -> cols_b, rows_a)
+        guardSizes sc
+        let cols_c, rows_c as sc = List.head sc
+        let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
+        for (sa,a),(sb,b) in l do gemm env.Str nT nT 1.0f (sa,a.P) (sb,b.P) 0.0f (sc,c.P)
+
+        if env.IsInferenceOnly = false then
+            for (sa,a),(sb,b) in l do
+                matmult_backwards (sa,a) (sb,b) (sc,c) env
+
+        c
+
+    let matmult (a: DM<float32>) (b: DM<float32>) (env: SpiralEnv) =
+        seqmatmult [a,b] env
+
     match x with
     // Root nodes
     | BaseNode x -> x
     // Basic operations
     | Matmult(id,a,b) ->
         if_not_evaluated id <| fun _ ->
-            let er = "Input to Matmult must be 2D."
-            let ((cols_a,rows_a as sa), a), ((cols_b,rows_b as sb), b) = eval2d a er, eval2d b er
-            let cols_c,rows_c as sc = cols_b, rows_a
-            let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
-            let aP, bP, cP = primal a, primal b, primal c
-
-            gemm env.Str nT nT 1.0f (sa,aP) (sb,bP) 0.0f (sc,cP)
-
+            let a,b = eval' a, eval' b
+            let c = matmult a b env
             env.Nodes.Add(id,c)
-            
-            if env.IsInferenceOnly = false then
-                matmult_backwards (sa,a) (sb,b) (sc,c) env
-
             c
 
     | SeqMatmult(id,l) -> 
         if_not_evaluated id <| fun _ ->
-            let er = "Input to SeqMatmult must be 2D."
-            let l = l |> List.map (fun (x,y) -> eval2d x er, eval2d y er)
-            let sc = l |> List.map (fun (((_,rows_a),_),((cols_b,_),_)) -> cols_b, rows_a)
-            guardSizes sc
-            let cols_c, rows_c as sc = List.head sc
-            let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
-            for (sa,a),(sb,b) in l do gemm env.Str nT nT 1.0f (sa,a.P) (sb,b.P) 0.0f (sc,c.P)
-
+            let l = l |> List.map (fun (x,y) -> eval' x, eval' y)
+            let c = seqmatmult l env
             env.Nodes.Add(id,c)
-
-            if env.IsInferenceOnly = false then
-                for (sa,a),(sb,b) in l do
-                    matmult_backwards (sa,a) (sb,b) (sc,c) env
-
             c
 
     | Add(id,alpha,a,beta,b) ->
         if_not_evaluated id <| fun _ ->
             let a,b = eval' a, eval' b
-            let c = env.Mem.GetDM(a.Size,default_num_vars, env)
-            add_tensor alpha a beta b c env
+            let c = add_tensor alpha a beta b env
+            env.Nodes.Add(id,c)
             c
             
-//    | Add of id: int * SpiralExp * SpiralExp
-//    | BAdd of id: int * matrix: SpiralExp * vector: SpiralExp // Addition with broadcasting.
 //    | Hadmult of id: int * SpiralExp * SpiralExp
 //    | SeqHadmult of id: int * (SpiralExp * SpiralExp) list // TODO: Make optimized implementation.
 

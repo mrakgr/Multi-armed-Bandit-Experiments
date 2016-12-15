@@ -354,19 +354,22 @@ let cuda_codegen (exp: CudaExpr list) =
         gen x env
     program.ToString()
 
-let group_to_explist group (ar_accessor: CudaExpr list) =
-    match group with
-    | CudaGroup(num,subvars) ->
-        Seq.fold (fun l i ->
-            l @ List.map (fun subvar ->
-                match subvar with
-                | CudaVar(name,typ) -> Var(name + string i)
-                | CudaArray(name,typ,bound_size) -> 
-                    VarAr(Var(name + string i), ar_accessor)
-                | x -> failwithf "%A not supported as a subtype of CudaGroup."  x
-                ) subvars
-            ) [] {1..num}
-    | _ -> failwith "Must input a CudaGroup."
+let cudavars_to_cudaexps vars (ar_accessor: CudaExpr list) =
+    List.collect (fun var ->
+        match var with
+        | CudaVar(name,typ) -> [Var(name)]
+        | CudaArray(name,typ,bound_size) -> [VarAr(Var(name), ar_accessor)]
+        | CudaGroup(num,subvars) ->
+            Seq.fold (fun l i ->
+                l @ List.map (fun subvar ->
+                    match subvar with
+                    | CudaVar(name,typ) -> Var(name + string i)
+                    | CudaArray(name,typ,bound_size) -> 
+                        VarAr(Var(name + string i), ar_accessor)
+                    | x -> failwithf "%A not supported as a subtype of CudaGroup."  x
+                    ) subvars
+                ) [] {1..num}
+        ) vars
 
 let zero = Value "0"
 let one = Value "1"
@@ -410,10 +413,8 @@ let get_unfolded_signature (args: CudaVar list): CudaVar list =
     let env = CudaEnvironment.create()
     get_method_arguments args env |> fst
 
-let map_module num_in args_in num_out args_out name f =
-    let in_group = CudaGroup(num_in,args_in)
-    let out_group = CudaGroup(num_out,args_out)
-    let args = [in_group; out_group]
+let map_module' in_group out_group name f =
+    let args = [in_group; out_group] |> List.concat
     cuda_codegen <|
         [
         include_ "thrust/tuple.h"
@@ -421,16 +422,19 @@ let map_module num_in args_in num_out args_out name f =
         externCBlock [
             method_ CudaGlobal CudaVoid name args [
                 for_ [CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"] (Var "i" .< Var "n") [Var "i" += Value "gridDim.x*blockDim.x"]
-                    (f (group_to_explist out_group [Var "i"]) (group_to_explist in_group [Var "i"]))
+                    (f (cudavars_to_cudaexps out_group [Var "i"]) (cudavars_to_cudaexps in_group [Var "i"]))
                 ]
             ]
         ]
     |> fun code -> code, get_unfolded_signature args
 
-let map_redocol_map_module num_in args_in num_out args_out name map_load_op reduce_op map_store_op block_size =
-    let in_group = CudaGroup(num_in,args_in)
-    let out_group = CudaGroup(num_out,args_out)
-    let args = [in_group; out_group]
+let map_module num_in args_in num_out args_out name f =
+    let in_group = [CudaGroup(num_in,args_in)]
+    let out_group = [CudaGroup(num_out,args_out)]
+    map_module' in_group out_group name f
+
+let map_redocol_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size =
+    let args = [in_group; out_group] |> List.concat
     cuda_codegen [
         include_ "thrust/tuple.h"
         include_ "cub/cub.cuh"
@@ -442,16 +446,16 @@ let map_redocol_map_module num_in args_in num_out args_out name map_load_op redu
                 for_ ([CudaVar("col",CudaInt),Value "blockIdx.x"]) (Var "col" .< Var "num_cols") [Var "col" += Value "gridDim.x"] [
                     let_ (CudaVar("row",CudaInt)) (Value "threadIdx.x") [
                     let_ (CudaVar("map_load_op",CudaConst CudaAuto)) map_load_op [
-                    let_ (CudaVar("value", CudaAuto)) (call "map_load_op" (group_to_explist in_group [Var "col"; Var "row"])) [
+                    let_ (CudaVar("value", CudaAuto)) (call "map_load_op" (cudavars_to_cudaexps in_group [Var "col"; Var "row"])) [
                     Var "row" += Value "blockDim.x"
                     while_ (Var "row" .< Var "num_rows") [
-                        Var "value" == call "reduce_op" [Var "value"; call "map_load_op" (group_to_explist in_group [Var "col"; Var "row"])]
+                        Var "value" == call "reduce_op" [Var "value"; call "map_load_op" (cudavars_to_cudaexps in_group [Var "col"; Var "row"])]
                         Var "row" += Value "blockDim.x"
                         ]
                     let_ (CudaVar("result",CudaConst CudaAuto)) (blockReduce (Value "temp_storage") (Var "value") (Var "reduce_op")) [
                     ifVoid 
                         (Value "threadIdx.x" .= zero)
-                        (map_store_op (group_to_explist out_group [Var "col"]) (Var "result"))
+                        (map_store_op (cudavars_to_cudaexps out_group [Var "col"]) (Var "result"))
                         []
                     ]]]]]
                 ]]
@@ -459,10 +463,13 @@ let map_redocol_map_module num_in args_in num_out args_out name map_load_op redu
         ]
     |> fun code -> code, get_unfolded_signature args
 
-let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_op map_store_op block_size =
-    let in_group = CudaGroup(num_in,args_in)
-    let out_group = CudaGroup(num_out,args_out)
-    let args = [in_group; out_group]
+let map_redocol_map_module num_in args_in num_out args_out name map_load_op reduce_op map_store_op block_size =
+    let in_group = [CudaGroup(num_in,args_in)]
+    let out_group = [CudaGroup(num_out,args_out)]
+    map_redocol_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
+
+let map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size =
+    let args = [in_group; out_group] |> List.concat
     cuda_codegen [
         include_ "thrust/tuple.h"
         include_ "cub/cub.cuh"
@@ -473,22 +480,27 @@ let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_
                 let_ (CudaVar("reduce_op",CudaConst CudaAuto)) reduce_op [
                 let_ (CudaVar("map_load_op",CudaConst CudaAuto)) map_load_op [
                 let_ (CudaVar("i",CudaInt)) (Value "blockIdx.x*blockDim.x + threadIdx.x") [
-                let_ (CudaVar("value", CudaAuto)) (call "map_load_op" (group_to_explist in_group [Var "i"])) [
+                let_ (CudaVar("value", CudaAuto)) (call "map_load_op" (cudavars_to_cudaexps in_group [Var "i"])) [
                 let_ (CudaVar("stride", CudaConst CudaAuto)) (Value "gridDim.x*blockDim.x") [
                 Var "i" += Var "stride"
                 while_ (Var "i" .< Var "n") [
-                    Var "value" == call "reduce_op" [Var "value"; call "map_load_op" (group_to_explist in_group [Var "i"])]
+                    Var "value" == call "reduce_op" [Var "value"; call "map_load_op" (cudavars_to_cudaexps in_group [Var "i"])]
                     Var "i" += Var "stride"
                     ]
                 let_ (CudaVar("result",CudaConst CudaAuto)) (blockReduce (Value "temp_storage") (Var "value") (Var "reduce_op")) [
                 ifVoid 
                     (Value "threadIdx.x" .= zero)
-                    (map_store_op (group_to_explist out_group []) (Var "result"))
+                    (map_store_op (cudavars_to_cudaexps out_group []) (Var "result"))
                     []
                 ]]]]]]]
             ]
         ]
     |> fun code -> code, get_unfolded_signature args
+
+let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_op map_store_op block_size =
+    let in_group = [CudaGroup(num_in,args_in)]
+    let out_group = [CudaGroup(num_out,args_out)]
+    map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
 
 let map_module_1_1 name f =
     map_module 1 [CudaArray("x",CudaConst CudaFloat,["n"])] 
@@ -556,8 +568,8 @@ let map_redo_map_module_1_1 name map_load_op reduce_op map_store_op =
     map_redo_map_module 
         1 [CudaArray("x",CudaConst CudaFloat,["n"])] 
         1 [CudaVar("o",CudaFloat)] name
-        (unary_op <| fun x -> [Return <| map_load_op x]) 
-        (binary_op <| fun x y -> [Return <| reduce_op x y]) 
+        (unary_op <| fun x -> [Return <| map_load_op x])
+        (binary_op <| fun x y -> [Return <| reduce_op x y])
         (fun [o1] value -> [AtomicAdd(o1, map_store_op value)])
         (string map_redo_map_launcher_block_size)
 
@@ -613,6 +625,40 @@ let hadmult_backward =
     map_backwards_module_3_2 name
         (fun er x1 x2 -> er*x2) // Adjoints for the left input (x1)
         (fun er x1 x2 -> er*x1) // Adjoinst for the right input (x2)
+
+// The hadmult module generic in the number of input arguments.
+let hadmult_generic num_input_pairs =
+    let rec f = function
+        | a :: b :: [] ->
+            a * b
+        | a :: b :: t ->
+            a * b + f t
+        | x -> failwithf "Should never reach here. x = %A" x
+
+    let name = "HadMult" + string num_input_pairs
+    map_module num_input_pairs [CudaArray("a",CudaConst CudaFloat,["n"]); CudaArray("b",CudaConst CudaFloat,["n"])] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] l -> [MSet(o, f l)])
+
+let map_backwards_module num_in args_in num_out args_out name fl =
+    map_module num_in args_in//[CudaArray("x",CudaConst CudaFloat,["n"])] 
+               num_out args_out name//[CudaArray("o",CudaFloat,["n"])] name 
+               (fun ol xl -> 
+                    List.map2 (fun o f -> 
+                        add_if_not_null o (f xl)) ol fl
+                    |> List.concat)
+
+let hadmult_backward_generic num_output_pairs =
+    let name = "HadMultBackward" + string num_output_pairs
+    map_module' 
+        [CudaArray("error",CudaConst CudaFloat,["n"]); CudaGroup(num_output_pairs, [CudaArray("a_primal_",CudaConst CudaFloat,["n"]); CudaArray("b_primal_",CudaConst CudaFloat,["n"])])]
+        [CudaGroup(num_output_pairs, [CudaArray("a_adjoint_",CudaConst CudaFloat,["n"]); CudaArray("b_adjoint_",CudaConst CudaFloat,["n"])])] name
+        (fun ol xl -> // TODO: Deal with this later.
+            )
+//        num_output_pairs [CudaArray("a",CudaConst CudaFloat,["n"]); CudaArray("b",CudaConst CudaFloat,["n"])] name 
+        //(fun [o] l -> [MSet(o, f l)])
+//        []
+
 
 let sum = map_redo_map_module_1_1 "Sum" id (+) (id)
 
