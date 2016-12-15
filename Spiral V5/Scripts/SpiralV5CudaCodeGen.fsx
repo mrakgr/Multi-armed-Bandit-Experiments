@@ -516,24 +516,23 @@ let map_module_3_1 name f =
                (fun [o] [x1;x2;x3] -> [MSet(o, f x1 x2 x3)])
 
 let add_if_not_null o f =
-    [IfVoid(IsNotNull o,[MAdd(o, f)],[])]
+    IfVoid(IsNotNull o,[MAdd(o, f)],[])
 
 let map_backwards_module_2_1 name f =
     map_module 2 [CudaArray("x",CudaConst CudaFloat,["n"])] 
                1 [CudaArray("o",CudaFloat,["n"])] name 
-               (fun [o] [x1;x2] -> add_if_not_null o (f x1 x2))
+               (fun [o] [x1;x2] -> [add_if_not_null o (f x1 x2)])
 let map_backwards_module_3_1 name f =
     map_module 3 [CudaArray("x",CudaConst CudaFloat,["n"])] 
                1 [CudaArray("o",CudaFloat,["n"])] name 
-               (fun [o] [x1;x2;x3] -> add_if_not_null o (f x1 x2 x3))
+               (fun [o] [x1;x2;x3] -> [add_if_not_null o (f x1 x2 x3)])
 
 let map_backwards_module_3_2 name f1 f2 =
     map_module 3 [CudaArray("x",CudaConst CudaFloat,["n"])] 
                2 [CudaArray("o",CudaFloat,["n"])] name 
                (fun [o1;o2] [x1;x2;x3] -> 
                     [add_if_not_null o1 (f1 x1 x2 x3)
-                     add_if_not_null o2 (f2 x1 x2 x3)]
-                    |> List.concat)
+                     add_if_not_null o2 (f2 x1 x2 x3)])
 
 let mapcoef_module_1_1 name f =
     map_module 1 [CudaArray("x",CudaConst CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 
@@ -645,20 +644,26 @@ let map_backwards_module num_in args_in num_out args_out name fl =
                num_out args_out name//[CudaArray("o",CudaFloat,["n"])] name 
                (fun ol xl -> 
                     List.map2 (fun o f -> 
-                        add_if_not_null o (f xl)) ol fl
-                    |> List.concat)
+                        add_if_not_null o (f xl)) ol fl)
 
 let hadmult_backward_generic num_output_pairs =
     let name = "HadMultBackward" + string num_output_pairs
     map_module' 
         [CudaArray("error",CudaConst CudaFloat,["n"]); CudaGroup(num_output_pairs, [CudaArray("a_primal_",CudaConst CudaFloat,["n"]); CudaArray("b_primal_",CudaConst CudaFloat,["n"])])]
         [CudaGroup(num_output_pairs, [CudaArray("a_adjoint_",CudaConst CudaFloat,["n"]); CudaArray("b_adjoint_",CudaConst CudaFloat,["n"])])] name
-        (fun ol xl -> // TODO: Deal with this later.
-            )
-//        num_output_pairs [CudaArray("a",CudaConst CudaFloat,["n"]); CudaArray("b",CudaConst CudaFloat,["n"])] name 
-        //(fun [o] l -> [MSet(o, f l)])
-//        []
-
+        (fun adjl xl ->
+            let error = List.head xl
+            let priml = List.tail xl
+            let chunk2 l =
+                List.chunkBySize 2 l
+                |> List.map (fun [a;b] -> (a,b))
+            let adjl = chunk2 adjl
+            let priml = chunk2 priml
+            List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
+                [add_if_not_null adj_a (error*prim_b)
+                 add_if_not_null adj_b (error*prim_a)]
+                ) adjl priml
+            |> List.concat)
 
 let sum = map_redo_map_module_1_1 "Sum" id (+) (id)
 
