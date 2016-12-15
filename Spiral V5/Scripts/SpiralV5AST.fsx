@@ -19,7 +19,7 @@ type SpiralExp =
 // Basic operations
 | Matmult of id: int * SpiralExp * SpiralExp
 | SeqMatmult of id: int * (SpiralExp * SpiralExp) list
-| BAdd of id: int * matrix: SpiralExp * vector: SpiralExp // Addition with broadcasting.
+| Add of id: int * alpha: float32 * matrix: SpiralExp * beta: float32 * vector: SpiralExp // Addition with broadcasting.
 | Hadmult of id: int * SpiralExp * SpiralExp
 | SeqHadmult of id: int * (SpiralExp * SpiralExp) list // TODO: Make optimized implementation.
 // Activations
@@ -165,58 +165,95 @@ let inline gemm
         cublas.Stream <- str.Stream
         cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
-let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv) =
-    let aDesc = env.Mem.GetTensorDescriptor sa
-    let bDesc = env.Mem.GetTensorDescriptor sb
+let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv) =
+    to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
 
-    cudnn.SetStream(env.Str)
-    cudnn.AddTensor(beta, bDesc, b, alpha, aDesc, a) // The output is a
-
-let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv) =
-    let tensor_add_right_backwards () =
-        cudnn.SetStream env.Str
-        let errDesc = env.Mem.GetTensorDescriptor serr
-        let inpDesc = env.Mem.GetTensorDescriptor sb
-        cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
-    
-    env.PushTape tensor_add_right_backwards
-
-let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv) =
-    let tensor_add_left_backwards () = saxpy env.Str alpha (serr,err) (sa,a_adj)
-    env.PushTape(tensor_add_left_backwards)
-
-let add_tensor matchn s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
-    let sa_total = total_size_of a.Size
-    let sa = matchn a.Size
-    let sb = matchn b.Size
-    
+let copy_dm_using_obj_pool (a: DM<float32>) (env: SpiralEnv) =
     let c = env.Mem.GetDM(a.Size,default_num_vars,env)
+    copy c.P a.P (total_size_of a.Size) env
+    c
+
+let like_dm (a: DM<float32>) (env: SpiralEnv) =
+    let c = env.Mem.GetDM(a.Size,default_num_vars,env)
+    c
+
+/// An umbrella function that does simple addition if all the dimensions sizes are the same and broadcast addition if they are 4d or 2d.
+/// Raises an error otherwise.
+let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
+    let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv) =
+        let aDesc = env.Mem.GetTensorDescriptor sa
+        let bDesc = env.Mem.GetTensorDescriptor sb
+
+        cudnn.SetStream(env.Str)
+        cudnn.AddTensor(beta, bDesc, b, alpha, aDesc, a) // The output is a
+
+    let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv) =
+        let tensor_add_right_backwards () =
+            cudnn.SetStream env.Str
+            let errDesc = env.Mem.GetTensorDescriptor serr
+            let inpDesc = env.Mem.GetTensorDescriptor sb
+            cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
     
-    c.P.AsyncCopyToDevice(a.P.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * sa_total),env.Str)
+        env.PushTape tensor_add_right_backwards
 
-    add_tensor_4d_forward alpha (s_to_4d sa,c.P) beta (s_to_4d sb,b.P) env
+    let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv) =
+        let tensor_add_left_backwards () = saxpy env.Str alpha (serr,err) (sa,a_adj)
+        env.PushTape(tensor_add_left_backwards)
 
-    if env.IsInferenceOnly = false then
-        add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
-        add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
+    let add_tensor matchn s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
+        let sa_total = total_size_of a.Size
+        let sa = matchn a.Size
+        let sb = matchn b.Size
 
-let add_tensor_4d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
+        copy c.P a.P sa_total env
+        add_tensor_4d_forward alpha (s_to_4d sa,c.P) beta (s_to_4d sb,b.P) env
+
+        if env.IsInferenceOnly = false then
+            add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
+            add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
+
     let match4 (x: int[]) =
         match x with
         | [|a;b;c;d|] -> a,b,c,d
         | _ -> failwith "Expected 4 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
 
-    add_tensor match4 id id alpha a beta b env
-    
-let add_tensor_2d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
+    let add_tensor_4d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
+        add_tensor match4 id id alpha a beta b c env
+
     let match2 (x: int[]) =
         match x with
         | [|a;b|] -> a,b
-        | _ -> failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
-    
-    let s_to_4d (c,r) = (c,1,r,1)
-    let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
-    add_tensor match2 s_to_4d s_to_4d_backwards alpha a beta b env
+        | _ -> failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size    
+
+    let add_tensor_2d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
+        let s_to_4d (c,r) = (c,1,r,1)
+        let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
+        add_tensor match2 s_to_4d s_to_4d_backwards alpha a beta b c env
+
+    let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv) =
+        geam env.Str nT nT alpha (s, a) beta (s, b) (s, c)
+    let add_backward (alpha: float32) s (er: VarF32) (x_adj: VarF32) (env: SpiralEnv) =
+        let add_backward() = saxpy env.Str alpha (s,er) (s,x_adj)
+        env.PushTape add_backward
+
+    /// Expects the sizes of a and b to be the same.
+    let add (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
+        let s = a.TotalSize
+        add_forward alpha (s,1) a.P beta b.P c.P env
+
+        if env.IsInferenceOnly then
+            add_backward alpha s c.A a.A env
+            add_backward alpha s c.A b.A env
+
+    let c = like_dm a env
+
+    if a.Size.Length <> b.Size.Length then
+        failwithf "a.Size.Length(%A) <> b.Size.Length(%A)" a.Size.Length b.Size.Length
+    if a.Size = b.Size then add alpha a beta b c env
+    elif a.Size.Length = 4 then add_tensor_4d alpha a beta b c env
+    elif a.Size.Length = 2 then add_tensor_2d alpha a beta b c env
+    else failwith "Tensor dimension(%i) not supported." a.Size.Length
+        
 
 type CallerVar =
 | CInt of int
@@ -362,13 +399,12 @@ let rec eval (env: SpiralEnv) x =
 
             c
 
-    | Add(id,a,b) ->
+    | Add(id,alpha,a,beta,b) ->
         if_not_evaluated id <| fun _ ->
             let a,b = eval' a, eval' b
-            let sa, sb = a.Size, b.Size
-            guardSizes [sa;sb]
-            let c = env.Mem.GetDM(sa,default_num_vars, env)
-            ()
+            let c = env.Mem.GetDM(a.Size,default_num_vars, env)
+            add_tensor alpha a beta b c env
+            c
             
 //    | Add of id: int * SpiralExp * SpiralExp
 //    | BAdd of id: int * matrix: SpiralExp * vector: SpiralExp // Addition with broadcasting.
