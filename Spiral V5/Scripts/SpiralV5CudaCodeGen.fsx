@@ -156,7 +156,7 @@ let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
                         | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
                         ) subvars
                     ) [] {1..num}
-                |> fun args -> loop args env acc
+                |> fun args -> loop (args @ t) env acc
     let acc, env = loop args env []
     List.rev acc, env
 
@@ -385,6 +385,9 @@ let var x = Var x
 let value x = Value x
 let let_ var init in_ =
     Let(var,init,in_)
+/// Declared the name as a const auto variable and passes it as a Var to the in_ function.
+let letcavar name init in_ =
+    Let(CudaVar(name,CudaConst CudaAuto),init,in_ (Var name))
 let varAr name accessor =
     VarAr(name,accessor)
 let for_ initializer cond incrementor body =
@@ -659,11 +662,16 @@ let hadmult_backward_generic num_output_pairs =
                 |> List.map (fun [a;b] -> (a,b))
             let adjl = chunk2 adjl
             let priml = chunk2 priml
-            List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
-                [add_if_not_null adj_a (error*prim_b)
-                 add_if_not_null adj_b (error*prim_a)]
-                ) adjl priml
-            |> List.concat)
+            
+            [letcavar "err" error <| fun err ->
+                List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
+                    [add_if_not_null adj_a (err*prim_b)
+                     add_if_not_null adj_b (err*prim_a)]
+                    ) adjl priml
+                |> List.concat]
+            )
+
+hadmult_backward_generic 3
 
 let sum = map_redo_map_module_1_1 "Sum" id (+) (id)
 
