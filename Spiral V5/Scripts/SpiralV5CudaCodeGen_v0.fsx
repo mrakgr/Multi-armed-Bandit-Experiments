@@ -30,7 +30,7 @@ type CudaType =
 
 type CudaVar =
 | CudaVar of name: string * typ: CudaType
-| CudaArray of name: string list * subtype: CudaType * bound_size: string list
+| CudaArray of name: string * subtype: CudaType * bound_size: string list
 | CudaGroup of num: int * subtype: CudaVar list
 
 type CudaMethodAnnotation =
@@ -105,8 +105,6 @@ type CudaExpr =
     static member (==)(var, body) = MSet(var,body)
     /// The mutable addition operator.
     static member (+=)(var, body) = MAdd(var,body)
-    /// The mutable addition with null check operator.
-    static member (+?=)(var, body) = IfVoid(IsNotNull var,[MAdd(var, body)],[])
 
 type CudaEnvironment =
     {
@@ -122,9 +120,6 @@ type CudaEnvironment =
 //        then failwith "Variable already exists in the environment. Duplicates are not allowed. Only arrays can have their sizes rebound."
 //        else 
         {t with variables = t.variables.Add(k,v)}
-    member t.AddVars(ks,v) =
-        let m = List.fold (fun m k -> Map.add k v m) t.variables ks
-        {t with variables = m}
 
     /// The separator for mutable expressions.
     member t.WithSeparator x = {t with mutable_separator=x}
@@ -140,24 +135,24 @@ let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
             match h with
             | CudaVar(name,typ) -> 
                 loop t (env.AddVar(name,h)) (h :: acc)
-            | CudaArray(names, subtype, bound_sizes) ->
+            | CudaArray(name, subtype, bound_size) ->
                 let vars_to_print =
                     let f bound_size =
                         match env.variables.TryFind bound_size with
                         | Some(CudaVar(_, CudaConst CudaInt)) -> None
                         | Some x -> failwithf "Type checking for CudaArray failed. The variable its size is bound to should aways be a Var(_, CudaConst CudaInt), not %A.\nName of the size bound variable is %s" x bound_size
                         | None -> Some <| CudaVar(bound_size, CudaConst CudaInt)
-                    List.choose (fun bound_size -> f bound_size) bound_sizes
+                    List.choose (fun bound_size -> f bound_size) bound_size
                 let acc, env = loop vars_to_print env acc
-                loop t (env.AddVars(names,h)) (h :: acc)
+                loop t (env.AddVar(name,h)) (h :: acc)
             | CudaGroup(num, subvars) ->
                 Seq.fold (fun (l: CudaVar list) i ->
                     l @ List.map (fun subvar ->
                         match subvar with
                         | CudaVar(name,typ) -> 
                             CudaVar (name + string i, typ)
-                        | CudaArray(names,typ,bound_size) ->
-                            CudaArray (List.map (fun name -> name + string i) names, typ, bound_size)
+                        | CudaArray(name,typ,bound_size) ->
+                            CudaArray (name + string i, typ, bound_size)
                         | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
                         ) subvars
                     ) [] {1..num}
@@ -195,10 +190,8 @@ let cuda_codegen (exp: CudaExpr list) =
                 pp prefix
                 match h with
                 | CudaVar(name,typ) -> print_type typ; pp name; ", "
-                | CudaArray(names, subtype, bound_size) ->
-                    for name in names do
-                        print_type subtype; pp "*"; pp name; pp ", "
-                    ", "
+                | CudaArray(name, subtype, bound_size) ->
+                    print_type subtype; pp "*"; pp name; ", "
                 | CudaGroup(num, subvars) ->
                     failwith "This case should have been unfolded inside the get_method_arguments call." // Should never hit.
                 ) "" acc
@@ -261,15 +254,14 @@ let cuda_codegen (exp: CudaExpr list) =
             | NoExpr -> ppln ";"
             | _ -> pp " = "; gen initializer env; ppln ";"
             print_seq in_ (env.AddVar(name,var))
-        | Let(CudaArray(names,typ,size) as var, initializer, in_) ->
-            for name in names do
-                print_type typ; pp name; pp "["
-                List.fold (fun separator size -> pp separator; pp size; " * ") "" size |> ignore
-                ppln "]"
-                match initializer with
-                | NoExpr -> ppln ";"
-                | _ -> failwith "Initializers not allowed for arrays."
-            print_seq in_ (env.AddVars(names,var))
+        | Let(CudaArray(name,typ,size) as var, initializer, in_) ->
+            print_type typ; pp name; pp "["
+            List.fold (fun separator size -> pp separator; pp size; " * ") "" size |> ignore
+            ppln "]"
+            match initializer with
+            | NoExpr -> ppln ";"
+            | _ -> failwith "Initializers not allowed for arrays."
+            print_seq in_ (env.AddVar(name,var))
         | Let(CudaGroup _,_,_) ->
             failwith "Array groups are only allowed in method declarations."
         | VarAr(Var name, accessors: CudaExpr list) ->
@@ -366,14 +358,14 @@ let cudavars_to_cudaexps vars (ar_accessor: CudaExpr list) =
     List.collect (fun var ->
         match var with
         | CudaVar(name,typ) -> [Var(name)]
-        | CudaArray(names,typ,bound_size) -> List.map (fun name -> VarAr(Var(name), ar_accessor)) names
+        | CudaArray(name,typ,bound_size) -> [VarAr(Var(name), ar_accessor)]
         | CudaGroup(num,subvars) ->
             Seq.fold (fun l i ->
-                l @ List.collect (fun subvar ->
+                l @ List.map (fun subvar ->
                     match subvar with
-                    | CudaVar(name,typ) -> [Var(name + string i)]
-                    | CudaArray(names,typ,bound_size) -> 
-                        List.map (fun name -> VarAr(Var(name + string i), ar_accessor)) names
+                    | CudaVar(name,typ) -> Var(name + string i)
+                    | CudaArray(name,typ,bound_size) -> 
+                        VarAr(Var(name + string i), ar_accessor)
                     | x -> failwithf "%A not supported as a subtype of CudaGroup."  x
                     ) subvars
                 ) [] {1..num}
@@ -438,6 +430,11 @@ let map_module' in_group out_group name f =
             ]
         ]
     |> fun code -> code, get_unfolded_signature args
+
+let map_module num_in args_in num_out args_out name f =
+    let in_group = [CudaGroup(num_in,args_in)]
+    let out_group = [CudaGroup(num_out,args_out)]
+    map_module' in_group out_group name f
 
 let map_redocol_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size =
     let args = [in_group; out_group] |> List.concat
@@ -508,49 +505,177 @@ let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_
     let out_group = [CudaGroup(num_out,args_out)]
     map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
 
-let map_module num_in names_in num_out names_out kernel_name f =
-    let in_group = [CudaGroup(num_in,[CudaArray(names_in,CudaConst CudaFloat,["n"])])]
-    let out_group = [CudaGroup(num_out,[CudaArray(names_out,CudaConst CudaFloat,["n"])])]
-    map_module' in_group out_group kernel_name f
-
 let map_module_1_1 name f =
-    map_module 1 ["x"] 1 ["o"] name (fun [o] [x] -> [o == f x])
+    map_module 1 [CudaArray("x",CudaConst CudaFloat,["n"])] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x] -> [MSet(o, f x)])
 let map_module_2_1 name f =
-    map_module 2 ["x"] 1 ["o"] name (fun [o] [x1;x2] -> [o == f x1 x2])
+    map_module 2 [CudaArray("x",CudaConst CudaFloat,["n"])] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x1;x2] -> [MSet(o, f x1 x2)])
 let map_module_3_1 name f =
-    map_module 3 ["x"] 1 ["o"] name (fun [o] [x1;x2;x3] -> [o == f x1 x2 x3])
+    map_module 3 [CudaArray("x",CudaConst CudaFloat,["n"])] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x1;x2;x3] -> [MSet(o, f x1 x2 x3)])
 
-//let map_backwards_module_1_1 name f =
-//    map_module' [CudaGroup(1,[CudaArray(["o_primal_";"o_adjoint_"],CudaConst CudaFloat,["n"])])
-//                 CudaGroup(1,[CudaArray(["x_primal_"],CudaConst CudaFloat,["n"])])] 
-//                [CudaGroup(1,[CudaArray(["x_adjoint_"],CudaFloat,["n"])])] 
-//                name
-//               (fun [x_adj] [o_pr;o_adj;x_pr] -> [x_adj +?= (f o_pr o_adj x_pr x_adj)])
+let add_if_not_null o f =
+    IfVoid(IsNotNull o,[MAdd(o, f)],[])
 
-/// The map_backwards function is intended to be a mirror of the map_module function so its input's adjoints are outputs and
-/// its prev_outputs are part of the input.
-let map_backwards_module num_in names_in num_out names_out kernel_name f =
-    let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"adjoint"]) names
-    let names_into_primals names = List.map (fun name -> name+"_primal_") names
-    let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
-    map_module' [CudaGroup(num_out,[CudaArray(separate_names_into_prim_and_adj names_out,CudaConst CudaFloat,["n"])])
-                 CudaGroup(num_in,[CudaArray(names_into_primals names_in,CudaConst CudaFloat,["n"])])] 
-                [CudaGroup(num_in,[CudaArray(names_into_adjoints names_in,CudaFloat,["n"])])] 
-                kernel_name
-                (fun input_adjoints output_prim_adj_and_input_prims -> 
-                    let output_prim_adj, input_prims = List.splitAt (num_out*2) output_prim_adj_and_input_prims
-                    f input_adjoints output_prim_adj input_prims)
+let map_backwards_module_2_1 name f =
+    map_module 2 [CudaArray("x",CudaConst CudaFloat,["n"])] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x1;x2] -> [add_if_not_null o (f x1 x2)])
+let map_backwards_module_3_1 name f =
+    map_module 3 [CudaArray("x",CudaConst CudaFloat,["n"])] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x1;x2;x3] -> [add_if_not_null o (f x1 x2 x3)])
 
-let map_backwards_module_1_1 name f =
-    map_backwards_module 1 ["x"] 1 ["o"] name <| fun [x_adj] [o_pr;o_adj] [x_pr] -> [x_adj +?= f o_pr o_adj x_pr x_adj]
+let map_backwards_module_3_2 name f1 f2 =
+    map_module 3 [CudaArray("x",CudaConst CudaFloat,["n"])] 
+               2 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o1;o2] [x1;x2;x3] -> 
+                    [add_if_not_null o1 (f1 x1 x2 x3)
+                     add_if_not_null o2 (f2 x1 x2 x3)])
 
-let map_backwards_module_2_1 name f1 f2 =
-    map_backwards_module 1 ["x"] 1 ["o"] name <| fun [x_adj1;x_adj2] [o_pr;o_adj] [x_pr1;x_pr2] -> [
-        x_adj1 +?= f1 o_pr o_adj x_pr1 x_adj1 x_pr2 x_adj2
-        x_adj2 +?= f2 o_pr o_adj x_pr1 x_adj1 x_pr2 x_adj2
-        ]
+let map_backwards_module num_in args_in num_out args_out name fl =
+    map_module num_in args_in//[CudaArray("x",CudaConst CudaFloat,["n"])] 
+               num_out args_out name//[CudaArray("o",CudaFloat,["n"])] name 
+               (fun ol xl -> 
+                    List.map2 (fun o f -> 
+                        add_if_not_null o (f xl)) ol fl)
 
-//    map_module num_in args_in//[CudaArray("x",CudaConst CudaFloat,["n"])] 
-//               num_out args_out name//[CudaArray("o",CudaFloat,["n"])] name 
+let mapcoef_module_1_1 name f =
+    map_module 1 [CudaArray("x",CudaConst CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x;coef_x] -> [MSet(o, f x coef_x)])
+let mapcoef_module_2_1 name f =
+    map_module 2 [CudaArray("x",CudaConst CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x1;coef_x1;x2;coef_x2] -> [MSet(o, f x1 coef_x1 x2 coef_x2)])
+let mapcoef_module_3_1 name f =
+    map_module 3 [CudaArray("x",CudaConst CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] [x1;coef_x1;x2;coef_x2;x3;coef_x3] -> [MSet(o, f x1 coef_x1 x2 coef_x2 x3 coef_x3)])
 
+let unary_op op = Lambda([CudaVar("x",CudaAuto)],op (Var "x"))
+let binary_op op = Lambda([CudaVar("x1",CudaAuto);CudaVar("x2",CudaAuto)], op (Var "x1") (Var "x2"))
+let nary_op num op =
+    let args = List.map (fun i -> CudaVar("x"+string i,CudaAuto)) [1..num]
+    let to_var x = List.map (fun (CudaVar(name,_)) -> Var name) x
+    Lambda(args, op <| to_var args)
 
+let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
+    map_redocol_map_module
+        1 [CudaArray("x",CudaConst CudaFloat,["num_cols";"num_rows"])] 
+        1 [CudaArray("o",CudaFloat,["num_cols"])] name 
+        (unary_op <| fun x -> [Return <| map_load_op x]) 
+        (binary_op <| fun x y -> [Return <| reduce_op x y]) 
+        (fun [o1] value -> [MSet(o1, map_store_op value)]) 
+        (string map_redocol_map_launcher_block_size)
+
+let map_redo_map_module_1_1 name map_load_op reduce_op map_store_op =
+    map_redo_map_module 
+        1 [CudaArray("x",CudaConst CudaFloat,["n"])] 
+        1 [CudaVar("o",CudaFloat)] name
+        (unary_op <| fun x -> [Return <| map_load_op x])
+        (binary_op <| fun x y -> [Return <| reduce_op x y])
+        (fun [o1] value -> [AtomicAdd(o1, map_store_op value)])
+        (string map_redo_map_launcher_block_size)
+
+let square = 
+    let name = "Square"
+    map_module_1_1 name <| fun x -> x * x
+let square_backward =
+    let name = "SquareBackward"
+    map_backwards_module_2_1 name <| fun er inp -> er * Value "2" * inp
+
+// Note: make sure to pass in the correct arguments into sigmoid_backward and
+// tanh_backward. Their derivatives need the output primals and not the inputs.
+
+let map_fst f x =
+    f (fst x), snd x
+
+let sigmoid = 
+    lazy
+        let name = "Sigmoid"
+        map_module_1_1 name <| fun x -> one / (one + Exp(-x))
+        |> map_fst (load_kernel_nvcc name)
+let sigmoid_backward =
+    lazy
+        let name = "SigmoidBackward"
+        map_backwards_module_2_1 name <| fun er out -> er * out * (one - out)
+        |> map_fst (load_kernel_nvcc name)
+let tanh = 
+    lazy
+        let name = "Tanh"
+        map_module_1_1 name <| fun x -> Tanh(x)
+        |> map_fst (load_kernel_nvcc name)
+let tanh_backward =
+    lazy
+        let name = "TanhBackward"
+        map_backwards_module_2_1 name <| fun er out -> er * (one - out * out)
+        |> map_fst (load_kernel_nvcc name)
+let relu = 
+    lazy
+        let name = "Relu"
+        map_module_1_1 name <| fun x -> if_ (x .> zero) x zero
+        |> map_fst (load_kernel_nvcc name)
+let relu_backward =
+    lazy
+        let name = "ReluBackward"
+        map_backwards_module_2_1 name <| fun er inp -> if_ (inp .> zero) er zero
+        |> map_fst (load_kernel_nvcc name)
+
+let hadmult = 
+    let name = "HadMult"
+    map_module_2_1 name <| fun x1 x2 -> x1 * x2
+let hadmult_backward =
+    let name = "HadMultBackward"
+    map_backwards_module_3_2 name
+        (fun er x1 x2 -> er*x2) // Adjoints for the left input (x1)
+        (fun er x1 x2 -> er*x1) // Adjoinst for the right input (x2)
+
+// The hadmult module generic in the number of input arguments.
+let hadmult_generic num_input_pairs =
+    let rec f = function
+        | a :: b :: [] ->
+            a * b
+        | a :: b :: t ->
+            a * b + f t
+        | x -> failwithf "Should never reach here. x = %A" x
+
+    let name = "HadMult" + string num_input_pairs
+    map_module num_input_pairs [CudaArray("a",CudaConst CudaFloat,["n"]); CudaArray("b",CudaConst CudaFloat,["n"])] 
+               1 [CudaArray("o",CudaFloat,["n"])] name 
+               (fun [o] l -> [MSet(o, f l)])
+    |> map_fst (load_kernel_nvcc name)
+
+let hadmult_backward_generic num_output_pairs =
+    let name = "HadMultBackward" + string num_output_pairs
+    map_module' 
+        [CudaArray("error",CudaConst CudaFloat,["n"]); CudaGroup(num_output_pairs, [CudaArray("a_primal_",CudaConst CudaFloat,["n"]); CudaArray("b_primal_",CudaConst CudaFloat,["n"])])]
+        [CudaGroup(num_output_pairs, [CudaArray("a_adjoint_",CudaConst CudaFloat,["n"]); CudaArray("b_adjoint_",CudaConst CudaFloat,["n"])])] name
+        <| fun adjl xl ->
+            let error = List.head xl
+            let priml = List.tail xl
+            let chunk2 l =
+                List.chunkBySize 2 l
+                |> List.map (fun [a;b] -> (a,b))
+            let adjl = chunk2 adjl
+            let priml = chunk2 priml
+            
+            [letcavar "err" error <| fun err ->
+                List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
+                    [add_if_not_null adj_a (err*prim_b)
+                     add_if_not_null adj_b (err*prim_a)]
+                    ) adjl priml
+                |> List.concat]
+    |> map_fst (load_kernel_nvcc name)
+
+let hadmult_generic_memoized = memoize hadmult_generic
+let hadmult_backward_generic_memoized = memoize hadmult_backward_generic
+
+let sum = map_redo_map_module_1_1 "Sum" id (+) (id)
+
+let colsum = map_redocol_map_module_1_1 "Colsum" id (+) id
+let gradclip = mapcoef_module_1_1 "GradClip" <| fun x coef_x -> if_ (x .< -coef_x) -coef_x (if_ (x .> coef_x) coef_x x)
