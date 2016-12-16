@@ -143,3 +143,12 @@ let load_kernel compile_kernel (kernel_code: string) (kernel_name: string) =
 let inline load_kernel_nvrtc kernel_name kernel_code = load_kernel compile_kernel_nvrtc kernel_name kernel_code
 let inline load_kernel_nvcc kernel_name kernel_code = load_kernel compile_kernel_using_nvcc_bat_router kernel_name kernel_code
 
+let memoize f =
+    let cache = Dictionary(HashIdentity.Structural)
+    fun x ->
+        match cache.TryGetValue x with
+        | true, v -> v
+        | false, _ ->
+            let res = f x
+            cache.[x] <- res
+            res
