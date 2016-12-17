@@ -21,7 +21,7 @@ type SpiralExp =
 | SeqMatmult of id: int * (SpiralExp * SpiralExp) list
 | Add of id: int * alpha: float32 * matrix: SpiralExp * beta: float32 * vector: SpiralExp // Addition with broadcasting.
 | Hadmult of id: int * SpiralExp * SpiralExp
-| SeqHadmult of id: int * (SpiralExp * SpiralExp) list // TODO: Make optimized implementation.
+| SeqHadmult of id: int * (SpiralExp * SpiralExp) list
 // Activations
 | Relu of id: int * SpiralExp
 | Tanh of id: int * SpiralExp
@@ -189,7 +189,7 @@ let match4 fail (x: int[]) =
 
 /// An umbrella function that does simple addition if all the dimensions sizes are the same and broadcast addition if they are 4d or 2d.
 /// Raises an error otherwise.
-let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
+let add_tensor id' (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv) =
     let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv) =
         let aDesc = env.Mem.GetTensorDescriptor sa
         let bDesc = env.Mem.GetTensorDescriptor sb
@@ -256,6 +256,7 @@ let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: Spi
     elif a.Size.Length = 2 then add_tensor_2d alpha a beta b c env
     else failwithf "Tensor dimension(%i) not supported." a.Size.Length
 
+    env.Nodes.Add(id',c)
     c
         
 
@@ -321,6 +322,82 @@ let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
     kernel.BlockDimensions <- dim3(block_size)
     kernel_caller str kernel sig_ (CInt total_size :: args_in) args_out
 
+let matmult_backwards (sa,a: DM<_>) (sb,b: DM<_>) (sc,c: DM<_>) (env: SpiralEnv) =
+    if a.HasAdjoint then 
+        let matmult_backward_left () = 
+            gemm env.Str nT T 1.0f (sc,c.A) (sb, b.P) 1.0f (sa, a.A)
+        env.PushTape matmult_backward_left
+
+    if b.HasAdjoint then 
+        let matmult_backward_right () = 
+            gemm env.Str T nT 1.0f (sa, a.P) (sc, c.A) 1.0f (sb, b.A)
+        env.PushTape matmult_backward_right
+
+let seqmatmult id (l: (DM<float32> * DM<float32>) list) (env: SpiralEnv) =
+    let l = l |> List.mapi (fun i (a,b) ->
+        let fail() = failwithf "Expected 2 dimensions.\na.Size=%A, b.Size=%A, index=%i." a.Size b.Size i
+        let sa = match2 fail a.Size
+        let sb = match2 fail b.Size
+        (sa,a), (sb,b))
+    let sc = l |> List.map (fun (((_,rows_a),_),((cols_b,_),_)) -> cols_b, rows_a)
+    guardSizes sc
+    let cols_c, rows_c as sc = List.head sc
+    let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
+    for (sa,a),(sb,b) in l do gemm env.Str nT nT 1.0f (sa,a.P) (sb,b.P) 0.0f (sc,c.P)
+
+    if env.IsInferenceOnly = false then
+        for (sa,a),(sb,b) in l do
+            matmult_backwards (sa,a) (sb,b) (sc,c) env
+
+    env.Nodes.Add(id,c)
+    c
+
+let matmult id (a: DM<float32>) (b: DM<float32>) (env: SpiralEnv) =
+    seqmatmult id [a,b] env
+
+//let activation id (x: DM<float32>) forward backward (env: SpiralEnv) =
+//    let c = env.Mem.GetDM(x.Size,default_num_vars, env)
+//    map_launcher env.Str forward [x.P'] [c.P']
+//
+//    env.Nodes.Add(id,c)
+//
+//    if env.IsInferenceOnly = false then
+//        if c.HasAdjoint then
+//            let activation_backward () =
+//                map_launcher env.Str backward [c.P';c.A';x.P'] [x.A']
+//            env.PushTape activation_backward
+//    c
+
+let activations id (x: DM<float32> list) forward backward (env: SpiralEnv) =
+    let c = env.Mem.GetDM(x.Head.Size,default_num_vars, env)
+    let input_prims = x |> List.map (fun x -> x.P')
+    map_launcher env.Str forward input_prims [c.P']
+
+    env.Nodes.Add(id,c)
+
+    if env.IsInferenceOnly = false then
+        if c.HasAdjoint then
+            let input_adjs = x |> List.map (fun x -> x.A')
+            let activation_backward () =
+                let err_args = [c.P';c.A']
+                map_launcher env.Str backward (err_args @ input_prims) input_adjs
+            env.PushTape activation_backward
+
+    c
+
+let activation id (x: DM<float32>) forward backward (env: SpiralEnv) =
+    activations id [x] forward backward env
+
+let seqhadmult id (ab: (DM<float32> * DM<float32>) list) env =
+    let l = ab.Length
+    let forward_kernel = hadmult_generic_memoized l
+    let backward_kernel = hadmult_backward_generic_memoized l
+    let args = ab |> List.collect (fun (a,b) -> [a;b])
+    activations id args forward_kernel backward_kernel env
+
+let hadmult id (ab: DM<float32> * DM<float32>) env =
+    seqhadmult id [ab] env
+
 let rec eval (env: SpiralEnv) x: DM<float32> =
     let eval' x = eval env x
     let if_not_evaluated id f =
@@ -328,91 +405,28 @@ let rec eval (env: SpiralEnv) x: DM<float32> =
         | true, v -> v
         | false, _ -> f()
             
-    /// Relu, Tanh and Sigmoid have so much in common that it is worth factoring them out.
-    /// The would be identical if not for the fact that the backwards steps for tanh and sigmoid need
-    /// the outputs rather than input as one of the backwards call arguments.
-    let activation_f id x forward backward ex =
-        let x = eval' x
-        let c = env.Mem.GetDM(x.Size,default_num_vars, env)
-        map_launcher env.Str forward [x.P'] [c.P']
-
-        env.Nodes.Add(id,c)
-
-        if env.IsInferenceOnly = false then
-            if c.HasAdjoint then
-                let relu_backward () = 
-                    map_launcher env.Str backward [c.A'; ex (c,x)] [x.A']
-                env.PushTape relu_backward
-        c
-
-    let matmult_backwards (sa,a: DM<_>) (sb,b: DM<_>) (sc,c: DM<_>) (env: SpiralEnv) =
-        if a.HasAdjoint then 
-            let matmult_backward_left () = 
-                gemm env.Str nT T 1.0f (sc,c.A) (sb, b.P) 1.0f (sa, a.A)
-            env.PushTape matmult_backward_left
-
-        if b.HasAdjoint then 
-            let matmult_backward_right () = 
-                gemm env.Str T nT 1.0f (sa, a.P) (sc, c.A) 1.0f (sb, b.A)
-            env.PushTape matmult_backward_right
-
-    let seqmatmult (l: (DM<float32> * DM<float32>) list) (env: SpiralEnv) =
-        let l = l |> List.mapi (fun i (a,b) ->
-            let fail() = failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A, index=%i." a.Size b.Size i
-            let sa = match2 fail a.Size
-            let sb = match2 fail b.Size
-            (sa,a), (sb,b))
-        let sc = l |> List.map (fun (((_,rows_a),_),((cols_b,_),_)) -> cols_b, rows_a)
-        guardSizes sc
-        let cols_c, rows_c as sc = List.head sc
-        let c = env.Mem.GetDM([|cols_c; rows_c|],default_num_vars, env)
-        for (sa,a),(sb,b) in l do gemm env.Str nT nT 1.0f (sa,a.P) (sb,b.P) 0.0f (sc,c.P)
-
-        if env.IsInferenceOnly = false then
-            for (sa,a),(sb,b) in l do
-                matmult_backwards (sa,a) (sb,b) (sc,c) env
-
-        c
-
-    let matmult (a: DM<float32>) (b: DM<float32>) (env: SpiralEnv) =
-        seqmatmult [a,b] env
-
     match x with
     // Root nodes
     | BaseNode x -> x
     // Basic operations
     | Matmult(id,a,b) ->
         if_not_evaluated id <| fun _ ->
-            let a,b = eval' a, eval' b
-            let c = matmult a b env
-            env.Nodes.Add(id,c)
-            c
-
+            matmult id (eval' a) (eval' b) env
     | SeqMatmult(id,l) -> 
         if_not_evaluated id <| fun _ ->
             let l = l |> List.map (fun (x,y) -> eval' x, eval' y)
-            let c = seqmatmult l env
-            env.Nodes.Add(id,c)
-            c
-
+            seqmatmult id l env
     | Add(id,alpha,a,beta,b) ->
         if_not_evaluated id <| fun _ ->
-            let a,b = eval' a, eval' b
-            let c = add_tensor alpha a beta b env
-            env.Nodes.Add(id,c)
-            c
-            
-//    | Hadmult of id: int * SpiralExp * SpiralExp
-//    | SeqHadmult of id: int * (SpiralExp * SpiralExp) list // TODO: Make optimized implementation.
-
+            add_tensor id alpha (eval' a) beta (eval' b) env
+    | Hadmult(id,a,b) -> 
+        if_not_evaluated id <| fun _ -> hadmult id (eval' a, eval' b) env
+    | SeqHadmult(id,abs) ->
+        if_not_evaluated id <| fun _ -> 
+            seqhadmult id (abs |> List.map (fun (a,b) -> eval' a, eval' b)) env
     | Relu(id, x) ->
-        if_not_evaluated id <| fun _ ->
-            activation_f id x relu relu_backward (fun (c,x) -> x.P')
+        if_not_evaluated id <| fun _ -> activation id (eval' x) relu relu_backward env
     | Tanh(id, x) ->
-        if_not_evaluated id <| fun _ ->
-            activation_f id x tanh tanh_backward (fun (c,x) -> c.P')
+        if_not_evaluated id <| fun _ -> activation id (eval' x) tanh tanh_backward env
     | Sigmoid(id, x) ->
-        if_not_evaluated id <| fun _ ->
-            activation_f id x tanh tanh_backward (fun (c,x) -> c.P')
- 
-        
+        if_not_evaluated id <| fun _ -> activation id (eval' x) tanh tanh_backward env

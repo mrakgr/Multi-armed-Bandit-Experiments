@@ -647,38 +647,40 @@ let relu_backward =
 
 // The hadmult module generic in the number of input arguments.
 let hadmult_generic num_input_pairs =
-    let rec f = function
-        | a :: b :: [] ->
-            a * b
-        | a :: b :: t ->
-            a * b + f t
-        | x -> failwithf "Should never reach here. x = %A" x
+    lazy
+        let rec f = function
+            | a :: b :: [] ->
+                a * b
+            | a :: b :: t ->
+                a * b + f t
+            | x -> failwithf "Should never reach here. x = %A" x
 
-    let name = KernelName <| "HadMult" + string num_input_pairs
-    map_module num_input_pairs ["a";"b"]
-               1 ["o"] name 
-               (fun [o] l -> [o == f l])
-    |> map_fst (load_kernel_nvcc name)
+        let name = KernelName <| "HadMult" + string num_input_pairs
+        map_module num_input_pairs ["a";"b"]
+                   1 ["o"] name 
+                   (fun [o] l -> [o == f l])
+        |> map_fst (load_kernel_nvcc name)
 
 let hadmult_backward_generic num_input_pairs =
-    let name = KernelName <| "HadMultBackward" + string num_input_pairs
-    map_backwards_module 
-        num_input_pairs ["a";"b";]
-        1 ["o"] name
-        <| fun inp_adjs [err_pr;err_adj] inp_prs -> 
-            let chunk2 l =
-                List.chunkBySize 2 l
-                |> List.map (fun [a;b] -> (a,b))
-            let adjl = chunk2 inp_adjs
-            let priml = chunk2 inp_prs
+    lazy
+        let name = KernelName <| "HadMultBackward" + string num_input_pairs
+        map_backwards_module 
+            num_input_pairs ["a";"b";]
+            1 ["o"] name
+            <| fun inp_adjs [err_pr;err_adj] inp_prs -> 
+                let chunk2 l =
+                    List.chunkBySize 2 l
+                    |> List.map (fun [a;b] -> (a,b))
+                let adjl = chunk2 inp_adjs
+                let priml = chunk2 inp_prs
 
-            [letcavar "err" err_adj <| fun err ->
-                List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
-                    [adj_a +?= err*prim_b
-                     adj_b +?= err*prim_a]
-                    ) adjl priml
-                |> List.concat]
-    |> map_fst (load_kernel_nvcc name)
+                [letcavar "err" err_adj <| fun err ->
+                    List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
+                        [adj_a +?= err*prim_b
+                         adj_b +?= err*prim_a]
+                        ) adjl priml
+                    |> List.concat]
+        |> map_fst (load_kernel_nvcc name)
 
 let hadmult_generic_memoized = memoize hadmult_generic
 let hadmult_backward_generic_memoized = memoize hadmult_backward_generic
