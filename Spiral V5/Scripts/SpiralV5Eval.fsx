@@ -26,16 +26,16 @@ type SpiralExp =
 | Relu of id: int * SpiralExp
 | Tanh of id: int * SpiralExp
 | Sigmoid of id: int * SpiralExp
-| ClippedSigmoid of id: int * min: float32 * max: float32 * SpiralExp // TODO: Make optimized implementation
-| SoftmaxInstance of id: int * SpiralExp
-| SoftmaxChannel of id: int * SpiralExp // TODO: I forgot what these two softmaxes are supposed to be doing.
+//| ClippedSigmoid of id: int * min: float32 * max: float32 * SpiralExp // TODO: Make optimized implementation
+//| SoftmaxInstance of id: int * SpiralExp
+//| SoftmaxChannel of id: int * SpiralExp // TODO: I forgot what these two softmaxes are supposed to be doing.
 | Clip of id: int * min: float32 * max: float32 * SpiralExp
 // Normalization functions
-| BatchNorm of id: int * SpiralExp
-| LayerNorm of id: int * SpiralExp // TODO: Need to implement this one.
+//| BatchNorm of id: int * SpiralExp
+//| LayerNorm of id: int * SpiralExp // TODO: Need to implement this one.
 // 4d operations
-| Convolve of id: int * SpiralExp * SpiralExp
-| Pool of id: int * SpiralExp
+//| Convolve of id: int * SpiralExp * SpiralExp
+//| Pool of id: int * SpiralExp
 // Cost function auxiliaries.
 | Square of id: int * SpiralExp
 | Sum of id: int * SpiralExp
@@ -430,3 +430,4 @@ let rec eval (env: SpiralEnv) x: DM<float32> =
         if_not_evaluated id <| fun _ -> activation id (eval' x) tanh tanh_backward env
     | Sigmoid(id, x) ->
         if_not_evaluated id <| fun _ -> activation id (eval' x) tanh tanh_backward env
+    | Clip(id, min, max) -> // ...
