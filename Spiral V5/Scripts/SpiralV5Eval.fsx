@@ -223,13 +223,13 @@ let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: Spi
             add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
     let add_tensor_4d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
-        let fail() = failwith "Expected 4 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
+        let fail() = failwithf "Expected 4 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size
         add_tensor (match4 fail) id id alpha a beta b c env
 
     let add_tensor_2d (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv) =
         let s_to_4d (c,r) = (c,1,r,1)
         let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
-        let fail() = failwith "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size    
+        let fail() = failwithf "Expected 2 dimensions.\na.Size=%A, b.Size=%A." a.Size b.Size    
         add_tensor (match2 fail) s_to_4d s_to_4d_backwards alpha a beta b c env
 
     let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv) =
@@ -254,7 +254,7 @@ let add_tensor (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: Spi
     if a.Size = b.Size then add alpha a beta b c env
     elif a.Size.Length = 4 then add_tensor_4d alpha a beta b c env
     elif a.Size.Length = 2 then add_tensor_2d alpha a beta b c env
-    else failwith "Tensor dimension(%i) not supported." a.Size.Length
+    else failwithf "Tensor dimension(%i) not supported." a.Size.Length
 
     c
         

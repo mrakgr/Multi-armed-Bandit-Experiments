@@ -570,7 +570,7 @@ let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
         1 [CudaArray("o",CudaFloat,["num_cols"])] name 
         (unary_op <| fun x -> [Return <| map_load_op x]) 
         (binary_op <| fun x y -> [Return <| reduce_op x y]) 
-        (fun [o1] value -> [MSet(o1, map_store_op value)]) 
+        (fun [o1] value -> [o1 == map_store_op value]) 
         (string map_redocol_map_launcher_block_size)
 
 let map_redo_map_module_1_1 name map_load_op reduce_op map_store_op =
@@ -588,9 +588,6 @@ let square =
 let square_backward =
     let name = "SquareBackward"
     map_backwards_module_2_1 name <| fun er inp -> er * Value "2" * inp
-
-// Note: make sure to pass in the correct arguments into sigmoid_backward and
-// tanh_backward. Their derivatives need the output primals and not the inputs.
 
 let map_fst f x =
     f (fst x), snd x
@@ -647,7 +644,7 @@ let hadmult_generic num_input_pairs =
     let name = "HadMult" + string num_input_pairs
     map_module num_input_pairs [CudaArray("a",CudaConst CudaFloat,["n"]); CudaArray("b",CudaConst CudaFloat,["n"])] 
                1 [CudaArray("o",CudaFloat,["n"])] name 
-               (fun [o] l -> [MSet(o, f l)])
+               (fun [o] l -> [o == f l])
     |> map_fst (load_kernel_nvcc name)
 
 let hadmult_backward_generic num_output_pairs =

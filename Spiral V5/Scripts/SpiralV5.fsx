@@ -62,7 +62,11 @@ Unlike with VS and Cuda SDK, this will have to be done manually."""
 let kernels_dir = IO.Path.Combine(__SOURCE_DIRECTORY__,"Cuda Kernels")
 IO.Directory.CreateDirectory(kernels_dir) |> ignore // Creates the Cuda Kernels directory if it does not exist. WriteAllBytes would otherwise throw an exception.
 
-let compile_kernel_nvrtc (kernel_name: string) (kernel_code: string) = 
+// When I decided to switch the arguments places, both of them being strings really started to trip me up.
+type KernelName = KernelName of string
+type KernelCode = KernelCode of string
+
+let compile_kernel_nvrtc (KernelName kernel_name) (KernelCode kernel_code) = 
     let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
     let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
     try k.Compile(
@@ -82,7 +86,7 @@ let compile_kernel_nvrtc (kernel_name: string) (kernel_code: string) =
 /// Puts quotes around the string.
 let quote x = sprintf "\"%s\"" x
 
-let inline compile_kernel_using_nvcc_bat_router (kernel_name: string) (kernel_code: string) =
+let inline compile_kernel_using_nvcc_bat_router (KernelName kernel_name) (KernelCode kernel_code) =
     let nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
     use p = 
         let procStartInfo = 
@@ -133,12 +137,12 @@ let inline compile_kernel_using_nvcc_bat_router (kernel_name: string) (kernel_co
 
     cuda_context.LoadKernelPTX(target_path,kernel_name)
 
-let load_kernel compile_kernel (kernel_code: string) (kernel_name: string) = 
+let load_kernel compile_kernel (KernelName kernel_name as kn) (KernelCode kernel_code as kc) = 
     let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
         
     if IO.File.Exists(kernel_path) 
     then cuda_context.LoadKernelPTX(kernel_path,kernel_name) // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
-    else compile_kernel kernel_code kernel_name
+    else compile_kernel kn kc
 
 let inline load_kernel_nvrtc kernel_name kernel_code = load_kernel compile_kernel_nvrtc kernel_name kernel_code
 let inline load_kernel_nvcc kernel_name kernel_code = load_kernel compile_kernel_using_nvcc_bat_router kernel_name kernel_code
