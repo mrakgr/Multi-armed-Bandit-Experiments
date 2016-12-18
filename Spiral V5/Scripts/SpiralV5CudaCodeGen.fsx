@@ -507,10 +507,27 @@ let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_
     let out_group = [CudaGroup(num_out,args_out)]
     map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
 
+//let map_module num_in names_in num_out names_out kernel_name f =
+//    let in_group = [CudaGroup(num_in,[CudaArray(names_in,CudaConst CudaFloat,["n"])])]
+//    let out_group = [CudaGroup(num_out,[CudaArray(names_out,CudaFloat,["n"])])]
+//    map_module' in_group out_group kernel_name f
+
+/// By necesity the coefficiencts have to be constants otherwise the reverse operation would
+/// require a reduction step. I'll think about how I want to deal with this in a general manner later.
+// TODO: Figure out how to deal with shared vs constant variables in this library.
+let mapcoef_module num_in names_in num_const names_const num_out names_out kernel_name f =
+    let len_in = num_in * List.length names_in
+    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
+    map_module' [CudaGroup(num_in,[CudaArray(names_in,CudaConst CudaFloat,["n"])])
+                 CudaGroup(num_const,cvars)]
+                [CudaGroup(num_out,[CudaArray(names_out,CudaFloat,["n"])])] kernel_name
+                (fun outs inps -> 
+                    let input_ars, cvars = List.splitAt len_in inps
+                    f outs input_ars cvars)
+
+// Rederived from the mapcoef_module function.
 let map_module num_in names_in num_out names_out kernel_name f =
-    let in_group = [CudaGroup(num_in,[CudaArray(names_in,CudaConst CudaFloat,["n"])])]
-    let out_group = [CudaGroup(num_out,[CudaArray(names_out,CudaFloat,["n"])])]
-    map_module' in_group out_group kernel_name f
+    mapcoef_module num_in names_in 0 [] num_out names_out kernel_name (fun outs input_ars cvars -> f outs input_ars)
 
 let map_module_1_1 name f =
     map_module 1 ["x"] 1 ["o"] name (fun [o] [x] -> [o == f x])
@@ -526,25 +543,54 @@ let map_module_3_1 name f =
 //                name
 //               (fun [x_adj] [o_pr;o_adj;x_pr] -> [x_adj +?= (f o_pr o_adj x_pr x_adj)])
 
-/// The map_backwards function is intended to be a mirror of the map_module function so its input's adjoints are outputs and
-/// its prev_outputs are part of the input.
-let map_backwards_module num_in names_in num_out names_out kernel_name f =
+//let map_backwards_module num_in names_in num_out names_out kernel_name f =
+//    let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
+//    let names_into_primals names = List.map (fun name -> name+"_primal_") names
+//    let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
+//
+//    let names_out = separate_names_into_prim_and_adj names_out
+//    let names_in_prim = names_into_primals names_in
+//    let names_in_adj = names_into_adjoints names_in
+//    let len_out = num_out * List.length names_out
+//
+//    map_module' [CudaGroup(num_out,[CudaArray(names_out,CudaConst CudaFloat,["n"])])
+//                 CudaGroup(num_in,[CudaArray(names_in_prim,CudaConst CudaFloat,["n"])])] 
+//                [CudaGroup(num_in,[CudaArray(names_in_adj,CudaFloat,["n"])])] 
+//                kernel_name
+//                (fun input_adjoints output_prim_adj_and_input_prims -> 
+//                    let output_prim_adj, input_prims = List.splitAt len_out output_prim_adj_and_input_prims
+//                    f input_adjoints output_prim_adj input_prims)
+
+let mapcoef_backwards_module num_in names_in num_const names_const num_out names_out kernel_name f =
     let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
     let names_into_primals names = List.map (fun name -> name+"_primal_") names
     let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
+    
+    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
 
     let names_out = separate_names_into_prim_and_adj names_out
     let names_in_prim = names_into_primals names_in
     let names_in_adj = names_into_adjoints names_in
     let len_out = num_out * List.length names_out
+    let len_in = num_in * List.length names_in_prim
 
     map_module' [CudaGroup(num_out,[CudaArray(names_out,CudaConst CudaFloat,["n"])])
-                 CudaGroup(num_in,[CudaArray(names_in_prim,CudaConst CudaFloat,["n"])])] 
+                 CudaGroup(num_in,[CudaArray(names_in_prim,CudaConst CudaFloat,["n"])])
+                 CudaGroup(num_const,cvars)] 
                 [CudaGroup(num_in,[CudaArray(names_in_adj,CudaFloat,["n"])])] 
                 kernel_name
-                (fun input_adjoints output_prim_adj_and_input_prims -> 
-                    let output_prim_adj, input_prims = List.splitAt len_out output_prim_adj_and_input_prims
-                    f input_adjoints output_prim_adj input_prims)
+                (fun input_adjoints output_prim_adj_and_input_prims_and_cvars -> 
+                    let output_prim_adj, input_prims_and_cvars = List.splitAt len_out output_prim_adj_and_input_prims_and_cvars
+                    let input_prims, cvars = List.splitAt len_in input_prims_and_cvars
+                    f input_adjoints output_prim_adj input_prims cvars)
+
+// The map_backwards function is intended to be a mirror of the map_module function so its input's adjoints are outputs and
+// its prev_outputs are part of the input.
+// Rederived from the mapcoef_backwards_module function.
+let map_backwards_module num_in names_in num_out names_out kernel_name f =
+    mapcoef_backwards_module num_in names_in 0 [] num_out names_out kernel_name 
+        (fun input_adjoints output_prim_adj input_prims cvars -> 
+            f input_adjoints output_prim_adj input_prims)
 
 let map_backwards_module_1_1 name f =
     map_backwards_module 1 ["x"] 1 ["o"] name <| fun [x_adj] [o_pr;o_adj] [x_pr] -> [x_adj +?= f (o_pr, o_adj) x_pr]
@@ -567,19 +613,6 @@ let mapcoef_module_1_1_1 name f =
                  CudaGroup(1,[CudaVar("const_var",CudaConst CudaFloat)])]
                 [CudaGroup(1,[CudaArray(["o"],CudaFloat,["n"])])] name
                 (fun [o] [x;cvar] -> [o == f x cvar])
-
-/// By necesity the coefficiencts have to be constants otherwise the reverse operation would
-/// require a reduction step. I'll think about how I want to deal with this in a general manner later.
-// TODO: Figure out how to deal with shared vs constant variables in this library.
-let mapcoef_module num_in names_in num_const names_const num_out names_out kernel_name f =
-    let len_in = num_in * List.length names_in
-    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
-    map_module' [CudaGroup(num_in,[CudaArray(names_in,CudaConst CudaFloat,["n"])])
-                 CudaGroup(num_const,cvars)]
-                [CudaGroup(num_out,[CudaArray(names_out,CudaFloat,["n"])])] kernel_name
-                (fun outs inps -> 
-                    let input_ars, cvars = List.splitAt len_in inps
-                    f outs input_ars cvars)
 
 let mapcoef_backwards_module num_in names_in num_const names_const num_out names_out kernel_name f =
     let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
@@ -748,3 +781,7 @@ let clip =
         map_module' [CudaArray(["x"],CudaConst CudaFloat,["n"]); CudaVar("min",CudaConst CudaFloat); CudaVar("max",CudaConst CudaFloat)] 
                     [CudaArray(["o"],CudaFloat,["n"])] name
                     (fun [o] [x;min;max] -> [o == if_ (x .< min) min (if_ (x .> max) max x)])
+
+type Op<'a> = 
+    | D of 'a
+    | Op of ('a -> 'a) * Op<'a> * Op<'a>
