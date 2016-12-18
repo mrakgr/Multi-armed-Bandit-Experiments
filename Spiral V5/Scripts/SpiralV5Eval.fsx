@@ -459,8 +459,8 @@ let rec eval<'a> (env: SpiralEnv) (x: SpiralExp<'a>): 'a =
         if_not_evaluated r id <| fun _ -> activation id (eval' x) [min;max] clipped_sigmoid clipped_sigmoid_backward env
     | Square(id, x, r) ->
         if_not_evaluated r id <| fun _ -> activation id (eval' x) [] square square_backward env
-    | Sum(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> 
+//    | Sum(id, x, r) ->
+//        if_not_evaluated r id <| fun _ -> 
 //| Sum of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
 //| Scale of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
 //| SumScalars of id: int * SpiralExpF32 [] * return_type: (Df -> 'a)
