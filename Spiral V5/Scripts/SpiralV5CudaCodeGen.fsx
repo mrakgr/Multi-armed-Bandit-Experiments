@@ -131,7 +131,7 @@ type CudaEnvironment =
 
     static member create() = {indentation=0; variables=Map.empty; mutable_separator=";\n"}
 
-type CudaGroupFlattener<'a> =
+type GenericCudaGroupFlattener<'a> =
 | ToCudaVarList of (CudaVar -> 'a)
 | ToCudaExprList of ar_accessor: CudaExpr list * (CudaExpr -> 'a)
 
@@ -154,10 +154,10 @@ let generic_flatten_cudagroup<'a> num subvars (flattener: CudaGroupFlattener<'a>
             ) subvars
         ) [] {1..num}
 
-let flatten_cudagroup num subvars =
+let flatten_cudagroup_to_cudavar_list num subvars =
     generic_flatten_cudagroup num subvars (ToCudaVarList id)
 
-let flatten_cudagroup_v2 num subvars (ar_accessor: CudaExpr list) =
+let flatten_cudagroup_to_cudaexp_list num subvars (ar_accessor: CudaExpr list) =
     generic_flatten_cudagroup num subvars (ToCudaExprList(ar_accessor, id))
 
 /// Unfolds the method arguments and returns them in a list along with the new environment.
@@ -180,7 +180,7 @@ let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
                 let acc, env = loop vars_to_print env acc
                 loop t (env.AddVar(name,h)) (h :: acc)
             | CudaGroup(num, subvars) ->
-                flatten_cudagroup num subvars
+                flatten_cudagroup_to_cudavar_list num subvars
                 |> fun args -> loop (args @ t) env acc
     let acc, env = loop args env []
     List.rev acc, env
@@ -384,7 +384,7 @@ let cudavars_to_cudaexps vars (ar_accessor: CudaExpr list) =
         match var with
         | CudaVar(name,typ) -> [Var(name)]
         | CudaArray(name,typ,bound_size) -> [VarAr(Var(name), ar_accessor)]
-        | CudaGroup(num,subvars) -> flatten_cudagroup_v2 num subvars ar_accessor
+        | CudaGroup(num,subvars) -> flatten_cudagroup_to_cudaexp_list num subvars ar_accessor
         ) vars
 
 let zero = Value "0"

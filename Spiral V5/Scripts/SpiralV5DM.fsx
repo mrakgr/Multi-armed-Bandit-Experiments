@@ -57,7 +57,7 @@ type Df =
     member t.Pr = t.P.Value.Value
 
     static member inline create P =
-        {P=ref (lazy P);A=ref 0.0f}
+        {P=ref P;A=ref 0.0f}
 
 type DM<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>
         (size: int[], data: CudaDeviceVariable<'t>[]) =

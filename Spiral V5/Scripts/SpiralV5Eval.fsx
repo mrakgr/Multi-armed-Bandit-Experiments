@@ -305,10 +305,10 @@ let kernel_caller (str: CudaStream) (kernel: CudaKernel) (signs: CudaVar list) (
 
 // Trying to figure out how to do a generic launcher function with closures is making me depressed so I'll
 // use a discriminated union type instead.
-type Launcher =
+type GenericLauncher =
 | MapLauncher of args_in: (int[] * VarF32) list * args_cvar: float32 list * args_out: (int[] * VarF32) list
 | MapRedoMapLauncher of args_in: (int[] * VarF32) list * args_cvar: float32 list * args_out: (int[] * VarF32) list
-| MapRedocolMapLauncher
+//| MapRedocolMapLauncher
 
 let generic_lanucher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) lan =
     // Checks whether all the sizes are the same.
@@ -338,7 +338,7 @@ let generic_lanucher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) lan
             match lan with
             | MapLauncher _ -> map_launcher_block_size
             | MapRedoMapLauncher _ -> map_redo_map_launcher_block_size
-            | MapRedocolMapLauncher _ -> map_redocol_map_launcher_block_size
+            //| MapRedocolMapLauncher _ -> map_redocol_map_launcher_block_size
 
         let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
         kernel.GridDimensions <- dim3(gridSize)
@@ -390,10 +390,24 @@ let seqmatmult id (l: (DM<float32> * DM<float32>) list) (env: SpiralEnv) =
 let matmult id (a: DM<float32>) (b: DM<float32>) (env: SpiralEnv) =
     seqmatmult id [a,b] env
 
-let activations id (x: DM<float32> list) cvars forward backward (env: SpiralEnv) =
-    let c = env.Mem.GetDM(x.Head.Size,default_num_vars, env)
+type GenericActivationType<'a> =
+| MapActivation of (DM<float32> -> 'a)
+| MapRedoMapActivation of (Df -> 'a)
+
+let generic_activations id (x: DM<float32> list) cvars forward backward (env: SpiralEnv) act =
+    let c = 
+        match act with
+        | MapActivation _ -> env.Mem.GetDM(x.Head.Size,default_num_vars, env)
+        | MapRedoMapActivation _ -> env.Mem.GetDM([|1|],default_num_vars, env)
+    
     let input_prims = x |> List.map (fun x -> x.P')
-    map_launcher env.Str forward input_prims cvars [c.P']
+
+    let launcher = 
+        match act with
+        | MapActivation _ -> map_launcher 
+        | MapRedoMapActivation _ -> map_redo_map_launcher
+
+    launcher env.Str forward input_prims cvars [c.P']
 
     env.Nodes.Add(id,c)
 
@@ -402,13 +416,21 @@ let activations id (x: DM<float32> list) cvars forward backward (env: SpiralEnv)
             let input_adjs = x |> List.map (fun x -> x.A')
             let activation_backward () =
                 let err_args = [c.P';c.A']
-                map_launcher env.Str backward (err_args @ input_prims) cvars input_adjs
+                launcher env.Str backward (err_args @ input_prims) cvars input_adjs
             env.PushTape activation_backward
 
-    c
+    match act with
+    | MapActivation r -> r c
+    | MapRedoMapActivation r -> r (Df.create (lazy c.P.Gather().[0]))
 
+let activations_map id' (x: DM<float32> list) cvars forward backward (env: SpiralEnv) =
+    generic_activations id' x cvars forward backward env (MapActivation id)
+
+let activations_map_redo_map id' (x: DM<float32> list) cvars forward backward (env: SpiralEnv) =
+    generic_activations id' x cvars forward backward env (MapRedoMapActivation id)
+    
 let activation id (x: DM<float32>) cvars forward backward (env: SpiralEnv) =
-    activations id [x] cvars forward backward env
+    activations_map id [x] cvars forward backward env 
 
 let seqhadmult id (ab: (DM<float32> * DM<float32>) list) env =
     let l = ab.Length
