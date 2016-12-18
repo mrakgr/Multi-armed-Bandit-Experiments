@@ -131,6 +131,35 @@ type CudaEnvironment =
 
     static member create() = {indentation=0; variables=Map.empty; mutable_separator=";\n"}
 
+type CudaGroupFlattener<'a> =
+| ToCudaVarList of (CudaVar -> 'a)
+| ToCudaExprList of ar_accessor: CudaExpr list * (CudaExpr -> 'a)
+
+// I can't believe I managed to abstract this.
+// This is what GADTs would give you, except with more efficiency.
+// At the end of suffering, lies inspiration.
+let generic_flatten_cudagroup<'a> num subvars (flattener: CudaGroupFlattener<'a>): 'a list =
+    Seq.fold (fun l i ->
+        l @ List.map (fun subvar ->
+            match subvar with
+            | CudaVar(name,typ) -> 
+                match flattener with
+                | ToCudaVarList r -> CudaVar (name + string i, typ) |> r
+                | ToCudaExprList(ac,r) -> Var(name + string i) |> r
+            | CudaArray(name,typ,bound_size) ->
+                match flattener with
+                | ToCudaVarList r -> CudaArray (name + string i, typ, bound_size) |> r
+                | ToCudaExprList(ar_accessor,r) -> VarAr(Var(name + string i), ar_accessor) |> r
+            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+            ) subvars
+        ) [] {1..num}
+
+let flatten_cudagroup num subvars =
+    generic_flatten_cudagroup num subvars (ToCudaVarList id)
+
+let flatten_cudagroup_v2 num subvars (ar_accessor: CudaExpr list) =
+    generic_flatten_cudagroup num subvars (ToCudaExprList(ar_accessor, id))
+
 /// Unfolds the method arguments and returns them in a list along with the new environment.
 let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
     let rec loop (args: CudaVar list) (env: CudaEnvironment) acc =
@@ -151,16 +180,7 @@ let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
                 let acc, env = loop vars_to_print env acc
                 loop t (env.AddVar(name,h)) (h :: acc)
             | CudaGroup(num, subvars) ->
-                Seq.fold (fun (l: CudaVar list) i ->
-                    l @ List.map (fun subvar ->
-                        match subvar with
-                        | CudaVar(name,typ) -> 
-                            CudaVar (name + string i, typ)
-                        | CudaArray(name,typ,bound_size) ->
-                            CudaArray (name + string i, typ, bound_size)
-                        | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
-                        ) subvars
-                    ) [] {1..num}
+                flatten_cudagroup num subvars
                 |> fun args -> loop (args @ t) env acc
     let acc, env = loop args env []
     List.rev acc, env
@@ -364,16 +384,7 @@ let cudavars_to_cudaexps vars (ar_accessor: CudaExpr list) =
         match var with
         | CudaVar(name,typ) -> [Var(name)]
         | CudaArray(name,typ,bound_size) -> [VarAr(Var(name), ar_accessor)]
-        | CudaGroup(num,subvars) ->
-            Seq.fold (fun l i ->
-                l @ List.map (fun subvar ->
-                    match subvar with
-                    | CudaVar(name,typ) -> Var(name + string i)
-                    | CudaArray(name,typ,bound_size) -> 
-                        VarAr(Var(name + string i), ar_accessor)
-                    | x -> failwithf "%A not supported as a subtype of CudaGroup."  x
-                    ) subvars
-                ) [] {1..num}
+        | CudaGroup(num,subvars) -> flatten_cudagroup_v2 num subvars ar_accessor
         ) vars
 
 let zero = Value "0"
