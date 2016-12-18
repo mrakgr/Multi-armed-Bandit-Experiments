@@ -507,11 +507,6 @@ let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_
     let out_group = [CudaGroup(num_out,args_out)]
     map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
 
-//let map_module num_in names_in num_out names_out kernel_name f =
-//    let in_group = [CudaGroup(num_in,[CudaArray(names_in,CudaConst CudaFloat,["n"])])]
-//    let out_group = [CudaGroup(num_out,[CudaArray(names_out,CudaFloat,["n"])])]
-//    map_module' in_group out_group kernel_name f
-
 /// By necesity the coefficiencts have to be constants otherwise the reverse operation would
 /// require a reduction step. I'll think about how I want to deal with this in a general manner later.
 // TODO: Figure out how to deal with shared vs constant variables in this library.
@@ -535,31 +530,6 @@ let map_module_2_1 name f =
     map_module 2 ["x"] 1 ["o"] name (fun [o] [x1;x2] -> [o == f x1 x2])
 let map_module_3_1 name f =
     map_module 3 ["x"] 1 ["o"] name (fun [o] [x1;x2;x3] -> [o == f x1 x2 x3])
-
-//let map_backwards_module_1_1 name f =
-//    map_module' [CudaGroup(1,[CudaArray(["o_primal_";"o_adjoint_"],CudaConst CudaFloat,["n"])])
-//                 CudaGroup(1,[CudaArray(["x_primal_"],CudaConst CudaFloat,["n"])])] 
-//                [CudaGroup(1,[CudaArray(["x_adjoint_"],CudaFloat,["n"])])] 
-//                name
-//               (fun [x_adj] [o_pr;o_adj;x_pr] -> [x_adj +?= (f o_pr o_adj x_pr x_adj)])
-
-//let map_backwards_module num_in names_in num_out names_out kernel_name f =
-//    let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
-//    let names_into_primals names = List.map (fun name -> name+"_primal_") names
-//    let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
-//
-//    let names_out = separate_names_into_prim_and_adj names_out
-//    let names_in_prim = names_into_primals names_in
-//    let names_in_adj = names_into_adjoints names_in
-//    let len_out = num_out * List.length names_out
-//
-//    map_module' [CudaGroup(num_out,[CudaArray(names_out,CudaConst CudaFloat,["n"])])
-//                 CudaGroup(num_in,[CudaArray(names_in_prim,CudaConst CudaFloat,["n"])])] 
-//                [CudaGroup(num_in,[CudaArray(names_in_adj,CudaFloat,["n"])])] 
-//                kernel_name
-//                (fun input_adjoints output_prim_adj_and_input_prims -> 
-//                    let output_prim_adj, input_prims = List.splitAt len_out output_prim_adj_and_input_prims
-//                    f input_adjoints output_prim_adj input_prims)
 
 let mapcoef_backwards_module num_in names_in num_const names_const num_out names_out kernel_name f =
     let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
@@ -602,49 +572,28 @@ let map_backwards_module_2_1 name f1 f2 =
         ]
 
 let map_backwards_module_3_1 name f1 f2 f3 =
-    map_backwards_module 3 ["x"] 1 ["o"] name <| fun [x_adj1;x_adj2;x_adj3] [o_pr;o_adj] [x_pr1;x_pr2;x_pr3] -> [
+    map_backwards_module 3 ["x"] 1 ["o"] name <| fun [x_adj1;x_adj2;x_adj3] [o_pr;o_adj] [x_pr1;x_pr2;x_pr3] -> 
+        [
         x_adj1 +?= f1 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
         x_adj2 +?= f2 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
         x_adj3 +?= f3 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
         ]
 
 let mapcoef_module_1_1_1 name f =
-    map_module' [CudaGroup(1,[CudaArray(["x"],CudaConst CudaFloat,["n"])])
-                 CudaGroup(1,[CudaVar("const_var",CudaConst CudaFloat)])]
-                [CudaGroup(1,[CudaArray(["o"],CudaFloat,["n"])])] name
-                (fun [o] [x;cvar] -> [o == f x cvar])
+    mapcoef_module 1 ["x"] 1 ["const_var"] 1 ["o"] name 
+        (fun [out] [in_] [cvar] -> [out == f in_ cvar])
 
-let mapcoef_backwards_module num_in names_in num_const names_const num_out names_out kernel_name f =
-    let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
-    let names_into_primals names = List.map (fun name -> name+"_primal_") names
-    let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
-    
-    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
+let mapcoef_module_1_2_1 name f =
+    mapcoef_module 1 ["x"] 2 ["const_var"] 1 ["o"] name 
+        (fun [out] [in_] [cvar1;cvar2] -> [out == f in_ cvar1 cvar2])
 
-    let names_out = separate_names_into_prim_and_adj names_out
-    let names_in_prim = names_into_primals names_in
-    let names_in_adj = names_into_adjoints names_in
-    let len_out = num_out * List.length names_out
-    let len_in = num_in * List.length names_in_prim
+let mapcoef_module_backwards_1_1_1 name f =
+    mapcoef_backwards_module 1 ["x"] 1 ["const_var"] 1 ["o"] name 
+        (fun [inp_adj] [out_prim;out_adj] [inp_prim] [cvar] -> [inp_adj +?= f (out_prim, out_adj) inp_prim cvar])
 
-    map_module' [CudaGroup(num_out,[CudaArray(names_out,CudaConst CudaFloat,["n"])])
-                 CudaGroup(num_in,[CudaArray(names_in_prim,CudaConst CudaFloat,["n"])])
-                 CudaGroup(num_const,cvars)] 
-                [CudaGroup(num_in,[CudaArray(names_in_adj,CudaFloat,["n"])])] 
-                kernel_name
-                (fun input_adjoints output_prim_adj_and_input_prims_and_cvars -> 
-                    let output_prim_adj, input_prims_and_cvars = List.splitAt len_out output_prim_adj_and_input_prims_and_cvars
-                    let input_prims, cvars = List.splitAt len_in input_prims_and_cvars
-                    f input_adjoints output_prim_adj input_prims cvars)
-
-//let mapcoef_module_2_1 name f =
-//    map_module' [CudaGroup(2,[CudaArray(["x"],CudaConst CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)])] 
-//                [CudaGroup(1,[CudaArray(["o"],CudaFloat,["n"])])] name
-//                (fun [o] [x1;coef_x1;x2;coef_x2] -> [o == f x1 coef_x1 x2 coef_x2])
-//let mapcoef_module_3_1 name f =
-//    map_module' [CudaGroup(3,[CudaArray(["x"],CudaConst CudaFloat,["n"]); CudaVar("coef_x",CudaConst CudaFloat)])] 
-//                [CudaGroup(1,[CudaArray(["o"],CudaFloat,["n"])])] name
-//                (fun [o] [x1;coef_x1;x2;coef_x2;x3;coef_x3] -> [o == f x1 coef_x1 x2 coef_x2 x3 coef_x3])
+let mapcoef_module_backwards_1_2_1 name f =
+    mapcoef_backwards_module 1 ["x"] 2 ["const_var"] 1 ["o"] name 
+        (fun [inp_adj] [out_prim;out_adj] [inp_prim] [cvar1;cvar2] -> [inp_adj +?= f (out_prim, out_adj) inp_prim cvar1 cvar2])
 
 let unary_op op = Lambda([CudaVar("x",CudaAuto)],op (Var "x"))
 let binary_op op = Lambda([CudaVar("x1",CudaAuto);CudaVar("x2",CudaAuto)], op (Var "x1") (Var "x2"))
@@ -671,16 +620,20 @@ let map_redo_map_module_1_1 name map_load_op reduce_op map_store_op =
         (fun [o1] value -> [AtomicAdd(o1, map_store_op value)])
         (string map_redo_map_launcher_block_size)
 
-let square = 
-    let name = KernelName "Square"
-    map_module_1_1 name <| fun x -> x * x
-
-let square_backward =
-    let name = KernelName "SquareBackward"
-    map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> er_adj * Value "2" * inp_pr
-
 let map_fst f x =
     f (fst x), snd x
+
+let square = 
+    lazy
+        let name = KernelName "Square"
+        map_module_1_1 name <| fun x -> x * x
+        |> map_fst (load_kernel_nvcc name)
+
+let square_backward =
+    lazy
+        let name = KernelName "SquareBackward"
+        map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> er_adj * Value "2" * inp_pr
+        |> map_fst (load_kernel_nvcc name)
 
 let sigmoid = 
     lazy
@@ -712,15 +665,6 @@ let relu_backward =
         let name = KernelName "ReluBackward"
         map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> if_ (inp_pr .> zero) er_adj zero
         |> map_fst (load_kernel_nvcc name)
-
-//let hadmult = 
-//    let name = "HadMult"
-//    map_module_2_1 name <| fun x1 x2 -> x1 * x2
-//let hadmult_backward =
-//    let name = "HadMultBackward"
-//    map_backwards_module_2_1 name
-//        (fun (er_pr,er_adj) inp_pr1 inp_pr2 -> er_adj*inp_pr2)
-//        (fun (er_pr,er_adj) inp_pr1 inp_pr2 -> er_adj*inp_pr1)
 
 // The hadmult module generic in the number of input arguments.
 let hadmult_generic num_input_pairs =
@@ -768,20 +712,39 @@ let sum =
         map_redo_map_module_1_1 name id (+) (id)
         |> map_fst (load_kernel_nvcc name)
 
+printfn "%A" (map_redo_map_module_1_1 (KernelName "Sum") id (+) (id))
+
 let colsum = map_redocol_map_module_1_1 (KernelName "Colsum") id (+) id
 let gradclip = 
     lazy 
         let name = KernelName "GradClip"
-        mapcoef_module_1_1 name <| fun x coef_x -> if_ (x .< -coef_x) -coef_x (if_ (x .> coef_x) coef_x x)
+        mapcoef_module_1_1_1 name <| fun x bound -> if_ (x .< -bound) -bound (if_ (x .> bound) bound x)
         |> map_fst (load_kernel_nvcc name)
 
 let clip =
     lazy
         let name = KernelName "Clip"
-        map_module' [CudaArray(["x"],CudaConst CudaFloat,["n"]); CudaVar("min",CudaConst CudaFloat); CudaVar("max",CudaConst CudaFloat)] 
-                    [CudaArray(["o"],CudaFloat,["n"])] name
-                    (fun [o] [x;min;max] -> [o == if_ (x .< min) min (if_ (x .> max) max x)])
+        mapcoef_module_1_2_1 name (fun x min max -> if_ (x .< min) min (if_ (x .> max) max x))
+        |> map_fst (load_kernel_nvcc name)
 
-type Op<'a> = 
-    | D of 'a
-    | Op of ('a -> 'a) * Op<'a> * Op<'a>
+let clip_backward =
+    lazy
+        let name = KernelName "ClipBackward"
+        mapcoef_module_backwards_1_2_1 name (fun (o_pr, o_adj) x min max -> if_ (x .< min) zero (if_ (x .> max) zero o_adj))
+        |> map_fst (load_kernel_nvcc name)
+
+let clipped_sigmoid = 
+    lazy
+        let name = KernelName "Sigmoid"
+        mapcoef_module_1_2_1 name <| fun x min max -> 
+            letcavar "post_act" (one / (one + Exp(-x))) <| fun x ->
+                [if_ (x .< min) min (if_ (x .> max) max x)]
+        |> map_fst (load_kernel_nvcc name)
+
+// I hope the o_pr .<= min optimization will not backfire on me.
+let clipped_sigmoid_backward =
+    lazy
+        let name = KernelName "SigmoidBackward"
+        mapcoef_module_backwards_1_2_1 name <| fun (o_pr, o_adj) x min max -> 
+            if_ (o_pr .<= min) zero (if_ (o_pr .>= max) zero (o_adj * o_pr * (one - o_pr)))
+        |> map_fst (load_kernel_nvcc name)

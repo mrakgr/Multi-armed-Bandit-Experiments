@@ -12,24 +12,28 @@ open ManagedCuda.CudaBlas
 
 let default_num_vars = 2
 
+type SpiralExpDMF32 = SpiralExp<DM<float32>>
+and SpiralExpF32 = SpiralExp<Df>
 // Unlike in the last iteration of the library, I need the ids to make sure that the expressions are evaluated only once.
-type SpiralExp =
+and SpiralExp<'a> =
 // Root nodes
-| BaseNode of DM<float32>
+| BaseNode of 'a //DM<float32>
 // Basic operations
-| Matmult of id: int * SpiralExp * SpiralExp
-| SeqMatmult of id: int * (SpiralExp * SpiralExp) list
-| Add of id: int * alpha: float32 * matrix: SpiralExp * beta: float32 * vector: SpiralExp // Addition with broadcasting.
-| Hadmult of id: int * SpiralExp * SpiralExp
-| SeqHadmult of id: int * (SpiralExp * SpiralExp) list
+// Note: The return_type: (DM<float32> -> 'a) things are just hooks for the typechecker to associate the evaluator return types with
+// the generic parameter in the SpiralExp. It is a way of emulating GADTs with standard F# discriminated unions.
+| Matmult of id: int * SpiralExpDMF32 * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+| SeqMatmult of id: int * (SpiralExpDMF32 * SpiralExpDMF32) list * return_type: (DM<float32> -> 'a)
+| Add of id: int * alpha: float32 * matrix: SpiralExpDMF32 * beta: float32 * vector: SpiralExpDMF32 * return_type: (DM<float32> -> 'a) // Addition with broadcasting.
+| Hadmult of id: int * SpiralExpDMF32 * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+| SeqHadmult of id: int * (SpiralExpDMF32 * SpiralExpDMF32) list * return_type: (DM<float32> -> 'a)
 // Activations
-| Relu of id: int * SpiralExp
-| Tanh of id: int * SpiralExp
-| Sigmoid of id: int * SpiralExp
-//| ClippedSigmoid of id: int * min: float32 * max: float32 * SpiralExp // TODO: Make optimized implementation
-//| SoftmaxInstance of id: int * SpiralExp
-//| SoftmaxChannel of id: int * SpiralExp // TODO: I forgot what these two softmaxes are supposed to be doing.
-| Clip of id: int * min: float32 * max: float32 * SpiralExp
+| Relu of id: int * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+| Tanh of id: int * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+| Sigmoid of id: int * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+| ClippedSigmoid of id: int * min: float32 * max: float32 * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+//| SoftmaxInstance of id: int * SpiralExpDMF32
+//| SoftmaxChannel of id: int * SpiralExpDMF32 // TODO: I forgot what these two softmaxes are supposed to be doing.
+| Clip of id: int * min: float32 * max: float32 * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
 // Normalization functions
 //| BatchNorm of id: int * SpiralExp
 //| LayerNorm of id: int * SpiralExp // TODO: Need to implement this one.
@@ -37,15 +41,15 @@ type SpiralExp =
 //| Convolve of id: int * SpiralExp * SpiralExp
 //| Pool of id: int * SpiralExp
 // Cost function auxiliaries.
-| Square of id: int * SpiralExp
-| Sum of id: int * SpiralExp
-| Scale of id: int * SpiralExp
-| SumScalars of id: int * SpiralExp
-| Log of id: int * SpiralExp
-| ScalarMatrixAdd of id: int * SpiralExp
-// Optimized cost functions
-| SquaredError of id: int * SpiralExp // TODO: Need to implement this one.
-| CrossEntropy of id: int * SpiralExp // TODO: Need to implement this one.
+| Square of id: int * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+| Sum of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
+| Scale of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
+| SumScalars of id: int * SpiralExpF32 [] * return_type: (Df -> 'a)
+| Log of id: int * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+| ScalarMatrixAdd of id: int * SpiralExpDMF32 * coef: float32 * scalar: float32 * return_type: (DM<float32> -> 'a)
+// Cost functions
+| SquaredError of id: int * SpiralExpDMF32 * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
+| CrossEntropy of id: int * SpiralExpDMF32 * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
 
 type VarF32 = CudaDeviceVariable<float32>
 
@@ -299,28 +303,59 @@ let kernel_caller (str: CudaStream) (kernel: CudaKernel) (signs: CudaVar list) (
 
     kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
 
-let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) 
-        (args_in: (int[] * VarF32) list) 
-        (args_out: (int[] * VarF32) list) =
+// Trying to figure out how to do a generic launcher function with closures is making me depressed so I'll
+// use a discriminated union type instead.
+type Launcher =
+| MapLauncher of args_in: (int[] * VarF32) list * args_cvar: float32 list * args_out: (int[] * VarF32) list
+| MapRedoMapLauncher of args_in: (int[] * VarF32) list * args_cvar: float32 list * args_out: (int[] * VarF32) list
+| MapRedocolMapLauncher
+
+let generic_lanucher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) lan =
     // Checks whether all the sizes are the same.
-    args_in @ args_out
+    match lan with
+    | MapLauncher(args_in,args_cvar,args_out) -> args_in @ args_out
+    | MapRedoMapLauncher(args_in,args_cvar,args_out) -> 
+        args_out |> List.iter (fun x -> if fst x <> [|1|] then failwith "Outputs for the map_redo_map operations should be of size 1")
+        args_in
     |> List.toArray
     |> Array.map fst
     |> guardSizes
 
-    let f x = x |> List.map (fun (ex,x) -> CArrayF32 x)
+    // The function body.
+    match lan with
+    | MapLauncher(args_in,args_cvar,args_out) | MapRedoMapLauncher(args_in,args_cvar,args_out) ->
+        let f x = x |> List.map (fun (ex,x) -> CArrayF32 x)
 
-    let total_size = args_in.Head |> fst |> total_size_of
+        let total_size = args_in.Head |> fst |> total_size_of
 
-    let args_in = f args_in
-    let args_out = f args_out
+        let args_in = f args_in
+        let args_cvar = List.map CF32 args_cvar
+        let args_out = f args_out
 
-    let kernel, sig_ = ks.Value
-    let block_size = map_launcher_block_size
-    let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
-    kernel.GridDimensions <- dim3(gridSize)
-    kernel.BlockDimensions <- dim3(block_size)
-    kernel_caller str kernel sig_ (CInt total_size :: args_in) args_out
+        let kernel, sig_ = ks.Value
+
+        let block_size = 
+            match lan with
+            | MapLauncher _ -> map_launcher_block_size
+            | MapRedoMapLauncher _ -> map_redo_map_launcher_block_size
+            | MapRedocolMapLauncher _ -> map_redocol_map_launcher_block_size
+
+        let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
+        kernel.GridDimensions <- dim3(gridSize)
+        kernel.BlockDimensions <- dim3(block_size)
+        kernel_caller str kernel sig_ (CInt total_size :: args_in @ args_cvar) args_out
+
+let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) 
+        (args_in: (int[] * VarF32) list) 
+        (args_cvar: float32 list)
+        (args_out: (int[] * VarF32) list) =
+    generic_lanucher str ks (MapLauncher(args_in,args_cvar,args_out))
+
+let map_redo_map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
+        (args_in: (int[] * VarF32) list)
+        (args_cvar: float32 list)
+        (args_out: (int[] * VarF32) list) =
+    generic_lanucher str ks (MapRedoMapLauncher(args_in,args_cvar,args_out))
 
 let matmult_backwards (sa,a: DM<_>) (sb,b: DM<_>) (sc,c: DM<_>) (env: SpiralEnv) =
     if a.HasAdjoint then 
@@ -355,23 +390,10 @@ let seqmatmult id (l: (DM<float32> * DM<float32>) list) (env: SpiralEnv) =
 let matmult id (a: DM<float32>) (b: DM<float32>) (env: SpiralEnv) =
     seqmatmult id [a,b] env
 
-//let activation id (x: DM<float32>) forward backward (env: SpiralEnv) =
-//    let c = env.Mem.GetDM(x.Size,default_num_vars, env)
-//    map_launcher env.Str forward [x.P'] [c.P']
-//
-//    env.Nodes.Add(id,c)
-//
-//    if env.IsInferenceOnly = false then
-//        if c.HasAdjoint then
-//            let activation_backward () =
-//                map_launcher env.Str backward [c.P';c.A';x.P'] [x.A']
-//            env.PushTape activation_backward
-//    c
-
-let activations id (x: DM<float32> list) forward backward (env: SpiralEnv) =
+let activations id (x: DM<float32> list) cvars forward backward (env: SpiralEnv) =
     let c = env.Mem.GetDM(x.Head.Size,default_num_vars, env)
     let input_prims = x |> List.map (fun x -> x.P')
-    map_launcher env.Str forward input_prims [c.P']
+    map_launcher env.Str forward input_prims cvars [c.P']
 
     env.Nodes.Add(id,c)
 
@@ -380,54 +402,67 @@ let activations id (x: DM<float32> list) forward backward (env: SpiralEnv) =
             let input_adjs = x |> List.map (fun x -> x.A')
             let activation_backward () =
                 let err_args = [c.P';c.A']
-                map_launcher env.Str backward (err_args @ input_prims) input_adjs
+                map_launcher env.Str backward (err_args @ input_prims) cvars input_adjs
             env.PushTape activation_backward
 
     c
 
-let activation id (x: DM<float32>) forward backward (env: SpiralEnv) =
-    activations id [x] forward backward env
+let activation id (x: DM<float32>) cvars forward backward (env: SpiralEnv) =
+    activations id [x] cvars forward backward env
 
 let seqhadmult id (ab: (DM<float32> * DM<float32>) list) env =
     let l = ab.Length
     let forward_kernel = hadmult_generic_memoized l
     let backward_kernel = hadmult_backward_generic_memoized l
     let args = ab |> List.collect (fun (a,b) -> [a;b])
-    activations id args forward_kernel backward_kernel env
+    activations id args [] forward_kernel backward_kernel env
 
 let hadmult id (ab: DM<float32> * DM<float32>) env =
     seqhadmult id [ab] env
 
-let rec eval (env: SpiralEnv) x: DM<float32> =
+let rec eval<'a> (env: SpiralEnv) (x: SpiralExp<'a>): 'a =
     let eval' x = eval env x
-    let if_not_evaluated id f =
+    let if_not_evaluated r id f =
         match env.Nodes.TryGetValue id with
         | true, v -> v
         | false, _ -> f()
+        |> r
             
     match x with
     // Root nodes
     | BaseNode x -> x
     // Basic operations
-    | Matmult(id,a,b) ->
-        if_not_evaluated id <| fun _ ->
+    | Matmult(id, a, b, r) ->
+        if_not_evaluated r id <| fun _ ->
             matmult id (eval' a) (eval' b) env
-    | SeqMatmult(id,l) -> 
-        if_not_evaluated id <| fun _ ->
+    | SeqMatmult(id, l, r) -> 
+        if_not_evaluated r id <| fun _ ->
             let l = l |> List.map (fun (x,y) -> eval' x, eval' y)
             seqmatmult id l env
-    | Add(id,alpha,a,beta,b) ->
-        if_not_evaluated id <| fun _ ->
+    | Add(id, alpha, a, beta, b, r) ->
+        if_not_evaluated r id <| fun _ ->
             add_tensor id alpha (eval' a) beta (eval' b) env
-    | Hadmult(id,a,b) -> 
-        if_not_evaluated id <| fun _ -> hadmult id (eval' a, eval' b) env
-    | SeqHadmult(id,abs) ->
-        if_not_evaluated id <| fun _ -> 
+    | Hadmult(id, a, b, r) -> 
+        if_not_evaluated r id <| fun _ -> hadmult id (eval' a, eval' b) env
+    | SeqHadmult(id , abs, r) ->
+        if_not_evaluated r id <| fun _ -> 
             seqhadmult id (abs |> List.map (fun (a,b) -> eval' a, eval' b)) env
-    | Relu(id, x) ->
-        if_not_evaluated id <| fun _ -> activation id (eval' x) relu relu_backward env
-    | Tanh(id, x) ->
-        if_not_evaluated id <| fun _ -> activation id (eval' x) tanh tanh_backward env
-    | Sigmoid(id, x) ->
-        if_not_evaluated id <| fun _ -> activation id (eval' x) tanh tanh_backward env
-    | Clip(id, min, max) -> // ...
+    | Relu(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> activation id (eval' x) [] relu relu_backward env
+    | Tanh(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> activation id (eval' x) [] tanh tanh_backward env
+    | Sigmoid(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> activation id (eval' x) [] tanh tanh_backward env
+    | Clip(id, min, max, x, r) ->
+        if_not_evaluated r id <| fun _ -> activation id (eval' x) [min;max] clip clip_backward env
+    | ClippedSigmoid(id, min, max, x, r) ->
+        if_not_evaluated r id <| fun _ -> activation id (eval' x) [min;max] clipped_sigmoid clipped_sigmoid_backward env
+    | Square(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> activation id (eval' x) [] square square_backward env
+    | Sum(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> 
+//| Sum of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
+//| Scale of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
+//| SumScalars of id: int * SpiralExpF32 [] * return_type: (Df -> 'a)
+//| Log of id: int * SpiralExpDMF32 * return_type: (DM<float32> -> 'a)
+//| ScalarMatrixAdd of id: int * SpiralExpDMF32 * coef: float32 * scalar: float32 * return_type: (DM<float32> -> 'a)
