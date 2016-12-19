@@ -371,39 +371,35 @@ type GenericActivationType<'r1,'r2,'size when 'size: equality> =
 | MapActivation of (DM<'size,float32> -> 'r1) * (DM<'size,float32> -> 'r2)
 | MapRedoMapActivation of (DM<'size,float32> -> 'r1) * (Df -> 'r2)
 
-let inline generic_get<'r1,'r2,'size when 'size: equality> (scalar_proof: Scalar -> 'size) (size: 'size) tot (act: GenericActivationType<'r1,'r2,'size>) (env: SpiralEnv): 'r1 =
+let generic_get<'r1,'r2,'size when 'size: equality> (scalar_proof: Scalar -> 'size) (size: 'size) tot (act: GenericActivationType<'r1,'r2,'size>) (env: SpiralEnv): 'r1 =
     match act with
     | MapActivation(r1,_) -> 
         env.Mem.GetDM(size,tot,default_num_vars, env) |> r1
     | MapRedoMapActivation(r1,_) -> 
         env.Mem.GetDM(scalar_proof Scalar,1,default_num_vars, env) |> r1
 
-let inline generic_activations''<'size when 'size: equality> id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) act =
-    let c: DM<_,_> = generic_get id (x.Head.Size) (x.Head.TotalSizeInElems) act env
-    ()
+let generic_activations''<'r2,'size1,'size2 when 'size1: equality and 'size2: equality> 
+        id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (act: GenericActivationType<DM<'size2,float32>,'r2,'size>) =
+    let c = generic_get id (x.Head.Size) (x.Head.TotalSizeInElems) act env
+    let input_prims = x |> List.map (fun x -> x.P')
 
-//    let input_prims = x |> List.map (fun x -> x.P')
-//
-//    let launcher = 
-//        match act with
-//        | MapActivation _ -> map_launcher 
-//        | MapRedoMapActivation _ -> map_redo_map_launcher
+    match act with
+    | MapActivation _ -> map_launcher env.Str forward input_prims cvars [c.P'] // Fuck.
+    | MapRedoMapActivation _ -> map_redo_map_launcher env.Str forward input_prims cvars [c.P']
 
-//    launcher env.Str forward input_prims cvars [c.P']
-//
-//    env.Nodes.Add(id,c)
-//
-//    if env.IsInferenceOnly = false then
-//        if c.HasAdjoint then
-//            let input_adjs = x |> List.map (fun x -> x.A')
-//            let activation_backward () =
-//                let err_args = [c.P';c.A']
-//                launcher env.Str backward (err_args @ input_prims) cvars input_adjs
-//            env.PushTape activation_backward
+    env.Nodes.Add(id,c)
 
-//    match act with
-//    | MapActivation r -> r c
-//    | MapRedoMapActivation r -> r (Df.create (lazy c.P.Gather().[0]))
+    if env.IsInferenceOnly = false then
+        if c.HasAdjoint then
+            let input_adjs = x |> List.map (fun x -> x.A')
+            let activation_backward () =
+                let err_args = [c.P';c.A']
+                launcher env.Str backward (err_args @ input_prims) cvars input_adjs
+            env.PushTape activation_backward
+
+    match act with
+    | MapActivation(_,r2) -> r2 c
+    | MapRedoMapActivation(_,r2) -> r2 (Df.create (lazy c.P.Gather().[0]))
 
 let activations_map id' (x: DM<float32> list) cvars forward backward (env: SpiralEnv) =
     generic_activations id' x cvars forward backward env (MapActivation id)
