@@ -49,22 +49,21 @@ let total_size_of size = Array.reduce (*) size
 /// The float scalar type
 type Df = 
     {
-    P : Lazy<float32> ref // primal
+    P : Lazy<float32> // primal
     A : float32 ref // adjoint
     }
 
-    /// Shorthand for t.P.Value.Value
-    member t.Pr = t.P.Value.Value
-
     static member inline create P =
-        {P=ref P;A=ref 0.0f}
+        {P=P;A=ref 0.0f}
 
-type DM<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>
-        (size: int[], data: CudaDeviceVariable<'t>[]) =
-    member val Size = size with get, set
-    member val Data = data with get, set
+type DM<'s,'t when 't: struct 
+               and 't: (new: unit -> 't) and 't:> System.ValueType
+               and 's: equality>
+        (size: 's, total_size_in_elems: int, data: CudaDeviceVariable<'t>[]) =
+    member t.Size = size
+    member t.Data = data
 
-    member t.TotalSize = total_size_of size
+    member t.TotalSizeInElems = total_size_in_elems
     member t.NumVars = t.Data.Length
 
     interface IDisposable with
@@ -76,46 +75,43 @@ let new_var (total_size: int) =
     x.Memset(0u)
     x
     
-let makeDMf32(size: int[], num_vars: int) =
-    let total_size = total_size_of size
-    new DM<float32>(size, Array.init num_vars <| fun _ -> new_var total_size)
+let makeDMf32(size: 's, total_size, num_vars: int) =
+    new DM<'s,float32>(size, total_size, Array.init num_vars <| fun _ -> new_var total_size)
 
-let primal (x: DM<_>) = let i=0 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have a primal."
-let adjoint (x: DM<_>) = let i=1 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an adjoint."
-let has_adjoint (x: DM<_>) = let i=1 in i < x.Data.Length
-let aux1 (x: DM<_>) = let i=2 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux1."
-let aux2 (x: DM<_>) = let i=3 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux2."
+let primal (x: DM<_,_>) = let i=0 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have a primal."
+let adjoint (x: DM<_,_>) = let i=1 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an adjoint."
+let has_adjoint (x: DM<_,_>) = let i=1 in i < x.Data.Length
+let aux1 (x: DM<_,_>) = let i=2 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux1."
+let aux2 (x: DM<_,_>) = let i=3 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux2."
 
 type DM with 
     member x.P = primal x
     member x.A = adjoint x
-    member x.P' = x.Size, primal x
-    member x.A' = x.Size, adjoint x
+    member x.P' = x.Size, x.TotalSizeInElems, primal x
+    member x.A' = x.Size, x.TotalSizeInElems, adjoint x
     member x.HasAdjoint = has_adjoint x
     member x.Aux1 = aux1 x
     member x.Aux2 = aux2 x
 
     /// Resizes the DM.
     /// Does the least amount of work possible.
-    member x.ResizeIf (dims: int[], num_vars: int) = 
-        let total_size = total_size_of dims
-        let total_size' = total_size_of x.Size
-        let new_size_is_bigger = total_size > total_size'
-
-        if x.Data.Length < num_vars then
-            x.Data <- Array.init num_vars <| fun i ->
-                if i < x.Data.Length then
-                    if new_size_is_bigger then dispose x.Data.[i]; new_var total_size
-                    else x.Data.[i]
-                else new_var total_size
-        elif new_size_is_bigger then
-            let l = min x.Data.Length num_vars
-            for i=0 to l-1 do
-                dispose x.Data.[i]; x.Data.[i] <- new_var total_size
-
-        // This is to help the GC a little.
-        if x.Size.Length = dims.Length then Array.Copy(dims,x.Size,dims.Length)
-        else x.Size <- dims
+//    member x.ResizeIf (dims: 's, total_size, num_vars: int) = 
+//        let new_size_is_bigger = total_size > x.TotalSize
+//
+//        if x.Data.Length < num_vars then
+//            x.Data <- Array.init num_vars <| fun i ->
+//                if i < x.Data.Length then
+//                    if new_size_is_bigger then dispose x.Data.[i]; new_var total_size
+//                    else x.Data.[i]
+//                else new_var total_size
+//        elif new_size_is_bigger then
+//            let l = min x.Data.Length num_vars
+//            for i=0 to l-1 do
+//                dispose x.Data.[i]; x.Data.[i] <- new_var total_size
+//
+//        // This is to help the GC a little.
+//        if x.Size.Length = dims.Length then Array.Copy(dims,x.Size,dims.Length)
+//        else x.Size <- dims
 
 let defaultLayout = cudnnTensorFormat.NCHW
 let defaultType = cudnnDataType.Float
@@ -179,6 +175,21 @@ type ConvolutionDescriptor with
         t.GetConvolution2dForwardOutputDim(s,f,&n,&c,&h,&w)
         n,c,h,w
 
+/// Disposes the old CudaDeviceVariable and returns the new in an efficient fashion.
+let resizeIf (total_size_in_elems: int) (x: CudaDeviceVariable<_>): CudaDeviceVariable<'t> = 
+    let total_size = sizeof<'t> * total_size_in_elems
+    let new_size_is_bigger = total_size > int x.SizeInBytes
+
+    if new_size_is_bigger then
+        x.Dispose()
+        new CudaDeviceVariable<_>(SizeT total_size_in_elems)
+    else
+        new CudaDeviceVariable<_>(x.DevicePointer,true,x.SizeInBytes)
+
+type GenericPoolGetter =
+| GetRegular
+| GetWorkspace
+
 open System.Collections.Generic
 type SpiralEnv =
     {
@@ -186,7 +197,7 @@ type SpiralEnv =
     Str : CudaStream
     Mem : ObjectPool
     Tape : Stack<unit -> unit>
-    Nodes : Dictionary<int,DM<float32>>
+    Nodes : Dictionary<int,obj>
     // State (immutable)
     IsInferenceOnly : bool
     }
@@ -194,10 +205,10 @@ type SpiralEnv =
     member t.PushTape x = t.Tape.Push x
 
 and ObjectPool() =
-    let dMPool = ResizeArray()
+    let dMPool = ResizeArray<obj>()
     let mutable dMp = 0
 
-    let workspace = new DM<byte>([||],[||])
+    let workspace = ResizeArray<obj>()
 
     let tensorDescriptorPool = Dictionary(HashIdentity.Structural)
     let filterDescriptorPool = Dictionary(HashIdentity.Structural)
@@ -227,42 +238,49 @@ and ObjectPool() =
         ObjectPool.GetFromDict activationDescriptorPool p (fun _ -> new ActivationDescriptor()) (fun (t: ActivationDescriptor) x -> x |> t.SetActivationDescriptor)
     member t.GetBNDescriptor ((nchw : int*int*int*int, mode : cudnnBatchNormMode, srcDesc : TensorDescriptor) as p) = 
         ObjectPool.GetFromDict BNDescriptorPool p 
-            (fun _ -> new TensorDescriptor()) 
+            (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member t.GetDM(size: int[], num_vars: int, env: SpiralEnv) =
-        if dMPool.Count > dMp then
-            let t: DM<float32> = dMPool.[dMp]
-            dMp <- dMp+1
-            t.ResizeIf(size, num_vars)
+    member inline private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv) getter: DM<'s,'t> =
+        let pool =
+            match getter with
+            | GetRegular -> dMPool
+            | GetWorkspace -> workspace
+
+        let get_var i =
+            let t = 
+                if pool.Count > dMp then resizeIf total_size_in_elems (pool.[dMp+i] :?> _)
+                else resizeIf total_size_in_elems CudaDeviceVariable<byte>.Null
+            pool.[dMp+i] <- t
+            t
+
+        let vars = [| for i=0 to num_vars-1 do yield get_var i |]
+
+        match getter with
+        | GetRegular -> 
+            dMp <- dMp + num_vars
+
             // The optimizers can only zero out the adjoints in the base nodes.
             // The object pool has to take up the slack for the rest.
-            if env.IsInferenceOnly = false && t.HasAdjoint then t.A.MemsetAsync(0u,env.Str.Stream) 
-            t
-        else
-            let t = makeDMf32(size,num_vars)
-            dMPool.Add(t)
-            dMp <- dMp+1
-            t
+            // The second variable is always the adjoint and here it is set to zero.
+            if env.IsInferenceOnly = false && vars.Length > 1 then vars.[1].MemsetAsync(0u,env.Str.Stream) 
+        | GetWorkspace -> ()
 
-    member t.GetWorkspace<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>(size: int) =
-        let total_size = sizeof<'t> * size
-        workspace.ResizeIf([|total_size|],1)
-        let x = workspace.P
-        new CudaDeviceVariable<'t>(x.DevicePointer,false,SizeT total_size)
+        new DM<_,_>(size,total_size_in_elems,vars)
 
-    member t.GetWorkspaceAsDM<'t when 't: struct and 't: (new: unit -> 't) and 't:> System.ValueType>(size: int[], num_vars: int) =
-        let total_size = sizeof<'t> * total_size_of size
-        workspace.ResizeIf([|total_size|], num_vars)
-        let vars = workspace.Data |> Array.map (fun x -> new CudaDeviceVariable<'t>(x.DevicePointer,false,SizeT total_size))
-        new DM<_>(size,vars)
+    member t.GetDM(size, total_size_in_elems, num_vars, env) =
+        t.Get(size,total_size_in_elems,num_vars,env) GetRegular
+
+    member t.GetWorkspace(size,total_size_in_elems, num_vars, env) =
+        t.Get(size,total_size_in_elems,num_vars,env) GetWorkspace
 
     interface IDisposable with
         member __.Dispose() =
-            let dis pool = Seq.iter dispose pool
+            let dis pool = Seq.iter (fun (x: obj) -> dispose (x :?> IDisposable)) pool
             dis dMPool
-            dispose workspace
+            dis workspace
 
+            let dis pool = Seq.iter dispose pool
             dis tensorDescriptorPool.Values
             dis filterDescriptorPool.Values
             dis convolutionDescriptorPool.Values

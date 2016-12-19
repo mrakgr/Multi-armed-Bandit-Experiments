@@ -138,7 +138,7 @@ type GenericCudaGroupFlattener<'a> =
 // I can't believe I managed to abstract this.
 // This is what GADTs would give you, except with more efficiency.
 // At the end of suffering, lies inspiration.
-let generic_flatten_cudagroup<'a> num subvars (flattener: CudaGroupFlattener<'a>): 'a list =
+let generic_flatten_cudagroup<'a> num subvars (flattener: GenericCudaGroupFlattener<'a>): 'a list =
     Seq.fold (fun l i ->
         l @ List.map (fun subvar ->
             match subvar with
