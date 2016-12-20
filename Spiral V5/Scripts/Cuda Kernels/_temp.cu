@@ -1,15 +1,23 @@
 #include "thrust/tuple.h"
 #include "cub/cub.cuh"
 extern "C" {
-    __global__ void HadMultBackward1(const int n, const float *o_primal_1, const float *o_adjoint_1, const float *a_primal_1, const float *b_primal_1, float *a_adjoint_1, float *b_adjoint_1) {
-        for (int i = blockIdx.x*blockDim.x + threadIdx.x; (i < n); i += gridDim.x*blockDim.x) {
-            const auto err = o_adjoint_1[i];
-            if ((a_adjoint_1 != NULL)){
-                a_adjoint_1[i] += (err * b_primal_1[i]);
-            }
-            if ((b_adjoint_1 != NULL)){
-                b_adjoint_1[i] += (err * a_primal_1[i]);
-            }
+    __global__ void Sum(const int n, const float *x1, float *o1) {
+        typedef cub::BlockReduce<float, 256> BlockReduceT;
+        __shared__ BlockReduceT::TempStorage temp_storage;
+        const auto reduce_op = [](auto x1, auto x2){
+            return (x1 + x2);
+        };
+        int i = blockIdx.x*blockDim.x + threadIdx.x;
+        auto value = x1[i];
+        const auto stride = gridDim.x*blockDim.x;
+        i += stride;
+        while ((i < n)){
+            value = reduce_op(value, x1[i]);
+            i += stride;
+        }
+        const auto result = BlockReduceT(temp_storage).Reduce(value, reduce_op);
+        if ((threadIdx.x == 0)){
+            atomicAdd((&o1[0]), result);
         }
     }
 }

@@ -27,7 +27,7 @@ and SpiralExp<'a,'size,'conv when 'size: equality and 'conv: equality> =
 | SeqMatmult of id: int * (SpiralExpDMF32<int*int,'conv> * SpiralExpDMF32<int*int,'conv>) list * return_type: (DM<int*int,float32> -> 'a)
 // Addition with broadcasting.
 // TODO: Turn this into BroadcastOp later.
-| Add of id: int * s_to_4d: ('size -> int*int*int*int) * s_to_4d_backwards: ('size -> int*int*int*int) * 
+| Add of id: int * size_to_4d: ('size -> int*int*int*int) * size_to_4d_backwards: ('size -> int*int*int*int) * 
           alpha: float32 * matrix: SpiralExpDMF32<'size,'conv> * beta: float32 * 
           vector: SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
 | Hadmult of id: int * SpiralExpDMF32<'size,'conv> * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
@@ -445,8 +445,8 @@ let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: Spir
         if_not_evaluated r id <| fun _ -> activation id (eval' x) [min;max] clipped_sigmoid clipped_sigmoid_backward env
     | Square(id, x, r) ->
         if_not_evaluated r id <| fun _ -> activation id (eval' x) [] square square_backward env
-////    | Sum(id, x, r) ->
-////        if_not_evaluated r id <| fun _ -> 
+    | Sum(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> 
 ////| Sum of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
 ////| Scale of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
 ////| SumScalars of id: int * SpiralExpF32 [] * return_type: (Df -> 'a)

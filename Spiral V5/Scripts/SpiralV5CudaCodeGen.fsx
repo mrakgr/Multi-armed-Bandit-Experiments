@@ -79,6 +79,7 @@ type CudaExpr =
     | Exp of CudaExpr
     | Tanh of CudaExpr
     | Neg of CudaExpr
+    | Address of CudaExpr
     // Cub operations
     | BlockReduce of temp_storage: CudaExpr * value: CudaExpr * op: CudaExpr
     // Mutable operations.
@@ -253,10 +254,6 @@ let cuda_codegen (exp: CudaExpr list) =
             | [] -> env
             | _ -> failwith "Only CudaVar allowed in the For initializer."
 
-        let print_var env = function 
-            | Var _ | VarAr _ as x -> gen x env
-            | _ -> failwith "This expression must a Var kind."
-
         let print_seq (body: CudaExpr list) (env: CudaEnvironment) =
             let ind() = program.Append (String.replicate env.indentation " ") |> ignore
             for x in body do
@@ -286,7 +283,7 @@ let cuda_codegen (exp: CudaExpr list) =
             print_seq body env.PlusIndent
             ind(); ppln "}"
         | Lambda(args, body) ->
-            pp "[&]"
+            pp "[]"
             pp "("
             let env = print_arguments args env ""
             ppln "){"
@@ -310,6 +307,8 @@ let cuda_codegen (exp: CudaExpr list) =
             print_seq in_ (env.AddVar(name,var))
         | Let(CudaGroup _,_,_) ->
             failwith "Array groups are only allowed in method declarations."
+        | VarAr(Var name, []) -> // The VarArs without accessors are treated to be singular.
+            pp name; pp "[0]"
         | VarAr(Var name, accessors: CudaExpr list) ->
             pp name; pp "["; 
             let sizes =
@@ -385,14 +384,15 @@ let cuda_codegen (exp: CudaExpr list) =
         | Exp(a) -> pp "exp("; gen a env; pp ")"
         | Tanh(a) -> pp "tanh("; gen a env; pp ")"
         | Neg(a) -> pp "(-"; gen a env; pp ")"
+        | Address(a) -> pp "(&"; gen a env; pp ")"
         // Cub operations
         | BlockReduce(temp_storage,value,reduce_op) -> 
             pp "BlockReduceT("; gen temp_storage env; pp ").Reduce("; gen value env; pp ", "; gen reduce_op env; pp ")"
         // Mutable operations.
-        | MSet(var,ex) -> print_var env var; pp " = "; gen ex env; pp env.mutable_separator
-        | MAdd(var,ex) -> print_var env var; pp " += "; gen ex env; pp env.mutable_separator
+        | MSet(var,ex) -> gen var env; pp " = "; gen ex env; pp env.mutable_separator
+        | MAdd(var,ex) -> gen var env; pp " += "; gen ex env; pp env.mutable_separator
         | AtomicAdd(out,in_) -> // Unlike the other functions, the atomic add returns the old value. This might be something to keep in mind.
-            pp "atomicAdd("; print_var env out; pp ", "; print_var env in_; pp ")"; pp env.mutable_separator
+            pp "atomicAdd("; gen out env; pp ", "; gen in_ env; pp ")"; pp env.mutable_separator
         | IsNotNull(VarAr(Var name,_)) -> pp "("; pp name; pp " != NULL)"
         | IsNotNull x -> failwithf "Expected a VarAr(Var _,_). Got %A instead in IsNull." x
     
@@ -470,6 +470,7 @@ let map_module' in_group out_group name f =
 
 let map_redocol_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size =
     let args = [in_group; out_group] |> List.concat
+    let map_load_op_macro = map_load_op (cudavars_to_cudaexps in_group [Var "col"; Var "row"])
     cuda_codegen [
         include_ "thrust/tuple.h"
         include_ "cub/cub.cuh"
@@ -480,11 +481,10 @@ let map_redocol_map_module' in_group out_group name map_load_op reduce_op map_st
                 let_ (CudaVar("reduce_op",CudaConst CudaAuto)) reduce_op [
                 for_ ([CudaVar("col",CudaInt),Value "blockIdx.x"]) (Var "col" .< Var "num_cols") [Var "col" += Value "gridDim.x"] [
                     let_ (CudaVar("row",CudaInt)) (Value "threadIdx.x") [
-                    let_ (CudaVar("map_load_op",CudaConst CudaAuto)) map_load_op [
-                    let_ (CudaVar("value", CudaAuto)) (call "map_load_op" (cudavars_to_cudaexps in_group [Var "col"; Var "row"])) [
+                    let_ (CudaVar("value", CudaAuto)) map_load_op_macro [
                     Var "row" += Value "blockDim.x"
                     while_ (Var "row" .< Var "num_rows") [
-                        Var "value" == call "reduce_op" [Var "value"; call "map_load_op" (cudavars_to_cudaexps in_group [Var "col"; Var "row"])]
+                        Var "value" == call "reduce_op" [Var "value"; map_load_op_macro]
                         Var "row" += Value "blockDim.x"
                         ]
                     let_ (CudaVar("result",CudaConst CudaAuto)) (blockReduce (Value "temp_storage") (Var "value") (Var "reduce_op")) [
@@ -492,7 +492,7 @@ let map_redocol_map_module' in_group out_group name map_load_op reduce_op map_st
                         (Value "threadIdx.x" .= zero)
                         (map_store_op (cudavars_to_cudaexps out_group [Var "col"]) (Var "result"))
                         []
-                    ]]]]]
+                    ]]]]
                 ]]
             ]
         ]
@@ -505,6 +505,7 @@ let map_redocol_map_module num_in args_in num_out args_out name map_load_op redu
 
 let map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size =
     let args = [in_group; out_group] |> List.concat
+    let map_load_op_macro = map_load_op (cudavars_to_cudaexps in_group [Var "i"])
     cuda_codegen [
         include_ "thrust/tuple.h"
         include_ "cub/cub.cuh"
@@ -513,13 +514,12 @@ let map_redo_map_module' in_group out_group name map_load_op reduce_op map_store
                 value <| "typedef cub::BlockReduce<float, "+block_size+"> BlockReduceT;\n"
                 value "__shared__ BlockReduceT::TempStorage temp_storage;\n"
                 let_ (CudaVar("reduce_op",CudaConst CudaAuto)) reduce_op [
-                let_ (CudaVar("map_load_op",CudaConst CudaAuto)) map_load_op [
                 let_ (CudaVar("i",CudaInt)) (Value "blockIdx.x*blockDim.x + threadIdx.x") [
-                let_ (CudaVar("value", CudaAuto)) (call "map_load_op" (cudavars_to_cudaexps in_group [Var "i"])) [
+                let_ (CudaVar("value", CudaAuto)) map_load_op_macro [
                 let_ (CudaVar("stride", CudaConst CudaAuto)) (Value "gridDim.x*blockDim.x") [
                 Var "i" += Var "stride"
                 while_ (Var "i" .< Var "n") [
-                    Var "value" == call "reduce_op" [Var "value"; call "map_load_op" (cudavars_to_cudaexps in_group [Var "i"])]
+                    Var "value" == call "reduce_op" [Var "value"; map_load_op_macro]
                     Var "i" += Var "stride"
                     ]
                 let_ (CudaVar("result",CudaConst CudaAuto)) (blockReduce (Value "temp_storage") (Var "value") (Var "reduce_op")) [
@@ -527,15 +527,15 @@ let map_redo_map_module' in_group out_group name map_load_op reduce_op map_store
                     (Value "threadIdx.x" .= zero)
                     (map_store_op (cudavars_to_cudaexps out_group []) (Var "result"))
                     []
-                ]]]]]]]
+                ]]]]]]
             ]
         ]
     |> fun code -> code, get_unfolded_signature args
 
-let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_op map_store_op block_size =
-    let in_group = [CudaGroup(num_in,args_in)]
-    let out_group = [CudaGroup(num_out,args_out)]
-    map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
+//let map_redo_map_module num_in args_in num_out args_out name map_load_op reduce_op map_store_op block_size =
+//    let in_group = [CudaGroup(num_in,args_in)]
+//    let out_group = [CudaGroup(num_out,args_out)]
+//    map_redo_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
 
 /// By necesity the coefficiencts have to be constants otherwise the reverse operation would
 /// require a reduction step. I'll think about how I want to deal with this in a general manner later.
@@ -642,19 +642,40 @@ let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
     map_redocol_map_module
         1 [CudaArray("x",CudaConst CudaFloat,["num_cols";"num_rows"])] 
         1 [CudaArray("o",CudaFloat,["num_cols"])] name 
-        (unary_op <| fun x -> [Return <| map_load_op x]) 
+        (fun [x] -> map_load_op x)
         (binary_op <| fun x y -> [Return <| reduce_op x y]) 
         (fun [o1] value -> [o1 == map_store_op value]) 
         (string map_redocol_map_launcher_block_size)
 
+let mapcoef_redo_map_module num_in names_in num_const names_const num_out names_out kernel_name map_load_op reduce_op map_store_op block_size =
+    let len_in = num_in * List.length names_in
+    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
+    let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
+    let outs = List.map (fun x -> CudaArray(x,CudaFloat,[])) names_out
+    map_redo_map_module' 
+                [CudaGroup(num_in,ins)
+                 CudaGroup(num_const,cvars)]
+                [CudaGroup(num_out,outs)] kernel_name
+                map_load_op
+                (binary_op <| fun x y -> [Return <| reduce_op x y])
+                (fun outs inps -> 
+                    let input_ars, cvars = List.splitAt len_in inps
+                    f outs input_ars cvars)
+
 let map_redo_map_module_1_1 name map_load_op reduce_op map_store_op =
-    map_redo_map_module 
+    map_redo_map_module
         1 [CudaArray("x",CudaConst CudaFloat,["n"])] 
-        1 [CudaVar("o",CudaFloat)] name
-        (unary_op <| fun x -> [Return <| map_load_op x])
+        1 [CudaArray("o",CudaFloat,[])] name
+        (fun [x] -> map_load_op x)
         (binary_op <| fun x y -> [Return <| reduce_op x y])
-        (fun [o1] value -> [AtomicAdd(o1, map_store_op value)])
+        (fun [o1] value -> [AtomicAdd(Address o1, map_store_op value)])
         (string map_redo_map_launcher_block_size)
+
+let map_redo_map_module_backward_1_1 name f =
+    map_module'
+        [CudaVar("o_primal",CudaConst CudaFloat);CudaVar("o_adjoint",CudaConst CudaFloat);CudaArray("x_primal",CudaConst CudaFloat,["n"])]
+        [CudaArray("x_adjoint",CudaFloat,["n"])] name
+        f
 
 let map_fst f x =
     f (fst x), snd x
@@ -748,7 +769,9 @@ let sum =
         map_redo_map_module_1_1 name id (+) (id)
         |> map_fst (load_kernel_nvcc name)
 
-printfn "%A" (map_redo_map_module_1_1 (KernelName "Sum") id (+) (id))
+//let add_scalar =
+//    let name = KernelName "AddScalar"
+//    map_m
 
 let colsum = map_redocol_map_module_1_1 (KernelName "Colsum") id (+) id
 let gradclip = 
