@@ -377,7 +377,7 @@ let generic_get<'r1,'r2,'size when 'size: equality> (scalar_proof: Scalar -> 'si
         env.Mem.GetDM(size,tot,default_num_vars, env) |> r1
     | MapRedoMapActivation(r1,_) -> 
         env.Mem.GetDM(scalar_proof Scalar,1,default_num_vars, env) |> r1
-
+        
 let generic_activations''<'r2,'size1,'size2 when 'size1: equality and 'size2: equality> 
         id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (act: GenericActivationType<DM<'size2,float32>,'r2,'size>) =
     let c = generic_get id (x.Head.Size) (x.Head.TotalSizeInElems) act env
