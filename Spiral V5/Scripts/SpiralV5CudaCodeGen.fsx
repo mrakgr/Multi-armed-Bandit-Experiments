@@ -160,6 +160,28 @@ let flatten_cudagroup_to_cudavar_list num subvars =
 let flatten_cudagroup_to_cudaexp_list num subvars (ar_accessor: CudaExpr list) =
     generic_flatten_cudagroup num subvars (ToCudaExprList(ar_accessor, id))
 
+// Here is the functional version, it is more convoluted than the one above.
+// Currently I am trying to think of how to do generic_activations with the above technique.
+let generic_flatten_cudagroup'<'a> num subvars (var_flattener: (_ * _) -> 'a) ar_flattener: 'a list =
+    Seq.fold (fun l i ->
+        l @ List.map (fun subvar ->
+            match subvar with
+            | CudaVar(name,typ) -> var_flattener (name + string i, typ)
+            | CudaArray(name,typ,bound_size) -> ar_flattener (name + string i, typ, bound_size)
+            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+            ) subvars
+        ) [] {1..num}
+
+let flatten_cudagroup_to_cudavar_list' num subvars =
+    generic_flatten_cudagroup' num subvars
+        (fun (name,typ) -> CudaVar (name, typ))
+        (fun (name,typ,bound_size) -> CudaArray (name, typ, bound_size))
+
+let flatten_cudagroup_to_cudaexp_list' num subvars (ar_accessor: CudaExpr list) =
+    generic_flatten_cudagroup' num subvars
+        (fun (name,typ) -> Var name)
+        (fun (name,typ,bound_size) -> VarAr(Var name, ar_accessor))
+
 /// Unfolds the method arguments and returns them in a list along with the new environment.
 let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
     let rec loop (args: CudaVar list) (env: CudaEnvironment) acc =
