@@ -186,9 +186,9 @@ let resizeIf (total_size_in_elems: int) (x: CudaDeviceVariable<_>): CudaDeviceVa
     else
         new CudaDeviceVariable<_>(x.DevicePointer,true,x.SizeInBytes)
 
-type GenericPoolGetter =
-| GetRegular
-| GetWorkspace
+type GenericPoolOperationType =
+| PoolRegular
+| PoolWorkspace
 
 open System.Collections.Generic
 type SpiralEnv =
@@ -241,11 +241,11 @@ and ObjectPool() =
             (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member inline private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv) getter: DM<'s,'t> =
+    member inline private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv) pool_type: DM<'s,'t> =
         let pool =
-            match getter with
-            | GetRegular -> dMPool
-            | GetWorkspace -> workspace
+            match pool_type with
+            | PoolRegular -> dMPool
+            | PoolWorkspace -> workspace
 
         let get_var i =
             let t = 
@@ -256,23 +256,23 @@ and ObjectPool() =
 
         let vars = [| for i=0 to num_vars-1 do yield get_var i |]
 
-        match getter with
-        | GetRegular -> 
+        match pool_type with
+        | PoolRegular -> 
             dMp <- dMp + num_vars
 
             // The optimizers can only zero out the adjoints in the base nodes.
             // The object pool has to take up the slack for the rest.
             // The second variable is always the adjoint and here it is set to zero.
             if env.IsInferenceOnly = false && vars.Length > 1 then vars.[1].MemsetAsync(0u,env.Str.Stream) 
-        | GetWorkspace -> ()
+        | PoolWorkspace -> ()
 
         new DM<_,_>(size,total_size_in_elems,vars)
 
     member t.GetDM(size, total_size_in_elems, num_vars, env) =
-        t.Get(size,total_size_in_elems,num_vars,env) GetRegular
+        t.Get(size,total_size_in_elems,num_vars,env) PoolRegular
 
     member t.GetWorkspace(size,total_size_in_elems, num_vars, env) =
-        t.Get(size,total_size_in_elems,num_vars,env) GetWorkspace
+        t.Get(size,total_size_in_elems,num_vars,env) PoolWorkspace
 
     interface IDisposable with
         member __.Dispose() =

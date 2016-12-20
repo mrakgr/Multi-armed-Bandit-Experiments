@@ -131,38 +131,37 @@ type CudaEnvironment =
 
     static member create() = {indentation=0; variables=Map.empty; mutable_separator=";\n"}
 
-type GenericCudaGroupFlattener<'a> =
-| ToCudaVarList of (CudaVar -> 'a)
-| ToCudaExprList of ar_accessor: CudaExpr list * (CudaExpr -> 'a)
+//type GenericCudaGroupFlattener<'a> =
+//| ToCudaVarList of (CudaVar -> 'a)
+//| ToCudaExprList of ar_accessor: CudaExpr list * (CudaExpr -> 'a)
+//
+//// I can't believe I managed to abstract this.
+//// This is what GADTs would give you, except with more efficiency.
+//// At the end of suffering, lies inspiration.
+//let generic_flatten_cudagroup<'a> num subvars (flattener: GenericCudaGroupFlattener<'a>): 'a list =
+//    Seq.fold (fun l i ->
+//        l @ List.map (fun subvar ->
+//            match subvar with
+//            | CudaVar(name,typ) -> 
+//                match flattener with
+//                | ToCudaVarList r -> CudaVar (name + string i, typ) |> r
+//                | ToCudaExprList(ac,r) -> Var(name + string i) |> r
+//            | CudaArray(name,typ,bound_size) ->
+//                match flattener with
+//                | ToCudaVarList r -> CudaArray (name + string i, typ, bound_size) |> r
+//                | ToCudaExprList(ar_accessor,r) -> VarAr(Var(name + string i), ar_accessor) |> r
+//            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
+//            ) subvars
+//        ) [] {1..num}
+//
+//let flatten_cudagroup_to_cudavar_list num subvars =
+//    generic_flatten_cudagroup num subvars (ToCudaVarList id)
+//
+//let flatten_cudagroup_to_cudaexp_list num subvars (ar_accessor: CudaExpr list) =
+//    generic_flatten_cudagroup num subvars (ToCudaExprList(ar_accessor, id))
 
-// I can't believe I managed to abstract this.
-// This is what GADTs would give you, except with more efficiency.
-// At the end of suffering, lies inspiration.
-let generic_flatten_cudagroup<'a> num subvars (flattener: GenericCudaGroupFlattener<'a>): 'a list =
-    Seq.fold (fun l i ->
-        l @ List.map (fun subvar ->
-            match subvar with
-            | CudaVar(name,typ) -> 
-                match flattener with
-                | ToCudaVarList r -> CudaVar (name + string i, typ) |> r
-                | ToCudaExprList(ac,r) -> Var(name + string i) |> r
-            | CudaArray(name,typ,bound_size) ->
-                match flattener with
-                | ToCudaVarList r -> CudaArray (name + string i, typ, bound_size) |> r
-                | ToCudaExprList(ar_accessor,r) -> VarAr(Var(name + string i), ar_accessor) |> r
-            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
-            ) subvars
-        ) [] {1..num}
-
-let flatten_cudagroup_to_cudavar_list num subvars =
-    generic_flatten_cudagroup num subvars (ToCudaVarList id)
-
-let flatten_cudagroup_to_cudaexp_list num subvars (ar_accessor: CudaExpr list) =
-    generic_flatten_cudagroup num subvars (ToCudaExprList(ar_accessor, id))
-
-// Here is the functional version, it is more convoluted than the one above.
-// Currently I am trying to think of how to do generic_activations with the above technique.
-let generic_flatten_cudagroup'<'a> num subvars (var_flattener: (_ * _) -> 'a) ar_flattener: 'a list =
+// Here is the functional version, it is more convoluted than the one above, but probably faster.
+let inline generic_flatten_cudagroup num subvars (var_flattener: (_ * _) -> 'a) ar_flattener: 'a list =
     Seq.fold (fun l i ->
         l @ List.map (fun subvar ->
             match subvar with
@@ -172,13 +171,13 @@ let generic_flatten_cudagroup'<'a> num subvars (var_flattener: (_ * _) -> 'a) ar
             ) subvars
         ) [] {1..num}
 
-let flatten_cudagroup_to_cudavar_list' num subvars =
-    generic_flatten_cudagroup' num subvars
+let flatten_cudagroup_to_cudavar_list num subvars =
+    generic_flatten_cudagroup num subvars
         (fun (name,typ) -> CudaVar (name, typ))
         (fun (name,typ,bound_size) -> CudaArray (name, typ, bound_size))
 
-let flatten_cudagroup_to_cudaexp_list' num subvars (ar_accessor: CudaExpr list) =
-    generic_flatten_cudagroup' num subvars
+let flatten_cudagroup_to_cudaexp_list num subvars (ar_accessor: CudaExpr list) =
+    generic_flatten_cudagroup num subvars
         (fun (name,typ) -> Var name)
         (fun (name,typ,bound_size) -> VarAr(Var name, ar_accessor))
 
