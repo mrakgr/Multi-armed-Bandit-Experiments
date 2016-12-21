@@ -180,12 +180,12 @@ let inline gemm
 let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv) =
     to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
 
-let dm_like (a: DM<_,_>) (env: SpiralEnv) =
+let like_dm (a: DM<_,_>) (env: SpiralEnv) =
     env.Mem.GetDM(a.Size,a.TotalSizeInElems,default_num_vars,env)
 
 /// Copies only the primals.
-let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv) =
-    let c = dm_like a env
+let copy_dm_using_obj_pool (a: DM<_,_>) (env: SpiralEnv) =
+    let c = like_dm a env
     copy c.P a.P a.TotalSizeInElems env
     c
 
@@ -242,7 +242,7 @@ let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>)
 //let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
 
 let routed_add id' s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv) =
-    let c = dm_like a env
+    let c = like_dm a env
 
     if a.Size = b.Size then add alpha a beta b c env
     else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
@@ -289,6 +289,71 @@ let kernel_caller (str: CudaStream) (kernel: CudaKernel) (signs: CudaVar list) (
 
     kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
 
+// Trying to figure out how to do a generic launcher function with closures is making me depressed so I'll
+// use a discriminated union type instead.
+type GenericLauncher<'size when 'size: equality> =
+| MapLauncher of args_in: ('size * int * VarF32) list * args_cvar: float32 list * args_out: ('size * int * VarF32) list
+| MapRedoMapLauncher of args_in: ('size * int * VarF32) list * args_cvar: float32 list * args_out: (Scalar * int * VarF32) list
+| MapRedoMapBackwardLauncher of args_er: float32 list * args_in: ('size * int * VarF32) list * 
+                                args_cvar: float32 list * args_out: (Scalar * int * VarF32) list
+//| MapRedocolMapLauncher
+
+let generic_lanucher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) lan =
+    // Checks whether all the sizes are the same.
+    match lan with
+    | MapLauncher(args_in,args_cvar,args_out) -> args_in @ args_out
+    | MapRedoMapLauncher(args_in,args_cvar,args_out) -> args_in
+    | MapRedoMapBackwardLauncher(args_er,args_in,args_cvar,args_out) -> args_in
+    |> List.map (fun (a,b,c) -> a,b)
+    |> guardSizes
+
+    let proccess_array x = List.map (fun (_,_,x) -> CArrayF32 x) x
+    let process_floatvars x = List.map CF32 x
+    let process_total_size (_,total_size_in_elems,_) = total_size_in_elems
+
+    let total_size, args_in, args_out, block_size = 
+        match lan with
+        | MapLauncher(args_in,args_cvar,args_out) -> 
+            let total_size = process_total_size args_in.Head
+            proccess_array args_in @ process_floatvars args_cvar, 
+            proccess_array args_out, 
+            map_launcher_block_size
+        | MapRedoMapLauncher(args_in,args_cvar,args_out) ->
+            let total_size = process_total_size args_in.Head
+            proccess_array args_in @ process_floatvars args_cvar, 
+            proccess_array args_out, 
+            map_redo_map_launcher_block_size
+        | MapRedoMapBackwardLauncher(args_er,args_in,args_cvar,args_out) ->
+            let total_size = process_total_size args_in.Head
+            process_total_size args_in.Head, process_floatvars args_er, proccess_array args_in, 
+            process_floatvars args_cvar, proccess_array args_out, map_launcher_block_size
+
+    let kernel, sig_ = ks.Value
+
+    let gridSize = min (2*numSm*(1024/block_size)) (divup total_size block_size)
+    kernel.GridDimensions <- dim3(gridSize)
+    kernel.BlockDimensions <- dim3(block_size)
+    kernel_caller str kernel sig_ (CInt total_size :: args_in @ args_cvar) args_out
+
+let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) 
+        (args_in: ('size * int * VarF32) list) 
+        (args_cvar: float32 list)
+        (args_out: ('size * int * VarF32) list) =
+    generic_lanucher str ks (MapLauncher(args_in,args_cvar,args_out))
+
+let map_redo_map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
+        (args_in: ('size * int * VarF32) list)
+        (args_cvar: float32 list)
+        (args_out: (Scalar * int * VarF32) list) =
+    generic_lanucher str ks (MapRedoMapLauncher(args_in,args_cvar,args_out))
+
+let map_redo_map_backward_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
+        (args_er: float32 list)
+        (args_in: ('size * int * VarF32) list)
+        (args_cvar: float32 list)
+        (args_out: (Scalar * int * VarF32) list) =
+    generic_lanucher str ks (MapRedoMapLauncher(args_in,args_cvar,args_out))
+
 let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv) =
     if a.HasAdjoint then 
         let matmult_backward_left () = 
@@ -319,121 +384,59 @@ let seqmatmult id (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: Sp
 let matmult id (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv) =
     seqmatmult id [a,b] env
 
-let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) (args_in: CallerVar list) (args_out: CallerVar list) =
-    let kernel, signs = ks.Value
-    kernel.GridDimensions <- dim3 grid_size
-    kernel.BlockDimensions <- dim3 block_size
-    let signs_in, signs_out = List.splitAt args_in.Length signs
+// Look, just like for the mapcoef_module and mapcoef_redo_map modules, I spent like 3 hours in wain trying to abstract the two functions. 
+// The annoying thing is that the slight differences set them apart enough that any abstraction that I can come up ends up being both
+// more convoluted and longer than the original.
 
-    List.iter2 (fun arg sign ->
-        match arg, sign with
-        | CInt _, CudaVar(_, CudaConst CudaInt) -> ()
-        | CF32 _, CudaVar(_, CudaConst CudaFloat) -> ()
-        | CArrayInt _, CudaArray(_, CudaConst CudaInt, _) -> ()
-        | CArrayF32 _, CudaArray(_, CudaConst CudaFloat, _) -> ()
-        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
-        ) args_in signs_in
+// The solution to this problem would be D's string mixins or Lisp's macros, but here I am just going to copy paste this crap.
+// I can't deal with this.
+let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) launcher_for launcher_back =
+    let c = env.Mem.GetDM(Scalar,1,default_num_vars, env)
+    let input_prims = x |> List.map (fun x -> x.P')
 
-    List.iter2 (fun arg sign ->
-        match arg, sign with
-        | CInt _, CudaVar(_, CudaInt) -> ()
-        | CF32 _, CudaVar(_, CudaFloat) -> ()
-        | CArrayInt _, CudaArray(_, CudaInt, _) -> ()
-        | CArrayF32 _, CudaArray(_, CudaFloat, _) -> ()
-        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
-        ) args_out signs_out
+    launcher_for env.Str forward input_prims cvars [c.P']
+    let c = Df.create (lazy c.P.Gather().[0])
 
-    let f x = x |> List.map (function
-        | CInt x -> box x
-        | CF32 x -> box x
-        | CArrayInt x -> box x
-        | CArrayF32 x -> box x
-        )
+    env.Nodes.Add(id,c)
 
-    let a1 = f args_in
-    let a2 = f args_out
+    if env.IsInferenceOnly = false then
+        let input_adjs = x |> List.map (fun x -> x.A')
+        let activation_backward () =
+            let err_args = [c.P.Value;c.A.Value]
+            launcher_back env.Str backward err_args input_prims cvars input_adjs
+        env.PushTape activation_backward
+    c
 
-    kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
+let activation_map id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) =
+    let h = x.Head
+    let c = env.Mem.GetDM(h.Size,h.TotalSizeInElems,default_num_vars, env)
+    let input_prims = x |> List.map (fun x -> x.P')
 
-let guarded_map_to_caller_var (a: DM<_,_> list) f =
-    a 
-    |> List.map (fun x -> x.Size)
-    |> guardSizes
+    map_launcher env.Str forward input_prims cvars [c.P']
 
-    a |> List.map (fun x -> f x)
-
-let grid_size_for_map total_size =
-    min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size)
-
-// To be honest, abstracting away the following two functions would be too much a pain in the ass without Lisp style macros.
-// I am just going to give it a pass this time.
-let map_operation (a: _ list) cvars forward_kernel backward_kernel env =
-    let h = a.Head
-    let c = dm_like h env
-
-    let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
-    let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
-    let cvars = List.map (fun x -> CF32 x) cvars
-    let out_prim = CArrayF32 c.P
-    let out_adj = CArrayF32 c.A
-    let out_prim_adj = [out_prim;out_adj]
-
-    let grid_size = grid_size_for_map h.TotalSizeInElems
-    let block_size = map_launcher_block_size
-    let size = CInt h.TotalSizeInElems
-
-    kernel_caller grid_size block_size 
-        env.Str forward_kernel (size :: input_prims) [out_prim]
+    env.Nodes.Add(id,c)
 
     if env.IsInferenceOnly = false then
         if c.HasAdjoint then
+            let input_adjs = x |> List.map (fun x -> x.A')
             let activation_backward () =
-                kernel_caller grid_size block_size 
-                    env.Str backward_kernel (size :: out_prim_adj @ input_prims @ cvars) input_adjs
+                let err_args = [c.P';c.A']
+                map_launcher env.Str backward (err_args @ input_prims) cvars input_adjs
             env.PushTape activation_backward
     c
 
-let map_redo_map_operation (a: _ list) cvars forward_kernel backward_kernel env =
-    let h = a.Head
-    let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
+let activation id (x: DM<_,float32>) cvars forward backward (env: SpiralEnv) =
+    activation_map id [x] cvars forward backward env 
 
-    let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
-    let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
-    let cvars = List.map (fun x -> CF32 x) cvars
-    let out_prim = CArrayF32 c.P
-//    let out_adj = CArrayF32 c.A
-//    let out_prim_adj = [out_prim;out_adj]
+let seqhadmult id (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
+    let l = ab.Length
+    let forward_kernel = hadmult_generic_memoized l
+    let backward_kernel = hadmult_backward_generic_memoized l
+    let args = ab |> List.collect (fun (a,b) -> [a;b])
+    activations_map id args [] forward_kernel backward_kernel env
 
-    let grid_size = grid_size_for_map h.TotalSizeInElems
-    let block_size = map_redo_map_launcher_block_size
-
-    let size = CInt h.TotalSizeInElems
-
-    kernel_caller grid_size block_size
-        env.Str forward_kernel (size :: input_prims) [out_prim]
-
-    let c' = Df.create(lazy c.P.Gather().[0])
-
-    if env.IsInferenceOnly = false then
-        if c.HasAdjoint then
-            let activation_backward () =
-                let out_prim = c'.P.Value |> CF32
-                let out_adj = c'.A.Value |> CF32
-                kernel_caller grid_size block_size 
-                    env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
-            env.PushTape activation_backward
-    c'
-    
-
-//let seqhadmult id (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
-//    let l = ab.Length
-//    let forward_kernel = hadmult_generic_memoized l
-//    let backward_kernel = hadmult_backward_generic_memoized l
-//    let args = ab |> List.collect (fun (a,b) -> [a;b])
-//    activations_map id args [] forward_kernel backward_kernel env
-//
-//let hadmult id (ab: DM<'s,float32> * DM<'s,float32>) env =
-//    seqhadmult id [ab] env
+let hadmult id (ab: DM<'s,float32> * DM<'s,float32>) env =
+    seqhadmult id [ab] env
 
 let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: SpiralEnv) (x: SpiralExp<'a,'size,'conv>): 'a =
     let eval' x = eval env x
@@ -474,8 +477,8 @@ let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: Spir
         if_not_evaluated r id <| fun _ -> activation id (eval' x) [min;max] clipped_sigmoid clipped_sigmoid_backward env
     | Square(id, x, r) ->
         if_not_evaluated r id <| fun _ -> activation id (eval' x) [] square square_backward env
-//    | Sum(id, x, r) ->
-//        if_not_evaluated r id <| fun _ -> 
+    | Sum(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> 
 ////| Sum of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
 ////| Scale of id: int * SpiralExpDMF32 * return_type: (Df -> 'a)
 ////| SumScalars of id: int * SpiralExpF32 [] * return_type: (Df -> 'a)
