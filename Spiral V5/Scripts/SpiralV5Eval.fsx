@@ -366,7 +366,13 @@ let seqmatmult id (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: Sp
 let matmult id (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv) =
     seqmatmult id [a,b] env
 
-let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher_for launcher_back ret =
+// Look, just like for the mapcoef_module and mapcoef_redo_map modules, I spent like 3 hours in wain trying to abstract the two functions. 
+// The annoying thing is that the slight differences set them apart enough that any abstraction that I can come up ends up being both
+// more convoluted and longer than the original.
+
+// The solution to this problem would be D's string mixins or Lisp's macros, but here I am just going to copy paste this crap.
+// I can't deal with this.
+let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher_for launcher_back =
     let input_prims = x |> List.map (fun x -> x.P')
 
     launcher_for env.Str forward input_prims cvars [c.P']
@@ -380,9 +386,9 @@ let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backw
             let err_args = [c.P.Value;c.A.Value]
             launcher_back env.Str backward err_args input_prims cvars input_adjs
         env.PushTape activation_backward
-    ret c
+    c
 
-let generic_activation id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher ret =
+let generic_activation_map id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher =
     let input_prims = x |> List.map (fun x -> x.P')
 
     launcher env.Str forward input_prims cvars [c.P']
@@ -396,7 +402,7 @@ let generic_activation id (x: DM<'size,float32> list) cvars forward backward (en
                 let err_args = [c.P';c.A']
                 launcher env.Str backward (err_args @ input_prims) cvars input_adjs
             env.PushTape activation_backward
-    ret c
+    c
 
 let activations_map id' (x: DM<_,float32> list) cvars forward backward (env: SpiralEnv) =
     let h = x.Head
