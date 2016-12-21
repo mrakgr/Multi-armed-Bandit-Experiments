@@ -657,20 +657,6 @@ let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
         (fun (InputFArgs [value]) (OutputFArgs [o1]) -> [o1 == map_store_op value]) 
         (string map_redocol_map_launcher_block_size)
 
-// Is used for both mapcoef and map_redo_map modules.
-let mapcoef_module_template ins cvars outs num_in names_in num_const names_const num_out names_out kernel_name f module_ =
-    let len_in = num_in * List.length names_in
-    let ins = ins names_in
-    let cvars = cvars names_const
-    let outs = outs names_out
-
-    let in_group = InputArgs [CudaGroup(num_in,ins); CudaGroup(num_const,cvars)]
-    let out_group = OutputArgs [CudaGroup(num_out,outs)]
-    map_module' in_group out_group kernel_name
-                (fun (InputFArgs inps) (OutputFArgs outs) -> 
-                    let input_ars, cvars = List.splitAt len_in inps
-                    f (InputFArgs input_ars) (InputFArgs cvars) (OutputFArgs outs))
-
 let mapcoef_redo_map_module num_in names_in num_const names_const num_out names_out kernel_name map_load_op reduce_op map_store_op =
     let len_in = num_in * List.length names_in
     let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
