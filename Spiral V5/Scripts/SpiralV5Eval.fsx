@@ -366,7 +366,23 @@ let seqmatmult id (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: Sp
 let matmult id (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv) =
     seqmatmult id [a,b] env
 
-let generic_activations id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher ret =
+let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher_for launcher_back ret =
+    let input_prims = x |> List.map (fun x -> x.P')
+
+    launcher_for env.Str forward input_prims cvars [c.P']
+    let c = Df.create (lazy c.P.Gather().[0])
+
+    env.Nodes.Add(id,c)
+
+    if env.IsInferenceOnly = false then
+        let input_adjs = x |> List.map (fun x -> x.A')
+        let activation_backward () =
+            let err_args = [c.P.Value;c.A.Value]
+            launcher_back env.Str backward err_args input_prims cvars input_adjs
+        env.PushTape activation_backward
+    ret c
+
+let generic_activation id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher ret =
     let input_prims = x |> List.map (fun x -> x.P')
 
     launcher env.Str forward input_prims cvars [c.P']
@@ -385,12 +401,12 @@ let generic_activations id (x: DM<'size,float32> list) cvars forward backward (e
 let activations_map id' (x: DM<_,float32> list) cvars forward backward (env: SpiralEnv) =
     let h = x.Head
     let c = env.Mem.GetDM(h.Size,h.TotalSizeInElems,default_num_vars, env)
-    generic_activations id' x cvars forward backward env c map_launcher 
+    generic_activation id' x cvars forward backward env c map_launcher 
         (fun c -> c)
 
 let activations_map_redo_map id' (x: DM<_,float32> list) cvars forward backward (env: SpiralEnv) =
     let c = env.Mem.GetDM(Scalar,1,default_num_vars, env)
-    generic_activations id' x cvars forward backward env c map_redo_map_launcher
+    generic_activation id' x cvars forward backward env c map_redo_map_launcher
         (fun c -> Df.create (lazy c.P.Gather().[0]))
     
 let activation id (x: DM<_,float32>) cvars forward backward (env: SpiralEnv) =

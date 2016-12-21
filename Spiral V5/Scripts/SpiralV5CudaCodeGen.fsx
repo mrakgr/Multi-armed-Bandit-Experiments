@@ -711,7 +711,7 @@ let sum_backward =
     lazy
         let name = KernelName "SumBackward"
         map_redo_map_backwards_module_1_1 name 
-            (fun (er_pr,er_adj) inp_pr inp_adj-> er_adj)
+            (fun (er_pr,er_adj) inp_pr inp_adj -> er_adj)
         |> map_fst (load_kernel_nvcc name)
 
 let square = 
