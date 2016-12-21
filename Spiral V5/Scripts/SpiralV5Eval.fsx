@@ -294,6 +294,8 @@ let kernel_caller (str: CudaStream) (kernel: CudaKernel) (signs: CudaVar list) (
 type GenericLauncher<'size when 'size: equality> =
 | MapLauncher of args_in: ('size * int * VarF32) list * args_cvar: float32 list * args_out: ('size * int * VarF32) list
 | MapRedoMapLauncher of args_in: ('size * int * VarF32) list * args_cvar: float32 list * args_out: (Scalar * int * VarF32) list
+| MapRedoMapBackwardLauncher of args_er: float32 list * args_in: ('size * int * VarF32) list * 
+                                args_cvar: float32 list * args_out: (Scalar * int * VarF32) list
 //| MapRedocolMapLauncher
 
 let generic_lanucher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) lan =
@@ -301,21 +303,30 @@ let generic_lanucher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) lan
     match lan with
     | MapLauncher(args_in,args_cvar,args_out) -> args_in @ args_out
     | MapRedoMapLauncher(args_in,args_cvar,args_out) -> args_in
+    | MapRedoMapBackwardLauncher(args_er,args_in,args_cvar,args_out) -> args_in
     |> List.map (fun (a,b,c) -> a,b)
     |> guardSizes
 
     let proccess_array x = List.map (fun (_,_,x) -> CArrayF32 x) x
-    let process_cvars x = List.map CF32 x
+    let process_floatvars x = List.map CF32 x
     let process_total_size (_,total_size_in_elems,_) = total_size_in_elems
-    let process_all (args_in: _ list,args_cvar,args_out) =
-        process_total_size args_in.Head, proccess_array args_in, process_cvars args_cvar, proccess_array args_out
 
-    let (total_size, args_in, args_cvar, args_out), block_size = 
+    let total_size, args_in, args_out, block_size = 
         match lan with
         | MapLauncher(args_in,args_cvar,args_out) -> 
-            process_all (args_in,args_cvar,args_out), map_launcher_block_size
+            let total_size = process_total_size args_in.Head
+            proccess_array args_in @ process_floatvars args_cvar, 
+            proccess_array args_out, 
+            map_launcher_block_size
         | MapRedoMapLauncher(args_in,args_cvar,args_out) ->
-            process_all (args_in,args_cvar,args_out), map_redo_map_launcher_block_size
+            let total_size = process_total_size args_in.Head
+            proccess_array args_in @ process_floatvars args_cvar, 
+            proccess_array args_out, 
+            map_redo_map_launcher_block_size
+        | MapRedoMapBackwardLauncher(args_er,args_in,args_cvar,args_out) ->
+            let total_size = process_total_size args_in.Head
+            process_total_size args_in.Head, process_floatvars args_er, proccess_array args_in, 
+            process_floatvars args_cvar, proccess_array args_out, map_launcher_block_size
 
     let kernel, sig_ = ks.Value
 
@@ -331,6 +342,13 @@ let map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
     generic_lanucher str ks (MapLauncher(args_in,args_cvar,args_out))
 
 let map_redo_map_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
+        (args_in: ('size * int * VarF32) list)
+        (args_cvar: float32 list)
+        (args_out: (Scalar * int * VarF32) list) =
+    generic_lanucher str ks (MapRedoMapLauncher(args_in,args_cvar,args_out))
+
+let map_redo_map_backward_launcher (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>)
+        (args_er: float32 list)
         (args_in: ('size * int * VarF32) list)
         (args_cvar: float32 list)
         (args_out: (Scalar * int * VarF32) list) =
@@ -372,7 +390,8 @@ let matmult id (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv
 
 // The solution to this problem would be D's string mixins or Lisp's macros, but here I am just going to copy paste this crap.
 // I can't deal with this.
-let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher_for launcher_back =
+let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) launcher_for launcher_back =
+    let c = env.Mem.GetDM(Scalar,1,default_num_vars, env)
     let input_prims = x |> List.map (fun x -> x.P')
 
     launcher_for env.Str forward input_prims cvars [c.P']
@@ -388,10 +407,12 @@ let generic_activation_reduce id (x: DM<'size,float32> list) cvars forward backw
         env.PushTape activation_backward
     c
 
-let generic_activation_map id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) (c: DM<_,_>) launcher =
+let activation_map id (x: DM<'size,float32> list) cvars forward backward (env: SpiralEnv) =
+    let h = x.Head
+    let c = env.Mem.GetDM(h.Size,h.TotalSizeInElems,default_num_vars, env)
     let input_prims = x |> List.map (fun x -> x.P')
 
-    launcher env.Str forward input_prims cvars [c.P']
+    map_launcher env.Str forward input_prims cvars [c.P']
 
     env.Nodes.Add(id,c)
 
@@ -400,23 +421,12 @@ let generic_activation_map id (x: DM<'size,float32> list) cvars forward backward
             let input_adjs = x |> List.map (fun x -> x.A')
             let activation_backward () =
                 let err_args = [c.P';c.A']
-                launcher env.Str backward (err_args @ input_prims) cvars input_adjs
+                map_launcher env.Str backward (err_args @ input_prims) cvars input_adjs
             env.PushTape activation_backward
     c
 
-let activations_map id' (x: DM<_,float32> list) cvars forward backward (env: SpiralEnv) =
-    let h = x.Head
-    let c = env.Mem.GetDM(h.Size,h.TotalSizeInElems,default_num_vars, env)
-    generic_activation id' x cvars forward backward env c map_launcher 
-        (fun c -> c)
-
-let activations_map_redo_map id' (x: DM<_,float32> list) cvars forward backward (env: SpiralEnv) =
-    let c = env.Mem.GetDM(Scalar,1,default_num_vars, env)
-    generic_activation id' x cvars forward backward env c map_redo_map_launcher
-        (fun c -> Df.create (lazy c.P.Gather().[0]))
-    
 let activation id (x: DM<_,float32>) cvars forward backward (env: SpiralEnv) =
-    activations_map id [x] cvars forward backward env 
+    activation_map id [x] cvars forward backward env 
 
 let seqhadmult id (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
     let l = ab.Length
