@@ -138,10 +138,10 @@ let inline compile_kernel_using_nvcc_bat_router (KernelName kernel_name) (Kernel
     cuda_context.LoadKernelPTX(target_path,kernel_name)
 
 let load_kernel compile_kernel (KernelName kernel_name as kn) (KernelCode kernel_code as kc) = 
-    let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
+    let kernel_path = IO.Path.Combine(kernels_dir,kernel_name+".ptx")
         
     if IO.File.Exists(kernel_path) 
-    then cuda_context.LoadKernelPTX(kernel_path,kernel_name) // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
+    then cuda_context.LoadKernelPTX(kernels_dir,kernel_name+".ptx") // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
     else compile_kernel kn kc
 
 let inline load_kernel_nvrtc kernel_name kernel_code = load_kernel compile_kernel_nvrtc kernel_name kernel_code

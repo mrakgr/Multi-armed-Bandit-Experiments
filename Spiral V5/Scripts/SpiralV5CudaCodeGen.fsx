@@ -832,3 +832,26 @@ let clipped_sigmoid_backward =
         mapcoef_module_backwards_1_2_1 name <| fun (o_pr, o_adj) x min max -> 
             if_ (o_pr .<= min) zero (if_ (o_pr .>= max) zero (o_adj * o_pr * (one - o_pr)))
         |> map_fst (load_kernel_nvcc name)
+
+let log_ =
+    lazy
+        let name = KernelName "Log"
+        map_module_1_1 name <| fun x -> Log x
+        |> map_fst (load_kernel_nvcc name)
+let log_backward =
+    lazy
+        let name = KernelName "LogBackward"
+        map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> er_adj / inp_pr
+        |> map_fst (load_kernel_nvcc name)
+
+let scalar_matrix_add =
+    lazy
+        let name = KernelName "ScalarMatrixAdd"
+        mapcoef_module_1_2_1 name <| fun x coef scalar -> coef * x + scalar
+        |> map_fst (load_kernel_nvcc name)
+let scalar_matrix_add_backward = // In the previous iteration of the library this was implemented using Saxpy.
+    lazy
+        let name = KernelName "ScalarMatrixAddBackward"
+        mapcoef_module_backwards_1_2_1 name <| fun (er_pr,er_adj) inp_pr coef scalar -> coef * er_adj
+        |> map_fst (load_kernel_nvcc name)
+    
