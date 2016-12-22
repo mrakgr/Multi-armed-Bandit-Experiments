@@ -312,6 +312,7 @@ let seqmatmult id (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: Sp
     let cols_c, rows_c as sc = List.head sc
     let c = env.Mem.GetDM(sc,cols_c*rows_c,default_num_vars, env)
     for a,b in l do gemm env.Str nT nT 1.0f (a.Size,a.P) (b.Size,b.P) 0.0f (c.Size,c.P)
+    //TODO: Seqmatmult does not have Nodes.Add(id,c)
 
     if env.IsInferenceOnly = false then
         for a,b in l do matmult_backwards a b c env

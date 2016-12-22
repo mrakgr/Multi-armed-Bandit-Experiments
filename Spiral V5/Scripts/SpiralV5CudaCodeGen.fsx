@@ -509,7 +509,7 @@ let map_redocol_map_module num_in args_in num_out args_out name map_load_op redu
     let out_group = OutputArgs [CudaGroup(num_out,args_out)]
     map_redocol_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
 
-let map_redo_map_module' (InputArgs in_group) (OutputArgs out_group) name map_load_op reduce_op map_store_op block_size =
+let map_redo_map_module' (InputArgs in_group) (OutputArgs out_group) name map_load_op reduce_op map_store_op =
     let args = [in_group; out_group] |> List.concat
     let map_load_op_macro = map_load_op (cudavars_to_cudaexps in_group [Var "i"])
     cuda_codegen [
@@ -517,7 +517,7 @@ let map_redo_map_module' (InputArgs in_group) (OutputArgs out_group) name map_lo
         include_ "cub/cub.cuh"
         externCBlock [
             method_ CudaGlobal CudaVoid name args [
-                value <| "typedef cub::BlockReduce<float, "+block_size+"> BlockReduceT;\n"
+                value <| "typedef cub::BlockReduce<float, " + string map_redo_map_launcher_block_size + "> BlockReduceT;\n"
                 value "__shared__ BlockReduceT::TempStorage temp_storage;\n"
                 let_ (CudaVar("reduce_op",CudaConst CudaAuto)) reduce_op [
                 let_ (CudaVar("i",CudaInt)) (Value "blockIdx.x*blockDim.x + threadIdx.x") [
@@ -538,21 +538,35 @@ let map_redo_map_module' (InputArgs in_group) (OutputArgs out_group) name map_lo
         ]
     |> fun code -> code, get_unfolded_signature args
 
-/// By necesity the coefficiencts have to be constants otherwise the reverse operation would
-/// require a reduction step. I'll think about how I want to deal with this in a general manner later.
-// TODO: Figure out how to deal with shared vs constant variables in this library.
-let mapcoef_module num_in names_in num_const names_const num_out names_out kernel_name f =
-    let len_in = num_in * List.length names_in
+let mapcoef_module_template num_in ins num_const cvars num_out outs kernel_name =
+    let len_in = num_in * List.length ins
+    let in_group = InputArgs [CudaGroup(num_in,ins); CudaGroup(num_const,cvars)]
+    let out_group = OutputArgs [CudaGroup(num_out,outs)]
+    len_in, fun f -> f in_group out_group kernel_name
+
+let mapcoef_module num_in names_in num_const names_const num_out names_out kernel_name map_func =
     let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
     let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
     let outs = List.map (fun x -> CudaArray(x,CudaFloat,["n"])) names_out
 
-    let in_group = InputArgs [CudaGroup(num_in,ins); CudaGroup(num_const,cvars)]
-    let out_group = OutputArgs [CudaGroup(num_out,outs)]
-    map_module' in_group out_group kernel_name
-                (fun (InputFArgs inps) (OutputFArgs outs) -> 
-                    let input_ars, cvars = List.splitAt len_in inps
-                    f (InputFArgs input_ars) (InputFArgs cvars) (OutputFArgs outs))
+    let len_in, f = mapcoef_module_template num_in ins num_const cvars num_out outs kernel_name
+    f map_module' <| fun (InputFArgs inps) (OutputFArgs outs) -> 
+        let input_ars, cvars = List.splitAt len_in inps
+        map_func (InputFArgs input_ars) (InputFArgs cvars) (OutputFArgs outs)
+
+let mapcoef_redo_map_module num_in names_in num_const names_const num_out names_out kernel_name map_load_op reduce_op map_store_op =
+    let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
+    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
+    let outs = List.map (fun x -> CudaArray(x,CudaFloat,[])) names_out
+
+    let len_in, f = mapcoef_module_template num_in ins num_const cvars num_out outs kernel_name
+    f map_redo_map_module' 
+        (fun ins_and_cvars -> 
+            let ins, cvars = List.splitAt len_in ins_and_cvars
+            map_load_op ins cvars)
+        reduce_op
+        map_store_op
+        
 
 // Rederived from the mapcoef_module function.
 let map_module num_in names_in num_out names_out kernel_name f =
@@ -565,40 +579,35 @@ let map_module_2_1 name f =
 let map_module_3_1 name f =
     map_module 3 ["x"] 1 ["o"] name (fun (InputFArgs [x1;x2;x3]) (OutputFArgs [o]) -> [o == f x1 x2 x3])
 
-let mapcoef_backwards_module_template outs ins_prim cvars ins_adj num_in names_in num_const names_const num_out names_out kernel_name f =
+let mapcoef_backwards_module_template num_in ins_prim ins_adj num_const cvars num_out outs =
     let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
     let names_into_primals names = List.map (fun name -> name+"_primal_") names
     let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
-    
-    let names_out = separate_names_into_prim_and_adj names_out
-    let names_in_prim = names_into_primals names_in
-    let names_in_adj = names_into_adjoints names_in
-    let len_out = num_out * List.length names_out
-    let len_in = num_in * List.length names_in_prim
 
-    let outs = outs names_out
-    let ins_prim = ins_prim names_in_prim
-    let cvars = cvars names_const
+    let outs = outs separate_names_into_prim_and_adj
+    let ins_prim = ins_prim names_into_primals
+    let cvars = cvars
 
-    let ins_adj = ins_adj names_in_adj
+    let ins_adj = ins_adj names_into_adjoints
+
+    let len_out = num_out * List.length outs
+    let len_in = num_in * List.length ins_prim
 
     let in_group = InputArgs [CudaGroup(num_out,outs); CudaGroup(num_in,ins_prim); CudaGroup(num_const,cvars)] 
     let out_group = OutputArgs [CudaGroup(num_in,ins_adj)]
-    map_module' in_group out_group kernel_name
-                (fun (InputFArgs output_prim_adj_and_input_prims_and_cvars) (OutputFArgs input_adjoints) -> 
-                    let output_prim_adj, input_prims_and_cvars = List.splitAt len_out output_prim_adj_and_input_prims_and_cvars
-                    let input_prims, cvars = List.splitAt len_in input_prims_and_cvars
-                    f (InputFArgs output_prim_adj) (InputFArgs input_prims) (InputFArgs cvars) (OutputFArgs input_adjoints))
+    fun kernel_name f -> 
+        map_module' in_group out_group kernel_name
+            (fun (InputFArgs output_prim_adj_and_input_prims_and_cvars) (OutputFArgs input_adjoints) -> 
+                let output_prim_adj, input_prims_and_cvars = List.splitAt len_out output_prim_adj_and_input_prims_and_cvars
+                let input_prims, cvars = List.splitAt len_in input_prims_and_cvars
+                f (InputFArgs output_prim_adj) (InputFArgs input_prims) (InputFArgs cvars) (OutputFArgs input_adjoints))
 
+let mapcoef_backwards_module num_in names_in num_const names_const num_out names_out =
+    let outs f = List.map (fun x -> CudaArray(x, CudaConst CudaFloat, ["n"])) (f names_out)
+    let ins g f = List.map (fun x -> CudaArray(x, g, ["n"])) (f names_in)
+    let cvars = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) names_const
 
-let mapcoef_backwards_module num_in names_in num_const names_const num_out names_out kernel_name f =
-    let outs names_out = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_out
-    let ins_prim names_in_prim = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in_prim
-    let cvars names_const = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
-
-    let ins_adj names_in_adj = List.map (fun x -> CudaArray(x,CudaFloat,["n"])) names_in_adj
-
-    mapcoef_backwards_module_template outs ins_prim cvars ins_adj num_in names_in num_const names_const num_out names_out kernel_name f
+    mapcoef_backwards_module_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs
 
 // The map_backwards function is intended to be a mirror of the map_module function so its input's adjoints are outputs and
 // its prev_outputs are part of the input.
@@ -657,30 +666,12 @@ let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
         (fun (InputFArgs [value]) (OutputFArgs [o1]) -> [o1 == map_store_op value]) 
         (string map_redocol_map_launcher_block_size)
 
-let mapcoef_redo_map_module num_in names_in num_const names_const num_out names_out kernel_name map_load_op reduce_op map_store_op =
-    let len_in = num_in * List.length names_in
-    let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
-    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
-    let outs = List.map (fun x -> CudaArray(x,CudaFloat,[])) names_out
+let mapcoef_redo_map_backwards_module num_in names_in num_const names_const num_out names_out =
+    let ins g f = List.map (fun x -> CudaArray(x, g, ["n"])) (f names_in)
+    let cvars = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) names_const
+    let outs f = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) (f names_out) // The inputs are expected to be passed in from host here.
 
-    let in_group = InputArgs [CudaGroup(num_in,ins); CudaGroup(num_const,cvars)]
-    let out_group = OutputArgs [CudaGroup(num_out,outs)]
-    map_redo_map_module' in_group out_group kernel_name
-                (fun ins_and_cvars -> 
-                    let ins, cvars = List.splitAt len_in ins_and_cvars
-                    map_load_op ins cvars)
-                reduce_op
-                map_store_op
-                (string map_redo_map_launcher_block_size)
-
-let mapcoef_redo_map_backwards_module num_in names_in num_const names_const num_out names_out kernel_name f =
-    let outs names_out = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_out // The inputs are expected to be passed in from host here.
-    let ins_prim names_in_prim = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in_prim
-    let cvars names_const = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
-
-    let ins_adj names_in_adj = List.map (fun x -> CudaArray(x,CudaFloat,["n"])) names_in_adj
-
-    mapcoef_backwards_module_template outs ins_prim cvars ins_adj num_in names_in num_const names_const num_out names_out kernel_name f
+    mapcoef_backwards_module_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs
 
 let map_redo_map_module_1_1 name map_load_op reduce_op map_store_op =
     mapcoef_redo_map_module
