@@ -329,71 +329,70 @@ let guarded_map_to_caller_var (a: DM<_,_> list) f =
 
     a |> List.map (fun x -> f x)
 
-let grid_size_for_map total_size =
-    min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size)
+let generic_operation id (a: DM<_,_> list) (env: SpiralEnv) forward_op =
+    let c,backward_op = forward_op()
+    env.Nodes.Add(id, c)
 
-// To be honest, abstracting away the following two functions would be too much a pain in the ass without Lisp style macros.
-// I am just going to give it a pass this time.
-// To be honest, it took me a long time to realize  that I can't cut the following functions from a single template.
-let map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
-    let h = a.Head
-    let c = dm_like h env
+    let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
 
+    if env.IsInferenceOnly = false && as_have_adjoint then
+        let activation_backward () =
+            backward_op()
+        env.PushTape activation_backward
+            
+    c
+
+let operation_prelude (a: DM<_,_> list) (c: DM<_,_>) cvars =
     let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
     let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
     let cvars = List.map (fun x -> CF32 x) cvars
     let out_prim = CArrayF32 c.P
     let out_adj = CArrayF32 c.A
-    let out_prim_adj = [out_prim;out_adj]
 
-    let grid_size = grid_size_for_map h.TotalSizeInElems
-    let block_size = map_launcher_block_size
-    let size = CInt h.TotalSizeInElems
+    input_prims, input_adjs, cvars, out_prim, out_adj
 
-    kernel_caller grid_size block_size 
-        env.Str forward_kernel (size :: input_prims) [out_prim]
+let grid_size_and_block_size_for_map total_size =
+    min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
 
-    env.Nodes.Add(id,c)
+let map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
+    generic_operation id a env <| fun () ->
+        let h = a.Head
+        let c = dm_like h env
 
-    if env.IsInferenceOnly = false then
-        if c.HasAdjoint then
-            let activation_backward () =
-                kernel_caller grid_size block_size 
-                    env.Str backward_kernel (size :: out_prim_adj @ input_prims @ cvars) input_adjs
-            env.PushTape activation_backward
-    c
+        let input_prims, input_adjs, cvars, out_prim, out_adj = operation_prelude a c cvars
+
+        let grid_size, block_size = grid_size_and_block_size_for_map h.TotalSizeInElems
+        let size = CInt h.TotalSizeInElems
+
+        kernel_caller grid_size block_size 
+            env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
+
+        c, fun () ->
+            kernel_caller grid_size block_size 
+                env.Str backward_kernel (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
+
+let grid_size_and_block_size_for_map_redo_map total_size =
+    min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size
 
 let map_redo_map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
-    let h = a.Head
-    let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
+    generic_operation id a env <| fun () ->
+        let h = a.Head
+        let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
 
-    let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
-    let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
-    let cvars = List.map (fun x -> CF32 x) cvars
-    let out_prim = CArrayF32 c.P
-//    let out_adj = CArrayF32 c.A
-//    let out_prim_adj = [out_prim;out_adj]
+        let input_prims, input_adjs, cvars, out_prim, _ = operation_prelude a c cvars
 
-    let grid_size = grid_size_for_map h.TotalSizeInElems
-    let block_size = map_redo_map_launcher_block_size
+        let grid_size, block_size = grid_size_and_block_size_for_map_redo_map h.TotalSizeInElems
+        let size = CInt h.TotalSizeInElems
 
-    let size = CInt h.TotalSizeInElems
+        kernel_caller grid_size block_size
+            env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
 
-    kernel_caller grid_size block_size
-        env.Str forward_kernel (size :: input_prims) [out_prim]
-
-    let c' = Df.create(lazy c.P.Gather().[0])
-    env.Nodes.Add(id,c')
-
-    if env.IsInferenceOnly = false then
-        if c.HasAdjoint then
-            let activation_backward() =
-                let out_prim = c'.P.Value |> CF32
-                let out_adj = c'.A.Value |> CF32
-                kernel_caller grid_size block_size 
-                    env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
-            env.PushTape activation_backward
-    c'
+        let c' = Df.create(lazy c.P.Gather().[0])
+        c', fun () ->
+            let out_prim = c'.P.Value |> CF32
+            let out_adj = c'.A.Value |> CF32
+            kernel_caller grid_size block_size 
+                env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
     
 let seqhadmult id (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
     let l = ab.Length
