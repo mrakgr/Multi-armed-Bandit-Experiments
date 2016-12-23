@@ -19,7 +19,7 @@ and SpiralExpF32<'conv when 'conv: equality> = SpiralExp<Df,Scalar,'conv>
 // Unlike in the last iteration of the library, I need the ids to make sure that the expressions are evaluated only once.
 and SpiralExp<'a,'size,'conv when 'size: equality and 'conv: equality> =
 // Root nodes
-| BaseNode of 'a //DM<float32>
+| BaseNode of id: int * 'a //DM<float32>
 // Basic operations
 // Note: The `return_type: (DM<'size,float32> -> 'a)` things are just hooks for the typechecker to associate the evaluator return types with
 // the generic parameter in the SpiralExp. It is a way of emulating GADTs with standard F# discriminated unions.
@@ -54,10 +54,41 @@ and SpiralExp<'a,'size,'conv when 'size: equality and 'conv: equality> =
 | Scale of id: int * float32 * SpiralExpF32<'conv> * return_type: (Df -> 'a)
 | SumScalars of id: int * SpiralExpF32<'conv> [] * return_type: (Df -> 'a)
 // Cost functions
-| SquaredError of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-| CrossEntropy of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
+| DeriveFunction of id: int * SpiralExp<'conv,'size,'conv> * return_type: (('conv -> 'size) -> 'a)
+| SquaredError of id: int * num_examples: ('size -> int) * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
+| CrossEntropy of id: int * num_examples: ('size -> int) * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
 // Converters - the 'conv generic parameter in all those other branches is just used in this one.
 | ConvertTo of id: int * SpiralExpDMF32<'size,'conv> * conv: ('size -> 'conv) * return_type: (DM<'conv,float32> -> 'a)
+
+// Smart constructors
+let tag =
+    let mutable i = 0
+    fun () -> i <- i+1; i
+
+let base_node' x = BaseNode(tag(), x)
+let matmult' a b = Matmult(tag(),a,b,id)
+let seq_matmult' abs = SeqMatmult(tag(),abs,id)
+let add_2d' alpha a beta b = 
+    let s_to_4d (c,r) = (c,1,r,1)
+    let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
+    Add(tag(),s_to_4d,s_to_4d_backwards,alpha,a,beta,b,id)
+let add_4d' alpha a beta b = Add(tag(),id,id,alpha,a,beta,b,id)
+let hadmult' a b = Hadmult(tag(),a,b,id)
+let seqhadmult' abs = SeqHadmult(tag(),abs,id)
+let relu' x = Relu(tag(),x,id)
+let tanh' x = Tanh(tag(),x,id)
+let sigmoid' x = Sigmoid(tag(),x,id)
+let clipped_sigmoid' x min max = ClippedSigmoid(tag(),min,max,x,id)
+let clip' x min max = Clip(tag(),min,max,x,id)
+let square' x = Square(tag(),x,id)
+let sum' x = Sum(tag(),x,id)
+let log' x = Log(tag(),x,id)
+let scalar_matrix_add' x coef scalar = ScalarMatrixAdd(tag(),x,coef,scalar,id)
+let scale' coef x = Scale(tag(),coef,x,id)
+let sum_scalars' x = SumScalars(tag(),x,id)
+let convert_to' x conv = ConvertTo(tag(),x,conv,id)
+let squared_error_cost' target input = SquaredError(tag(),target,input,id)
+let cross_entropy_cost' target input = CrossEntropy(tag(),target,input,id)
 
 type CallerVar =
 | CInt of int
@@ -283,15 +314,16 @@ let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>)
         if b.HasAdjoint then add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
         if c.HasAdjoint then add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
-//let s_to_4d (c,r) = (c,1,r,1)
-//let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
-
 let routed_add id' s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv) =
-    let c = dm_like a env
-
     generic_operation id' env <| fun _ ->
+        let c = dm_like a env
         if a.Size = b.Size then add alpha a beta b c env
         else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
+
+let standard_add id' (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv) =
+    generic_operation id' env <| fun _ ->
+        let c = dm_like a env
+        add alpha a beta b c env
 
 let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv) =
     if a.HasAdjoint then gemm env.Str nT T 1.0f (c.Size,c.A) (b.Size, b.P) 1.0f (a.Size, a.A)
@@ -404,10 +436,13 @@ let sum_scalars id (a:Df seq) (env: SpiralEnv) =
 
         c, fun _ -> for l in a do l.A := !c.A + !l.A
 
-let convert_to id (a:DM<_,_>) conv (env: SpiralEnv) =
+let convert_to id (a: DM<_,_>) conv (env: SpiralEnv) =
     generic_operation id {env with IsInferenceOnly = true} <| fun _ ->
         let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
         c, fun _ -> ()
+
+let squared_error_cost id target input =
+    standard_add 1.0f target -1.0f input 
 
 let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: SpiralEnv) (x: SpiralExp<'a,'size,'conv>): 'a =
     let eval' x = eval env x
@@ -419,7 +454,7 @@ let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: Spir
 
     match x with
     // Root nodes
-    | BaseNode x -> x
+    | BaseNode(id, x) -> x // TODO: Add this to env.
     // Basic operations
     | Matmult(id, a, b, r) ->
         if_not_evaluated r id <| fun _ ->
