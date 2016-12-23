@@ -48,17 +48,17 @@ and SpiralExp<'a,'size,'conv when 'size: equality and 'conv: equality> =
 //| Pool of id: int * SpiralExp
 // Cost function auxiliaries.
 | Square of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| Sum of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a)
+| Sum of id: int * SpiralExpDMF32<int*int,'conv> * return_type: (Df -> 'a)
 | Log of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
 | ScalarMatrixAdd of id: int * SpiralExpDMF32<'size,'conv> * coef: float32 * scalar: float32 * return_type: (DM<'size,float32> -> 'a)
-| Scale of id: int * float32 * SpiralExpF32<'conv> * return_type: (Df -> 'a)
+| Scale of id: int * SpiralExp<float32,'size,'conv> * SpiralExpF32<'conv> * return_type: (Df -> 'a)
 | SumScalars of id: int * SpiralExpF32<'conv> [] * return_type: (Df -> 'a)
 // Cost functions
-| DeriveFunction of id: int * SpiralExp<'conv,'size,'conv> * return_type: (('conv -> 'size) -> 'a)
-| SquaredError of id: int * num_examples: ('size -> int) * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-| CrossEntropy of id: int * num_examples: ('size -> int) * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-// Converters - the 'conv generic parameter in all those other branches is just used in this one.
+| SquaredError of id: int * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
+| CrossEntropy of id: int * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
+// Converters
 | ConvertTo of id: int * SpiralExpDMF32<'size,'conv> * conv: ('size -> 'conv) * return_type: (DM<'conv,float32> -> 'a)
+| GetNumExamplesAndRescaleIt of id: int * SpiralExpDMF32<int*int,'conv> * ex: ((int*int) -> float32) * return_type: (float32 -> 'a)
 
 // Smart constructors
 let tag =
@@ -81,14 +81,16 @@ let sigmoid' x = Sigmoid(tag(),x,id)
 let clipped_sigmoid' x min max = ClippedSigmoid(tag(),min,max,x,id)
 let clip' x min max = Clip(tag(),min,max,x,id)
 let square' x = Square(tag(),x,id)
-let sum' x = Sum(tag(),x,id)
+let sum' (x: SpiralExpDMF32<int*int,_>): SpiralExpF32<_> = Sum(tag(),x,id)
 let log' x = Log(tag(),x,id)
 let scalar_matrix_add' x coef scalar = ScalarMatrixAdd(tag(),x,coef,scalar,id)
-let scale' coef x = Scale(tag(),coef,x,id)
+let scale' coef x: SpiralExp<Df,Scalar,_> = Scale(tag(),coef,x,id)
 let sum_scalars' x = SumScalars(tag(),x,id)
-let convert_to' x conv = ConvertTo(tag(),x,conv,id)
+
 let squared_error_cost' target input = SquaredError(tag(),target,input,id)
 let cross_entropy_cost' target input = CrossEntropy(tag(),target,input,id)
+let convert_to' x conv = ConvertTo(tag(),x,conv,id)
+let get_num_examples_and_rescale_it' (x: SpiralExpDMF32<int*int,_>) (f: (int * int) -> float32): SpiralExp<float32,Scalar,_> = GetNumExamplesAndRescaleIt(tag(),x,f,id)
 
 type CallerVar =
 | CInt of int
@@ -441,8 +443,18 @@ let convert_to id (a: DM<_,_>) conv (env: SpiralEnv) =
         let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
         c, fun _ -> ()
 
-let squared_error_cost id target input =
-    standard_add 1.0f target -1.0f input 
+let get_num_examples_and_rescale_it id (a: DM<_,_>) f env =
+    generic_operation id {env with IsInferenceOnly = true} <| fun _ ->
+        f a.Size, fun _ -> ()
+
+let squared_error_cost id (target: SpiralExpDMF32<int*int,_>) (input: SpiralExpDMF32<int*int,_>) =
+    let r = scale' (get_num_examples_and_rescale_it' target (fun (c,r) -> 0.5f / float32 c))
+    add_2d' 1.0f target -1.0f input
+    |> square'
+    |> fun x -> x
+    |> sum'
+    |> r
+    
 
 let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: SpiralEnv) (x: SpiralExp<'a,'size,'conv>): 'a =
     let eval' x = eval env x
