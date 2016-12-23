@@ -59,6 +59,48 @@ and SpiralExp<'a,'size,'conv when 'size: equality and 'conv: equality> =
 // Converters - the 'conv generic parameter in all those other branches is just used in this one.
 | ConvertTo of id: int * SpiralExpDMF32<'size,'conv> * conv: ('size -> 'conv) * return_type: (DM<'conv,float32> -> 'a)
 
+type CallerVar =
+| CInt of int
+| CF32 of float32
+| CArrayInt of CudaDeviceVariable<int>
+| CArrayF32 of CudaDeviceVariable<float32>
+
+let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) (args_in: CallerVar list) (args_out: CallerVar list) =
+    let kernel, signs = ks.Value
+    kernel.GridDimensions <- dim3 grid_size
+    kernel.BlockDimensions <- dim3 block_size
+    let signs_in, signs_out = List.splitAt args_in.Length signs
+
+    List.iter2 (fun arg sign ->
+        match arg, sign with
+        | CInt _, CudaVar(_, CudaConst CudaInt) -> ()
+        | CF32 _, CudaVar(_, CudaConst CudaFloat) -> ()
+        | CArrayInt _, CudaArray(_, CudaConst CudaInt, _) -> ()
+        | CArrayF32 _, CudaArray(_, CudaConst CudaFloat, _) -> ()
+        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+        ) args_in signs_in
+
+    List.iter2 (fun arg sign ->
+        match arg, sign with
+        | CInt _, CudaVar(_, CudaInt) -> ()
+        | CF32 _, CudaVar(_, CudaFloat) -> ()
+        | CArrayInt _, CudaArray(_, CudaInt, _) -> ()
+        | CArrayF32 _, CudaArray(_, CudaFloat, _) -> ()
+        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+        ) args_out signs_out
+
+    let f x = x |> List.map (function
+        | CInt x -> box x
+        | CF32 x -> box x
+        | CArrayInt x -> box x
+        | CArrayF32 x -> box x
+        )
+
+    let a1 = f args_in
+    let a2 = f args_out
+
+    kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
+
 type VarF32 = CudaDeviceVariable<float32>
 
 let guardSizes (x: seq<'a>) =
@@ -189,20 +231,26 @@ let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv) =
     copy c.P a.P a.TotalSizeInElems env
     c
 
+let generic_operation id (env: SpiralEnv) forward_op =
+    let c,backward_op = forward_op()
+    env.Nodes.Add(id, c)
+
+    if env.IsInferenceOnly = false then env.PushTape backward_op
+    c
+
 let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv) =
     geam env.Str nT nT alpha (s, a) beta (s, b) (s, c)
 let add_backward (alpha: float32) s (er: VarF32) (x_adj: VarF32) (env: SpiralEnv) =
-    let add_backward() = saxpy env.Str alpha (s,er) (s,x_adj)
-    env.PushTape add_backward
+    saxpy env.Str alpha (s,er) (s,x_adj)
 
 let add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv) =
     if a.Size <> b.Size then failwithf "a.Size(%A) <> b.Size(%A)" a.Size b.Size
     let s = a.TotalSizeInElems
     add_forward alpha (s,1) a.P beta b.P c.P env
 
-    if env.IsInferenceOnly then
-        add_backward alpha s c.A a.A env
-        add_backward beta s c.A b.A env
+    c, fun _ ->
+        if a.HasAdjoint then add_backward alpha s c.A a.A env
+        if b.HasAdjoint then add_backward beta s c.A b.A env
 
 /// An umbrella function that does simple addition if all the dimensions sizes are the same and broadcast addition if they are 4d or 2d.
 /// Raises an error otherwise.
@@ -214,17 +262,14 @@ let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (e
     cudnn.AddTensor(beta, bDesc, b, alpha, aDesc, a) // The output is a
 
 let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv) =
-    let tensor_add_right_backwards () =
-        cudnn.SetStream env.Str
-        let errDesc = env.Mem.GetTensorDescriptor serr
-        let inpDesc = env.Mem.GetTensorDescriptor sb
-        cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
-    
-    env.PushTape tensor_add_right_backwards
+    let errDesc = env.Mem.GetTensorDescriptor serr
+    let inpDesc = env.Mem.GetTensorDescriptor sb
+
+    cudnn.SetStream env.Str
+    cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
 
 let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv) =
-    let tensor_add_left_backwards () = saxpy env.Str alpha (serr,err) (sa,a_adj)
-    env.PushTape(tensor_add_left_backwards)
+    saxpy env.Str alpha (serr,err) (sa,a_adj)
 
 let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv) =
     let sa_total = a.TotalSizeInElems
@@ -234,9 +279,9 @@ let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>)
     copy c.P a.P sa_total env
     add_tensor_4d_forward alpha (s_to_4d sa,c.P) beta (s_to_4d sb,b.P) env
 
-    if env.IsInferenceOnly = false then
-        add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
-        add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
+    c, fun _ ->
+        if b.HasAdjoint then add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
+        if c.HasAdjoint then add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
 //let s_to_4d (c,r) = (c,1,r,1)
 //let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
@@ -244,81 +289,26 @@ let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>)
 let routed_add id' s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv) =
     let c = dm_like a env
 
-    if a.Size = b.Size then add alpha a beta b c env
-    else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
-
-    env.Nodes.Add(id',c)
-    c
-
-type CallerVar =
-| CInt of int
-| CF32 of float32
-| CArrayInt of CudaDeviceVariable<int>
-| CArrayF32 of CudaDeviceVariable<float32>
-
-let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) (args_in: CallerVar list) (args_out: CallerVar list) =
-    let kernel, signs = ks.Value
-    kernel.GridDimensions <- dim3 grid_size
-    kernel.BlockDimensions <- dim3 block_size
-    let signs_in, signs_out = List.splitAt args_in.Length signs
-
-    List.iter2 (fun arg sign ->
-        match arg, sign with
-        | CInt _, CudaVar(_, CudaConst CudaInt) -> ()
-        | CF32 _, CudaVar(_, CudaConst CudaFloat) -> ()
-        | CArrayInt _, CudaArray(_, CudaConst CudaInt, _) -> ()
-        | CArrayF32 _, CudaArray(_, CudaConst CudaFloat, _) -> ()
-        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
-        ) args_in signs_in
-
-    List.iter2 (fun arg sign ->
-        match arg, sign with
-        | CInt _, CudaVar(_, CudaInt) -> ()
-        | CF32 _, CudaVar(_, CudaFloat) -> ()
-        | CArrayInt _, CudaArray(_, CudaInt, _) -> ()
-        | CArrayF32 _, CudaArray(_, CudaFloat, _) -> ()
-        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
-        ) args_out signs_out
-
-    let f x = x |> List.map (function
-        | CInt x -> box x
-        | CF32 x -> box x
-        | CArrayInt x -> box x
-        | CArrayF32 x -> box x
-        )
-
-    let a1 = f args_in
-    let a2 = f args_out
-
-    kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
+    generic_operation id' env <| fun _ ->
+        if a.Size = b.Size then add alpha a beta b c env
+        else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
 
 let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv) =
-    if a.HasAdjoint then 
-        let matmult_backward_left () = 
-            gemm env.Str nT T 1.0f (c.Size,c.A) (b.Size, b.P) 1.0f (a.Size, a.A)
-        env.PushTape matmult_backward_left
-
-    if b.HasAdjoint then 
-        let matmult_backward_right () = 
-            gemm env.Str T nT 1.0f (a.Size, a.P) (c.Size, c.A) 1.0f (b.Size, b.A)
-        env.PushTape matmult_backward_right
+    if a.HasAdjoint then gemm env.Str nT T 1.0f (c.Size,c.A) (b.Size, b.P) 1.0f (a.Size, a.A)
+    if b.HasAdjoint then gemm env.Str T nT 1.0f (a.Size, a.P) (c.Size, c.A) 1.0f (b.Size, b.A)
 
 let seqmatmult id (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: SpiralEnv) =
-    let sc = l |> List.map (fun (a,b) -> 
-        let (cols_b,_) = b.Size
-        let (_,rows_a) = a.Size
-        cols_b,rows_a)
-    guardSizes sc
-    let cols_c, rows_c as sc = List.head sc
-    let c = env.Mem.GetDM(sc,cols_c*rows_c,default_num_vars, env)
-    for a,b in l do gemm env.Str nT nT 1.0f (a.Size,a.P) (b.Size,b.P) 0.0f (c.Size,c.P)
-    //TODO: Seqmatmult does not have Nodes.Add(id,c)
+    generic_operation id env <| fun _ ->
+        let sc = l |> List.map (fun (a,b) -> 
+            let (cols_b,_) = b.Size
+            let (_,rows_a) = a.Size
+            cols_b,rows_a)
+        guardSizes sc
+        let cols_c, rows_c as sc = List.head sc
+        let c = env.Mem.GetDM(sc,cols_c*rows_c,default_num_vars, env)
+        for a,b in l do gemm env.Str nT nT 1.0f (a.Size,a.P) (b.Size,b.P) 0.0f (c.Size,c.P)
 
-    if env.IsInferenceOnly = false then
-        for a,b in l do matmult_backwards a b c env
-
-    env.Nodes.Add(id,c)
-    c
+        c, fun _ -> for a,b in l do matmult_backwards a b c env
 
 let matmult id (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv) =
     seqmatmult id [a,b] env
@@ -329,19 +319,6 @@ let guarded_map_to_caller_var (a: DM<_,_> list) f =
     |> guardSizes
 
     a |> List.map (fun x -> f x)
-
-let generic_operation id (a: DM<_,_> list) (env: SpiralEnv) forward_op =
-    let c,backward_op = forward_op()
-    env.Nodes.Add(id, c)
-
-    let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
-
-    if env.IsInferenceOnly = false && as_have_adjoint then
-        let activation_backward () =
-            backward_op()
-        env.PushTape activation_backward
-            
-    c
 
 let operation_prelude (a: DM<_,_> list) (c: DM<_,_>) cvars =
     let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
@@ -356,7 +333,7 @@ let grid_size_and_block_size_for_map total_size =
     min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
 
 let map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
-    generic_operation id a env <| fun () ->
+    generic_operation id env <| fun () ->
         let h = a.Head
         let c = dm_like h env
 
@@ -369,14 +346,16 @@ let map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
             env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
 
         c, fun () ->
-            kernel_caller grid_size block_size 
-                env.Str backward_kernel (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
+            let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
+            if as_have_adjoint then
+                kernel_caller grid_size block_size 
+                    env.Str backward_kernel (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
 
 let grid_size_and_block_size_for_map_redo_map total_size =
     min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size
 
 let map_redo_map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
-    generic_operation id a env <| fun () ->
+    generic_operation id env <| fun () ->
         let h = a.Head
         let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
 
@@ -390,10 +369,12 @@ let map_redo_map_operation id (a: _ list) cvars forward_kernel backward_kernel e
 
         let c' = Df.create(lazy c.P.Gather().[0])
         c', fun () ->
-            let out_prim = c'.P.Value |> CF32
-            let out_adj = c'.A.Value |> CF32
-            kernel_caller grid_size block_size 
-                env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
+            let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
+            if as_have_adjoint then
+                let out_prim = c'.P.Value |> CF32
+                let out_adj = c'.A.Value |> CF32
+                kernel_caller grid_size block_size 
+                    env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
     
 let seqhadmult id (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
     let l = ab.Length
