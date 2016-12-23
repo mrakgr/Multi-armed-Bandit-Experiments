@@ -51,7 +51,7 @@ and SpiralExp<'a,'size,'conv when 'size: equality and 'conv: equality> =
 | Sum of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a)
 | Log of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
 | ScalarMatrixAdd of id: int * SpiralExpDMF32<'size,'conv> * coef: float32 * scalar: float32 * return_type: (DM<'size,float32> -> 'a)
-| Scale of id: int * SpiralExpF32<'conv> * return_type: (Df -> 'a)
+| Scale of id: int * float32 * SpiralExpF32<'conv> * return_type: (Df -> 'a)
 | SumScalars of id: int * SpiralExpF32<'conv> [] * return_type: (Df -> 'a)
 // Cost functions
 | SquaredError of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
@@ -386,6 +386,29 @@ let seqhadmult id (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
 let hadmult id (ab: DM<'s,float32> * DM<'s,float32>) env =
     seqhadmult id [ab] env
 
+/// alpha * a
+let scale id (alpha: float32) (a:Df) (env: SpiralEnv) =
+    generic_operation id env <| fun _ ->
+        let c = Df.create (lazy (alpha * a.P.Value))
+        c, fun _ ->  a.A := alpha * !c.A + !a.A
+
+let sum_scalars id (a:Df seq) (env: SpiralEnv) =
+    generic_operation id env <| fun _ ->
+        let c = 
+            Df.create <|
+                lazy 
+                    let mutable t = 0.0f
+                    for l in a do
+                        t <- t + l.P.Value
+                    t
+
+        c, fun _ -> for l in a do l.A := !c.A + !l.A
+
+let convert_to id (a:DM<_,_>) conv (env: SpiralEnv) =
+    generic_operation id {env with IsInferenceOnly = true} <| fun _ ->
+        let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
+        c, fun _ -> ()
+
 let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: SpiralEnv) (x: SpiralExp<'a,'size,'conv>): 'a =
     let eval' x = eval env x
     let if_not_evaluated r id f =
@@ -431,10 +454,12 @@ let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: Spir
         if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] log_ log_backward env
     | ScalarMatrixAdd(id, x, coef, scalar, r) ->
         if_not_evaluated r id <| fun _ ->  map_operation id [eval' x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
-//| Scale of id: int * SpiralExpF32<'conv> * return_type: (Df -> 'a)
-//| SumScalars of id: int * SpiralExpF32<'conv> [] * return_type: (Df -> 'a)
+    | Scale(id, alpha, x, r) ->
+        if_not_evaluated r id <| fun _ -> scale id alpha (eval' x) env
+    | SumScalars(id, x, r) ->
+        if_not_evaluated r id <| fun _ -> sum_scalars id (Array.map eval' x) env
 //// Cost functions
 //| SquaredError of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
 //| CrossEntropy of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-//// Converters - the 'conv generic parameter in all those other branches is just used in this one.
-//| ConvertTo of id: int * SpiralExpDMF32<'size,'conv> * conv: ('size -> 'conv) * return_type: (DM<'conv,float32> -> 'a)
+    | ConvertTo(id, x, conv, r) -> 
+        if_not_evaluated r id <| fun _ -> convert_to id (eval' x) conv env
