@@ -1,4 +1,7 @@
-﻿#load "SpiralV5DM.fsx"
+﻿// 12/23/2016: I am throwing in the towel on the GADT emulation experiment. The smart constructor type errors convinced me to go for the finally
+// tagless style using statically resolved type params. I am only starting this, but I am surprised that the errors are quite good.
+
+#load "SpiralV5DM.fsx"
 open System
 open System.Diagnostics
 open SpiralV5
