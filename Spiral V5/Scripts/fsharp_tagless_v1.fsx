@@ -47,4 +47,3 @@ let inline r4 in_ = mult (val_ 3) (val_ "3") in_
 //let int_r4 = r4 reg // As expected this gives a type error.
 let string_r4 = r4 str
 
-

@@ -69,6 +69,7 @@
     <None Include="Scripts\fsharp_tagless.fsx" />
     <None Include="Scripts\fsharp_tagless_v1.fsx" />
     <None Include="Scripts\SpiralV5Eval.fsx" />
+    <None Include="Scripts\SpiralV5TaglessCudaCodegen.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
