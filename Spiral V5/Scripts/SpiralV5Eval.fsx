@@ -13,437 +13,464 @@ open ManagedCuda.BasicTypes
 open ManagedCuda.VectorTypes
 open ManagedCuda.CudaBlas
 
-let default_num_vars = 2
+module Primitives =
+    let default_num_vars = 2
 
-type Scalar = Scalar
+    type Scalar = Scalar
 
-type CallerVar =
-| CInt of int
-| CF32 of float32
-| CArrayInt of CudaDeviceVariable<int>
-| CArrayF32 of CudaDeviceVariable<float32>
+    type CallerVar =
+    | CInt of int
+    | CF32 of float32
+    | CArrayInt of CudaDeviceVariable<int>
+    | CArrayF32 of CudaDeviceVariable<float32>
 
-let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) (args_in: CallerVar list) (args_out: CallerVar list) =
-    let kernel, signs = ks.Value
-    kernel.GridDimensions <- dim3 grid_size
-    kernel.BlockDimensions <- dim3 block_size
-    let signs_in, signs_out = List.splitAt args_in.Length signs
+    let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) (args_in: CallerVar list) (args_out: CallerVar list) =
+        let kernel, signs = ks.Value
+        kernel.GridDimensions <- dim3 grid_size
+        kernel.BlockDimensions <- dim3 block_size
+        let signs_in, signs_out = List.splitAt args_in.Length signs
 
-    List.iter2 (fun arg sign ->
-        match arg, sign with
-        | CInt _, CudaVar(_, CudaConst CudaInt) -> ()
-        | CF32 _, CudaVar(_, CudaConst CudaFloat) -> ()
-        | CArrayInt _, CudaArray(_, CudaConst CudaInt, _) -> ()
-        | CArrayF32 _, CudaArray(_, CudaConst CudaFloat, _) -> ()
-        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
-        ) args_in signs_in
+        List.iter2 (fun arg sign ->
+            match arg, sign with
+            | CInt _, CudaVar(_, CudaConst CudaInt) -> ()
+            | CF32 _, CudaVar(_, CudaConst CudaFloat) -> ()
+            | CArrayInt _, CudaArray(_, CudaConst CudaInt, _) -> ()
+            | CArrayF32 _, CudaArray(_, CudaConst CudaFloat, _) -> ()
+            | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+            ) args_in signs_in
 
-    List.iter2 (fun arg sign ->
-        match arg, sign with
-        | CInt _, CudaVar(_, CudaInt) -> ()
-        | CF32 _, CudaVar(_, CudaFloat) -> ()
-        | CArrayInt _, CudaArray(_, CudaInt, _) -> ()
-        | CArrayF32 _, CudaArray(_, CudaFloat, _) -> ()
-        | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
-        ) args_out signs_out
+        List.iter2 (fun arg sign ->
+            match arg, sign with
+            | CInt _, CudaVar(_, CudaInt) -> ()
+            | CF32 _, CudaVar(_, CudaFloat) -> ()
+            | CArrayInt _, CudaArray(_, CudaInt, _) -> ()
+            | CArrayF32 _, CudaArray(_, CudaFloat, _) -> ()
+            | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+            ) args_out signs_out
 
-    let f x = x |> List.map (function
-        | CInt x -> box x
-        | CF32 x -> box x
-        | CArrayInt x -> box x
-        | CArrayF32 x -> box x
-        )
+        let f x = x |> List.map (function
+            | CInt x -> box x
+            | CF32 x -> box x
+            | CArrayInt x -> box x
+            | CArrayF32 x -> box x
+            )
 
-    let a1 = f args_in
-    let a2 = f args_out
+        let a1 = f args_in
+        let a2 = f args_out
 
-    kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
+        kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
 
-type VarF32 = CudaDeviceVariable<float32>
+    type VarF32 = CudaDeviceVariable<float32>
 
-let guardSizes (x: seq<'a>) =
-    let h = Seq.head x
-    let t = Seq.tail x
-    Seq.iter (fun e -> if h <> e then failwithf "%A <> %A" h e) t
+    let guardSizes (x: seq<'a>) =
+        let h = Seq.head x
+        let t = Seq.tail x
+        Seq.iter (fun e -> if h <> e then failwithf "%A <> %A" h e) t
 
-let T = Operation.Transpose
-let nT = Operation.NonTranspose
+    let T = Operation.Transpose
+    let nT = Operation.NonTranspose
 
-// y <- alpha * x + y
-let saxpy 
-        (str: CudaStream) 
-        (alpha:float32) (sx: int, x: VarF32) (sy, y: VarF32) =
-    guardSizes [|sx;sy|]
-    cublas.Stream <- str.Stream
-
-    // The previous version of the library had a bug here because the size was not passed in explicitly.
-    let _status = CudaBlasNativeMethods.cublasSaxpy_v2(cublas.CublasHandle, sx, ref alpha, x.DevicePointer, 1, y.DevicePointer, 1)
-    Debug.WriteLine(String.Format("{0:G}, {1}: {2}", DateTime.Now, "cublasSaxpy_v2", _status))
-    if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
-
-/// General matrix-matrix addition. Inplace version.
-let inline geam 
-        (str: CudaStream) transa transb 
-        (alpha: float32) ((cols_A: int,rows_A: int), A: VarF32) 
-        (beta: float32)  ((cols_B: int,rows_B: int), B: VarF32) 
-                         ((cols_C: int,rows_C: int), C: VarF32) =
-    let a_row = if transa = nT then rows_A else cols_A
-    let a_col = if transa = nT then cols_A else rows_A
-    let b_row = if transb = nT then rows_B else cols_B
-    let b_col = if transb = nT then cols_B else rows_B
-        
-    if a_row <> b_row then failwithf "a_row <> b_row in geam! %i <> %i" a_row b_row
-    if a_col <> b_col then failwithf "a_col <> b_col in geam! %i <> %i" a_col b_col
-
-    if a_row <> rows_C then failwithf "a_row <> C_num_rows in geam! %i <> %i" a_col rows_C
-    if a_col <> cols_C then failwithf "a_col <> C_num_cols in geam! %i <> %i" a_col cols_C
-
-    let lda = if transa = nT then a_row else a_col
-    let ldb = if transa = nT then b_row else b_col
-    let ldc = a_row
-
-    cublas.Stream <- str.Stream
-    cublas.Geam(transa, transb, a_row, a_col, alpha, A, lda, B, ldb, beta, C, ldc)
-
-/// General matrix-matrix multiply from cuBLAS. Inplace version
-let inline gemm 
-        (str: CudaStream) transa transb 
-        (alpha: float32) ((cols_A: int,rows_A: int as sA), A: VarF32)
-                         ((cols_B: int,rows_B: int as sB), B: VarF32)
-        (beta: float32)  ((cols_C: int,rows_C: int as sC), C: VarF32) =
-
-    // -------
-
-    // These two are meant to be called from inside gemm as they lack boundary checks.
-    // I've added them to enhance gemm's vector handling capabilities for online learning
-    // tasks.
-
-    /// o <- alpha * op(A) * x + beta * o
-    /// Matrix-vector multiplication. Inplace version.
-    let inline gemv
-            (str: CudaStream) transa transb
-            (alpha:float32) ((cols_A: int,rows_A: int), A: VarF32)
-                            ((cols_x: int,rows_x: int), x: VarF32)
-            (beta:float32)  ((cols_o: int,rows_o: int), o: VarF32) =
-        let m = rows_A
-        let n = cols_A
-        let lda = m
+    // y <- alpha * x + y
+    let saxpy 
+            (str: CudaStream) 
+            (alpha:float32) (sx: int, x: VarF32) (sy, y: VarF32) =
+        guardSizes [|sx;sy|]
         cublas.Stream <- str.Stream
-        cublas.Gemv(transa, m, n, alpha, A, lda, x, 1, beta, o, 1)
 
-    // A <- alpha * x * yT + beta * A (outer product)
-    let inline ger 
-            (str: CudaStream)
-            (alpha: float32) ((cols_x: int,rows_x: int), x: VarF32)
-                             ((cols_y: int,rows_y: int), y: VarF32)
-            (beta: float32)  ((cols_a: int,rows_a: int as sa), a: VarF32) =
-        let m = max rows_x cols_x
-        let n = max rows_y cols_y
-        if beta <> 1.0f then geam str nT nT beta (sa, a) 0.0f (sa, a) (sa, a) 
-        cublas.Stream <- str.Stream
-        let _status = CudaBlasNativeMethods.cublasSger_v2(cublas.CublasHandle, m, n, ref alpha, x.DevicePointer, 1, y.DevicePointer, 1, a.DevicePointer, m)
+        // The previous version of the library had a bug here because the size was not passed in explicitly.
+        let _status = CudaBlasNativeMethods.cublasSaxpy_v2(cublas.CublasHandle, sx, ref alpha, x.DevicePointer, 1, y.DevicePointer, 1)
+        Debug.WriteLine(String.Format("{0:G}, {1}: {2}", DateTime.Now, "cublasSaxpy_v2", _status))
         if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
 
-    // -------
+    /// General matrix-matrix addition. Inplace version.
+    let inline geam 
+            (str: CudaStream) transa transb 
+            (alpha: float32) ((cols_A: int,rows_A: int), A: VarF32) 
+            (beta: float32)  ((cols_B: int,rows_B: int), B: VarF32) 
+                             ((cols_C: int,rows_C: int), C: VarF32) =
+        let a_row = if transa = nT then rows_A else cols_A
+        let a_col = if transa = nT then cols_A else rows_A
+        let b_row = if transb = nT then rows_B else cols_B
+        let b_col = if transb = nT then cols_B else rows_B
+        
+        if a_row <> b_row then failwithf "a_row <> b_row in geam! %i <> %i" a_row b_row
+        if a_col <> b_col then failwithf "a_col <> b_col in geam! %i <> %i" a_col b_col
 
-    let inline is_vector (cols_x,rows_x) = rows_x = 1 || cols_x = 1
+        if a_row <> rows_C then failwithf "a_row <> C_num_rows in geam! %i <> %i" a_col rows_C
+        if a_col <> cols_C then failwithf "a_col <> C_num_cols in geam! %i <> %i" a_col cols_C
 
-    let a_col = if transa = nT then cols_A else rows_A
-    let b_row = if transb = nT then rows_B else cols_B
-    if a_col <> b_row then failwithf "a_col(%i) <> b_row(%i) in gemm!" a_col b_row
-    let m = if transa = nT then rows_A else cols_A
-    let n = if transb = nT then cols_B else rows_B
-    let k = a_col
-    let lda = if transa = nT then m else k
-    let ldb = if transb = nT then k else n
-    let ldc = m
+        let lda = if transa = nT then a_row else a_col
+        let ldb = if transa = nT then b_row else b_col
+        let ldc = a_row
 
-    if m <> rows_C || n <> cols_C then failwithf "m(%i) <> rows C(%i) || n(%i) <> cols C(%i)" m rows_C n cols_C
-
-    // If is outer product call ger
-    if a_col = 1 && b_row = 1 then 
-        ger str alpha (sA, A) (sB, B) beta (sC, C)
-    // If the vector is on the right side or both are vectors call gemv normally.
-    elif is_vector sB then 
-        gemv str transa transb alpha (sA,A) (sB,B) beta (sC,C)
-    // If the vector is on the left side call gemv with the arguments switched and transposed
-    // It does not actually transpose them, just their views. The function should work regardless.
-    elif is_vector sA then
-        let opta = if transa = nT then T else nT
-        let optb = if transb = nT then T else nT
-        gemv str optb opta alpha (sB,B) (sA,A) beta (sC,C)
-    // Just do the standard matrix multiply
-    else
         cublas.Stream <- str.Stream
-        cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
+        cublas.Geam(transa, transb, a_row, a_col, alpha, A, lda, B, ldb, beta, C, ldc)
 
-let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv<_>) =
-    to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
+    /// General matrix-matrix multiply from cuBLAS. Inplace version
+    let inline gemm 
+            (str: CudaStream) transa transb 
+            (alpha: float32) ((cols_A: int,rows_A: int as sA), A: VarF32)
+                             ((cols_B: int,rows_B: int as sB), B: VarF32)
+            (beta: float32)  ((cols_C: int,rows_C: int as sC), C: VarF32) =
 
-let dm_like (a: DM<_,_>) (env: SpiralEnv<_>) =
-    env.Mem.GetDM(a.Size,a.TotalSizeInElems,default_num_vars,env)
+        // -------
 
-/// Copies only the primals.
-let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv<_>) =
-    let c = dm_like a env
-    copy c.P a.P a.TotalSizeInElems env
-    c
+        // These two are meant to be called from inside gemm as they lack boundary checks.
+        // I've added them to enhance gemm's vector handling capabilities for online learning
+        // tasks.
 
-let generic_operation (env: SpiralEnv<_>) forward_op =
-    let c,backward_op = forward_op()
-    if env.IsInferenceOnly = false then env.PushTape backward_op
-    c
+        /// o <- alpha * op(A) * x + beta * o
+        /// Matrix-vector multiplication. Inplace version.
+        let inline gemv
+                (str: CudaStream) transa transb
+                (alpha:float32) ((cols_A: int,rows_A: int), A: VarF32)
+                                ((cols_x: int,rows_x: int), x: VarF32)
+                (beta:float32)  ((cols_o: int,rows_o: int), o: VarF32) =
+            let m = rows_A
+            let n = cols_A
+            let lda = m
+            cublas.Stream <- str.Stream
+            cublas.Gemv(transa, m, n, alpha, A, lda, x, 1, beta, o, 1)
 
-let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv<_>) =
-    geam env.Str nT nT alpha (s, a) beta (s, b) (s, c)
+        // A <- alpha * x * yT + beta * A (outer product)
+        let inline ger 
+                (str: CudaStream)
+                (alpha: float32) ((cols_x: int,rows_x: int), x: VarF32)
+                                 ((cols_y: int,rows_y: int), y: VarF32)
+                (beta: float32)  ((cols_a: int,rows_a: int as sa), a: VarF32) =
+            let m = max rows_x cols_x
+            let n = max rows_y cols_y
+            if beta <> 1.0f then geam str nT nT beta (sa, a) 0.0f (sa, a) (sa, a) 
+            cublas.Stream <- str.Stream
+            let _status = CudaBlasNativeMethods.cublasSger_v2(cublas.CublasHandle, m, n, ref alpha, x.DevicePointer, 1, y.DevicePointer, 1, a.DevicePointer, m)
+            if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
 
-let add_backward (alpha: float32) s (er: VarF32) (x_adj: VarF32) (env: SpiralEnv<_>) =
-    saxpy env.Str alpha (s,er) (s,x_adj)
+        // -------
 
-let add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
-    if a.Size <> b.Size then failwithf "a.Size(%A) <> b.Size(%A)" a.Size b.Size
-    let s = a.TotalSizeInElems
-    add_forward alpha (s,1) a.P beta b.P c.P env
+        let inline is_vector (cols_x,rows_x) = rows_x = 1 || cols_x = 1
 
-    c, fun _ ->
-        if a.HasAdjoint then add_backward alpha s c.A a.A env
-        if b.HasAdjoint then add_backward beta s c.A b.A env
+        let a_col = if transa = nT then cols_A else rows_A
+        let b_row = if transb = nT then rows_B else cols_B
+        if a_col <> b_row then failwithf "a_col(%i) <> b_row(%i) in gemm!" a_col b_row
+        let m = if transa = nT then rows_A else cols_A
+        let n = if transb = nT then cols_B else rows_B
+        let k = a_col
+        let lda = if transa = nT then m else k
+        let ldb = if transb = nT then k else n
+        let ldc = m
 
-/// An umbrella function that does simple addition if all the dimensions sizes are the same and broadcast addition if they are 4d or 2d.
-/// Raises an error otherwise.
-let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv<_>) =
-    let aDesc = env.Mem.GetTensorDescriptor sa
-    let bDesc = env.Mem.GetTensorDescriptor sb
+        if m <> rows_C || n <> cols_C then failwithf "m(%i) <> rows C(%i) || n(%i) <> cols C(%i)" m rows_C n cols_C
 
-    cudnn.SetStream(env.Str)
-    cudnn.AddTensor(beta, bDesc, b, alpha, aDesc, a) // The output is a
+        // If is outer product call ger
+        if a_col = 1 && b_row = 1 then 
+            ger str alpha (sA, A) (sB, B) beta (sC, C)
+        // If the vector is on the right side or both are vectors call gemv normally.
+        elif is_vector sB then 
+            gemv str transa transb alpha (sA,A) (sB,B) beta (sC,C)
+        // If the vector is on the left side call gemv with the arguments switched and transposed
+        // It does not actually transpose them, just their views. The function should work regardless.
+        elif is_vector sA then
+            let opta = if transa = nT then T else nT
+            let optb = if transb = nT then T else nT
+            gemv str optb opta alpha (sB,B) (sA,A) beta (sC,C)
+        // Just do the standard matrix multiply
+        else
+            cublas.Stream <- str.Stream
+            cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
-let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv<_>) =
-    let errDesc = env.Mem.GetTensorDescriptor serr
-    let inpDesc = env.Mem.GetTensorDescriptor sb
+    let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv<_>) =
+        to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
 
-    cudnn.SetStream env.Str
-    cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
+    let dm_like (a: DM<_,_>) (env: SpiralEnv<_>) =
+        env.Mem.GetDM(a.Size,a.TotalSizeInElems,default_num_vars,env)
 
-let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv<_>) =
-    saxpy env.Str alpha (serr,err) (sa,a_adj)
-
-let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
-    let sa_total = a.TotalSizeInElems
-    let sa = a.Size
-    let sb = b.Size
-
-    copy c.P a.P sa_total env
-    add_tensor_4d_forward alpha (s_to_4d sa,c.P) beta (s_to_4d sb,b.P) env
-
-    c, fun _ ->
-        if b.HasAdjoint then add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
-        if c.HasAdjoint then add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
-
-let routed_add s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
-    generic_operation env <| fun _ ->
+    /// Copies only the primals.
+    let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv<_>) =
         let c = dm_like a env
-        if a.Size = b.Size then add alpha a beta b c env
-        else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
+        copy c.P a.P a.TotalSizeInElems env
+        c
 
-let standard_add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
-    generic_operation env <| fun _ ->
-        let c = dm_like a env
-        add alpha a beta b c env
+    let generic_operation (env: SpiralEnv<_>) forward_op =
+        let c,backward_op = forward_op()
+        if env.IsInferenceOnly = false then env.PushTape backward_op
+        c
 
-let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv<_>) =
-    if a.HasAdjoint then gemm env.Str nT T 1.0f (c.Size,c.A) (b.Size, b.P) 1.0f (a.Size, a.A)
-    if b.HasAdjoint then gemm env.Str T nT 1.0f (a.Size, a.P) (c.Size, c.A) 1.0f (b.Size, b.A)
+    let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv<_>) =
+        geam env.Str nT nT alpha (s, a) beta (s, b) (s, c)
 
-let seqmatmult (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: SpiralEnv<_>) =
-    generic_operation env <| fun _ ->
-        let sc = l |> List.map (fun (a,b) -> 
-            let (cols_b,_) = b.Size
-            let (_,rows_a) = a.Size
-            cols_b,rows_a)
-        guardSizes sc
-        let cols_c, rows_c as sc = List.head sc
-        let c = env.Mem.GetDM(sc,cols_c*rows_c,default_num_vars, env)
-        for a,b in l do gemm env.Str nT nT 1.0f (a.Size,a.P) (b.Size,b.P) 0.0f (c.Size,c.P)
+    let add_backward (alpha: float32) s (er: VarF32) (x_adj: VarF32) (env: SpiralEnv<_>) =
+        saxpy env.Str alpha (s,er) (s,x_adj)
 
-        c, fun _ -> for a,b in l do matmult_backwards a b c env
+    let add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
+        if a.Size <> b.Size then failwithf "a.Size(%A) <> b.Size(%A)" a.Size b.Size
+        let s = a.TotalSizeInElems
+        add_forward alpha (s,1) a.P beta b.P c.P env
 
-let matmult (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv<_>) =
-    seqmatmult [a,b] env
+        c, fun _ ->
+            if a.HasAdjoint then add_backward alpha s c.A a.A env
+            if b.HasAdjoint then add_backward beta s c.A b.A env
 
-let guarded_map_to_caller_var (a: DM<_,_> list) f =
-    a 
-    |> List.map (fun x -> x.Size)
-    |> guardSizes
+    /// An umbrella function that does simple addition if all the dimensions sizes are the same and broadcast addition if they are 4d or 2d.
+    /// Raises an error otherwise.
+    let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv<_>) =
+        let aDesc = env.Mem.GetTensorDescriptor sa
+        let bDesc = env.Mem.GetTensorDescriptor sb
 
-    a |> List.map (fun x -> f x)
+        cudnn.SetStream(env.Str)
+        cudnn.AddTensor(beta, bDesc, b, alpha, aDesc, a) // The output is a
 
-let operation_prelude (a: DM<_,_> list) (c: DM<_,_>) cvars =
-    let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
-    let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
-    let cvars = List.map (fun x -> CF32 x) cvars
-    let out_prim = CArrayF32 c.P
-    let out_adj = CArrayF32 c.A
+    let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv<_>) =
+        let errDesc = env.Mem.GetTensorDescriptor serr
+        let inpDesc = env.Mem.GetTensorDescriptor sb
 
-    input_prims, input_adjs, cvars, out_prim, out_adj
+        cudnn.SetStream env.Str
+        cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
 
-let grid_size_and_block_size_for_map total_size =
-    min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
+    let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv<_>) =
+        saxpy env.Str alpha (serr,err) (sa,a_adj)
 
-let map_operation (a: _ list) cvars forward_kernel backward_kernel env =
-    generic_operation env <| fun () ->
-        let h = a.Head
-        let c = dm_like h env
+    let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
+        let sa_total = a.TotalSizeInElems
+        let sa = a.Size
+        let sb = b.Size
 
-        let input_prims, input_adjs, cvars, out_prim, out_adj = operation_prelude a c cvars
+        copy c.P a.P sa_total env
+        add_tensor_4d_forward alpha (s_to_4d sa,c.P) beta (s_to_4d sb,b.P) env
 
-        let grid_size, block_size = grid_size_and_block_size_for_map h.TotalSizeInElems
-        let size = CInt h.TotalSizeInElems
+        c, fun _ ->
+            if b.HasAdjoint then add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
+            if c.HasAdjoint then add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
-        kernel_caller grid_size block_size 
-            env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
+    let routed_add s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
+        generic_operation env <| fun _ ->
+            let c = dm_like a env
+            if a.Size = b.Size then add alpha a beta b c env
+            else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
 
-        c, fun () ->
-            let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
-            if as_have_adjoint then
-                kernel_caller grid_size block_size 
-                    env.Str backward_kernel (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
+    let standard_add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
+        generic_operation env <| fun _ ->
+            let c = dm_like a env
+            add alpha a beta b c env
 
-let grid_size_and_block_size_for_map_redo_map total_size =
-    min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size
+    let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv<_>) =
+        if a.HasAdjoint then gemm env.Str nT T 1.0f (c.Size,c.A) (b.Size, b.P) 1.0f (a.Size, a.A)
+        if b.HasAdjoint then gemm env.Str T nT 1.0f (a.Size, a.P) (c.Size, c.A) 1.0f (b.Size, b.A)
 
-let map_redo_map_operation (a: _ list) cvars forward_kernel backward_kernel env =
-    generic_operation env <| fun () ->
-        let h = a.Head
-        let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
+    let seqmatmult (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: SpiralEnv<_>) =
+        generic_operation env <| fun _ ->
+            let sc = l |> List.map (fun (a,b) -> 
+                let (cols_b,_) = b.Size
+                let (_,rows_a) = a.Size
+                cols_b,rows_a)
+            guardSizes sc
+            let cols_c, rows_c as sc = List.head sc
+            let c = env.Mem.GetDM(sc,cols_c*rows_c,default_num_vars, env)
+            for a,b in l do gemm env.Str nT nT 1.0f (a.Size,a.P) (b.Size,b.P) 0.0f (c.Size,c.P)
 
-        let input_prims, input_adjs, cvars, out_prim, _ = operation_prelude a c cvars
+            c, fun _ -> for a,b in l do matmult_backwards a b c env
 
-        let grid_size, block_size = grid_size_and_block_size_for_map_redo_map h.TotalSizeInElems
-        let size = CInt h.TotalSizeInElems
+    let matmult (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv<_>) =
+        seqmatmult [a,b] env
 
-        kernel_caller grid_size block_size
-            env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
+    let guarded_map_to_caller_var (a: DM<_,_> list) f =
+        a 
+        |> List.map (fun x -> x.Size)
+        |> guardSizes
 
-        let c' = Df.create(lazy c.P.Gather().[0])
-        c', fun () ->
-            let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
-            if as_have_adjoint then
-                let out_prim = c'.P.Value |> CF32
-                let out_adj = c'.A.Value |> CF32
-                kernel_caller grid_size block_size 
-                    env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
+        a |> List.map (fun x -> f x)
+
+    let operation_prelude (a: DM<_,_> list) (c: DM<_,_>) cvars =
+        let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
+        let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
+        let cvars = List.map (fun x -> CF32 x) cvars
+        let out_prim = CArrayF32 c.P
+        let out_adj = CArrayF32 c.A
+
+        input_prims, input_adjs, cvars, out_prim, out_adj
+
+    let grid_size_and_block_size_for_map total_size =
+        min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
+
+    let map_operation (a: _ list) cvars forward_kernel backward_kernel env =
+        generic_operation env <| fun () ->
+            let h = a.Head
+            let c = dm_like h env
+
+            let input_prims, input_adjs, cvars, out_prim, out_adj = operation_prelude a c cvars
+
+            let grid_size, block_size = grid_size_and_block_size_for_map h.TotalSizeInElems
+            let size = CInt h.TotalSizeInElems
+
+            kernel_caller grid_size block_size 
+                env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
+
+            c, fun () ->
+                let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
+                if as_have_adjoint then
+                    kernel_caller grid_size block_size 
+                        env.Str backward_kernel (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
+
+    let grid_size_and_block_size_for_map_redo_map total_size =
+        min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size
+
+    let map_redo_map_operation (a: _ list) cvars forward_kernel backward_kernel env =
+        generic_operation env <| fun () ->
+            let h = a.Head
+            let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
+
+            let input_prims, input_adjs, cvars, out_prim, _ = operation_prelude a c cvars
+
+            let grid_size, block_size = grid_size_and_block_size_for_map_redo_map h.TotalSizeInElems
+            let size = CInt h.TotalSizeInElems
+
+            kernel_caller grid_size block_size
+                env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
+
+            let c' = Df.create(lazy c.P.Gather().[0])
+            c', fun () ->
+                let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
+                if as_have_adjoint then
+                    let out_prim = c'.P.Value |> CF32
+                    let out_adj = c'.A.Value |> CF32
+                    kernel_caller grid_size block_size 
+                        env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
     
-let seqhadmult (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
-    let l = ab.Length
-    let forward_kernel = hadmult_generic_memoized l
-    let backward_kernel = hadmult_backward_generic_memoized l
-    let args = ab |> List.collect (fun (a,b) -> [a;b])
-    map_operation args [] forward_kernel backward_kernel env
+    let seqhadmult (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
+        let l = ab.Length
+        let forward_kernel = hadmult_generic_memoized l
+        let backward_kernel = hadmult_backward_generic_memoized l
+        let args = ab |> List.collect (fun (a,b) -> [a;b])
+        map_operation args [] forward_kernel backward_kernel env
 
-let hadmult (ab: DM<'s,float32> * DM<'s,float32>) env =
-    seqhadmult [ab] env
+    let hadmult (ab: DM<'s,float32> * DM<'s,float32>) env =
+        seqhadmult [ab] env
 
-/// alpha * a
-let scale (alpha: float32) (a:Df) (env: SpiralEnv<_>) =
-    generic_operation env <| fun _ ->
-        let c = Df.create (lazy (alpha * a.P.Value))
-        c, fun _ ->  a.A := alpha * !c.A + !a.A
+    /// alpha * a
+    let scale (alpha: float32) (a:Df) (env: SpiralEnv<_>) =
+        generic_operation env <| fun _ ->
+            let c = Df.create (lazy (alpha * a.P.Value))
+            c, fun _ ->  a.A := alpha * !c.A + !a.A
 
-let sum_scalars (a:Df seq) (env: SpiralEnv<_>) =
-    generic_operation env <| fun _ ->
-        let c = 
-            Df.create <|
-                lazy 
-                    let mutable t = 0.0f
-                    for l in a do
-                        t <- t + l.P.Value
-                    t
+    let sum_scalars (a:Df seq) (env: SpiralEnv<_>) =
+        generic_operation env <| fun _ ->
+            let c = 
+                Df.create <|
+                    lazy 
+                        let mutable t = 0.0f
+                        for l in a do
+                            t <- t + l.P.Value
+                        t
 
-        c, fun _ -> for l in a do l.A := !c.A + !l.A
+            c, fun _ -> for l in a do l.A := !c.A + !l.A
 
-//let convert_to (a: DM<_,_>) conv (env: SpiralEnv<_>) =
-//    generic_operation {env with IsInferenceOnly = true} <| fun _ ->
-//        let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
-//        c, fun _ -> ()
-//
-//let get_num_examples_and_rescale_it (a: DM<_,_>) f env =
-//    generic_operation {env with IsInferenceOnly = true} <| fun _ ->
-//        f a.Size, fun _ -> ()
-
-//let squared_error_cost id (target: SpiralExpDMF32<int*int,_>) (input: SpiralExpDMF32<int*int,_>) =
-//    let r = scale' (get_num_examples_and_rescale_it' target (fun (c,r) -> 0.5f / float32 c))
-//    add_2d' 1.0f target -1.0f input
-//    |> square'
-//    |> fun x -> x
-//    |> sum'
-//    |> r
-    
+    let reshape (a: DM<_,_>) conv (env: SpiralEnv<_>) =
+        generic_operation {env with IsInferenceOnly = true} <| fun _ ->
+            let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
+            c, fun _ -> ()
+   
 type RegularEval = RegularEval with
     // Root nodes
     static member BaseNode(env: SpiralEnv<RegularEval>, x) = x
     // Basic operations
-    static member Matmult(env: SpiralEnv<RegularEval>, a, b) = matmult a b env
-    static member SeqMatmult(env: SpiralEnv<RegularEval>, l) = seqmatmult l env
-    static member Add(env: SpiralEnv<RegularEval>, alpha, a: DM<int*int*int*int,_>, beta, b, r) =
-        routed_add id id alpha a beta b env
+    static member Matmult(env: SpiralEnv<RegularEval>, a, b) = Primitives.matmult a b env
+    static member SeqMatmult(env: SpiralEnv<RegularEval>, l) = Primitives.seqmatmult l env
     static member Add(env: SpiralEnv<RegularEval>, alpha, a, beta, b) =
+        Primitives.standard_add alpha a beta b env
+    static member BAdd(env: SpiralEnv<RegularEval>, alpha, a: DM<int*int*int*int,_>, beta, b) =
+        Primitives.routed_add id id alpha a beta b env
+    static member BAdd(env: SpiralEnv<RegularEval>, alpha, a, beta, b) =
         let s_to_4d (c,r) = (c,1,r,1)
         let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
-        routed_add s_to_4d s_to_4d_backwards alpha a beta b env
-    static member Hadmult(env: SpiralEnv<RegularEval>, a, b) = hadmult (a, b) env
-    static member SeqHadmult(env: SpiralEnv<RegularEval>, abs) = seqhadmult abs env
-    static member Relu(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] relu relu_backward env
+        Primitives.routed_add s_to_4d s_to_4d_backwards alpha a beta b env
+    static member Hadmult(env: SpiralEnv<RegularEval>, a, b) = Primitives.hadmult (a, b) env
+    static member SeqHadmult(env: SpiralEnv<RegularEval>, abs) = Primitives.seqhadmult abs env
+    static member Relu(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] relu relu_backward env
     /// The ' is in the name because .NET treats the Tanh specially for some reason.
-    static member Tanh'(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] tanh tanh_backward env
-    static member Sigmoid(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] tanh tanh_backward env
-    static member Clip(env: SpiralEnv<RegularEval>, min, max, x) = map_operation [x] [min;max] clip clip_backward env
+    static member Tanh'(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] tanh tanh_backward env
+    static member Sigmoid(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] tanh tanh_backward env
+    static member Clip(env: SpiralEnv<RegularEval>, min, max, x) = Primitives.map_operation [x] [min;max] clip clip_backward env
     static member ClippedSigmoid(env: SpiralEnv<RegularEval>, min, max, x) = 
-        map_operation [x] [min;max] clipped_sigmoid clipped_sigmoid_backward env
-    static member Square(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] square square_backward env
-    static member Sum(env: SpiralEnv<RegularEval>, x) = map_redo_map_operation [x] [] sum sum_backward env
-    static member Log'(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] log_ log_backward env
+        Primitives.map_operation [x] [min;max] clipped_sigmoid clipped_sigmoid_backward env
+    static member Square(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] square square_backward env
+    static member Sum(env: SpiralEnv<RegularEval>, x) = Primitives.map_redo_map_operation [x] [] sum sum_backward env
+    static member Log'(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] log_ log_backward env
     static member ScalarMatrixAdd(env: SpiralEnv<RegularEval>, x, coef, scalar) =
-        map_operation [x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
-    static member Scale(env: SpiralEnv<RegularEval>, alpha, x) = scale alpha x env
-    static member SumScalars(env: SpiralEnv<RegularEval>, x) = sum_scalars x env
+        Primitives.map_operation [x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
+    static member Scale(env: SpiralEnv<RegularEval>, alpha, x) = Primitives.scale alpha x env
+    static member SumScalars(env: SpiralEnv<RegularEval>, x) = Primitives.sum_scalars x env
+    static member Reshape(env: SpiralEnv<RegularEval>, x, conv) = Primitives.reshape x conv env
 
 let inline base_node' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member BaseNode: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+    ((^in_ or ^input_type) : (static member BaseNode: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x)
 let inline matmult' a b (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Matmult: SpiralEnv< ^in_> * ^x * ^x -> ^x) env, a, b)
+    ((^in_ or ^input_type) : (static member Matmult: SpiralEnv< ^in_> * ^input_type * ^input_type -> ^input_type) env, a env, b env)
 let inline seq_matmult' abs (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member SeqMatmult: SpiralEnv< ^in_> * (^x * ^x) list -> ^x) env, abs)
+    let x = List.map (fun (a,b) -> a env, b env) abs
+    ((^in_ or ^input_type) : (static member SeqMatmult: 
+        SpiralEnv< ^in_> * (^input_type * ^input_type) list -> ^input_type) env, x)
 let inline add' alpha a beta b (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Add: SpiralEnv< ^in_> * float32 * ^x * float32 * ^x -> ^x) env, alpha, a, beta, b)
+    ((^in_ or ^input_type) : (static member Add: SpiralEnv< ^in_> * float32 * ^input_type * float32 * ^input_type -> ^input_type) env, alpha, a env, beta, b env)
+let inline badd' alpha a beta b (env: SpiralEnv<_>) = 
+    ((^in_ or ^input_type) : (static member BAdd: SpiralEnv< ^in_> * float32 * ^input_type * float32 * ^input_type -> ^input_type) env, alpha, a env, beta, b env)
 let inline hadmult' a b (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Hadmult: SpiralEnv< ^in_> * ^x * ^x -> ^x) env, a, b)
+    ((^in_ or ^input_type) : (static member Hadmult: SpiralEnv< ^in_> * ^input_type * ^input_type -> ^input_type) env, a env, b env)
 let inline seqhadmult' abs (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member SeqHadmult: SpiralEnv< ^in_> * (^x * ^x) list -> ^x) env, abs)
+    let x = List.map (fun (a,b) -> a env, b env) abs
+    ((^in_ or ^input_type) : (static member SeqHadmult: 
+        SpiralEnv< ^in_> * (^input_type * ^input_type) list -> ^input_type) env, x)
 let inline relu' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Relu: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+    ((^in_ or ^input_type) : (static member Relu: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
 let inline tanh' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Tanh': SpiralEnv< ^in_> * ^x -> ^x) env, x)
+    ((^in_ or ^input_type) : (static member Tanh': SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
 let inline sigmoid' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Sigmoid: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+    ((^in_ or ^input_type) : (static member Sigmoid: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
 let inline clipped_sigmoid' x min max (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member ClippedSigmoid: SpiralEnv< ^in_> * ^x * float32 * float32 -> ^x) env, x, min, max)
+    ((^in_ or ^input_type) : (static member ClippedSigmoid: SpiralEnv< ^in_> * ^input_type * float32 * float32 -> ^input_type) env, x env, min, max)
 let inline clip' x min max (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Clip: SpiralEnv< ^in_> * ^x * float32 * float32 -> ^x) env, x, min, max)
+    ((^in_ or ^input_type) : (static member Clip: SpiralEnv< ^in_> * ^input_type * float32 * float32 -> ^input_type) env, x env, min, max)
 let inline square' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Square: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+    ((^in_ or ^input_type) : (static member Square: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
 let inline sum' x (env: SpiralEnv<_>) =
-    ((^in_ or ^x) : (static member Sum: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+    ((^in_ or ^input_type or ^output_type) : (static member Sum: SpiralEnv< ^in_> * ^input_type -> ^output_type) env, x env)
 let inline log' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^x) : (static member Log': SpiralEnv< ^in_> * ^x -> ^x) env, x)
+    ((^in_ or ^input_type) : (static member Log': SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
 let inline scalar_matrix_add' x coef scalar (env: SpiralEnv<_>) =
-    ((^in_ or ^x) : (static member ScalarMatrixAdd: SpiralEnv< ^in_> * ^x * float32 * float32 -> ^x) env, x, coef, scalar)
+    ((^in_ or ^input_type) : (static member ScalarMatrixAdd: SpiralEnv< ^in_> * ^input_type * float32 * float32 -> ^input_type) env, x env, coef, scalar)
 let inline scale' coef x (env: SpiralEnv<_>) =
-    ((^in_ or ^x) : (static member Scale: SpiralEnv< ^in_> * float32 * ^x -> ^x) env, coef, x)
-let inline sum_scalars' x (env: SpiralEnv<_>) =
-    ((^in_ or ^x) : (static member Scale: SpiralEnv< ^in_> * seq< ^x> -> ^x) env, x)
+    ((^in_) : (static member Scale: SpiralEnv< ^in_> * float32 * Df -> Df) env, coef, x env)
+let inline sum_scalars' x (env: SpiralEnv<_>) = /// TODO: Not sure about the type of this one. Adjust when making recurrent nets.
+    ((^in_ or ^input_type) : (static member SumScalars: SpiralEnv< ^in_> * seq<Df> -> Df) env, List.map (fun x -> x env) x)
+let inline reshape' x conv (env: SpiralEnv<_>) =
+    ((^in_) : (static member Reshape: SpiralEnv< ^in_> * DM< ^a,^b> * (^a -> ^c) -> DM< ^c,^b>) env, x env, conv)
 
-//let squared_error_cost' target input = SquaredError(tag(),target,input,id)
-//let cross_entropy_cost' target input = CrossEntropy(tag(),target,input,id)
-//let convert_to' x conv = ConvertTo(tag(),x,conv,id)
-//let get_num_examples_and_rescale_it' (x: SpiralExpDMF32<int*int,_>) (f: (int * int) -> float32): SpiralExp<float32,Scalar,_> = GetNumExamplesAndRescaleIt(tag(),x,f,id)
+/// Rather than use it directly pass it into cost_function' as the cost_f argument
+let inline squared_error num_examples_of target input =
+    add' 1.0f target -1.0f input
+    |> square'
+    |> sum'
+    |> scale' (0.5f / float32 (num_examples_of target))
+
+/// Rather than use it directly pass it into cost_function' as the cost_f argument
+let inline cross_entropy_cost num_examples_of target input =
+    let lt = target
+    let li = log' input
+    let rt = scalar_matrix_add' target 1.0f -1.0f
+    let ri = scalar_matrix_add' input 1.0f -1.0f |> log'
+    seqhadmult' [lt, li; rt, ri] 
+    |> sum'
+    |> scale' (-1.0f / float32 (num_examples_of target))
+
+// Dim extractors.
+/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
+let D4 (x: SpiralEnv<_> -> DM<int*int*int*int,_>) env = (x env).Size |> fun (n,_,_,_) -> n
+/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
+let D3 (x: SpiralEnv<_> -> DM<int*int*int,_>) env = (x env).Size |> fun (n,_,_) -> n
+/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
+let D2 (x: SpiralEnv<_> -> DM<int*int,_>) env = (x env).Size |> fun (c,_) -> c
+/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
+let D1 (x: SpiralEnv<_> -> DM<int,_>) _ = 1
+
+/// The generalized cost function.
+/// dim_extrator gets the number of examples (usually the outermost dimension) from the target expression. It evaluates it first.
+let inline cost_function' dim_extractor cost_f target input (env: SpiralEnv<_>): Df =
+    cost_f dim_extractor target input env
