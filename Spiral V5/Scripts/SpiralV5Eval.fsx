@@ -17,51 +17,48 @@ let default_num_vars = 2
 
 type Scalar = Scalar
 
-type SpiralExpDMF32<'size,'conv when 'size: equality and 'conv: equality> = SpiralExp<DM<'size,float32>,'size,'conv>
-and SpiralExpF32<'conv when 'conv: equality> = SpiralExp<Df,Scalar,'conv>
-// Unlike in the last iteration of the library, I need the ids to make sure that the expressions are evaluated only once.
-and SpiralExp<'a,'size,'conv when 'size: equality and 'conv: equality> =
-// Root nodes
-| BaseNode of id: int * 'a //DM<float32>
-// Basic operations
-// Note: The `return_type: (DM<'size,float32> -> 'a)` things are just hooks for the typechecker to associate the evaluator return types with
-// the generic parameter in the SpiralExp. It is a way of emulating GADTs with standard F# discriminated unions.
-| Matmult of id: int * SpiralExpDMF32<int*int,'conv> * SpiralExpDMF32<int*int,'conv> * return_type: (DM<int*int,float32> -> 'a)
-| SeqMatmult of id: int * (SpiralExpDMF32<int*int,'conv> * SpiralExpDMF32<int*int,'conv>) list * return_type: (DM<int*int,float32> -> 'a)
-// Addition with broadcasting.
-// TODO: Turn this into BroadcastOp later.
-| Add of id: int * size_to_4d: ('size -> int*int*int*int) * size_to_4d_backwards: ('size -> int*int*int*int) * 
-            alpha: float32 * matrix: SpiralExpDMF32<'size,'conv> * beta: float32 * 
-            vector: SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| Hadmult of id: int * SpiralExpDMF32<'size,'conv> * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| SeqHadmult of id: int * (SpiralExpDMF32<'size,'conv> * SpiralExpDMF32<'size,'conv>) list * return_type: (DM<'size,float32> -> 'a)
-// Activations
-| Relu of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| Tanh of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| Sigmoid of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| ClippedSigmoid of id: int * min: float32 * max: float32 * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-//| SoftmaxInstance of id: int * SpiralExpDMF32
-//| SoftmaxChannel of id: int * SpiralExpDMF32 // TODO: I forgot what these two softmaxes are supposed to be doing.
-| Clip of id: int * min: float32 * max: float32 * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-// Normalization functions
-//| BatchNorm of id: int * SpiralExp
-//| LayerNorm of id: int * SpiralExp // TODO: Need to implement this one.
-// 4d operations
-//| Convolve of id: int * SpiralExp * SpiralExp
-//| Pool of id: int * SpiralExp
-// Cost function auxiliaries.
-| Square of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| Sum of id: int * SpiralExpDMF32<int*int,'conv> * return_type: (Df -> 'a)
-| Log of id: int * SpiralExpDMF32<'size,'conv> * return_type: (DM<'size,float32> -> 'a)
-| ScalarMatrixAdd of id: int * SpiralExpDMF32<'size,'conv> * coef: float32 * scalar: float32 * return_type: (DM<'size,float32> -> 'a)
-| Scale of id: int * SpiralExp<float32,'size,'conv> * SpiralExpF32<'conv> * return_type: (Df -> 'a)
-| SumScalars of id: int * SpiralExpF32<'conv> [] * return_type: (Df -> 'a)
-// Cost functions
-| SquaredError of id: int * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-| CrossEntropy of id: int * target: SpiralExpDMF32<'size,'conv> * input: SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-// Converters
-| ConvertTo of id: int * SpiralExpDMF32<'size,'conv> * conv: ('size -> 'conv) * return_type: (DM<'conv,float32> -> 'a)
-| GetNumExamplesAndRescaleIt of id: int * SpiralExpDMF32<int*int,'conv> * ex: ((int*int) -> float32) * return_type: (float32 -> 'a)
+type RegularEval = RegularEval with
+    // Root nodes
+    static member BaseNode(_: RegularEval, id, x) = x // TODO: Add this to env.
+    // Basic operations
+    static member Matmult(_: RegularEval, id, a, b, r) =
+        if_not_evaluated r id <| fun _ ->
+            matmult id (eval' a) (eval' b) env
+    static member SeqMatmult(_: RegularEval, id, l, r) =
+        if_not_evaluated r id <| fun _ ->
+            let l = l |> List.map (fun (x,y) -> eval' x, eval' y)
+            seqmatmult id l env
+    static member Add(_: RegularEval, id, s_to_4d, s_to_4d_backwards, alpha, a, beta, b, r) =
+        if_not_evaluated r id <| fun _ ->
+            routed_add id s_to_4d s_to_4d_backwards alpha (eval' a) beta (eval' b) env
+    static member Hadmult(_: RegularEval, id, a, b, r) =
+        if_not_evaluated r id <| fun _ -> hadmult id (eval' a, eval' b) env
+    static member SeqHadmult(id , abs, r) =
+        if_not_evaluated r id <| fun _ -> 
+            seqhadmult id (abs |> List.map (fun (a,b) -> eval' a, eval' b)) env
+    static member Relu(_: RegularEval, id, x, r) =
+        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] relu relu_backward env
+    static member Tanh(_: RegularEval, id, x, r) =
+        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] tanh tanh_backward env
+    static member Sigmoid(_: RegularEval, id, x, r) =
+        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] tanh tanh_backward env
+    static member Clip(_: RegularEval, id, min, max, x, r) =
+        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [min;max] clip clip_backward env
+    static member ClippedSigmoid(_: RegularEval, id, min, max, x, r) =
+        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [min;max] clipped_sigmoid clipped_sigmoid_backward env
+    static member Square(_: RegularEval, id, x, r) =
+        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] square square_backward env
+    static member Sum(_: RegularEval, id, x, r) =
+        if_not_evaluated r id <| fun _ -> map_redo_map_operation id [eval' x] [] sum sum_backward env
+    static member Log(_: RegularEval, id, x, r) =
+        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] log_ log_backward env
+    static member ScalarMatrixAdd(_: RegularEval, id, x, coef, scalar, r) =
+        if_not_evaluated r id <| fun _ ->  map_operation id [eval' x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
+    static member Scale(_: RegularEval, id, alpha, x, r) =
+        if_not_evaluated r id <| fun _ -> scale id alpha (eval' x) env
+    static member SumScalars(_: RegularEval, id, x, r) =
+        if_not_evaluated r id <| fun _ -> sum_scalars id (Array.map eval' x) env
+
 
 // Smart constructors
 let tag =
@@ -458,58 +455,3 @@ let squared_error_cost id (target: SpiralExpDMF32<int*int,_>) (input: SpiralExpD
     |> sum'
     |> r
     
-
-let rec eval<'a,'size,'conv when 'size: equality and 'conv: equality> (env: SpiralEnv) (x: SpiralExp<'a,'size,'conv>): 'a =
-    let eval' x = eval env x
-    let if_not_evaluated r id f =
-        match env.Nodes.TryGetValue id with
-        | true, v -> v :?> _
-        | false, _ -> f()
-        |> r
-
-    match x with
-    // Root nodes
-    | BaseNode(id, x) -> x // TODO: Add this to env.
-    // Basic operations
-    | Matmult(id, a, b, r) ->
-        if_not_evaluated r id <| fun _ ->
-            matmult id (eval' a) (eval' b) env
-    | SeqMatmult(id, l, r) -> 
-        if_not_evaluated r id <| fun _ ->
-            let l = l |> List.map (fun (x,y) -> eval' x, eval' y)
-            seqmatmult id l env
-    | Add(id, s_to_4d, s_to_4d_backwards, alpha, a, beta, b, r) ->
-        if_not_evaluated r id <| fun _ ->
-            routed_add id s_to_4d s_to_4d_backwards alpha (eval' a) beta (eval' b) env
-    | Hadmult(id, a, b, r) -> 
-        if_not_evaluated r id <| fun _ -> hadmult id (eval' a, eval' b) env
-    | SeqHadmult(id , abs, r) ->
-        if_not_evaluated r id <| fun _ -> 
-            seqhadmult id (abs |> List.map (fun (a,b) -> eval' a, eval' b)) env
-    | Relu(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] relu relu_backward env
-    | Tanh(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] tanh tanh_backward env
-    | Sigmoid(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] tanh tanh_backward env
-    | Clip(id, min, max, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [min;max] clip clip_backward env
-    | ClippedSigmoid(id, min, max, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [min;max] clipped_sigmoid clipped_sigmoid_backward env
-    | Square(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] square square_backward env
-    | Sum(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_redo_map_operation id [eval' x] [] sum sum_backward env
-    | Log(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] log_ log_backward env
-    | ScalarMatrixAdd(id, x, coef, scalar, r) ->
-        if_not_evaluated r id <| fun _ ->  map_operation id [eval' x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
-    | Scale(id, alpha, x, r) ->
-        if_not_evaluated r id <| fun _ -> scale id alpha (eval' x) env
-    | SumScalars(id, x, r) ->
-        if_not_evaluated r id <| fun _ -> sum_scalars id (Array.map eval' x) env
-//// Cost functions
-//| SquaredError of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-//| CrossEntropy of id: int * SpiralExpDMF32<'size,'conv> * return_type: (Df -> 'a) // TODO: Make an optimized implementation.
-    | ConvertTo(id, x, conv, r) -> 
-        if_not_evaluated r id <| fun _ -> convert_to id (eval' x) conv env
