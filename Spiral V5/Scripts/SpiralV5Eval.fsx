@@ -17,81 +17,6 @@ let default_num_vars = 2
 
 type Scalar = Scalar
 
-type RegularEval = RegularEval with
-    // Root nodes
-    static member BaseNode(_: RegularEval, id, x) = x // TODO: Add this to env.
-    // Basic operations
-    static member Matmult(_: RegularEval, id, a, b, r) =
-        if_not_evaluated r id <| fun _ ->
-            matmult id (eval' a) (eval' b) env
-    static member SeqMatmult(_: RegularEval, id, l, r) =
-        if_not_evaluated r id <| fun _ ->
-            let l = l |> List.map (fun (x,y) -> eval' x, eval' y)
-            seqmatmult id l env
-    static member Add(_: RegularEval, id, s_to_4d, s_to_4d_backwards, alpha, a, beta, b, r) =
-        if_not_evaluated r id <| fun _ ->
-            routed_add id s_to_4d s_to_4d_backwards alpha (eval' a) beta (eval' b) env
-    static member Hadmult(_: RegularEval, id, a, b, r) =
-        if_not_evaluated r id <| fun _ -> hadmult id (eval' a, eval' b) env
-    static member SeqHadmult(id , abs, r) =
-        if_not_evaluated r id <| fun _ -> 
-            seqhadmult id (abs |> List.map (fun (a,b) -> eval' a, eval' b)) env
-    static member Relu(_: RegularEval, id, x, r) =
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] relu relu_backward env
-    static member Tanh(_: RegularEval, id, x, r) =
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] tanh tanh_backward env
-    static member Sigmoid(_: RegularEval, id, x, r) =
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] tanh tanh_backward env
-    static member Clip(_: RegularEval, id, min, max, x, r) =
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [min;max] clip clip_backward env
-    static member ClippedSigmoid(_: RegularEval, id, min, max, x, r) =
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [min;max] clipped_sigmoid clipped_sigmoid_backward env
-    static member Square(_: RegularEval, id, x, r) =
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] square square_backward env
-    static member Sum(_: RegularEval, id, x, r) =
-        if_not_evaluated r id <| fun _ -> map_redo_map_operation id [eval' x] [] sum sum_backward env
-    static member Log(_: RegularEval, id, x, r) =
-        if_not_evaluated r id <| fun _ -> map_operation id [eval' x] [] log_ log_backward env
-    static member ScalarMatrixAdd(_: RegularEval, id, x, coef, scalar, r) =
-        if_not_evaluated r id <| fun _ ->  map_operation id [eval' x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
-    static member Scale(_: RegularEval, id, alpha, x, r) =
-        if_not_evaluated r id <| fun _ -> scale id alpha (eval' x) env
-    static member SumScalars(_: RegularEval, id, x, r) =
-        if_not_evaluated r id <| fun _ -> sum_scalars id (Array.map eval' x) env
-
-
-// Smart constructors
-let tag =
-    let mutable i = 0
-    fun () -> i <- i+1; i
-
-let base_node' x = BaseNode(tag(), x)
-let matmult' a b = Matmult(tag(),a,b,id)
-let seq_matmult' abs = SeqMatmult(tag(),abs,id)
-let add_2d' alpha a beta b = 
-    let s_to_4d (c,r) = (c,1,r,1)
-    let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
-    Add(tag(),s_to_4d,s_to_4d_backwards,alpha,a,beta,b,id)
-let add_4d' alpha a beta b = Add(tag(),id,id,alpha,a,beta,b,id)
-let hadmult' a b = Hadmult(tag(),a,b,id)
-let seqhadmult' abs = SeqHadmult(tag(),abs,id)
-let relu' x = Relu(tag(),x,id)
-let tanh' x = Tanh(tag(),x,id)
-let sigmoid' x = Sigmoid(tag(),x,id)
-let clipped_sigmoid' x min max = ClippedSigmoid(tag(),min,max,x,id)
-let clip' x min max = Clip(tag(),min,max,x,id)
-let square' x = Square(tag(),x,id)
-let sum' (x: SpiralExpDMF32<int*int,_>): SpiralExpF32<_> = Sum(tag(),x,id)
-let log' x = Log(tag(),x,id)
-let scalar_matrix_add' x coef scalar = ScalarMatrixAdd(tag(),x,coef,scalar,id)
-let scale' coef x: SpiralExp<Df,Scalar,_> = Scale(tag(),coef,x,id)
-let sum_scalars' x = SumScalars(tag(),x,id)
-
-let squared_error_cost' target input = SquaredError(tag(),target,input,id)
-let cross_entropy_cost' target input = CrossEntropy(tag(),target,input,id)
-let convert_to' x conv = ConvertTo(tag(),x,conv,id)
-let get_num_examples_and_rescale_it' (x: SpiralExpDMF32<int*int,_>) (f: (int * int) -> float32): SpiralExp<float32,Scalar,_> = GetNumExamplesAndRescaleIt(tag(),x,f,id)
-
 type CallerVar =
 | CInt of int
 | CF32 of float32
@@ -252,31 +177,30 @@ let inline gemm
         cublas.Stream <- str.Stream
         cublas.Gemm(transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
 
-let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv) =
+let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv<_>) =
     to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
 
-let dm_like (a: DM<_,_>) (env: SpiralEnv) =
+let dm_like (a: DM<_,_>) (env: SpiralEnv<_>) =
     env.Mem.GetDM(a.Size,a.TotalSizeInElems,default_num_vars,env)
 
 /// Copies only the primals.
-let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv) =
+let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv<_>) =
     let c = dm_like a env
     copy c.P a.P a.TotalSizeInElems env
     c
 
-let generic_operation id (env: SpiralEnv) forward_op =
+let generic_operation (env: SpiralEnv<_>) forward_op =
     let c,backward_op = forward_op()
-    env.Nodes.Add(id, c)
-
     if env.IsInferenceOnly = false then env.PushTape backward_op
     c
 
-let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv) =
+let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv<_>) =
     geam env.Str nT nT alpha (s, a) beta (s, b) (s, c)
-let add_backward (alpha: float32) s (er: VarF32) (x_adj: VarF32) (env: SpiralEnv) =
+
+let add_backward (alpha: float32) s (er: VarF32) (x_adj: VarF32) (env: SpiralEnv<_>) =
     saxpy env.Str alpha (s,er) (s,x_adj)
 
-let add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv) =
+let add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
     if a.Size <> b.Size then failwithf "a.Size(%A) <> b.Size(%A)" a.Size b.Size
     let s = a.TotalSizeInElems
     add_forward alpha (s,1) a.P beta b.P c.P env
@@ -287,24 +211,24 @@ let add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: 
 
 /// An umbrella function that does simple addition if all the dimensions sizes are the same and broadcast addition if they are 4d or 2d.
 /// Raises an error otherwise.
-let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv) =
+let add_tensor_4d_forward (alpha: float32) (sa,a: VarF32) beta (sb,b: VarF32) (env: SpiralEnv<_>) =
     let aDesc = env.Mem.GetTensorDescriptor sa
     let bDesc = env.Mem.GetTensorDescriptor sb
 
     cudnn.SetStream(env.Str)
     cudnn.AddTensor(beta, bDesc, b, alpha, aDesc, a) // The output is a
 
-let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv) =
+let add_tensor_backwards_4d_b alpha (serr,err: VarF32) beta (sb,b_adj: VarF32) (env: SpiralEnv<_>) =
     let errDesc = env.Mem.GetTensorDescriptor serr
     let inpDesc = env.Mem.GetTensorDescriptor sb
 
     cudnn.SetStream env.Str
     cudnn.ConvolutionBackwardBias(beta,errDesc,err,1.0f,inpDesc,b_adj)
 
-let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv) =
+let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv<_>) =
     saxpy env.Str alpha (serr,err) (sa,a_adj)
 
-let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv) =
+let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
     let sa_total = a.TotalSizeInElems
     let sa = a.Size
     let sb = b.Size
@@ -316,23 +240,23 @@ let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>)
         if b.HasAdjoint then add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
         if c.HasAdjoint then add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
-let routed_add id' s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv) =
-    generic_operation id' env <| fun _ ->
+let routed_add s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
+    generic_operation env <| fun _ ->
         let c = dm_like a env
         if a.Size = b.Size then add alpha a beta b c env
         else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
 
-let standard_add id' (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv) =
-    generic_operation id' env <| fun _ ->
+let standard_add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
+    generic_operation env <| fun _ ->
         let c = dm_like a env
         add alpha a beta b c env
 
-let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv) =
+let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv<_>) =
     if a.HasAdjoint then gemm env.Str nT T 1.0f (c.Size,c.A) (b.Size, b.P) 1.0f (a.Size, a.A)
     if b.HasAdjoint then gemm env.Str T nT 1.0f (a.Size, a.P) (c.Size, c.A) 1.0f (b.Size, b.A)
 
-let seqmatmult id (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: SpiralEnv) =
-    generic_operation id env <| fun _ ->
+let seqmatmult (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: SpiralEnv<_>) =
+    generic_operation env <| fun _ ->
         let sc = l |> List.map (fun (a,b) -> 
             let (cols_b,_) = b.Size
             let (_,rows_a) = a.Size
@@ -344,8 +268,8 @@ let seqmatmult id (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: Sp
 
         c, fun _ -> for a,b in l do matmult_backwards a b c env
 
-let matmult id (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv) =
-    seqmatmult id [a,b] env
+let matmult (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv<_>) =
+    seqmatmult [a,b] env
 
 let guarded_map_to_caller_var (a: DM<_,_> list) f =
     a 
@@ -366,8 +290,8 @@ let operation_prelude (a: DM<_,_> list) (c: DM<_,_>) cvars =
 let grid_size_and_block_size_for_map total_size =
     min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
 
-let map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
-    generic_operation id env <| fun () ->
+let map_operation (a: _ list) cvars forward_kernel backward_kernel env =
+    generic_operation env <| fun () ->
         let h = a.Head
         let c = dm_like h env
 
@@ -388,8 +312,8 @@ let map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
 let grid_size_and_block_size_for_map_redo_map total_size =
     min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size
 
-let map_redo_map_operation id (a: _ list) cvars forward_kernel backward_kernel env =
-    generic_operation id env <| fun () ->
+let map_redo_map_operation (a: _ list) cvars forward_kernel backward_kernel env =
+    generic_operation env <| fun () ->
         let h = a.Head
         let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
 
@@ -410,24 +334,24 @@ let map_redo_map_operation id (a: _ list) cvars forward_kernel backward_kernel e
                 kernel_caller grid_size block_size 
                     env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
     
-let seqhadmult id (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
+let seqhadmult (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
     let l = ab.Length
     let forward_kernel = hadmult_generic_memoized l
     let backward_kernel = hadmult_backward_generic_memoized l
     let args = ab |> List.collect (fun (a,b) -> [a;b])
-    map_operation id args [] forward_kernel backward_kernel env
+    map_operation args [] forward_kernel backward_kernel env
 
-let hadmult id (ab: DM<'s,float32> * DM<'s,float32>) env =
-    seqhadmult id [ab] env
+let hadmult (ab: DM<'s,float32> * DM<'s,float32>) env =
+    seqhadmult [ab] env
 
 /// alpha * a
-let scale id (alpha: float32) (a:Df) (env: SpiralEnv) =
-    generic_operation id env <| fun _ ->
+let scale (alpha: float32) (a:Df) (env: SpiralEnv<_>) =
+    generic_operation env <| fun _ ->
         let c = Df.create (lazy (alpha * a.P.Value))
         c, fun _ ->  a.A := alpha * !c.A + !a.A
 
-let sum_scalars id (a:Df seq) (env: SpiralEnv) =
-    generic_operation id env <| fun _ ->
+let sum_scalars (a:Df seq) (env: SpiralEnv<_>) =
+    generic_operation env <| fun _ ->
         let c = 
             Df.create <|
                 lazy 
@@ -438,20 +362,88 @@ let sum_scalars id (a:Df seq) (env: SpiralEnv) =
 
         c, fun _ -> for l in a do l.A := !c.A + !l.A
 
-let convert_to id (a: DM<_,_>) conv (env: SpiralEnv) =
-    generic_operation id {env with IsInferenceOnly = true} <| fun _ ->
-        let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
-        c, fun _ -> ()
+//let convert_to (a: DM<_,_>) conv (env: SpiralEnv<_>) =
+//    generic_operation {env with IsInferenceOnly = true} <| fun _ ->
+//        let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
+//        c, fun _ -> ()
+//
+//let get_num_examples_and_rescale_it (a: DM<_,_>) f env =
+//    generic_operation {env with IsInferenceOnly = true} <| fun _ ->
+//        f a.Size, fun _ -> ()
 
-let get_num_examples_and_rescale_it id (a: DM<_,_>) f env =
-    generic_operation id {env with IsInferenceOnly = true} <| fun _ ->
-        f a.Size, fun _ -> ()
-
-let squared_error_cost id (target: SpiralExpDMF32<int*int,_>) (input: SpiralExpDMF32<int*int,_>) =
-    let r = scale' (get_num_examples_and_rescale_it' target (fun (c,r) -> 0.5f / float32 c))
-    add_2d' 1.0f target -1.0f input
-    |> square'
-    |> fun x -> x
-    |> sum'
-    |> r
+//let squared_error_cost id (target: SpiralExpDMF32<int*int,_>) (input: SpiralExpDMF32<int*int,_>) =
+//    let r = scale' (get_num_examples_and_rescale_it' target (fun (c,r) -> 0.5f / float32 c))
+//    add_2d' 1.0f target -1.0f input
+//    |> square'
+//    |> fun x -> x
+//    |> sum'
+//    |> r
     
+type RegularEval = RegularEval with
+    // Root nodes
+    static member BaseNode(env: SpiralEnv<RegularEval>, x) = x
+    // Basic operations
+    static member Matmult(env: SpiralEnv<RegularEval>, a, b) = matmult a b env
+    static member SeqMatmult(env: SpiralEnv<RegularEval>, l) = seqmatmult l env
+    static member Add(env: SpiralEnv<RegularEval>, alpha, a: DM<int*int*int*int,_>, beta, b, r) =
+        routed_add id id alpha a beta b env
+    static member Add(env: SpiralEnv<RegularEval>, alpha, a, beta, b) =
+        let s_to_4d (c,r) = (c,1,r,1)
+        let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
+        routed_add s_to_4d s_to_4d_backwards alpha a beta b env
+    static member Hadmult(env: SpiralEnv<RegularEval>, a, b) = hadmult (a, b) env
+    static member SeqHadmult(env: SpiralEnv<RegularEval>, abs) = seqhadmult abs env
+    static member Relu(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] relu relu_backward env
+    /// The ' is in the name because .NET treats the Tanh specially for some reason.
+    static member Tanh'(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] tanh tanh_backward env
+    static member Sigmoid(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] tanh tanh_backward env
+    static member Clip(env: SpiralEnv<RegularEval>, min, max, x) = map_operation [x] [min;max] clip clip_backward env
+    static member ClippedSigmoid(env: SpiralEnv<RegularEval>, min, max, x) = 
+        map_operation [x] [min;max] clipped_sigmoid clipped_sigmoid_backward env
+    static member Square(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] square square_backward env
+    static member Sum(env: SpiralEnv<RegularEval>, x) = map_redo_map_operation [x] [] sum sum_backward env
+    static member Log'(env: SpiralEnv<RegularEval>, x) = map_operation [x] [] log_ log_backward env
+    static member ScalarMatrixAdd(env: SpiralEnv<RegularEval>, x, coef, scalar) =
+        map_operation [x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
+    static member Scale(env: SpiralEnv<RegularEval>, alpha, x) = scale alpha x env
+    static member SumScalars(env: SpiralEnv<RegularEval>, x) = sum_scalars x env
+
+let inline base_node' x (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member BaseNode: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+let inline matmult' a b (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Matmult: SpiralEnv< ^in_> * ^x * ^x -> ^x) env, a, b)
+let inline seq_matmult' abs (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member SeqMatmult: SpiralEnv< ^in_> * (^x * ^x) list -> ^x) env, abs)
+let inline add' alpha a beta b (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Add: SpiralEnv< ^in_> * float32 * ^x * float32 * ^x -> ^x) env, alpha, a, beta, b)
+let inline hadmult' a b (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Hadmult: SpiralEnv< ^in_> * ^x * ^x -> ^x) env, a, b)
+let inline seqhadmult' abs (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member SeqHadmult: SpiralEnv< ^in_> * (^x * ^x) list -> ^x) env, abs)
+let inline relu' x (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Relu: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+let inline tanh' x (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Tanh': SpiralEnv< ^in_> * ^x -> ^x) env, x)
+let inline sigmoid' x (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Sigmoid: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+let inline clipped_sigmoid' x min max (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member ClippedSigmoid: SpiralEnv< ^in_> * ^x * float32 * float32 -> ^x) env, x, min, max)
+let inline clip' x min max (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Clip: SpiralEnv< ^in_> * ^x * float32 * float32 -> ^x) env, x, min, max)
+let inline square' x (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Square: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+let inline sum' x (env: SpiralEnv<_>) =
+    ((^in_ or ^x) : (static member Sum: SpiralEnv< ^in_> * ^x -> ^x) env, x)
+let inline log' x (env: SpiralEnv<_>) = 
+    ((^in_ or ^x) : (static member Log': SpiralEnv< ^in_> * ^x -> ^x) env, x)
+let inline scalar_matrix_add' x coef scalar (env: SpiralEnv<_>) =
+    ((^in_ or ^x) : (static member ScalarMatrixAdd: SpiralEnv< ^in_> * ^x * float32 * float32 -> ^x) env, x, coef, scalar)
+let inline scale' coef x (env: SpiralEnv<_>) =
+    ((^in_ or ^x) : (static member Scale: SpiralEnv< ^in_> * float32 * ^x -> ^x) env, coef, x)
+let inline sum_scalars' x (env: SpiralEnv<_>) =
+    ((^in_ or ^x) : (static member Scale: SpiralEnv< ^in_> * seq< ^x> -> ^x) env, x)
+
+//let squared_error_cost' target input = SquaredError(tag(),target,input,id)
+//let cross_entropy_cost' target input = CrossEntropy(tag(),target,input,id)
+//let convert_to' x conv = ConvertTo(tag(),x,conv,id)
+//let get_num_examples_and_rescale_it' (x: SpiralExpDMF32<int*int,_>) (f: (int * int) -> float32): SpiralExp<float32,Scalar,_> = GetNumExamplesAndRescaleIt(tag(),x,f,id)

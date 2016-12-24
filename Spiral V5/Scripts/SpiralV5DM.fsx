@@ -191,15 +191,15 @@ type GenericPoolOperationType =
 | PoolWorkspace
 
 open System.Collections.Generic
-type SpiralEnv =
+type SpiralEnv<'interpreter> =
     {
     // Memory (mutable)
     Str : CudaStream
     Mem : ObjectPool
     Tape : Stack<unit -> unit>
-    Nodes : Dictionary<int,obj>
     // State (immutable)
     IsInferenceOnly : bool
+    Interpreter: 'interpreter
     }
 
     member t.PushTape x = t.Tape.Push x
@@ -241,12 +241,7 @@ and ObjectPool() =
             (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member inline private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv) pool_type: DM<'s,'t> =
-        let pool =
-            match pool_type with
-            | PoolRegular -> dMPool
-            | PoolWorkspace -> workspace
-
+    member inline private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
         let get_var i =
             let t = 
                 if pool.Count > dMp then resizeIf total_size_in_elems (pool.[dMp+i] :?> _)
@@ -255,24 +250,23 @@ and ObjectPool() =
             t
 
         let vars = [| for i=0 to num_vars-1 do yield get_var i |]
+        post_process vars // Increments the pointer and zeroes out the adjoint of vars if working on the regular pool.
 
-        match pool_type with
-        | PoolRegular -> 
+        new DM<_,_>(size,total_size_in_elems,vars)
+
+    member t.GetDM(size, total_size_in_elems, num_vars, env) =
+        let post_process (vars: CudaDeviceVariable<_>[]) =
             dMp <- dMp + num_vars
 
             // The optimizers can only zero out the adjoints in the base nodes.
             // The object pool has to take up the slack for the rest.
             // The second variable is always the adjoint and here it is set to zero.
             if env.IsInferenceOnly = false && vars.Length > 1 then vars.[1].MemsetAsync(0u,env.Str.Stream) 
-        | PoolWorkspace -> ()
-
-        new DM<_,_>(size,total_size_in_elems,vars)
-
-    member t.GetDM(size, total_size_in_elems, num_vars, env) =
-        t.Get(size,total_size_in_elems,num_vars,env) PoolRegular
+        t.Get(size,total_size_in_elems,num_vars,env,dMPool,post_process)
 
     member t.GetWorkspace(size,total_size_in_elems, num_vars, env) =
-        t.Get(size,total_size_in_elems,num_vars,env) PoolWorkspace
+        let post_process _ = ()
+        t.Get(size,total_size_in_elems,num_vars,env,workspace,post_process)
 
     interface IDisposable with
         member __.Dispose() =
