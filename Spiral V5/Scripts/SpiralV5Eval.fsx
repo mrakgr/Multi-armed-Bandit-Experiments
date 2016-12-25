@@ -474,3 +474,7 @@ let D1 (x: SpiralEnv<_> -> DM<int,_>) _ = 1
 /// dim_extrator gets the number of examples (usually the outermost dimension) from the target expression. It evaluates it first.
 let inline cost_function' dim_extractor cost_f target input (env: SpiralEnv<_>): Df =
     cost_f dim_extractor target input env
+
+type Q<'a> =
+| A of 'a
+| B of 'a * 'b
