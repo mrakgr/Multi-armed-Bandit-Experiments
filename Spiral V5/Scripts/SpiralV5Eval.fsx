@@ -20,10 +20,11 @@ let ba2 =
     let s_to_4d (c,r) = (c,1,r,1)
     let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
     s_to_4d, s_to_4d_backwards
-/// Broadcast addition.
+
+/// Broadcast addition. Does it mutably on the left argument unlike the rest of the operations which are immutable.
 let badd bax alpha a beta b (env: SpiralEnv<_>) = 
     let s_to_4d,s_to_4d_backwards = bax
-    Primitives.routed_add s_to_4d s_to_4d_backwards alpha (a env) beta (b env) env
+    Primitives.routed_add s_to_4d s_to_4d_backwards true alpha (a env) beta (b env) env
 
 let hadmult a b (env: SpiralEnv<_>) = 
     Primitives.hadmult (a env, b env) env
@@ -84,5 +85,6 @@ let cf1 (x: SpiralEnv<_> -> DM<int,_>) _ = 1
 
 /// The generalized cost function.
 /// dim_extrator gets the number of examples (usually the outermost dimension) from the target expression. It evaluates it first.
-let inline cost_function cfx cost_f target input (env: SpiralEnv<_>): Df =
+let cost_function cfx cost_f target input (env: SpiralEnv<_>): Df =
     cost_f cfx target input env
+

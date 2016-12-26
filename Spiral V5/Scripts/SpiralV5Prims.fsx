@@ -238,9 +238,9 @@ module Primitives =
             if b.HasAdjoint then add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
             if c.HasAdjoint then add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
-    let routed_add s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
+    let routed_add s_to_4d s_to_4d_backwards inplace_mode (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
         generic_operation env <| fun _ ->
-            let c = dm_like a env
+            let c = if inplace_mode then a else dm_like a env
             if a.Size = b.Size then add alpha a beta b c env
             else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
 
