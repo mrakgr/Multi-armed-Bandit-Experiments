@@ -191,7 +191,7 @@ type GenericPoolOperationType =
 | PoolWorkspace
 
 open System.Collections.Generic
-type SpiralEnv<'interpreter> =
+type SpiralEnv<'user_state> =
     {
     // Memory (mutable)
     Str : CudaStream
@@ -199,7 +199,6 @@ type SpiralEnv<'interpreter> =
     Tape : Stack<unit -> unit>
     // State (immutable)
     IsInferenceOnly : bool
-    Interpreter: 'interpreter
     }
 
     member t.PushTape x = t.Tape.Push x

@@ -367,114 +367,86 @@ module Primitives =
         generic_operation {env with IsInferenceOnly = true} <| fun _ ->
             let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
             c, fun _ -> ()
-   
-type RegularEval = RegularEval with
-    // Root nodes
-    static member BaseNode(env: SpiralEnv<RegularEval>, x) = x
-    // Basic operations
-    static member Matmult(env: SpiralEnv<RegularEval>, a, b) = Primitives.matmult a b env
-    static member SeqMatmult(env: SpiralEnv<RegularEval>, l) = Primitives.seqmatmult l env
-    static member Add(env: SpiralEnv<RegularEval>, alpha, a, beta, b) =
-        Primitives.standard_add alpha a beta b env
-    static member BAdd(env: SpiralEnv<RegularEval>, alpha, a: DM<int*int*int*int,_>, beta, b) =
-        Primitives.routed_add id id alpha a beta b env
-    static member BAdd(env: SpiralEnv<RegularEval>, alpha, a, beta, b) =
-        let s_to_4d (c,r) = (c,1,r,1)
-        let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
-        Primitives.routed_add s_to_4d s_to_4d_backwards alpha a beta b env
-    static member Hadmult(env: SpiralEnv<RegularEval>, a, b) = Primitives.hadmult (a, b) env
-    static member SeqHadmult(env: SpiralEnv<RegularEval>, abs) = Primitives.seqhadmult abs env
-    static member Relu(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] relu relu_backward env
-    /// The ' is in the name because .NET treats the Tanh specially for some reason.
-    static member Tanh'(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] tanh tanh_backward env
-    static member Sigmoid(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] tanh tanh_backward env
-    static member Clip(env: SpiralEnv<RegularEval>, min, max, x) = Primitives.map_operation [x] [min;max] clip clip_backward env
-    static member ClippedSigmoid(env: SpiralEnv<RegularEval>, min, max, x) = 
-        Primitives.map_operation [x] [min;max] clipped_sigmoid clipped_sigmoid_backward env
-    static member Square(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] square square_backward env
-    static member Sum(env: SpiralEnv<RegularEval>, x) = Primitives.map_redo_map_operation [x] [] sum sum_backward env
-    static member Log'(env: SpiralEnv<RegularEval>, x) = Primitives.map_operation [x] [] log_ log_backward env
-    static member ScalarMatrixAdd(env: SpiralEnv<RegularEval>, x, coef, scalar) =
-        Primitives.map_operation [x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
-    static member Scale(env: SpiralEnv<RegularEval>, alpha, x) = Primitives.scale alpha x env
-    static member SumScalars(env: SpiralEnv<RegularEval>, x) = Primitives.sum_scalars x env
-    static member Reshape(env: SpiralEnv<RegularEval>, x, conv) = Primitives.reshape x conv env
 
-let inline base_node' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member BaseNode: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x)
-let inline matmult' a b (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Matmult: SpiralEnv< ^in_> * ^input_type * ^input_type -> ^input_type) env, a env, b env)
-let inline seq_matmult' abs (env: SpiralEnv<_>) = 
-    let x = List.map (fun (a,b) -> a env, b env) abs
-    ((^in_ or ^input_type) : (static member SeqMatmult: 
-        SpiralEnv< ^in_> * (^input_type * ^input_type) list -> ^input_type) env, x)
-let inline add' alpha a beta b (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Add: SpiralEnv< ^in_> * float32 * ^input_type * float32 * ^input_type -> ^input_type) env, alpha, a env, beta, b env)
-let inline badd' alpha a beta b (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member BAdd: SpiralEnv< ^in_> * float32 * ^input_type * float32 * ^input_type -> ^input_type) env, alpha, a env, beta, b env)
-let inline hadmult' a b (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Hadmult: SpiralEnv< ^in_> * ^input_type * ^input_type -> ^input_type) env, a env, b env)
-let inline seqhadmult' abs (env: SpiralEnv<_>) = 
-    let x = List.map (fun (a,b) -> a env, b env) abs
-    ((^in_ or ^input_type) : (static member SeqHadmult: 
-        SpiralEnv< ^in_> * (^input_type * ^input_type) list -> ^input_type) env, x)
-let inline relu' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Relu: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
-let inline tanh' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Tanh': SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
-let inline sigmoid' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Sigmoid: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
-let inline clipped_sigmoid' x min max (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member ClippedSigmoid: SpiralEnv< ^in_> * ^input_type * float32 * float32 -> ^input_type) env, x env, min, max)
-let inline clip' x min max (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Clip: SpiralEnv< ^in_> * ^input_type * float32 * float32 -> ^input_type) env, x env, min, max)
-let inline square' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Square: SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
-let inline sum' x (env: SpiralEnv<_>) =
-    ((^in_ or ^input_type or ^output_type) : (static member Sum: SpiralEnv< ^in_> * ^input_type -> ^output_type) env, x env)
-let inline log' x (env: SpiralEnv<_>) = 
-    ((^in_ or ^input_type) : (static member Log': SpiralEnv< ^in_> * ^input_type -> ^input_type) env, x env)
-let inline scalar_matrix_add' x coef scalar (env: SpiralEnv<_>) =
-    ((^in_ or ^input_type) : (static member ScalarMatrixAdd: SpiralEnv< ^in_> * ^input_type * float32 * float32 -> ^input_type) env, x env, coef, scalar)
-let inline scale' coef x (env: SpiralEnv<_>) =
-    ((^in_) : (static member Scale: SpiralEnv< ^in_> * float32 * Df -> Df) env, coef, x env)
-let inline sum_scalars' x (env: SpiralEnv<_>) = /// TODO: Not sure about the type of this one. Adjust when making recurrent nets.
-    ((^in_ or ^input_type) : (static member SumScalars: SpiralEnv< ^in_> * seq<Df> -> Df) env, List.map (fun x -> x env) x)
-let inline reshape' x conv (env: SpiralEnv<_>) =
-    ((^in_) : (static member Reshape: SpiralEnv< ^in_> * DM< ^a,^b> * (^a -> ^c) -> DM< ^c,^b>) env, x env, conv)
+let base_node x (env: SpiralEnv<_>) = x
+let matmult a b (env: SpiralEnv<_>) = Primitives.matmult (a env) (b env) env
+let seq_matmult abs (env: SpiralEnv<_>) = 
+    let l = List.map (fun (a,b) -> a env, b env) abs
+    Primitives.seqmatmult l env
+/// Standard addition (no broadcasting.)
+let add alpha a beta b (env: SpiralEnv<_>) = 
+    Primitives.standard_add alpha (a env) beta (b env) env
 
-/// Rather than use it directly pass it into cost_function' as the cost_f argument
-let inline squared_error num_examples_of target input =
-    add' 1.0f target -1.0f input
-    |> square'
-    |> sum'
-    |> scale' (0.5f / float32 (num_examples_of target))
+/// 4d Extractor for badd. Just the id.
+let ba4 = id,id
+/// 2d Extractor for badd. Does some complicated shuffling.
+let ba2 = 
+    let s_to_4d (c,r) = (c,1,r,1)
+    let s_to_4d_backwards (c,r) = (c,r,1,1) // A hack to make the backwards step 10x faster
+    s_to_4d, s_to_4d_backwards
+/// Broadcast addition.
+let badd bax alpha a beta b (env: SpiralEnv<_>) = 
+    let s_to_4d,s_to_4d_backwards = bax
+    Primitives.routed_add s_to_4d s_to_4d_backwards alpha (a env) beta (b env) env
 
-/// Rather than use it directly pass it into cost_function' as the cost_f argument
-let inline cross_entropy_cost num_examples_of target input =
+let hadmult a b (env: SpiralEnv<_>) = 
+    Primitives.hadmult (a env, b env) env
+let seqhadmult abs (env: SpiralEnv<_>) = 
+    let l = List.map (fun (a,b) -> a env, b env) abs
+    Primitives.seqhadmult l env
+let relu x (env: SpiralEnv<_>) = 
+    Primitives.map_operation [x env] [] relu relu_backward env
+let tanh x (env: SpiralEnv<_>) = 
+    Primitives.map_operation [x env] [] tanh tanh_backward env
+let sigmoid x (env: SpiralEnv<_>) = 
+    Primitives.map_operation [x env] [] sigmoid sigmoid_backward env
+let clipped_sigmoid x min max (env: SpiralEnv<_>) = 
+    Primitives.map_operation [x env] [min;max] clipped_sigmoid clipped_sigmoid_backward env
+let clip x min max (env: SpiralEnv<_>) = 
+    Primitives.map_operation [x env] [min;max] clip clip_backward env
+let square x (env: SpiralEnv<_>) = 
+    Primitives.map_operation [x env] [] square square_backward env
+let sum x (env: SpiralEnv<_>) =
+    Primitives.map_redo_map_operation [x env] [] sum sum_backward env
+let log x (env: SpiralEnv<_>) = 
+    Primitives.map_operation [x env] [] log_ log_backward env
+let scalar_matrix_add x coef scalar (env: SpiralEnv<_>) =
+    Primitives.map_operation [x env] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
+let scale alpha x (env: SpiralEnv<_>) =
+    Primitives.scale alpha (x env) env
+let sum_scalars x (env: SpiralEnv<_>) = /// TODO: Not sure about the type of this one. Adjust when making recurrent nets.
+    Primitives.sum_scalars x env
+let reshape x conv (env: SpiralEnv<_>) =
+    Primitives.reshape (x env) conv env
+
+/// Rather than use it directly pass it into cost_function as the cost_f argument
+let squared_error num_examples_of target input =
+    add 1.0f target -1.0f input
+    |> square
+    |> sum
+    |> scale (0.5f / float32 (num_examples_of target))
+
+/// Rather than use it directly pass it into cost_function as the cost_f argument
+let cross_entropy_cost num_examples_of target input =
     let lt = target
-    let li = log' input
-    let rt = scalar_matrix_add' target 1.0f -1.0f
-    let ri = scalar_matrix_add' input 1.0f -1.0f |> log'
-    seqhadmult' [lt, li; rt, ri] 
-    |> sum'
-    |> scale' (-1.0f / float32 (num_examples_of target))
+    let li = log input
+    let rt = scalar_matrix_add target 1.0f -1.0f
+    let ri = scalar_matrix_add input 1.0f -1.0f |> log
+    seqhadmult [lt, li; rt, ri] 
+    |> sum
+    |> scale (-1.0f / float32 (num_examples_of target))
 
 // Dim extractors.
-/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
-let D4 (x: SpiralEnv<_> -> DM<int*int*int*int,_>) env = (x env).Size |> fun (n,_,_,_) -> n
-/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
-let D3 (x: SpiralEnv<_> -> DM<int*int*int,_>) env = (x env).Size |> fun (n,_,_) -> n
-/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
-let D2 (x: SpiralEnv<_> -> DM<int*int,_>) env = (x env).Size |> fun (c,_) -> c
-/// Pass it as the dim_extractor argument to cost_function'. Will evaluate target so make sure it is either a base_node or memoized.
-let D1 (x: SpiralEnv<_> -> DM<int,_>) _ = 1
+/// Pass it as the dim_extractor argument to cost_function. Will evaluate target so make sure it is either a base_node or memoized.
+let cf4 (x: SpiralEnv<_> -> DM<int*int*int*int,_>) env = (x env).Size |> fun (n,_,_,_) -> n
+/// Pass it as the dim_extractor argument to cost_function. Will evaluate target so make sure it is either a base_node or memoized.
+let cf3 (x: SpiralEnv<_> -> DM<int*int*int,_>) env = (x env).Size |> fun (n,_,_) -> n
+/// Pass it as the dim_extractor argument to cost_function. Will evaluate target so make sure it is either a base_node or memoized.
+let cf2 (x: SpiralEnv<_> -> DM<int*int,_>) env = (x env).Size |> fun (c,_) -> c
+/// Pass it as the dim_extractor argument to cost_function. Will evaluate target so make sure it is either a base_node or memoized.
+let cf1 (x: SpiralEnv<_> -> DM<int,_>) _ = 1
 
 /// The generalized cost function.
 /// dim_extrator gets the number of examples (usually the outermost dimension) from the target expression. It evaluates it first.
-let inline cost_function' dim_extractor cost_f target input (env: SpiralEnv<_>): Df =
-    cost_f dim_extractor target input env
-
-type Q<'a> =
-| A of 'a
-| B of 'a * 'b
+let inline cost_function cfx cost_f target input (env: SpiralEnv<_>): Df =
+    cost_f cfx target input env
