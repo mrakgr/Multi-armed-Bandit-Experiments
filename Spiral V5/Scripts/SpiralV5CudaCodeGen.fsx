@@ -846,3 +846,29 @@ let scalar_matrix_add_backward = // In the previous iteration of the library thi
         mapcoef_module_backwards_1_2_1 name <| fun (er_pr,er_adj) inp_pr coef scalar -> coef * er_adj
         |> map_fst (load_kernel_nvcc name)
     
+let sgd = 
+    lazy
+        let name = KernelName "Sgd"
+        mapcoef_module 0 [] 1 ["learning_rate"] 1 ["in_pr";"in_adj"] name 
+            (fun (InputFArgs []) (InputFArgs [learning_rate]) (OutputFArgs [in_pr;in_adj]) -> 
+                [in_pr += in_adj * learning_rate
+                 in_adj == zero])
+        |> map_fst (load_kernel_nvcc name)
+
+let clipped_sgd =
+    lazy
+        let name = KernelName "ClippedSgd"
+        mapcoef_module 0 [] 1 ["learning_rate";"clipping_threshold"] 1 ["in_pr";"in_adj"] name 
+            (fun (InputFArgs []) (InputFArgs [learning_rate;clipping_threshold]) (OutputFArgs [in_pr;in_adj]) -> 
+                [in_pr += if_ (in_adj .< -clipping_threshold) zero (if_ (in_adj .> clipping_threshold) zero (in_adj * learning_rate))
+                 in_adj == zero])
+        |> map_fst (load_kernel_nvcc name)
+
+// For normalizing after random initialization of the weight matrices.
+let random_normalization =
+    lazy
+        let name = KernelName "RandomNormalization"
+        mapcoef_module 0 [] 1 ["scaling_factor";"location"] 1 ["x_pr";"x_adj"] name 
+            (fun (InputFArgs []) (InputFArgs [scaling_factor;location]) (OutputFArgs [x_pr;x_adj]) -> 
+                [ x_pr == scaling_factor * (x_pr - value "0.5") + location])
+        |> map_fst (load_kernel_nvcc name)

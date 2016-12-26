@@ -88,3 +88,22 @@ let cf1 (x: SpiralEnv<_> -> DM<int,_>) _ = 1
 let cost_function cfx cost_f target input (env: SpiralEnv<_>): Df =
     cost_f cfx target input env
 
+let grad_checking (node : DM<_,_>) (env: SpiralEnv<_>) =
+    () // Does nothing. This is here so the adjoints do not get zeroed out.
+let sgd learning_rate (node : DM<_,_>) (env: SpiralEnv<_>) =
+    Primitives.mutable_map_operation 2 node [-learning_rate] clipped_sgd env
+let clipped_sgd learning_rate clipping_threshold (node : DM<_,_>) (env: SpiralEnv<_>) =
+    Primitives.mutable_map_operation 2 node [-learning_rate;clipping_threshold] clipped_sgd env
+
+/// Fills primal of a matrix by sampling from a random uniform distribution in <-1.0f,1.0f]. Is inplace and mutable.
+let fillRandomUniformMatrix (scaling_factor: float32) (location: float32) (env: SpiralEnv<_>) (x: DM<_,float32>) =
+    cudaRandom.SetStream env.Str.Stream
+    cudaRandom.GenerateUniform(x.P)
+
+    // 2.0f*scaling_factor ensures that it is rescaled in the [-1.0f;1.0f] range if the scaling_factor is 1.0f.
+    Primitives.mutable_map_operation 1 x [2.0f * scaling_factor; location] random_normalization env
+    x
+
+let feedforward_layer size total_size env =
+    let W = createDM size total_size 2 |> fillRandomUniformMatrix 1.0f 0.0f env
+    ()

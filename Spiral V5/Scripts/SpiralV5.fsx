@@ -22,6 +22,8 @@ open System.IO
 open System.Collections.Generic
 open System.Runtime.InteropServices
 
+let default_num_vars = 2
+
 // Initialize the context. Analogous to a CPU process. Cuda tries to offload as much as possible during context creation so there aren't
 // any unexpected delays later.
 let cuda_context = new CudaContext(false)

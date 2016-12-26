@@ -59,12 +59,12 @@ type Df =
 type DM<'s,'t when 't: struct 
                and 't: (new: unit -> 't) and 't:> System.ValueType
                and 's: equality>
-        (size: 's, total_size_in_elems: int, data: CudaDeviceVariable<'t>[]) =
+        (size: 's, total_size_in_elems: int, data: ResizeArray<CudaDeviceVariable<'t>>) =
     member t.Size = size
     member t.Data = data
 
     member t.TotalSizeInElems = total_size_in_elems
-    member t.NumVars = t.Data.Length
+    member t.NumVars = t.Data.Count
 
     interface IDisposable with
         member t.Dispose() = for var in t.Data do var.Dispose()
@@ -75,43 +75,43 @@ let new_var (total_size: int) =
     x.Memset(0u)
     x
     
-let makeDMf32(size: 's, total_size, num_vars: int) =
-    new DM<'s,float32>(size, total_size, Array.init num_vars <| fun _ -> new_var total_size)
+let createDM(size: 's) total_size (num_vars: int) =
+    new DM<'s,_>(size, total_size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
 
-let primal (x: DM<_,_>) = let i=0 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have a primal."
-let adjoint (x: DM<_,_>) = let i=1 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an adjoint."
-let has_adjoint (x: DM<_,_>) = let i=1 in i < x.Data.Length
-let aux1 (x: DM<_,_>) = let i=2 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux1."
-let aux2 (x: DM<_,_>) = let i=3 in if i < x.Data.Length then x.Data.[i] else failwith "DM does not have an aux2."
+let copyToDevice (host_ar: 'a[]) (device_var: CudaDeviceVariable<'a>) =
+    if int device_var.Size <> host_ar.Length then failwithf "int device_var.Size(%i) <> host_ar.Length(%i)" (int device_var.Size) (host_ar.Length)
+    device_var.CopyToDevice(host_ar)
+
+let primal (x: DM<_,_>) = let i=0 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have a primal."
+let adjoint (x: DM<_,_>) = let i=1 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an adjoint."
+let has_adjoint (x: DM<_,_>) = let i=1 in i < x.NumVars
+let aux1 (x: DM<_,_>) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
+let aux2 (x: DM<_,_>) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
 
 type DM with 
     member x.P = primal x
     member x.A = adjoint x
     member x.P' = x.Size, x.TotalSizeInElems, primal x
     member x.A' = x.Size, x.TotalSizeInElems, adjoint x
+    member x.P'' = x.Size, primal x
+    member x.A'' = x.Size, adjoint x
     member x.HasAdjoint = has_adjoint x
-    member x.Aux1 = aux1 x
-    member x.Aux2 = aux2 x
+    member x.NumAuxes = max (x.NumVars - 2) 0
+    /// Allocates new variables if the Auxes are missing.
+    /// The auxes are intended to be used for things like Nesterov's Momentum so it will also allocate the adjoint if it is missing.
+//    member x.GetAuxes num_auxes = 
+//        while x.NumAuxes < num_auxes do
+//            x.Data.Add <| new_var x.TotalSizeInElems
+//        List.init num_auxes (fun i -> x.Data.[2+i])
+    member x.GetArgs num_args = 
+        while x.NumVars < num_args do 
+            x.Data.Add <| new_var x.TotalSizeInElems
+        List.init num_args (fun i -> x.Data.[i])
 
-    /// Resizes the DM.
-    /// Does the least amount of work possible.
-//    member x.ResizeIf (dims: 's, total_size, num_vars: int) = 
-//        let new_size_is_bigger = total_size > x.TotalSize
-//
-//        if x.Data.Length < num_vars then
-//            x.Data <- Array.init num_vars <| fun i ->
-//                if i < x.Data.Length then
-//                    if new_size_is_bigger then dispose x.Data.[i]; new_var total_size
-//                    else x.Data.[i]
-//                else new_var total_size
-//        elif new_size_is_bigger then
-//            let l = min x.Data.Length num_vars
-//            for i=0 to l-1 do
-//                dispose x.Data.[i]; x.Data.[i] <- new_var total_size
-//
-//        // This is to help the GC a little.
-//        if x.Size.Length = dims.Length then Array.Copy(dims,x.Size,dims.Length)
-//        else x.Size <- dims
+    static member create (c,r) num_vars (x: float32[]) =
+        let d = createDM (c,r) (c*r) num_vars
+        copyToDevice x d.P
+        d
 
 let defaultLayout = cudnnTensorFormat.NCHW
 let defaultType = cudnnDataType.Float
@@ -203,6 +203,14 @@ type SpiralEnv<'user_state> =
 
     member t.PushTape x = t.Tape.Push x
 
+    static member create =
+        {
+        Str = new CudaStream()
+        Mem = new ObjectPool()
+        Tape = new Stack<_>()
+        IsInferenceOnly = false
+        }
+
 and ObjectPool() =
     let dMPool = ResizeArray<obj>()
     let mutable dMp = 0
@@ -240,7 +248,7 @@ and ObjectPool() =
             (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member inline private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
+    member private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
         let get_var i =
             let t = 
                 if pool.Count > dMp then resizeIf total_size_in_elems (pool.[dMp+i] :?> _)
@@ -248,19 +256,19 @@ and ObjectPool() =
             pool.[dMp+i] <- t
             t
 
-        let vars = [| for i=0 to num_vars-1 do yield get_var i |]
+        let vars = Array.init num_vars (fun i -> get_var i) |> ResizeArray
         post_process vars // Increments the pointer and zeroes out the adjoint of vars if working on the regular pool.
 
         new DM<_,_>(size,total_size_in_elems,vars)
 
     member t.GetDM(size, total_size_in_elems, num_vars, env) =
-        let post_process (vars: CudaDeviceVariable<_>[]) =
+        let post_process (vars: ResizeArray<CudaDeviceVariable<_>>) =
             dMp <- dMp + num_vars
 
             // The optimizers can only zero out the adjoints in the base nodes.
             // The object pool has to take up the slack for the rest.
             // The second variable is always the adjoint and here it is set to zero.
-            if env.IsInferenceOnly = false && vars.Length > 1 then vars.[1].MemsetAsync(0u,env.Str.Stream) 
+            if env.IsInferenceOnly = false && vars.Count > 1 then vars.[1].MemsetAsync(0u,env.Str.Stream) 
         t.Get(size,total_size_in_elems,num_vars,env,dMPool,post_process)
 
     member t.GetWorkspace(size,total_size_in_elems, num_vars, env) =

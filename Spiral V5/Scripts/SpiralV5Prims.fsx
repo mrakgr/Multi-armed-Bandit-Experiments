@@ -11,8 +11,6 @@ open ManagedCuda.VectorTypes
 open ManagedCuda.CudaBlas
 
 module Primitives =
-    let default_num_vars = 2
-
     type Scalar = Scalar
 
     type CallerVar =
@@ -287,6 +285,16 @@ module Primitives =
 
     let grid_size_and_block_size_for_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
+
+    let mutable_map_operation desired_args (a: DM<_,_>) cvars kernel env =
+        let cvars = cvars |> List.map CF32
+        let ins = a.GetArgs desired_args |> List.map CArrayF32
+
+        let grid_size, block_size = grid_size_and_block_size_for_map a.TotalSizeInElems
+        let size = CInt a.TotalSizeInElems
+
+        kernel_caller grid_size block_size
+            env.Str kernel cvars (size :: ins)
 
     let map_operation (a: _ list) cvars forward_kernel backward_kernel env =
         generic_operation env <| fun () ->

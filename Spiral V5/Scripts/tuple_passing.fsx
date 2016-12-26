@@ -28,7 +28,7 @@ let in_2 =
 
 let r2 d = add (val_ 1) (val_ 3) d
 
-let test x = x in_1, x in_2 // Type error.
+//let test x = x in_1, x in_2 // Type error.
 
 let a2 = r2 in_1
 let b2 = r2 in_2

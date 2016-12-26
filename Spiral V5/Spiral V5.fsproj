@@ -73,6 +73,8 @@
     <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
     <None Include="Scripts\SpiralV5Prims.fsx" />
     <None Include="Scripts\SpiralV5Eval.fsx" />
+    <None Include="Scripts\SpiralV5Tests.fsx" />
+    <None Include="Scripts\tuple_passing_v2.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
