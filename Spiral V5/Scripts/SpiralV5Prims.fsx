@@ -11,8 +11,6 @@ open ManagedCuda.VectorTypes
 open ManagedCuda.CudaBlas
 
 module Primitives =
-    type Scalar = Scalar
-
     type CallerVar =
     | CInt of int
     | CF32 of float32
@@ -176,11 +174,11 @@ module Primitives =
     let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv<_>) =
         to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
 
-    let dm_like (a: DM<_,_>) (env: SpiralEnv<_>) =
-        env.Mem.GetDM(a.Size,a.TotalSizeInElems,default_num_vars,env)
+    let dm_like (a: DM<_>) (env: SpiralEnv<_>) =
+        env.Mem.GetDM(a.Size,default_num_vars,env)
 
     /// Copies only the primals.
-    let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv<_>) =
+    let dm_like_using_obj_pool (a: DM<_>) (env: SpiralEnv<_>) =
         let c = dm_like a env
         copy c.P a.P a.TotalSizeInElems env
         c
@@ -196,7 +194,7 @@ module Primitives =
     let add_backward (alpha: float32) s (er: VarF32) (x_adj: VarF32) (env: SpiralEnv<_>) =
         saxpy env.Str alpha (s,er) (s,x_adj)
 
-    let add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
+    let add (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv<_>) =
         if a.Size <> b.Size then failwithf "a.Size(%A) <> b.Size(%A)" a.Size b.Size
         let s = a.TotalSizeInElems
         add_forward alpha (s,1) a.P beta b.P c.P env
@@ -224,7 +222,7 @@ module Primitives =
     let add_tensor_backwards_4d_a alpha (sa,a_adj: VarF32) beta (serr,err: VarF32) (env: SpiralEnv<_>) =
         saxpy env.Str alpha (serr,err) (sa,a_adj)
 
-    let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (c: DM<'size,float32>) (env: SpiralEnv<_>) =
+    let add_tensor s_to_4d s_to_4d_backwards (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (c: DM<float32>) (env: SpiralEnv<_>) =
         let sa_total = a.TotalSizeInElems
         let sa = a.Size
         let sb = b.Size
@@ -236,45 +234,49 @@ module Primitives =
             if b.HasAdjoint then add_tensor_backwards_4d_b alpha (s_to_4d_backwards sa,c.A) beta (s_to_4d_backwards sb,b.A) env
             if c.HasAdjoint then add_tensor_backwards_4d_a alpha (sa_total,a.A) beta (sa_total,c.A) env
 
-    let routed_add s_to_4d s_to_4d_backwards inplace_mode (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
+    let routed_add s_to_4d s_to_4d_backwards inplace_mode (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv<_>) =
         generic_operation env <| fun _ ->
             let c = if inplace_mode then a else dm_like a env
             if a.Size = b.Size then add alpha a beta b c env
             else add_tensor s_to_4d s_to_4d_backwards alpha a beta b c env
 
-    let standard_add (alpha: float32) (a: DM<'size,float32>) beta (b: DM<'size,float32>) (env: SpiralEnv<_>) =
+    let standard_add (alpha: float32) (a: DM<float32>) beta (b: DM<float32>) (env: SpiralEnv<_>) =
         generic_operation env <| fun _ ->
             let c = dm_like a env
             add alpha a beta b c env
 
-    let matmult_backwards (a: DM<int*int,_>) (b: DM<int*int,_>) (c: DM<int*int,_>) (env: SpiralEnv<_>) =
-        if a.HasAdjoint then gemm env.Str nT T 1.0f (c.Size,c.A) (b.Size, b.P) 1.0f (a.Size, a.A)
-        if b.HasAdjoint then gemm env.Str T nT 1.0f (a.Size, a.P) (c.Size, c.A) 1.0f (b.Size, b.A)
+    let matmult_backwards sa (a: DM<_>) sb (b: DM<_>) sc (c: DM<_>) (env: SpiralEnv<_>) =
+        if a.HasAdjoint then gemm env.Str nT T 1.0f (sc, c.A) (sb, b.P) 1.0f (sa, a.A)
+        if b.HasAdjoint then gemm env.Str T nT 1.0f (sa, a.P) (sc, c.A) 1.0f (sb, b.A)
 
-    let seqmatmult (l: (DM<int*int,float32> * DM<int*int,float32>) list) (env: SpiralEnv<_>) =
+    let seqmatmult exa exb exc (l: (DM<float32> * DM<float32>) list) (env: SpiralEnv<_>) =
+//        let match2 (x: DM<_>) =
+//            match x.Size with
+//            | [|a;b|] -> a,b
+//            | _ -> failwith "Invalid dimension."
         generic_operation env <| fun _ ->
             let sc = l |> List.map (fun (a,b) -> 
-                let (cols_b,_) = b.Size
-                let (_,rows_a) = a.Size
+                let cols_b,_ = exb b.Size
+                let _,rows_a = exa a.Size
                 cols_b,rows_a)
             guardSizes sc
             let cols_c, rows_c as sc = List.head sc
-            let c = env.Mem.GetDM(sc,cols_c*rows_c,default_num_vars, env)
-            for a,b in l do gemm env.Str nT nT 1.0f (a.Size,a.P) (b.Size,b.P) 0.0f (c.Size,c.P)
+            let c = env.Mem.GetDM([|cols_c;rows_c|],default_num_vars, env)
+            for a,b in l do gemm env.Str nT nT 1.0f (exa a.Size,a.P) (exb b.Size,b.P) 0.0f (exc c.Size,c.P)
 
-            c, fun _ -> for a,b in l do matmult_backwards a b c env
+            c, fun _ -> for a,b in l do matmult_backwards (exa a.Size) a (exb b.Size) b (exc c.Size) c env
 
-    let matmult (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv<_>) =
-        seqmatmult [a,b] env
+    let matmult exa exb exc (a: DM<float32>) (b: DM<float32>) (env: SpiralEnv<_>) =
+        seqmatmult exa exb exc [a,b] env
 
-    let guarded_map_to_caller_var (a: DM<_,_> list) f =
+    let guarded_map_to_caller_var (a: DM<_> list) f =
         a 
         |> List.map (fun x -> x.Size)
         |> guardSizes
 
         a |> List.map (fun x -> f x)
 
-    let operation_prelude (a: DM<_,_> list) (c: DM<_,_>) cvars =
+    let operation_prelude (a: DM<_> list) (c: DM<_>) cvars =
         let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
         let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
         let cvars = List.map (fun x -> CF32 x) cvars
@@ -286,7 +288,7 @@ module Primitives =
     let grid_size_and_block_size_for_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
 
-    let mutable_map_operation desired_args (a: DM<_,_>) cvars kernel env =
+    let mutable_map_operation desired_args (a: DM<_>) cvars kernel env =
         let cvars = cvars |> List.map CF32
         let ins = a.GetArgs desired_args |> List.map CArrayF32
 
@@ -321,7 +323,7 @@ module Primitives =
     let map_redo_map_operation (a: _ list) cvars forward_kernel backward_kernel env =
         generic_operation env <| fun () ->
             let h = a.Head
-            let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
+            let c = env.Mem.GetDM([|1|],default_num_vars,env)
 
             let input_prims, input_adjs, cvars, out_prim, _ = operation_prelude a c cvars
 
@@ -340,14 +342,14 @@ module Primitives =
                     kernel_caller grid_size block_size 
                         env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
     
-    let seqhadmult (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
+    let seqhadmult (ab: (DM<float32> * DM<float32>) list) env =
         let l = ab.Length
         let forward_kernel = hadmult_generic_memoized l
         let backward_kernel = hadmult_backward_generic_memoized l
         let args = ab |> List.collect (fun (a,b) -> [a;b])
         map_operation args [] forward_kernel backward_kernel env
 
-    let hadmult (ab: DM<'s,float32> * DM<'s,float32>) env =
+    let hadmult (ab: DM<float32> * DM<float32>) env =
         seqhadmult [ab] env
 
     /// alpha * a
@@ -368,8 +370,8 @@ module Primitives =
 
             c, fun _ -> for l in a do l.A := !c.A + !l.A
 
-    let reshape (a: DM<_,_>) conv (env: SpiralEnv<_>) =
+    let reshape (a: DM<_>) conv (env: SpiralEnv<_>) =
         generic_operation {env with IsInferenceOnly = true} <| fun _ ->
-            let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
+            let c = new DM<_>(conv a.Size,a.Data)
             c, fun _ -> ()
 

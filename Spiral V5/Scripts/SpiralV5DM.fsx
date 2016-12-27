@@ -56,14 +56,13 @@ type Df =
     static member inline create P =
         {P=P;A=ref 0.0f}
 
-type DM<'s,'t when 't: struct 
-               and 't: (new: unit -> 't) and 't:> System.ValueType
-               and 's: equality>
-        (size: 's, total_size_in_elems: int, data: ResizeArray<CudaDeviceVariable<'t>>) =
+type DM<'t when 't: struct 
+            and 't: (new: unit -> 't) and 't:> System.ValueType>
+        (size: int[], data: ResizeArray<CudaDeviceVariable<'t>>) =
     member t.Size = size
     member t.Data = data
 
-    member t.TotalSizeInElems = total_size_in_elems
+    member t.TotalSizeInElems = Array.reduce (*) size
     member t.NumVars = t.Data.Count
 
     interface IDisposable with
@@ -75,18 +74,19 @@ let new_var (total_size: int) =
     x.Memset(0u)
     x
     
-let createDM(size: 's) total_size (num_vars: int) =
-    new DM<'s,_>(size, total_size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
+let createDM size (num_vars: int) =
+    let total_size = Array.reduce (*) size
+    new DM<_>(size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
 
 let copyToDevice (host_ar: 'a[]) (device_var: CudaDeviceVariable<'a>) =
     if int device_var.Size <> host_ar.Length then failwithf "int device_var.Size(%i) <> host_ar.Length(%i)" (int device_var.Size) (host_ar.Length)
     device_var.CopyToDevice(host_ar)
 
-let primal (x: DM<_,_>) = let i=0 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have a primal."
-let adjoint (x: DM<_,_>) = let i=1 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an adjoint."
-let has_adjoint (x: DM<_,_>) = let i=1 in i < x.NumVars
-let aux1 (x: DM<_,_>) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
-let aux2 (x: DM<_,_>) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
+let primal (x: DM<_>) = let i=0 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have a primal."
+let adjoint (x: DM<_>) = let i=1 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an adjoint."
+let has_adjoint (x: DM<_>) = let i=1 in i < x.NumVars
+let aux1 (x: DM<_>) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
+let aux2 (x: DM<_>) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
 
 type DM with 
     member x.P = primal x
@@ -108,8 +108,8 @@ type DM with
             x.Data.Add <| new_var x.TotalSizeInElems
         List.init num_args (fun i -> x.Data.[i])
 
-    static member create (c,r) num_vars (x: float32[]) =
-        let d = createDM (c,r) (c*r) num_vars
+    static member create size num_vars (x: float32[]) =
+        let d = createDM size num_vars
         copyToDevice x d.P
         d
 
@@ -248,7 +248,14 @@ and ObjectPool() =
             (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
+    member private t.Get(size, num_vars: int, env: SpiralEnv<_>, op) =
+        let pool =
+            match op with
+            | PoolRegular -> dMPool
+            | PoolWorkspace -> workspace
+
+        let total_size_in_elems = Array.reduce (*) size
+
         let get_var i =
             let t = 
                 if pool.Count > dMp then resizeIf total_size_in_elems (pool.[dMp+i] :?> _)
@@ -257,23 +264,24 @@ and ObjectPool() =
             t
 
         let vars = Array.init num_vars (fun i -> get_var i) |> ResizeArray
-        post_process vars // Increments the pointer and zeroes out the adjoint of vars if working on the regular pool.
 
-        new DM<_,_>(size,total_size_in_elems,vars)
-
-    member t.GetDM(size, total_size_in_elems, num_vars, env) =
-        let post_process (vars: ResizeArray<CudaDeviceVariable<_>>) =
+        match op with
+        | PoolRegular ->
             dMp <- dMp + num_vars
 
             // The optimizers can only zero out the adjoints in the base nodes.
             // The object pool has to take up the slack for the rest.
             // The second variable is always the adjoint and here it is set to zero.
             if env.IsInferenceOnly = false && vars.Count > 1 then vars.[1].MemsetAsync(0u,env.Str.Stream) 
-        t.Get(size,total_size_in_elems,num_vars,env,dMPool,post_process)
+        | PoolWorkspace -> ()
 
-    member t.GetWorkspace(size,total_size_in_elems, num_vars, env) =
-        let post_process _ = ()
-        t.Get(size,total_size_in_elems,num_vars,env,workspace,post_process)
+        new DM<_>(size,vars)
+
+    member t.GetDM(size, num_vars, env) =
+        t.Get(size,num_vars,env,PoolRegular)
+
+    member t.GetWorkspace(size, num_vars, env) =
+        t.Get(size,num_vars,env,PoolWorkspace)
 
     interface IDisposable with
         member __.Dispose() =
