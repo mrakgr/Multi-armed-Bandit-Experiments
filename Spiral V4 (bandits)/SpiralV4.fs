@@ -2132,7 +2132,7 @@ let inline createFFSublayer has_bias activation desired_hidden_size (input: d2M)
 
     match b with
     | Some b -> [|W;b|]
-    | None -> [|W|] 
+    | None -> [|W|]
     |> Array.map D2M
     |> add_nodes ctx
 

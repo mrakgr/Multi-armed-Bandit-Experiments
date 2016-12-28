@@ -131,8 +131,17 @@ let fillRandomUniformMatrix (scaling_factor: float32) (location: float32) (env: 
     // 2.0f*scaling_factor ensures that it is rescaled in the [-1.0f;1.0f] range if the scaling_factor is 1.0f.
     Primitives.mutable_map_operation 1 x [2.0f * scaling_factor; location] random_normalization env
     x
-//
-//let feedforward_layer size total_size env =
-//    let W = createDM size total_size 2 |> fillRandomUniformMatrix 1.0f 0.0f env
-//    ()
+
+/// As it says on the tin. TODO: Make initializers for other activation functions.
+let reluInitializer (env: SpiralEnv<_>) (a: DM<_>) =
+    let t = a.Size |> Array.reduce (+)
+    let scale = (1.0f / sqrt(float32 t))
+    fillRandomUniformMatrix scale 0.0f env a
+
+let feedforward_layer act size env =
+    let W = createDM size 2 |> reluInitializer env |> DMF32 |> BaseNode
+    let b = createDM size 2 |> reluInitializer env |> DMF32 |> BaseNode
+    
+    fun x -> Badd(1.0f, Matmult(W, x), 1.0f, b) |> act
+    
     // Hmmm...
