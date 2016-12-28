@@ -104,6 +104,11 @@ let fillRandomUniformMatrix (scaling_factor: float32) (location: float32) (env: 
     Primitives.mutable_map_operation 1 x [2.0f * scaling_factor; location] random_normalization env
     x
 
+let reluInitializer (env: SpiralEnv<_>) (a: DM<_,float32>) =
+    let t = a.Size |> Array.reduce (+)
+    let scale = (1.0f / sqrt(float32 t))
+    fillRandomUniformMatrix scale 0.0f env a
+
 let feedforward_layer size total_size env =
     let W = createDM size total_size 2 |> fillRandomUniformMatrix 1.0f 0.0f env
     ()
