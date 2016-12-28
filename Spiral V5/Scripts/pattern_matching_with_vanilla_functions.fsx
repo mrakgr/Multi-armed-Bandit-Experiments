@@ -38,3 +38,8 @@
 // This gives me confidence that by chosing the purely functional approach, I am not losing the benefits of pattern matching.
 // It is in essence like having a minicompiler for pattern matching.
 //
+
+// Edit: Possibly the best example of functional pattern matching are parser combinators. It just never occured to me to put 
+// DU pattern matching and parser combinators together.
+
+// Pattern matching on datatypes is not a reason to chose DUs over functions, that much is certain.

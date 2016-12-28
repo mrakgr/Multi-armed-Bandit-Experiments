@@ -44,8 +44,6 @@ type CudaDeviceVariable<'t when 't: struct and 't: (new: unit -> 't) and 't:> Sy
     member inline this.Gather() =
         to_host this
 
-let total_size_of size = Array.reduce (*) size
-
 /// The float scalar type
 type Df = 
     {
@@ -59,12 +57,10 @@ type Df =
 type DM<'s,'t when 't: struct 
                and 't: (new: unit -> 't) and 't:> System.ValueType
                and 's: equality>
-        (size: 's, size_as_int_ar: 's -> int[], data: ResizeArray<CudaDeviceVariable<'t>>) =
+        (size: 's, data: ResizeArray<CudaDeviceVariable<'t>>) =
     member t.Size = size
     member t.Data = data
 
-    member t.TotalSizeInElems = size_as_int_ar size |> Array.reduce (*)
-    member t.SizeAsIntAr = size_as_int_ar
     member t.NumVars = t.Data.Count
 
     interface IDisposable with
@@ -76,9 +72,9 @@ let new_var (total_size: int) =
     x.Memset(0u)
     x
     
-let createDM(size: 's) size_as_int_ar (num_vars: int) =
-    let total_size = size_as_int_ar size |> Array.reduce (*)
-    new DM<'s,_>(size, size_as_int_ar, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
+let createDM (size: 's) size_to_total_size (num_vars: int) =
+    let total_size = size_to_total_size size
+    new DM<'s,_>(size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
 
 let copyToDevice (host_ar: 'a[]) (device_var: CudaDeviceVariable<'a>) =
     if int device_var.Size <> host_ar.Length then failwithf "int device_var.Size(%i) <> host_ar.Length(%i)" (int device_var.Size) (host_ar.Length)
@@ -90,15 +86,14 @@ let has_adjoint (x: DM<_,_>) = let i=1 in i < x.NumVars
 let aux1 (x: DM<_,_>) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
 let aux2 (x: DM<_,_>) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
 
-let size_as_ar2d (c,r) = [|c;r|]
+let total_size_2d (c,r) = c*r
+let add_dims_2d (c,r) = c+r
 
 type DM with 
     member x.P = primal x
     member x.A = adjoint x
-    member x.P' = x.Size, x.TotalSizeInElems, primal x
-    member x.A' = x.Size, x.TotalSizeInElems, adjoint x
-    member x.P'' = x.Size, primal x
-    member x.A'' = x.Size, adjoint x
+    member x.P' = x.Size, primal x
+    member x.A' = x.Size, adjoint x
     member x.HasAdjoint = has_adjoint x
     member x.NumAuxes = max (x.NumVars - 2) 0
     /// Allocates new variables if the Auxes are missing.
@@ -107,13 +102,14 @@ type DM with
 //        while x.NumAuxes < num_auxes do
 //            x.Data.Add <| new_var x.TotalSizeInElems
 //        List.init num_auxes (fun i -> x.Data.[2+i])
-    member x.GetArgs num_args = 
+    member x.GetArgs num_args size_to_total_size = 
+        let total_size = size_to_total_size x.Size
         while x.NumVars < num_args do 
-            x.Data.Add <| new_var x.TotalSizeInElems
+            x.Data.Add <| new_var total_size
         List.init num_args (fun i -> x.Data.[i])
 
     static member create (c,r) num_vars (x: float32[]) =
-        let d = createDM (c,r) size_as_ar2d num_vars
+        let d = createDM (c,r) total_size_2d num_vars
         copyToDevice x d.P
         d
 
@@ -252,8 +248,8 @@ and ObjectPool() =
             (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member private t.Get(size: 's, size_as_int_ar, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
-        let total_size_in_elems = size_as_int_ar size |> Array.reduce (*)
+    member private t.Get(size: 's, size_to_total_size, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
+        let total_size_in_elems = size_to_total_size size
         let get_var i =
             let t = 
                 if pool.Count > dMp then resizeIf total_size_in_elems (pool.[dMp+i] :?> _)
@@ -264,7 +260,7 @@ and ObjectPool() =
         let vars = Array.init num_vars (fun i -> get_var i) |> ResizeArray
         post_process vars // Increments the pointer and zeroes out the adjoint of vars if working on the regular pool.
 
-        new DM<_,_>(size,size_as_int_ar,vars)
+        new DM<_,_>(size,vars)
 
     member t.GetDM(size, total_size_in_elems, num_vars, env) =
         let post_process (vars: ResizeArray<CudaDeviceVariable<_>>) =
