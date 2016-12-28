@@ -59,11 +59,12 @@ type Df =
 type DM<'s,'t when 't: struct 
                and 't: (new: unit -> 't) and 't:> System.ValueType
                and 's: equality>
-        (size: 's, total_size_in_elems: int, data: ResizeArray<CudaDeviceVariable<'t>>) =
+        (size: 's, size_as_int_ar: 's -> int[], data: ResizeArray<CudaDeviceVariable<'t>>) =
     member t.Size = size
     member t.Data = data
 
-    member t.TotalSizeInElems = total_size_in_elems
+    member t.TotalSizeInElems = size_as_int_ar size |> Array.reduce (*)
+    member t.SizeAsIntAr = size_as_int_ar
     member t.NumVars = t.Data.Count
 
     interface IDisposable with
@@ -75,8 +76,9 @@ let new_var (total_size: int) =
     x.Memset(0u)
     x
     
-let createDM(size: 's) total_size (num_vars: int) =
-    new DM<'s,_>(size, total_size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
+let createDM(size: 's) size_as_int_ar (num_vars: int) =
+    let total_size = size_as_int_ar size |> Array.reduce (*)
+    new DM<'s,_>(size, size_as_int_ar, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
 
 let copyToDevice (host_ar: 'a[]) (device_var: CudaDeviceVariable<'a>) =
     if int device_var.Size <> host_ar.Length then failwithf "int device_var.Size(%i) <> host_ar.Length(%i)" (int device_var.Size) (host_ar.Length)
@@ -87,6 +89,8 @@ let adjoint (x: DM<_,_>) = let i=1 in if i < x.NumVars then x.Data.[i] else fail
 let has_adjoint (x: DM<_,_>) = let i=1 in i < x.NumVars
 let aux1 (x: DM<_,_>) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
 let aux2 (x: DM<_,_>) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
+
+let size_as_ar2d (c,r) = [|c;r|]
 
 type DM with 
     member x.P = primal x
@@ -109,7 +113,7 @@ type DM with
         List.init num_args (fun i -> x.Data.[i])
 
     static member create (c,r) num_vars (x: float32[]) =
-        let d = createDM (c,r) (c*r) num_vars
+        let d = createDM (c,r) size_as_ar2d num_vars
         copyToDevice x d.P
         d
 
@@ -248,7 +252,8 @@ and ObjectPool() =
             (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member private t.Get(size: 's, total_size_in_elems: int, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
+    member private t.Get(size: 's, size_as_int_ar, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
+        let total_size_in_elems = size_as_int_ar size |> Array.reduce (*)
         let get_var i =
             let t = 
                 if pool.Count > dMp then resizeIf total_size_in_elems (pool.[dMp+i] :?> _)
@@ -259,7 +264,7 @@ and ObjectPool() =
         let vars = Array.init num_vars (fun i -> get_var i) |> ResizeArray
         post_process vars // Increments the pointer and zeroes out the adjoint of vars if working on the regular pool.
 
-        new DM<_,_>(size,total_size_in_elems,vars)
+        new DM<_,_>(size,size_as_int_ar,vars)
 
     member t.GetDM(size, total_size_in_elems, num_vars, env) =
         let post_process (vars: ResizeArray<CudaDeviceVariable<_>>) =

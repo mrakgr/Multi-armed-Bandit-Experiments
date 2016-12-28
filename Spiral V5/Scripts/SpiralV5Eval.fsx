@@ -104,12 +104,33 @@ let fillRandomUniformMatrix (scaling_factor: float32) (location: float32) (env: 
     Primitives.mutable_map_operation 1 x [2.0f * scaling_factor; location] random_normalization env
     x
 
-let reluInitializer (env: SpiralEnv<_>) (a: DM<_,float32>) =
-    let t = a.Size |> Array.reduce (+)
+let relu_initializer (env: SpiralEnv<_>) (a: DM<_,_>) =
+    let t = a.SizeAsIntAr a.Size |> Array.reduce (+)
     let scale = (1.0f / sqrt(float32 t))
     fillRandomUniformMatrix scale 0.0f env a
 
-let feedforward_layer size total_size env =
-    let W = createDM size total_size 2 |> fillRandomUniformMatrix 1.0f 0.0f env
-    ()
+//let feedforward_layer (c,r) a env =
+//    let W = createDM (c,r) size_as_ar2d 2 |> relu_initializer env
+//    let b = createDM (c,1) size_as_ar2d 2 |> relu_initializer env
+
     // Hmmm...
+
+//    match b with
+//    | Some b -> [|W;b|]
+//    | None -> [|W|] 
+//    |> Array.map D2M
+//    |> add_nodes ctx
+
+let create_sublayer_template create_weight create_bias activation matmult add_bias deal_with_weights input (env: SpiralEnv<_>) =
+    let input: DM<_,_> = input env
+    let W: DM<_,_> = create_weight input env
+    let b: DM<_,_> option = create_bias input env
+
+    (fun (x: DM<_,_>) -> matmult (W,x) |> add_bias b |> activation), // run function
+    deal_with_weights W b
+
+let create_2d_ff_sublayer desired_size =
+    let create_weight (input: DM<int*int,_>) env = 
+        createDM (desired_size,r) size_as_ar2d 2 |> relu_initializer env
+
+

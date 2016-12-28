@@ -177,7 +177,7 @@ module Primitives =
         to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
 
     let dm_like (a: DM<_,_>) (env: SpiralEnv<_>) =
-        env.Mem.GetDM(a.Size,a.TotalSizeInElems,default_num_vars,env)
+        env.Mem.GetDM(a.Size,a.SizeAsIntAr,default_num_vars,env)
 
     /// Copies only the primals.
     let dm_like_using_obj_pool (a: DM<_,_>) (env: SpiralEnv<_>) =
@@ -259,7 +259,7 @@ module Primitives =
                 cols_b,rows_a)
             guardSizes sc
             let cols_c, rows_c as sc = List.head sc
-            let c = env.Mem.GetDM(sc,cols_c*rows_c,default_num_vars, env)
+            let c = env.Mem.GetDM(sc, size_as_ar2d,default_num_vars, env)
             for a,b in l do gemm env.Str nT nT 1.0f (a.Size,a.P) (b.Size,b.P) 0.0f (c.Size,c.P)
 
             c, fun _ -> for a,b in l do matmult_backwards a b c env
@@ -321,7 +321,7 @@ module Primitives =
     let map_redo_map_operation (a: _ list) cvars forward_kernel backward_kernel env =
         generic_operation env <| fun () ->
             let h = a.Head
-            let c = env.Mem.GetDM(Scalar,1,default_num_vars,env)
+            let c = env.Mem.GetDM(Scalar,(fun Scalar -> [|1|]),default_num_vars,env)
 
             let input_prims, input_adjs, cvars, out_prim, _ = operation_prelude a c cvars
 
@@ -370,6 +370,5 @@ module Primitives =
 
     let reshape (a: DM<_,_>) conv (env: SpiralEnv<_>) =
         generic_operation {env with IsInferenceOnly = true} <| fun _ ->
-            let c = new DM<_,_>(conv a.Size,a.TotalSizeInElems,a.Data)
+            let c = new DM<_,_>(conv a.Size,a.SizeAsIntAr,a.Data)
             c, fun _ -> ()
-
