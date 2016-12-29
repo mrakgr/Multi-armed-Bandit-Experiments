@@ -61,6 +61,7 @@
     <None Include="Scripts\load-references-release.fsx" />
     <None Include="Scripts\load-project-release.fsx" />
     <None Include="Scripts\SpiralV5CudaCodeGen_v0.fsx" />
+    <None Include="Scripts\SpiralV5EvalFun.fsx" />
     <None Include="Scripts\SpiralV5TaglessCudaCodegen.fsx" />
     <None Include="Scripts\SpiralV5Eval_v0.fsx" />
     <None Include="Scripts\SpiralV5Eval_v1.fsx" />
@@ -70,11 +71,11 @@
     <None Include="Scripts\tuple_passing_v1.fsx" />
     <None Include="Scripts\tuple_passing_v2.fsx" />
     <None Include="Scripts\pattern_matching_with_vanilla_functions.fsx" />
+    <None Include="Scripts\total_size.fsx" />
     <None Include="Scripts\SpiralV5.fsx" />
-    <None Include="Scripts\SpiralV5DM.fsx" />
     <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
+    <None Include="Scripts\SpiralV5DM.fsx" />
     <None Include="Scripts\SpiralV5Prims.fsx" />
-    <None Include="Scripts\SpiralV5Eval.fsx" />
     <None Include="Scripts\SpiralV5Tests.fsx" />
   </ItemGroup>
   <ItemGroup>

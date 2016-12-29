@@ -54,6 +54,19 @@ type Df =
     static member inline create P =
         {P=P;A=ref 0.0f}
 
+type Scalar = Scalar
+type TotalSizeToken = TotalSizeToken with
+    static member TotalSize(_: TotalSizeToken, (a,b,c,d,e)): int = a*b*c*d*e
+    static member TotalSize(_: TotalSizeToken, (a,b,c,d)): int = a*b*c*d
+    static member TotalSize(_: TotalSizeToken, (a,b,c)): int = a*b*c
+    static member TotalSize(_: TotalSizeToken, (a,b)): int = a*b
+    static member TotalSize(_: TotalSizeToken, x: int): int = x
+    static member TotalSize(_: TotalSizeToken, x: Scalar): int = 1
+
+let inline size_to_total_size x = 
+    let call (t:^T) = ((^s or ^T) : (static member TotalSize: TotalSizeToken * ^s -> int) t, x)
+    call TotalSizeToken
+
 type DM<'s,'t when 't: struct 
                and 't: (new: unit -> 't) and 't:> System.ValueType
                and 's: equality>
@@ -71,8 +84,8 @@ let new_var (total_size: int) =
     let x = new CudaDeviceVariable<_>(SizeT total_size)
     x.Memset(0u)
     x
-    
-let createDM (size: 's) size_to_total_size (num_vars: int) =
+
+let inline createDM (size: 's) (num_vars: int) =
     let total_size = size_to_total_size size
     new DM<'s,_>(size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
 
@@ -102,16 +115,18 @@ type DM with
 //        while x.NumAuxes < num_auxes do
 //            x.Data.Add <| new_var x.TotalSizeInElems
 //        List.init num_auxes (fun i -> x.Data.[2+i])
-    member x.GetArgs num_args size_to_total_size = 
-        let total_size = size_to_total_size x.Size
-        while x.NumVars < num_args do 
-            x.Data.Add <| new_var total_size
-        List.init num_args (fun i -> x.Data.[i])
 
-    static member create (c,r) num_vars (x: float32[]) =
-        let d = createDM (c,r) total_size_2d num_vars
+    static member inline create (c,r) num_vars (x: float32[]) =
+        let d = createDM (c,r) num_vars
         copyToDevice x d.P
         d
+
+let inline get_args (x: DM<_,_>) (num_args: int): CudaDeviceVariable<_> list = 
+    let total_size = size_to_total_size x.Size
+    while x.NumVars < num_args do 
+        x.Data.Add <| new_var total_size
+    List.init num_args (fun i -> x.Data.[i])
+
 
 let defaultLayout = cudnnTensorFormat.NCHW
 let defaultType = cudnnDataType.Float
@@ -248,7 +263,7 @@ and ObjectPool() =
             (fun _ -> new TensorDescriptor())
             (fun (t: TensorDescriptor) (nchw, mode, srcDesc) -> cudnn.DeriveBNTensorDescriptor(t,srcDesc,mode))
 
-    member private t.Get(size: 's, size_to_total_size, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
+    member inline t.Get(size: 's, num_vars: int, env: SpiralEnv<_>, pool: ResizeArray<obj>, post_process): DM<'s,'t> =
         let total_size_in_elems = size_to_total_size size
         let get_var i =
             let t = 
@@ -262,7 +277,7 @@ and ObjectPool() =
 
         new DM<_,_>(size,vars)
 
-    member t.GetDM(size, total_size_in_elems, num_vars, env) =
+    member inline t.GetDM(size, num_vars, env) =
         let post_process (vars: ResizeArray<CudaDeviceVariable<_>>) =
             dMp <- dMp + num_vars
 
@@ -270,11 +285,11 @@ and ObjectPool() =
             // The object pool has to take up the slack for the rest.
             // The second variable is always the adjoint and here it is set to zero.
             if env.IsInferenceOnly = false && vars.Count > 1 then vars.[1].MemsetAsync(0u,env.Str.Stream) 
-        t.Get(size,total_size_in_elems,num_vars,env,dMPool,post_process)
+        t.Get(size,num_vars,env,dMPool,post_process)
 
-    member t.GetWorkspace(size,total_size_in_elems, num_vars, env) =
+    member inline t.GetWorkspace(size,total_size_in_elems, num_vars, env) =
         let post_process _ = ()
-        t.Get(size,total_size_in_elems,num_vars,env,workspace,post_process)
+        t.Get(size,num_vars,env,workspace,post_process)
 
     interface IDisposable with
         member __.Dispose() =
