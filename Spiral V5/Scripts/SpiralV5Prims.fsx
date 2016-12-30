@@ -373,3 +373,22 @@ module Primitives =
         generic_operation {env with IsInferenceOnly = true} <| fun _ ->
             let c = new DM<_,_>(conv a.Size,a.Data)
             c, fun _ -> ()
+
+    let inline relu x = 
+        map_operation  [x] [] relu relu_backward
+    let inline tanh x =
+        map_operation  [x] [] tanh tanh_backward
+    let inline sigmoid x =
+        map_operation  [x] [] sigmoid sigmoid_backward
+    let inline clipped_sigmoid  x min max =
+        map_operation  [x] [min;max] clipped_sigmoid clipped_sigmoid_backward
+    let inline clip x min max =
+        map_operation  [x] [min;max] clip clip_backward
+    let inline square x =
+        map_operation  [x] [] square square_backward
+    let inline sum x =
+        map_redo_map_operation [x] [] sum sum_backward
+    let inline log x =
+        map_operation  [x] [] log_ log_backward
+    let inline scalar_matrix_add x coef scalar (env: SpiralEnv<_>) =
+        map_operation  [x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env

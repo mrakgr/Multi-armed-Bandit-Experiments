@@ -158,3 +158,7 @@ let memoize f =
             let res = f x
             cache.[x] <- res
             res
+
+let tag =
+    let mutable i = 0
+    fun () -> i <- i+1; i
