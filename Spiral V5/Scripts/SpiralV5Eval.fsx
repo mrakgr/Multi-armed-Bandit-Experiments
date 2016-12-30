@@ -176,10 +176,17 @@ let (++) a b = combine_layer a b
 
 let ce target input = cross_entropy_cost cf2 target input
 
-let layers target = 
-    [|
-    layer_2d_ff 128 relu
-    layer_2d_ff 128 relu
-    layer_2d_ff 10 sigmoid
-    |] |> Array.reduce (++)
-    |> fun x -> x ++ layer_cost_function ff_runner (cross_entropy_cost cf2 target)
+let layers_2d_feedforward layers cost_function target = 
+    layers 
+    |> Array.reduce (++)
+    |> fun x -> x ++ layer_cost_function ff_runner (cost_function cf2 target)
+
+let layers target =
+    layers_2d_feedforward
+        [|
+        layer_2d_ff 128 relu
+        layer_2d_ff 128 relu
+        layer_2d_ff 10 sigmoid
+        |]
+        cross_entropy_cost
+        target
