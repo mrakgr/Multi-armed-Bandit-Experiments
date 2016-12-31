@@ -212,6 +212,7 @@ type SpiralEnv<'user_state> =
     Str : CudaStream
     Mem : ObjectPool
     Tape : Stack<unit -> unit>
+    Weights : Stack<obj []>
     // State (immutable)
     IsInferenceOnly : bool
     }

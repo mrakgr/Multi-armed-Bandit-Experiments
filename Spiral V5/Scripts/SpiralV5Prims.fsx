@@ -184,9 +184,10 @@ module Primitives =
         c
 
     let inline generic_operation (env: SpiralEnv<_>) forward_op =
-        let c,backward_op = forward_op()
-        if env.IsInferenceOnly = false then env.PushTape backward_op
-        c
+        //let c,backward_op = forward_op()
+        //if env.IsInferenceOnly = false then env.PushTape backward_op
+        //c, backward_op
+        forward_op() // The runner is to take care of the backwards part.
 
     let add_forward (alpha: float32) s (a: VarF32) beta (b: VarF32) (c: VarF32) (env: SpiralEnv<_>) =
         geam env.Str nT nT alpha (s, a) beta (s, b) (s, c)

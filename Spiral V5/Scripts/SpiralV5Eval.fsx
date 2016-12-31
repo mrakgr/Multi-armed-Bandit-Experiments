@@ -71,12 +71,14 @@ let inline private cross_entropy_cost_template log scalar_matrix_add seqhadmult 
 
 // But there is no doubt that the templated form is how the function should be written.
 // I actually prever how the above came out to what it was in the previous library.
-let inline cross_entropy_cost num_examples_of target input env =
-    let log x = Primitives.log x env
-    let scalar_matrix_add x coef scalar = Primitives.scalar_matrix_add x coef scalar env
-    let seqhadmult x = Primitives.seqhadmult x env
-    let sum x = Primitives.sum x env
-    let scale alpha x = Primitives.scale alpha x env
+let inline cross_entropy_cost 
+        (log_runner, scalar_matrix_add_runner, seqhadmult_runner, sum_runner, scale_runner) 
+        num_examples_of target input env =
+    let log x = log_runner (fun x -> Primitives.log x env) x
+    let scalar_matrix_add x coef scalar = scalar_matrix_add_runner (fun x coef scalar -> Primitives.scalar_matrix_add x coef scalar env) x coef scalar
+    let seqhadmult x = seqhadmult_runner (fun x -> Primitives.seqhadmult x env) x
+    let sum x = sum_runner (fun x -> Primitives.sum x env) x
+    let scale alpha x = scale_runner (fun alpha x -> Primitives.scale alpha x env) alpha x
     cross_entropy_cost_template log scalar_matrix_add seqhadmult sum scale num_examples_of (target env) (input env)
 
 let inline private squared_error_template add square sum scale num_examples_of target input =
@@ -85,11 +87,11 @@ let inline private squared_error_template add square sum scale num_examples_of t
     |> sum 
     |> scale (0.5f / float32 (num_examples_of target))
 
-let inline squared_error_cost num_examples_of target input env =
-    let add alpha a beta b = Primitives.standard_add alpha a beta b env
-    let square x = Primitives.square x env
-    let sum x = Primitives.sum x env
-    let scale alpha x = Primitives.scale alpha x env
+let inline squared_error_cost (add_runner,square_runner,sum_runner,scale_runner) num_examples_of target input env =
+    let add alpha a beta b = add_runner (fun a beta b -> Primitives.standard_add alpha a beta b env) a beta b
+    let square x = square_runner (fun x -> Primitives.square x env) x
+    let sum x = sum_runner (fun x -> Primitives.sum x env) x
+    let scale alpha x = scale_runner (fun alpha x -> Primitives.scale alpha x env) alpha x
     squared_error_template add square sum scale num_examples_of (target env) (input env)
 
 // Dim extractors.
@@ -128,20 +130,21 @@ let create_ff_sublayer_template create_weight create_bias matmult add_bias deal_
     let W: DM<_,_> = create_weight input env
     let b: DM<_,_> = create_bias env
 
-    (fun x -> matmult W x |> add_bias b |> activation), // run function
     deal_with_weights W b
 
-let create_2d_ff_sublayer desired_size activation input env =
+    (fun x -> matmult W x |> add_bias b |> activation) // run function
+
+let create_2d_ff_sublayer runner desired_size activation input (env: SpiralEnv<_>) =
     let create_weight (input: DM<int*int,_>) env = 
         let c,r = input.Size
         createDM (r,desired_size) 2 |> relu_initializer add_dims_2d env
     let create_bias env = 
         createDM (1,desired_size) 2 |> relu_initializer add_dims_2d env
-    let matmult W x env = Primitives.matmult W (x env) env
-    let add_bias b a env = Primitives.routed_add ba2 true 1.0f (a env) 1.0f b env
-    let deal_with_weights W b = [|W;b|]
+    let matmult W x env = Primitives.matmult W (x env) env |> runner
+    let add_bias b a env = Primitives.routed_add ba2 true 1.0f (a env) 1.0f b env |> runner
+    let deal_with_weights W b = env.Weights.Push [|W;b|] // Maybe later I'll figure out something smarter, but for now this will do.
 
-    let f, weights = create_ff_sublayer_template create_weight create_bias matmult add_bias deal_with_weights activation input env
+    let f = create_ff_sublayer_template create_weight create_bias matmult add_bias deal_with_weights activation input env
     f//, weights // TODO: Should I store the weights in the environment or do something more refined with them?
 
 let create_layer runner (create_layer: ('input -> 'env -> ('input -> 'output))) =
@@ -165,7 +168,11 @@ let layer_cost_function runner (cost_f: ('input -> 'output)) =
         runner cost_f id input env : 'true_output
 
 let ff_runner sub_layer id input env =
-    sub_layer input env
+    let c, backward_op = sub_layer input env
+    // Here the runner is just pushing to the global stack, but in the future, I might have runners that run their own neural nets and
+    // even backtrack, so I want them to decide individually when to push.
+    if env.IsInferenceOnly = false then env.PushTape backward_op
+    c
 
 let layer_2d_ff desire_size activation = create_2d_ff_sublayer desire_size activation |> create_layer ff_runner
 
