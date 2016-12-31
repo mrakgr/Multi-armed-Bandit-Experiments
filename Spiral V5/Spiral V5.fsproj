@@ -77,6 +77,7 @@
     <None Include="Scripts\SpiralV5DM.fsx" />
     <None Include="Scripts\SpiralV5Prims.fsx" />
     <None Include="Scripts\SpiralV5Eval.fsx" />
+    <None Include="y-comb.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
