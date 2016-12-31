@@ -17,8 +17,8 @@ module Primitives =
     | CArrayInt of CudaDeviceVariable<int>
     | CArrayF32 of CudaDeviceVariable<float32>
 
-    let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) (ks: Lazy<CudaKernel * CudaVar list>) (args_in: CallerVar list) (args_out: CallerVar list) =
-        let kernel, signs = ks.Value
+    let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) ex (ks: Lazy<_>) (args_in: CallerVar list) (args_out: CallerVar list) =
+        let kernel, signs: CudaKernel * _ = ex ks.Value
         kernel.GridDimensions <- dim3 grid_size
         kernel.BlockDimensions <- dim3 block_size
         let signs_in, signs_out = List.splitAt args_in.Length signs
@@ -293,9 +293,9 @@ module Primitives =
         let size = CInt a_total_size
 
         kernel_caller grid_size block_size
-            env.Str kernel cvars (size :: ins)
+            env.Str id kernel cvars (size :: ins)
 
-    let inline map_operation (a: _ list) cvars forward_kernel backward_kernel env =
+    let inline map_operation (a: _ list) cvars kernels env =
         generic_operation env <| fun () ->
             let h = a.Head
             let c = dm_like h env
@@ -307,18 +307,18 @@ module Primitives =
             let size = CInt h_total_size
 
             kernel_caller grid_size block_size 
-                env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
+                env.Str fst kernels (size :: input_prims @ cvars) [out_prim]
 
             c, fun () ->
                 let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
                 if as_have_adjoint then
                     kernel_caller grid_size block_size 
-                        env.Str backward_kernel (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
+                        env.Str snd kernels (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
 
     let grid_size_and_block_size_for_map_redo_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size
 
-    let inline map_redo_map_operation (a: _ list) cvars forward_kernel backward_kernel env =
+    let inline map_redo_map_operation (a: _ list) cvars kernels env =
         generic_operation env <| fun () ->
             let h = a.Head
             let c = env.Mem.GetDM(Scalar,default_num_vars,env)
@@ -330,7 +330,7 @@ module Primitives =
             let size = CInt h_total_size
 
             kernel_caller grid_size block_size
-                env.Str forward_kernel (size :: input_prims @ cvars) [out_prim]
+                env.Str fst kernels (size :: input_prims @ cvars) [out_prim]
 
             let c' = Df.create(lazy c.P.Gather().[0])
             c', fun () ->
@@ -339,14 +339,12 @@ module Primitives =
                     let out_prim = c'.P.Value |> CF32
                     let out_adj = c'.A.Value |> CF32
                     kernel_caller grid_size block_size 
-                        env.Str backward_kernel (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
+                        env.Str snd kernels (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
     
     let inline seqhadmult (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
         let l = ab.Length
-        let forward_kernel = hadmult_generic_memoized l
-        let backward_kernel = hadmult_backward_generic_memoized l
         let args = ab |> List.collect (fun (a,b) -> [a;b])
-        map_operation  args [] forward_kernel backward_kernel env
+        map_operation args [] (hadmult_generic l) env
 
     let inline hadmult  (ab: DM<'s,float32> * DM<'s,float32>) env =
         seqhadmult [ab] env
@@ -360,12 +358,9 @@ module Primitives =
     let sum_scalars (a:Df seq) (env: SpiralEnv<_>) =
         generic_operation env <| fun _ ->
             let c = 
-                Df.create <|
-                    lazy 
-                        let mutable t = 0.0f
-                        for l in a do
-                            t <- t + l.P.Value
-                        t
+                Df.create 
+                    (lazy 
+                        a |> Seq.fold (fun s e -> s + e.P.Value) 0.0f)
 
             c, fun _ -> for l in a do l.A := !c.A + !l.A
 
@@ -375,20 +370,20 @@ module Primitives =
             c, fun _ -> ()
 
     let inline relu x = 
-        map_operation  [x] [] relu relu_backward
+        map_operation  [x] [] relu
     let inline tanh x =
-        map_operation  [x] [] tanh tanh_backward
+        map_operation  [x] [] tanh
     let inline sigmoid x =
-        map_operation  [x] [] sigmoid sigmoid_backward
-    let inline clipped_sigmoid  x min max =
-        map_operation  [x] [min;max] clipped_sigmoid clipped_sigmoid_backward
+        map_operation  [x] [] sigmoid
+    let inline clipped_sigmoid x min max =
+        map_operation  [x] [min;max] clipped_sigmoid
     let inline clip x min max =
-        map_operation  [x] [min;max] clip clip_backward
+        map_operation  [x] [min;max] clip
     let inline square x =
-        map_operation  [x] [] square square_backward
+        map_operation  [x] [] square
     let inline sum x =
-        map_redo_map_operation [x] [] sum sum_backward
+        map_redo_map_operation [x] [] sum
     let inline log x =
-        map_operation  [x] [] log_ log_backward
-    let inline scalar_matrix_add x coef scalar (env: SpiralEnv<_>) =
-        map_operation  [x] [coef;scalar] scalar_matrix_add scalar_matrix_add_backward env
+        map_operation [x] [] log_
+    let inline scalar_matrix_add x coef scalar =
+        map_operation [x] [coef;scalar] scalar_matrix_add

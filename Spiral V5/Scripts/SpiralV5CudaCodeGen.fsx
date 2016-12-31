@@ -538,48 +538,40 @@ let map_redo_map_module' (InputArgs in_group) (OutputArgs out_group) name map_lo
         ]
     |> fun code -> code, get_unfolded_signature args
 
-let mapcoef_module_template num_in ins num_const cvars num_out outs kernel_name =
+let mapcoef_module_forward_template num_in ins num_const cvars num_out outs kernel_name =
     let len_in = num_in * List.length ins
     let in_group = InputArgs [CudaGroup(num_in,ins); CudaGroup(num_const,cvars)]
     let out_group = OutputArgs [CudaGroup(num_out,outs)]
     len_in, fun f -> f in_group out_group kernel_name
 
-let mapcoef_module num_in names_in num_const names_const num_out names_out kernel_name map_func =
+let mapcoef_module_forward num_in names_in num_const names_const num_out names_out kernel_name map_func =
     let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
     let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
     let outs = List.map (fun x -> CudaArray(x,CudaFloat,["n"])) names_out
 
-    let len_in, f = mapcoef_module_template num_in ins num_const cvars num_out outs kernel_name
+    let len_in, f = mapcoef_module_forward_template num_in ins num_const cvars num_out outs kernel_name
     f map_module' <| fun (InputFArgs inps) (OutputFArgs outs) -> 
         let input_ars, cvars = List.splitAt len_in inps
         map_func (InputFArgs input_ars) (InputFArgs cvars) (OutputFArgs outs)
 
-let mapcoef_redo_map_module num_in names_in num_const names_const num_out names_out kernel_name map_load_op reduce_op map_store_op =
+let mapcoef_redo_map_module_forward num_in names_in num_const names_const num_out names_out kernel_name (map_load_op, reduce_op, map_store_op) =
     let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
     let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
     let outs = List.map (fun x -> CudaArray(x,CudaFloat,[])) names_out
 
-    let len_in, f = mapcoef_module_template num_in ins num_const cvars num_out outs kernel_name
+    let len_in, f = mapcoef_module_forward_template num_in ins num_const cvars num_out outs kernel_name
     f map_redo_map_module' 
         (fun ins_and_cvars -> 
             let ins, cvars = List.splitAt len_in ins_and_cvars
             map_load_op ins cvars)
         reduce_op
         map_store_op
-        
 
 // Rederived from the mapcoef_module function.
-let map_module num_in names_in num_out names_out kernel_name f =
-    mapcoef_module num_in names_in 0 [] num_out names_out kernel_name (fun input_ars cvars outs -> f input_ars outs)
+//let map_module_forward num_in names_in num_out names_out kernel_name f =
+//    mapcoef_module_forward num_in names_in 0 [] num_out names_out kernel_name (fun input_ars cvars outs -> f input_ars outs)
 
-let map_module_1_1 name f =
-    map_module 1 ["x"] 1 ["o"] name (fun (InputFArgs [x]) (OutputFArgs [o]) -> [o == f x])
-let map_module_2_1 name f =
-    map_module 2 ["x"] 1 ["o"] name (fun (InputFArgs [x1;x2]) (OutputFArgs [o]) -> [o == f x1 x2])
-let map_module_3_1 name f =
-    map_module 3 ["x"] 1 ["o"] name (fun (InputFArgs [x1;x2;x3]) (OutputFArgs [o]) -> [o == f x1 x2 x3])
-
-let mapcoef_backwards_module_template num_in ins_prim ins_adj num_const cvars num_out outs =
+let mapcoef_module_backwards_template num_in ins_prim ins_adj num_const cvars num_out outs =
     let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
     let names_into_primals names = List.map (fun name -> name+"_primal_") names
     let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
@@ -602,53 +594,70 @@ let mapcoef_backwards_module_template num_in ins_prim ins_adj num_const cvars nu
                 let input_prims, cvars = List.splitAt len_in input_prims_and_cvars
                 f (InputFArgs output_prim_adj) (InputFArgs input_prims) (InputFArgs cvars) (OutputFArgs input_adjoints))
 
-let mapcoef_backwards_module num_in names_in num_const names_const num_out names_out =
+let mapcoef_module_backwards num_in names_in num_const names_const num_out names_out =
     let outs f = List.map (fun x -> CudaArray(x, CudaConst CudaFloat, ["n"])) (f names_out)
     let ins g f = List.map (fun x -> CudaArray(x, g, ["n"])) (f names_in)
     let cvars = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) names_const
 
-    mapcoef_backwards_module_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs
+    mapcoef_module_backwards_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs
 
 // The map_backwards function is intended to be a mirror of the map_module function so its input's adjoints are outputs and
 // its prev_outputs are part of the input.
 // Rederived from the mapcoef_backwards_module function.
-let map_backwards_module num_in names_in num_out names_out kernel_name f =
-    mapcoef_backwards_module num_in names_in 0 [] num_out names_out kernel_name 
-        (fun output_prim_adj input_prims cvars input_adjoints -> 
-            f output_prim_adj input_prims input_adjoints)
+//let map_module_backwards num_in names_in num_out names_out kernel_name f =
+//    mapcoef_module_backwards num_in names_in 0 [] num_out names_out kernel_name 
+//        (fun output_prim_adj input_prims cvars input_adjoints -> 
+//            f output_prim_adj input_prims input_adjoints)
 
-let map_backwards_module_1_1 name f =
-    map_backwards_module 1 ["x"] 1 ["o"] name <| fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr]) (OutputFArgs [x_adj]) -> [x_adj +?= f (o_pr, o_adj) x_pr]
+let map_fst f (a, b) = f a, b
+let load_kernel name = load_kernel_nvcc name // I've pulled this out just in case I need to edit this. I do not think I'll be going back to NVRTC though.
 
-let map_backwards_module_2_1 name f1 f2 =
-    map_backwards_module 2 ["x"] 1 ["o"] name <| fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr1;x_pr2]) (OutputFArgs [x_adj1;x_adj2]) -> [
-        x_adj1 +?= f1 (o_pr, o_adj) x_pr1 x_pr2
-        x_adj2 +?= f2 (o_pr, o_adj) x_pr1 x_pr2
-        ]
+let combine_and_compile_modules forward_module backward_module num_in names_in num_const names_const num_out names_out kernel_name forward_fun backward_fun =
+    let split_kernel_name_into_forward_and_backward (KernelName n as name) =
+        name, KernelName <| n+"Backward"
+    
+    let forward_name, backward_name = split_kernel_name_into_forward_and_backward kernel_name
+    let f = forward_module num_in names_in num_const names_const num_out names_out forward_name forward_fun
+    let b = backward_module num_in names_in num_const names_const num_out names_out backward_name backward_fun
+    map_fst (load_kernel forward_name) f, map_fst (load_kernel backward_name) b
 
-let map_backwards_module_3_1 name f1 f2 f3 =
-    map_backwards_module 3 ["x"] 1 ["o"] name <| fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr1;x_pr2;x_pr3]) (OutputFArgs [x_adj1;x_adj2;x_adj3]) ->
-        [
-        x_adj1 +?= f1 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
-        x_adj2 +?= f2 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
-        x_adj3 +?= f3 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
-        ]
+let map_module_1_1 kernel_name map_forward map_backward =
+    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 1 ["x"] 0 [] 1 ["o"] kernel_name
+        (fun (InputFArgs [x]) _ (OutputFArgs [o]) -> 
+            [o == map_forward x])
+        (fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr]) _ (OutputFArgs [x_adj]) -> 
+            [x_adj +?= map_backward (o_pr, o_adj) x_pr])
 
-let mapcoef_module_1_1_1 name f =
-    mapcoef_module 1 ["x"] 1 ["const_var"] 1 ["o"] name 
-        (fun (InputFArgs [in_]) (InputFArgs [cvar]) (OutputFArgs [out]) -> [out == f in_ cvar])
+let map_module_2_1 kernel_name map_forward map_backward1 map_backward2 =
+    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 2 ["x"] 0 [] 1 ["o"] kernel_name
+        (fun (InputFArgs [x1;x2]) _ (OutputFArgs [o]) -> 
+            [o == map_forward x1 x2])
+        (fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr1;x_pr2]) _ (OutputFArgs [x_adj1;x_adj2]) -> 
+            [x_adj1 +?= map_backward1 (o_pr, o_adj) x_pr1 x_pr2
+             x_adj2 +?= map_backward2 (o_pr, o_adj) x_pr1 x_pr2])
 
-let mapcoef_module_1_2_1 name f =
-    mapcoef_module 1 ["x"] 2 ["const_var"] 1 ["o"] name 
-        (fun (InputFArgs [in_]) (InputFArgs [cvar1;cvar2]) (OutputFArgs [out]) -> [out == f in_ cvar1 cvar2])
+let map_module_3_1 kernel_name map_forward map_backward1 map_backward2 map_backward3 =
+    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 3 ["x"] 0 [] 1 ["o"] kernel_name
+        (fun (InputFArgs [x1;x2;x3]) _ (OutputFArgs [o]) -> 
+            [o == map_forward x1 x2 x3])
+        (fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr1;x_pr2;x_pr3]) _ (OutputFArgs [x_adj1;x_adj2;x_adj3]) -> 
+            [x_adj1 +?= map_backward1 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
+             x_adj2 +?= map_backward2 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
+             x_adj3 +?= map_backward3 (o_pr, o_adj) x_pr1 x_pr2 x_pr3])
 
-let mapcoef_module_backwards_1_1_1 name f =
-    mapcoef_backwards_module 1 ["x"] 1 ["const_var"] 1 ["o"] name 
-        (fun (InputFArgs [out_prim;out_adj]) (InputFArgs [inp_prim]) (InputFArgs [cvar]) (OutputFArgs [inp_adj]) -> [inp_adj +?= f (out_prim, out_adj) inp_prim cvar])
+let mapcoef_module_1_1_1 kernel_name map_forward map_backward =
+    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 1 ["x"] 1 ["cvar"] 1 ["o"] kernel_name
+        (fun (InputFArgs [in_]) (InputFArgs [cvar]) (OutputFArgs [out]) -> 
+            [out == map_forward in_ cvar])
+        (fun (InputFArgs [out_prim;out_adj]) (InputFArgs [inp_prim]) (InputFArgs [cvar]) (OutputFArgs [inp_adj]) -> 
+            [inp_adj +?= map_backward (out_prim, out_adj) inp_prim cvar])
 
-let mapcoef_module_backwards_1_2_1 name f =
-    mapcoef_backwards_module 1 ["x"] 2 ["const_var"] 1 ["o"] name 
-        (fun (InputFArgs [out_prim;out_adj]) (InputFArgs [inp_prim]) (InputFArgs [cvar1;cvar2]) (OutputFArgs [inp_adj]) -> [inp_adj +?= f (out_prim, out_adj) inp_prim cvar1 cvar2])
+let mapcoef_module_1_2_1 kernel_name map_forward map_backward =
+    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 1 ["x"] 2 ["cvar"] 1 ["o"] kernel_name
+        (fun (InputFArgs [in_]) (InputFArgs [cvar1;cvar2]) (OutputFArgs [out]) -> 
+            [out == map_forward in_ cvar1 cvar2])
+        (fun (InputFArgs [out_prim;out_adj]) (InputFArgs [inp_prim]) (InputFArgs [cvar1;cvar2]) (OutputFArgs [inp_adj]) -> 
+            [inp_adj +?= map_backward (out_prim, out_adj) inp_prim cvar1 cvar2])
 
 let unary_op op = Lambda([CudaVar("x",CudaAuto)],op (Var "x"))
 let binary_op op = Lambda([CudaVar("x1",CudaAuto);CudaVar("x2",CudaAuto)], op (Var "x1") (Var "x2"))
@@ -666,209 +675,155 @@ let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
         (fun (InputFArgs [value]) (OutputFArgs [o1]) -> [o1 == map_store_op value]) 
         (string map_redocol_map_launcher_block_size)
 
-let mapcoef_redo_map_backwards_module num_in names_in num_const names_const num_out names_out =
+// Note: The backwards of a sum, min, max or top k operations does not require a reduction, instead a map will suffice.
+let mapcoef_redo_map_module_backwards num_in names_in num_const names_const num_out names_out kernel_name =
     let ins g f = List.map (fun x -> CudaArray(x, g, ["n"])) (f names_in)
     let cvars = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) names_const
     let outs f = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) (f names_out) // The inputs are expected to be passed in from host here.
 
-    mapcoef_backwards_module_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs
+    mapcoef_module_backwards_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs kernel_name
 
-let map_redo_map_module_1_1 name map_load_op reduce_op map_store_op =
-    mapcoef_redo_map_module
-        1 ["x"] 0 [] 1 ["o"] name
-        (fun [x] [] -> map_load_op x) // TODO: Seperate the regular inputs and cvars here.
-        (binary_op <| fun x y -> [Return <| reduce_op x y])
-        (fun (InputFArgs [result]) (OutputFArgs [o]) -> [AtomicAdd(Address o, map_store_op result)])
+let map_redo_map_module_1_1 kernel_name (map_load_op, reduce_op, map_store_op) backward_map_op =
+    combine_and_compile_modules 
+        mapcoef_redo_map_module_forward 
+        mapcoef_redo_map_module_backwards
+        1 ["x"] 0 [] 1 ["o"] kernel_name
+        ((fun [x] [] -> map_load_op x), // TODO: Seperate the regular inputs and cvars here.
+         (binary_op <| fun x y -> [Return <| reduce_op x y]),
+         (fun (InputFArgs [result]) (OutputFArgs [o]) -> [AtomicAdd(Address o, map_store_op result)]))
+        (fun (InputFArgs [er_pr;er_adj]) (InputFArgs [inp_pr]) (InputFArgs []) (OutputFArgs [inp_adj]) ->
+            [inp_adj +?= backward_map_op (er_pr,er_adj) inp_pr inp_adj])
 
-let map_redo_map_backwards_module num_in args_in num_out args_out name f =
-    mapcoef_redo_map_backwards_module num_in args_in 0 [] num_out args_out name
-        (fun output_prim_adj input_prims cvars input_adjoints -> 
-            f output_prim_adj input_prims input_adjoints)
-
-let map_redo_map_backwards_module_1_1 name f =
-    map_redo_map_backwards_module 1 ["x"] 1 ["o"] name
-        (fun (InputFArgs [er_pr;er_adj]) (InputFArgs [inp_pr]) (OutputFArgs [inp_adj]) ->
-            [inp_adj +?= f (er_pr,er_adj) inp_pr inp_adj])
-
-let map_fst f x = f (fst x), snd x
 
 let sum = 
     lazy
         let name = KernelName "Sum"
-        map_redo_map_module_1_1 name id (+) id
-        |> map_fst (load_kernel_nvcc name)
-
-let sum_backward =
-    lazy
-        let name = KernelName "SumBackward"
-        map_redo_map_backwards_module_1_1 name 
-            (fun (er_pr,er_adj) inp_pr inp_adj -> er_adj)
-        |> map_fst (load_kernel_nvcc name)
+        map_redo_map_module_1_1 name 
+            (id, (+), id) // Forward
+            (fun (er_pr,er_adj) inp_pr inp_adj -> er_adj) // Backward
 
 let square = 
     lazy
         let name = KernelName "Square"
-        map_module_1_1 name <| fun x -> x * x
-        |> map_fst (load_kernel_nvcc name)
-
-let square_backward =
-    lazy
-        let name = KernelName "SquareBackward"
-        map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> er_adj * Value "2" * inp_pr
-        |> map_fst (load_kernel_nvcc name)
+        map_module_1_1 name 
+            (fun x -> x * x)
+            (fun (er_pr,er_adj) inp_pr -> er_adj * Value "2" * inp_pr)
 
 let sigmoid = 
     lazy
         let name = KernelName "Sigmoid"
-        map_module_1_1 name <| fun x -> one / (one + Exp(-x))
-        |> map_fst (load_kernel_nvcc name)
-let sigmoid_backward =
-    lazy
-        let name = KernelName "SigmoidBackward"
-        map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> er_adj * er_pr * (one - er_pr)
-        |> map_fst (load_kernel_nvcc name)
+        map_module_1_1 name 
+            (fun x -> one / (one + Exp(-x)))
+            (fun (er_pr,er_adj) inp_pr -> er_adj * er_pr * (one - er_pr))
 let tanh = 
     lazy
         let name = KernelName "Tanh"
-        map_module_1_1 name <| fun x -> Tanh(x)
-        |> map_fst (load_kernel_nvcc name)
-let tanh_backward =
-    lazy
-        let name = KernelName "TanhBackward"
-        map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> er_adj * (one - er_pr * er_pr)
-        |> map_fst (load_kernel_nvcc name)
+        map_module_1_1 name 
+            (fun x -> Tanh(x))
+            (fun (er_pr,er_adj) inp_pr -> er_adj * er_pr * (one - er_pr))
 let relu = 
     lazy
         let name = KernelName "Relu"
-        map_module_1_1 name <| fun x -> if_ (x .> zero) x zero
-        |> map_fst (load_kernel_nvcc name)
-let relu_backward =
-    lazy
-        let name = KernelName "ReluBackward"
-        map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> if_ (inp_pr .> zero) er_adj zero
-        |> map_fst (load_kernel_nvcc name)
+        map_module_1_1 name 
+            (fun x -> if_ (x .> zero) x zero)
+            (fun (er_pr,er_adj) inp_pr -> if_ (inp_pr .> zero) er_adj zero)
 
 // The hadmult module generic in the number of input arguments.
-let hadmult_generic num_input_pairs =
-    lazy
-        let rec f = function
-            | a :: b :: [] ->
-                a * b
-            | a :: b :: t ->
-                a * b + f t
-            | x -> failwithf "Should never reach here. x = %A" x
+let hadmult_generic =
+    memoize (fun num_input_pairs ->
+        lazy
+            let rec forward_hadmult = function
+                | a :: b :: [] ->
+                    a * b
+                | a :: b :: t ->
+                    a * b + forward_hadmult t
+                | x -> failwithf "Should never reach here. x = %A" x
 
-        let name = KernelName <| "HadMult" + string num_input_pairs
-        map_module num_input_pairs ["a";"b"]
-                   1 ["o"] name 
-                   (fun (InputFArgs l) (OutputFArgs [o]) -> [o == f l])
-        |> map_fst (load_kernel_nvcc name)
+            let name = KernelName "Hadmult"
+            combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards num_input_pairs ["a";"b"] 0 [] 1 ["o"] name
+                (fun (InputFArgs l) _ (OutputFArgs [o]) -> 
+                    [o == forward_hadmult l])
+                (fun (InputFArgs [err_pr;err_adj]) (InputFArgs inp_prs) _ (OutputFArgs inp_adjs) -> 
+                    let chunk2 l =
+                        List.chunkBySize 2 l
+                        |> List.map (fun [a;b] -> (a,b))
+                    let adjl = chunk2 inp_adjs
+                    let priml = chunk2 inp_prs // Organizes the primals and the adjoints into pairs of two.
 
-let hadmult_backward_generic num_input_pairs =
-    lazy
-        let name = KernelName <| "HadMultBackward" + string num_input_pairs
-        map_backwards_module 
-            num_input_pairs ["a";"b";]
-            1 ["o"] name
-            <| fun (InputFArgs [err_pr;err_adj]) (InputFArgs inp_prs) (OutputFArgs inp_adjs) -> 
-                let chunk2 l =
-                    List.chunkBySize 2 l
-                    |> List.map (fun [a;b] -> (a,b))
-                let adjl = chunk2 inp_adjs
-                let priml = chunk2 inp_prs
+                    [letcavar "err" err_adj <| fun err ->
+                        List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
+                            [adj_a +?= err*prim_b
+                             adj_b +?= err*prim_a]
+                            ) adjl priml
+                        |> List.concat]))
 
-                [letcavar "err" err_adj <| fun err ->
-                    List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
-                        [adj_a +?= err*prim_b
-                         adj_b +?= err*prim_a]
-                        ) adjl priml
-                    |> List.concat]
-        |> map_fst (load_kernel_nvcc name)
-
-let hadmult_generic_memoized = memoize hadmult_generic
-let hadmult_backward_generic_memoized = memoize hadmult_backward_generic
-
-
-let colsum = map_redocol_map_module_1_1 (KernelName "Colsum") id (+) id
-let gradclip = 
-    lazy 
-        let name = KernelName "GradClip"
-        mapcoef_module_1_1_1 name <| fun x bound -> if_ (x .< -bound) -bound (if_ (x .> bound) bound x)
-        |> map_fst (load_kernel_nvcc name)
+// TODO: When needed, adjust map_redocol_map_module_1_1 to conform to the new interface.
+//let colsum = map_redocol_map_module_1_1 (KernelName "Colsum") id (+) id
 
 let clip =
     lazy
         let name = KernelName "Clip"
-        mapcoef_module_1_2_1 name (fun x min max -> if_ (x .< min) min (if_ (x .> max) max x))
-        |> map_fst (load_kernel_nvcc name)
-
-let clip_backward =
-    lazy
-        let name = KernelName "ClipBackward"
-        mapcoef_module_backwards_1_2_1 name (fun (o_pr, o_adj) x min max -> if_ (x .< min) zero (if_ (x .> max) zero o_adj))
-        |> map_fst (load_kernel_nvcc name)
+        mapcoef_module_1_2_1 name 
+            (fun x min max -> if_ (x .< min) min (if_ (x .> max) max x))
+            (fun (o_pr, o_adj) x min max -> if_ (x .< min) zero (if_ (x .> max) zero o_adj))
 
 let clipped_sigmoid = 
     lazy
         let name = KernelName "Sigmoid"
-        mapcoef_module_1_2_1 name <| fun x min max -> 
-            letcavar "post_act" (one / (one + Exp(-x))) <| fun x ->
-                [if_ (x .< min) min (if_ (x .> max) max x)]
-        |> map_fst (load_kernel_nvcc name)
-
-// I hope the o_pr .<= min optimization will not backfire on me.
-let clipped_sigmoid_backward =
-    lazy
-        let name = KernelName "SigmoidBackward"
-        mapcoef_module_backwards_1_2_1 name <| fun (o_pr, o_adj) x min max -> 
-            if_ (o_pr .<= min) zero (if_ (o_pr .>= max) zero (o_adj * o_pr * (one - o_pr)))
-        |> map_fst (load_kernel_nvcc name)
-
+        mapcoef_module_1_2_1 name 
+            (fun x min max -> 
+                letcavar "post_act" (one / (one + Exp(-x))) <| fun x -> 
+                    [if_ (x .< min) min (if_ (x .> max) max x)])
+            (fun (o_pr, o_adj) x min max -> // I hope the o_pr .<= min optimization will not backfire on me.
+                if_ (o_pr .<= min) zero (if_ (o_pr .>= max) zero (o_adj * o_pr * (one - o_pr))))
 let log_ =
     lazy
         let name = KernelName "Log"
-        map_module_1_1 name <| fun x -> Log x
-        |> map_fst (load_kernel_nvcc name)
-let log_backward =
-    lazy
-        let name = KernelName "LogBackward"
-        map_backwards_module_1_1 name <| fun (er_pr,er_adj) inp_pr -> er_adj / inp_pr
-        |> map_fst (load_kernel_nvcc name)
+        map_module_1_1 name 
+            (fun x -> Log x)
+            (fun (er_pr,er_adj) inp_pr -> er_adj / inp_pr)
 
 let scalar_matrix_add =
     lazy
         let name = KernelName "ScalarMatrixAdd"
-        mapcoef_module_1_2_1 name <| fun x coef scalar -> coef * x + scalar
-        |> map_fst (load_kernel_nvcc name)
-let scalar_matrix_add_backward = // In the previous iteration of the library this was implemented using Saxpy.
-    lazy
-        let name = KernelName "ScalarMatrixAddBackward"
-        mapcoef_module_backwards_1_2_1 name <| fun (er_pr,er_adj) inp_pr coef scalar -> coef * er_adj
-        |> map_fst (load_kernel_nvcc name)
-    
+        mapcoef_module_1_2_1 name 
+            (fun x coef scalar -> coef * x + scalar)
+            (fun (er_pr,er_adj) inp_pr coef scalar -> coef * er_adj) 
+                // In the previous iteration of the library the backwards pass was implemented using Saxpy, but
+                // this optimization is not important enough to bother with here.
+
+/// Unlike combine_and_compile_layers this one does not have a backwards step.
+let mutable_mapcoef num_in names_in num_const names_const num_out names_out kernel_name forward_fun =
+     mapcoef_module_forward num_in names_in num_const names_const num_out names_out kernel_name forward_fun
+     |> map_fst (load_kernel kernel_name)
+
+let gradclip = // TODO: This should be using the mutable_map stuff.
+    lazy 
+        let name = KernelName "GradClip"
+        mutable_mapcoef 1 ["x"] 1 ["bound"] 1 ["o"] name 
+            (fun (InputFArgs [x]) (InputFArgs [bound]) (OutputFArgs [o]) -> 
+                [o == if_ (x .< -bound) -bound (if_ (x .> bound) bound x)])
+         
 let sgd = 
     lazy
         let name = KernelName "Sgd"
-        mapcoef_module 0 [] 1 ["learning_rate"] 1 ["in_pr";"in_adj"] name 
+        mutable_mapcoef 0 [] 1 ["learning_rate"] 1 ["in_pr";"in_adj"] name 
             (fun (InputFArgs []) (InputFArgs [learning_rate]) (OutputFArgs [in_pr;in_adj]) -> 
                 [in_pr += in_adj * learning_rate
                  in_adj == zero])
-        |> map_fst (load_kernel_nvcc name)
 
 let clipped_sgd =
     lazy
         let name = KernelName "ClippedSgd"
-        mapcoef_module 0 [] 1 ["learning_rate";"clipping_threshold"] 1 ["in_pr";"in_adj"] name 
+        mutable_mapcoef 0 [] 1 ["learning_rate";"clipping_threshold"] 1 ["in_pr";"in_adj"] name 
             (fun (InputFArgs []) (InputFArgs [learning_rate;clipping_threshold]) (OutputFArgs [in_pr;in_adj]) -> 
                 [in_pr += if_ (in_adj .< -clipping_threshold) zero (if_ (in_adj .> clipping_threshold) zero (in_adj * learning_rate))
                  in_adj == zero])
-        |> map_fst (load_kernel_nvcc name)
 
 // For normalizing after random initialization of the weight matrices.
 let random_normalization =
     lazy
         let name = KernelName "RandomNormalization"
-        mapcoef_module 0 [] 1 ["scaling_factor";"location"] 1 ["x_pr";"x_adj"] name 
+        mutable_mapcoef 0 [] 1 ["scaling_factor";"location"] 1 ["x_pr";"x_adj"] name 
             (fun (InputFArgs []) (InputFArgs [scaling_factor;location]) (OutputFArgs [x_pr;x_adj]) -> 
                 [ x_pr == scaling_factor * (x_pr - value "0.5") + location])
-        |> map_fst (load_kernel_nvcc name)

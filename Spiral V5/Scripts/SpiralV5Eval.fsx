@@ -103,8 +103,8 @@ let cf2 (x: DM<int*int,_>) = x.Size |> fun (c,_) -> c
 let cf1 (x: DM<int,_>) = 1
 
 let grad_checking (node : DM<_,_>) (env: SpiralEnv<_>) =
-    () // Does nothing. This is here so the adjoints do not get zeroed out.
-let inline sgd  learning_rate (node : DM<_,_>) (env: SpiralEnv<_>) =
+    () // Does nothing. This is here so the adjoints do not get zeroed out on the backwards pass for gradient checking.
+let inline sgd learning_rate (node : DM<_,_>) (env: SpiralEnv<_>) =
     Primitives.mutable_map_operation 2 node [-learning_rate] clipped_sgd env
 let inline clipped_sgd  learning_rate clipping_threshold (node : DM<_,_>) (env: SpiralEnv<_>) =
     Primitives.mutable_map_operation 2 node [-learning_rate;clipping_threshold] clipped_sgd env
