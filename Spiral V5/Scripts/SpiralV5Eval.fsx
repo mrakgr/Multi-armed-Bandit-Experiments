@@ -56,12 +56,8 @@ let inline sum_scalars x (env: SpiralEnv<_>) = /// TODO: Not sure about the type
 let inline reshape x conv (env: SpiralEnv<_>) =
     Primitives.reshape (x env) conv env
 
-let inline private cross_entropy_cost_template log scalar_matrix_add seqhadmult sum scale num_examples_of target input =
-    let lt = target
-    let li = log input
-    let rt = scalar_matrix_add target 1.0f -1.0f
-    let ri = scalar_matrix_add input 1.0f -1.0f |> log 
-    seqhadmult [lt, li; rt, ri] 
+let inline private cross_entropy_cost_template log one_minus seqhadmult sum scale num_examples_of target input =
+    seqhadmult [target, log input; one_minus target, one_minus input |> log ] 
     |> sum 
     |> scale (-1.0f / float32 (num_examples_of target))
 
@@ -75,11 +71,11 @@ let inline cross_entropy_cost
         (log_runner, scalar_matrix_add_runner, seqhadmult_runner, sum_runner, scale_runner) 
         num_examples_of target input env =
     let log x = log_runner (fun x -> Primitives.log x env) x
-    let scalar_matrix_add x coef scalar = scalar_matrix_add_runner (fun x coef scalar -> Primitives.scalar_matrix_add x coef scalar env) x coef scalar
+    let one_minus x = scalar_matrix_add_runner (fun x coef scalar -> Primitives.scalar_matrix_add x -1.0f 1.0f env) x
     let seqhadmult x = seqhadmult_runner (fun x -> Primitives.seqhadmult x env) x
     let sum x = sum_runner (fun x -> Primitives.sum x env) x
     let scale alpha x = scale_runner (fun alpha x -> Primitives.scale alpha x env) alpha x
-    cross_entropy_cost_template log scalar_matrix_add seqhadmult sum scale num_examples_of (target env) (input env)
+    cross_entropy_cost_template log one_minus seqhadmult sum scale num_examples_of (target env) (input env)
 
 let inline private squared_error_template add square sum scale num_examples_of target input =
     add 1.0f target -1.0f input
