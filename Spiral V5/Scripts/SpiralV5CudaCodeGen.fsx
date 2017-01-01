@@ -567,10 +567,6 @@ let mapcoef_redo_map_module_forward num_in names_in num_const names_const num_ou
         reduce_op
         map_store_op
 
-// Rederived from the mapcoef_module function.
-//let map_module_forward num_in names_in num_out names_out kernel_name f =
-//    mapcoef_module_forward num_in names_in 0 [] num_out names_out kernel_name (fun input_ars cvars outs -> f input_ars outs)
-
 let mapcoef_module_backwards_template num_in ins_prim ins_adj num_const cvars num_out outs =
     let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
     let names_into_primals names = List.map (fun name -> name+"_primal_") names
@@ -600,14 +596,6 @@ let mapcoef_module_backwards num_in names_in num_const names_const num_out names
     let cvars = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) names_const
 
     mapcoef_module_backwards_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs
-
-// The map_backwards function is intended to be a mirror of the map_module function so its input's adjoints are outputs and
-// its prev_outputs are part of the input.
-// Rederived from the mapcoef_backwards_module function.
-//let map_module_backwards num_in names_in num_out names_out kernel_name f =
-//    mapcoef_module_backwards num_in names_in 0 [] num_out names_out kernel_name 
-//        (fun output_prim_adj input_prims cvars input_adjoints -> 
-//            f output_prim_adj input_prims input_adjoints)
 
 let map_fst f (a, b) = f a, b
 let load_kernel name = load_kernel_nvcc name // I've pulled this out just in case I need to edit this. I do not think I'll be going back to NVRTC though.
