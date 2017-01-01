@@ -31,7 +31,6 @@ type CudaType =
 type CudaVar =
 | CudaVar of name: string * typ: CudaType
 | CudaArray of name: string * subtype: CudaType * bound_size: string list
-| CudaGroup of num: int * subtype: CudaVar list
 
 type CudaMethodAnnotation =
 | CudaGlobal
@@ -119,9 +118,6 @@ type CudaEnvironment =
     /// Immutably increments the indentation by 4.
     member t.PlusIndent = {t with indentation = t.indentation+4}
     member t.AddVar(k,v) = 
-//        if t.variables.ContainsKey k 
-//        then failwith "Variable already exists in the environment. Duplicates are not allowed. Only arrays can have their sizes rebound."
-//        else 
         {t with variables = t.variables.Add(k,v)}
     member t.AddVars(ks,v) =
         let m = List.fold (fun m k -> Map.add k v m) t.variables ks
@@ -131,27 +127,6 @@ type CudaEnvironment =
     member t.WithSeparator x = {t with mutable_separator=x}
 
     static member create() = {indentation=0; variables=Map.empty; mutable_separator=";\n"}
-
-// Here is the functional version, it is more convoluted than the one above, but probably faster.
-let inline generic_flatten_cudagroup num subvars (var_flattener: (_ * _) -> 'a) ar_flattener: 'a list =
-    Seq.fold (fun l i ->
-        l @ List.map (fun subvar ->
-            match subvar with
-            | CudaVar(name,typ) -> var_flattener (name + string i, typ)
-            | CudaArray(name,typ,bound_size) -> ar_flattener (name + string i, typ, bound_size)
-            | x -> failwithf "%A not supported as a subtype of CudaArrayGroup."  x
-            ) subvars
-        ) [] {1..num}
-
-let flatten_cudagroup_to_cudavar_list num subvars =
-    generic_flatten_cudagroup num subvars
-        (fun (name,typ) -> CudaVar (name, typ))
-        (fun (name,typ,bound_size) -> CudaArray (name, typ, bound_size))
-
-let flatten_cudagroup_to_cudaexp_list num subvars (ar_accessor: CudaExpr list) =
-    generic_flatten_cudagroup num subvars
-        (fun (name,typ) -> Var name)
-        (fun (name,typ,bound_size) -> VarAr(Var name, ar_accessor))
 
 /// Unfolds the method arguments and returns them in a list along with the new environment.
 let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
@@ -172,9 +147,6 @@ let get_method_arguments (args: CudaVar list) (env: CudaEnvironment) =
                     List.choose (fun bound_size -> f bound_size) bound_sizes
                 let acc, env = loop vars_to_print env acc
                 loop t (env.AddVar(name,h)) (h :: acc)
-            | CudaGroup(num, subvars) ->
-                flatten_cudagroup_to_cudavar_list num subvars
-                |> fun args -> loop (args @ t) env acc
     let acc, env = loop args env []
     List.rev acc, env
 
@@ -209,8 +181,6 @@ let cuda_codegen (exp: CudaExpr list) =
                 | CudaVar(name,typ) -> pp prefix; print_type typ; pp name; ", "
                 | CudaArray(name, subtype, bound_size) ->
                     pp prefix; print_type subtype; pp "*"; pp name; ", "
-                | CudaGroup(num, subvars) ->
-                    failwith "This case should have been unfolded inside the get_method_arguments call." // Should never hit.
                 ) "" acc
             |> ignore
             env
@@ -276,8 +246,6 @@ let cuda_codegen (exp: CudaExpr list) =
             | NoExpr -> ppln ";"
             | _ -> failwith "Initializers not allowed for arrays."
             print_seq in_ (env.AddVar(name,var))
-        | Let(CudaGroup _,_,_) ->
-            failwith "Array groups are only allowed in method declarations."
         | VarAr(Var name, []) -> // The VarArs without accessors are treated to be singular.
             pp name; pp "[0]"
         | VarAr(Var name, accessors: CudaExpr list) ->
@@ -371,14 +339,6 @@ let cuda_codegen (exp: CudaExpr list) =
         gen x env
     program.ToString() |> KernelCode
 
-let cudavars_to_cudaexps vars (ar_accessor: CudaExpr list) =
-    List.collect (fun var ->
-        match var with
-        | CudaVar(name,typ) -> [Var(name)]
-        | CudaArray(name,typ,bound_size) -> [VarAr(Var(name), ar_accessor)]
-        | CudaGroup(num,subvars) -> flatten_cudagroup_to_cudaexp_list num subvars ar_accessor
-        ) vars
-
 let zero = Value "0"
 let one = Value "1"
 let neg_inf = Value "__int_as_float(0xff800000)"
@@ -424,8 +384,14 @@ let get_unfolded_signature (args: CudaVar list): CudaVar list =
     let env = CudaEnvironment.create()
     get_method_arguments args env |> fst
 
-let cuda_map_module_template ins_to_exps outs_to_exps to_args in_group out_group name map_macro =
-    let args = to_args in_group out_group
+let cuda_group num_in ins =
+    let f i = function
+        | CudaVar(name,typ) -> CudaVar(name + string i,typ)
+        | CudaArray(name,typ,size)  -> CudaArray(name + string i,typ,size) 
+    List.collect (fun i ->
+        List.map (f i) ins) [1..num_in]
+
+let cuda_map_module_template in_exp out_exp args name map_macro =
     cuda_codegen <|
         [
         include_ "thrust/tuple.h"
@@ -433,360 +399,49 @@ let cuda_map_module_template ins_to_exps outs_to_exps to_args in_group out_group
         externCBlock [
             method_ CudaGlobal CudaVoid name args [
                 for_ [CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"] (Var "i" .< Var "n") [Var "i" += Value "gridDim.x*blockDim.x"]
-                    (map_macro (ins_to_exps in_group [Var "i"]) (outs_to_exps out_group [Var "i"]))
+                    (map_macro (in_exp (Var "i")) (out_exp (Var "i")))
                 ]
-            ]
-        ]
-    |> fun code -> code, get_unfolded_signature args
-
-let map_redocol_map_module' (InputArgs in_group) (OutputArgs out_group) name map_load_op reduce_op map_store_op block_size =
-    let args = [in_group; out_group] |> List.concat
-    let map_load_op_macro = map_load_op (cudavars_to_cudaexps in_group [Var "col"; Var "row"])
-    cuda_codegen [
-        include_ "thrust/tuple.h"
-        include_ "cub/cub.cuh"
-        externCBlock [
-            method_ CudaGlobal CudaVoid name args [
-                value <| "typedef cub::BlockReduce<float, "+block_size+"> BlockReduceT;\n"
-                value "__shared__ BlockReduceT::TempStorage temp_storage;\n"
-                let_ (CudaVar("reduce_op",CudaConst CudaAuto)) reduce_op [
-                for_ ([CudaVar("col",CudaInt),Value "blockIdx.x"]) (Var "col" .< Var "num_cols") [Var "col" += Value "gridDim.x"] [
-                    let_ (CudaVar("row",CudaInt)) (Value "threadIdx.x") [
-                    let_ (CudaVar("value", CudaAuto)) map_load_op_macro [
-                    Var "row" += Value "blockDim.x"
-                    while_ (Var "row" .< Var "num_rows") [
-                        Var "value" == call "reduce_op" [Var "value"; map_load_op_macro]
-                        Var "row" += Value "blockDim.x"
-                        ]
-                    let_ (CudaVar("result",CudaConst CudaAuto)) (blockReduce (Value "temp_storage") (Var "value") (Var "reduce_op")) [
-                    ifVoid 
-                        (Value "threadIdx.x" .= zero)
-                        (map_store_op (InputFArgs [Var "result"]) (OutputFArgs (cudavars_to_cudaexps out_group [Var "col"])))
-                        []
-                    ]]]]
-                ]]
-            ]
-        ]
-    |> fun code -> code, get_unfolded_signature args
-
-let map_redocol_map_module num_in args_in num_out args_out name map_load_op reduce_op map_store_op block_size =
-    let in_group = InputArgs [CudaGroup(num_in,args_in)]
-    let out_group = OutputArgs [CudaGroup(num_out,args_out)]
-    map_redocol_map_module' in_group out_group name map_load_op reduce_op map_store_op block_size
-
-let map_redo_map_module' (InputArgs in_group) (OutputArgs out_group) name map_load_op reduce_op map_store_op =
-    let args = [in_group; out_group] |> List.concat
-    let map_load_op_macro = map_load_op (cudavars_to_cudaexps in_group [Var "i"])
-    cuda_codegen [
-        include_ "thrust/tuple.h"
-        include_ "cub/cub.cuh"
-        externCBlock [
-            method_ CudaGlobal CudaVoid name args [
-                value <| "typedef cub::BlockReduce<float, " + string map_redo_map_launcher_block_size + "> BlockReduceT;\n"
-                value "__shared__ BlockReduceT::TempStorage temp_storage;\n"
-                let_ (CudaVar("reduce_op",CudaConst CudaAuto)) reduce_op [
-                let_ (CudaVar("i",CudaInt)) (Value "blockIdx.x*blockDim.x + threadIdx.x") [
-                let_ (CudaVar("value", CudaAuto)) map_load_op_macro [
-                let_ (CudaVar("stride", CudaConst CudaAuto)) (Value "gridDim.x*blockDim.x") [
-                Var "i" += Var "stride"
-                while_ (Var "i" .< Var "n") [
-                    Var "value" == call "reduce_op" [Var "value"; map_load_op_macro]
-                    Var "i" += Var "stride"
-                    ]
-                let_ (CudaVar("result",CudaConst CudaAuto)) (blockReduce (Value "temp_storage") (Var "value") (Var "reduce_op")) [
-                ifVoid 
-                    (Value "threadIdx.x" .= zero)
-                    (map_store_op (InputFArgs [Var "result"]) (OutputFArgs (cudavars_to_cudaexps out_group [])))
-                    []
-                ]]]]]]
             ]
         ]
     |> fun code -> code, get_unfolded_signature args
 
 let map_module_template 
         process_ins process_outs process_args
-        num_in names_in num_const names_const num_out names_out kernel_name map_macro =
-    let ins, ins_to_exps = process_ins num_in names_in num_const names_const
-    let outs, outs_to_exps = process_outs num_out names_out
+        args_in args_out kernel_name map_macro =
+    let ins, in_exp = process_ins args_in
+    let outs, out_exp = process_outs args_out
 
-    let in_group, out_group, to_args = process_args ins outs
-    cuda_map_module_template ins_to_exps outs_to_exps to_args in_group out_group kernel_name map_macro
+    let args = process_args ins outs
+    cuda_map_module_template in_exp out_exp args kernel_name map_macro
 
-let mapcoef_module_forward_template num_in ins num_const cvars num_out outs kernel_name =
-    let len_in = num_in * List.length ins
-    let in_group = InputArgs [CudaGroup(num_in,ins); CudaGroup(num_const,cvars)]
-    let out_group = OutputArgs [CudaGroup(num_out,outs)]
-    len_in, fun f -> f in_group out_group kernel_name
+let cudaar_to_exp l ar_accessor =
+    List.map (function
+    | CudaArray(name,typ,size) -> VarAr(Var name,[ar_accessor])) l
+let cudavar_to_exp l =
+    List.map (function
+        | CudaVar(name,typ) -> Var name) l
 
-let mapcoef_module_forward num_in names_in num_const names_const num_out names_out kernel_name map_func =
-    let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
-    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
-    let outs = List.map (fun x -> CudaArray(x,CudaFloat,["n"])) names_out
-
-    let len_in, f = mapcoef_module_forward_template num_in ins num_const cvars num_out outs kernel_name
-    f map_module' <| fun (InputFArgs inps) (OutputFArgs outs) -> 
-        let input_ars, cvars = List.splitAt len_in inps
-        map_func (InputFArgs input_ars) (InputFArgs cvars) (OutputFArgs outs)
-
-let mapcoef_redo_map_module_forward num_in names_in num_const names_const num_out names_out kernel_name (map_load_op, reduce_op, map_store_op) =
-    let ins = List.map (fun x -> CudaArray(x,CudaConst CudaFloat,["n"])) names_in
-    let cvars = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const
-    let outs = List.map (fun x -> CudaArray(x,CudaFloat,[])) names_out
-
-    let len_in, f = mapcoef_module_forward_template num_in ins num_const cvars num_out outs kernel_name
-    f map_redo_map_module' 
-        (fun ins_and_cvars -> 
-            let ins, cvars = List.splitAt len_in ins_and_cvars
-            map_load_op ins cvars)
-        reduce_op
-        map_store_op
-
-let mapcoef_module_backwards_template num_in ins_prim ins_adj num_const cvars num_out outs =
-    let separate_names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
-    let names_into_primals names = List.map (fun name -> name+"_primal_") names
-    let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
-
-    let outs = outs separate_names_into_prim_and_adj
-    let ins_prim = ins_prim names_into_primals
-    let cvars = cvars
-
-    let ins_adj = ins_adj names_into_adjoints
-
-    let len_out = num_out * List.length outs
-    let len_in = num_in * List.length ins_prim
-
-    let in_group = InputArgs [CudaGroup(num_out,outs); CudaGroup(num_in,ins_prim); CudaGroup(num_const,cvars)] 
-    let out_group = OutputArgs [CudaGroup(num_in,ins_adj)]
-    fun kernel_name f -> 
-        map_module' in_group out_group kernel_name
-            (fun (InputFArgs output_prim_adj_and_input_prims_and_cvars) (OutputFArgs input_adjoints) -> 
-                let output_prim_adj, input_prims_and_cvars = List.splitAt len_out output_prim_adj_and_input_prims_and_cvars
-                let input_prims, cvars = List.splitAt len_in input_prims_and_cvars
-                f (InputFArgs output_prim_adj) (InputFArgs input_prims) (InputFArgs cvars) (OutputFArgs input_adjoints))
-
-let mapcoef_module_backwards num_in names_in num_const names_const num_out names_out =
-    let outs f = List.map (fun x -> CudaArray(x, CudaConst CudaFloat, ["n"])) (f names_out)
-    let ins g f = List.map (fun x -> CudaArray(x, g, ["n"])) (f names_in)
-    let cvars = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) names_const
-
-    mapcoef_module_backwards_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs
-
-let map_fst f (a, b) = f a, b
-let load_kernel name = load_kernel_nvcc name // I've pulled this out just in case I need to edit this. I do not think I'll be going back to NVRTC though.
-
-let combine_and_compile_modules forward_module backward_module num_in names_in num_const names_const num_out names_out kernel_name forward_fun backward_fun =
-    let split_kernel_name_into_forward_and_backward (KernelName n as name) =
-        name, KernelName <| n+"Backward"
+let map_module args_in args_out kernel_name map_macro =
+    let process_ins (num_in, names_in) =
+        let ins = List.map (fun n -> CudaArray(n,CudaConst CudaFloat,["n"])) names_in |> cuda_group num_in
+        ins, cudaar_to_exp ins
+    let process_outs (num_out, names_out) =
+        let outs = List.map (fun n -> CudaArray(n,CudaFloat,["n"])) names_out |> cuda_group num_out
+        outs, cudaar_to_exp outs
+    let process_args ins outs =
+        [ins;outs] |> List.concat
     
-    let forward_name, backward_name = split_kernel_name_into_forward_and_backward kernel_name
-    let f = forward_module num_in names_in num_const names_const num_out names_out forward_name forward_fun
-    let b = backward_module num_in names_in num_const names_const num_out names_out backward_name backward_fun
-    map_fst (load_kernel forward_name) f, map_fst (load_kernel backward_name) b
+    map_module_template process_ins process_outs process_args args_in args_out kernel_name map_macro
 
-let map_module_1_1 kernel_name map_forward map_backward =
-    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 1 ["x"] 0 [] 1 ["o"] kernel_name
-        (fun (InputFArgs [x]) _ (OutputFArgs [o]) -> 
-            [o == map_forward x])
-        (fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr]) _ (OutputFArgs [x_adj]) -> 
-            [x_adj +?= map_backward (o_pr, o_adj) x_pr])
-
-let map_module_2_1 kernel_name map_forward map_backward1 map_backward2 =
-    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 2 ["x"] 0 [] 1 ["o"] kernel_name
-        (fun (InputFArgs [x1;x2]) _ (OutputFArgs [o]) -> 
-            [o == map_forward x1 x2])
-        (fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr1;x_pr2]) _ (OutputFArgs [x_adj1;x_adj2]) -> 
-            [x_adj1 +?= map_backward1 (o_pr, o_adj) x_pr1 x_pr2
-             x_adj2 +?= map_backward2 (o_pr, o_adj) x_pr1 x_pr2])
-
-let map_module_3_1 kernel_name map_forward map_backward1 map_backward2 map_backward3 =
-    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 3 ["x"] 0 [] 1 ["o"] kernel_name
-        (fun (InputFArgs [x1;x2;x3]) _ (OutputFArgs [o]) -> 
-            [o == map_forward x1 x2 x3])
-        (fun (InputFArgs [o_pr;o_adj]) (InputFArgs [x_pr1;x_pr2;x_pr3]) _ (OutputFArgs [x_adj1;x_adj2;x_adj3]) -> 
-            [x_adj1 +?= map_backward1 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
-             x_adj2 +?= map_backward2 (o_pr, o_adj) x_pr1 x_pr2 x_pr3
-             x_adj3 +?= map_backward3 (o_pr, o_adj) x_pr1 x_pr2 x_pr3])
-
-let mapcoef_module_1_1_1 kernel_name map_forward map_backward =
-    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 1 ["x"] 1 ["cvar"] 1 ["o"] kernel_name
-        (fun (InputFArgs [in_]) (InputFArgs [cvar]) (OutputFArgs [out]) -> 
-            [out == map_forward in_ cvar])
-        (fun (InputFArgs [out_prim;out_adj]) (InputFArgs [inp_prim]) (InputFArgs [cvar]) (OutputFArgs [inp_adj]) -> 
-            [inp_adj +?= map_backward (out_prim, out_adj) inp_prim cvar])
-
-let mapcoef_module_1_2_1 kernel_name map_forward map_backward =
-    combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards 1 ["x"] 2 ["cvar"] 1 ["o"] kernel_name
-        (fun (InputFArgs [in_]) (InputFArgs [cvar1;cvar2]) (OutputFArgs [out]) -> 
-            [out == map_forward in_ cvar1 cvar2])
-        (fun (InputFArgs [out_prim;out_adj]) (InputFArgs [inp_prim]) (InputFArgs [cvar1;cvar2]) (OutputFArgs [inp_adj]) -> 
-            [inp_adj +?= map_backward (out_prim, out_adj) inp_prim cvar1 cvar2])
-
-let unary_op op = Lambda([CudaVar("x",CudaAuto)],op (Var "x"))
-let binary_op op = Lambda([CudaVar("x1",CudaAuto);CudaVar("x2",CudaAuto)], op (Var "x1") (Var "x2"))
-let nary_op num op =
-    let args = List.map (fun i -> CudaVar("x"+string i,CudaAuto)) [1..num]
-    let to_var x = List.map (fun (CudaVar(name,_)) -> Var name) x
-    Lambda(args, op <| to_var args)
-
-let map_redocol_map_module_1_1 name map_load_op reduce_op map_store_op =
-    map_redocol_map_module
-        1 [CudaArray("x",CudaConst CudaFloat,["num_cols";"num_rows"])] 
-        1 [CudaArray("o",CudaFloat,["num_cols"])] name 
-        (fun [x] -> map_load_op x)
-        (binary_op <| fun x y -> [Return <| reduce_op x y]) 
-        (fun (InputFArgs [value]) (OutputFArgs [o1]) -> [o1 == map_store_op value]) 
-        (string map_redocol_map_launcher_block_size)
-
-// Note: The backwards of a sum, min, max or top k operations does not require a reduction, instead a map will suffice.
-let mapcoef_redo_map_module_backwards num_in names_in num_const names_const num_out names_out kernel_name =
-    let ins g f = List.map (fun x -> CudaArray(x, g, ["n"])) (f names_in)
-    let cvars = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) names_const
-    let outs f = List.map (fun x -> CudaVar(x, CudaConst CudaFloat)) (f names_out) // The inputs are expected to be passed in from host here.
-
-    mapcoef_module_backwards_template num_in (ins <| CudaConst CudaFloat) (ins CudaFloat) num_const cvars num_out outs kernel_name
-
-let map_redo_map_module_1_1 kernel_name (map_load_op, reduce_op, map_store_op) backward_map_op =
-    combine_and_compile_modules 
-        mapcoef_redo_map_module_forward 
-        mapcoef_redo_map_module_backwards
-        1 ["x"] 0 [] 1 ["o"] kernel_name
-        ((fun [x] [] -> map_load_op x), // TODO: Seperate the regular inputs and cvars here.
-         (binary_op <| fun x y -> [Return <| reduce_op x y]),
-         (fun (InputFArgs [result]) (OutputFArgs [o]) -> [AtomicAdd(Address o, map_store_op result)]))
-        (fun (InputFArgs [er_pr;er_adj]) (InputFArgs [inp_pr]) (InputFArgs []) (OutputFArgs [inp_adj]) ->
-            [inp_adj +?= backward_map_op (er_pr,er_adj) inp_pr inp_adj])
-
-
-let sum = 
-    lazy
-        let name = KernelName "Sum"
-        map_redo_map_module_1_1 name 
-            (id, (+), id) // Forward
-            (fun (er_pr,er_adj) inp_pr inp_adj -> er_adj) // Backward
-
-let square = 
-    lazy
-        let name = KernelName "Square"
-        map_module_1_1 name 
-            (fun x -> x * x)
-            (fun (er_pr,er_adj) inp_pr -> er_adj * Value "2" * inp_pr)
-
-let sigmoid = 
-    lazy
-        let name = KernelName "Sigmoid"
-        map_module_1_1 name 
-            (fun x -> one / (one + Exp(-x)))
-            (fun (er_pr,er_adj) inp_pr -> er_adj * er_pr * (one - er_pr))
-let tanh = 
-    lazy
-        let name = KernelName "Tanh"
-        map_module_1_1 name 
-            (fun x -> Tanh(x))
-            (fun (er_pr,er_adj) inp_pr -> er_adj * er_pr * (one - er_pr))
-let relu = 
-    lazy
-        let name = KernelName "Relu"
-        map_module_1_1 name 
-            (fun x -> if_ (x .> zero) x zero)
-            (fun (er_pr,er_adj) inp_pr -> if_ (inp_pr .> zero) er_adj zero)
-
-// The hadmult module generic in the number of input arguments.
-let hadmult_generic =
-    memoize (fun num_input_pairs ->
-        lazy
-            let rec forward_hadmult = function
-                | a :: b :: [] ->
-                    a * b
-                | a :: b :: t ->
-                    a * b + forward_hadmult t
-                | x -> failwithf "Should never reach here. x = %A" x
-
-            let name = KernelName "Hadmult"
-            combine_and_compile_modules mapcoef_module_forward mapcoef_module_backwards num_input_pairs ["a";"b"] 0 [] 1 ["o"] name
-                (fun (InputFArgs l) _ (OutputFArgs [o]) -> 
-                    [o == forward_hadmult l])
-                (fun (InputFArgs [err_pr;err_adj]) (InputFArgs inp_prs) _ (OutputFArgs inp_adjs) -> 
-                    let chunk2 l =
-                        List.chunkBySize 2 l
-                        |> List.map (fun [a;b] -> (a,b))
-                    let adjl = chunk2 inp_adjs
-                    let priml = chunk2 inp_prs // Organizes the primals and the adjoints into pairs of two.
-
-                    [letcavar "err" err_adj <| fun err ->
-                        List.map2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
-                            [adj_a +?= err*prim_b
-                             adj_b +?= err*prim_a]
-                            ) adjl priml
-                        |> List.concat]))
-
-// TODO: When needed, adjust map_redocol_map_module_1_1 to conform to the new interface.
-//let colsum = map_redocol_map_module_1_1 (KernelName "Colsum") id (+) id
-
-let clip =
-    lazy
-        let name = KernelName "Clip"
-        mapcoef_module_1_2_1 name 
-            (fun x min max -> if_ (x .< min) min (if_ (x .> max) max x))
-            (fun (o_pr, o_adj) x min max -> if_ (x .< min) zero (if_ (x .> max) zero o_adj))
-
-let clipped_sigmoid = 
-    lazy
-        let name = KernelName "Sigmoid"
-        mapcoef_module_1_2_1 name 
-            (fun x min max -> 
-                letcavar "post_act" (one / (one + Exp(-x))) <| fun x -> 
-                    [if_ (x .< min) min (if_ (x .> max) max x)])
-            (fun (o_pr, o_adj) x min max -> // I hope the o_pr .<= min optimization will not backfire on me.
-                if_ (o_pr .<= min) zero (if_ (o_pr .>= max) zero (o_adj * o_pr * (one - o_pr))))
-let log_ =
-    lazy
-        let name = KernelName "Log"
-        map_module_1_1 name 
-            (fun x -> Log x)
-            (fun (er_pr,er_adj) inp_pr -> er_adj / inp_pr)
-
-let scalar_matrix_add =
-    lazy
-        let name = KernelName "ScalarMatrixAdd"
-        mapcoef_module_1_2_1 name 
-            (fun x coef scalar -> coef * x + scalar)
-            (fun (er_pr,er_adj) inp_pr coef scalar -> coef * er_adj) 
-                // In the previous iteration of the library the backwards pass was implemented using Saxpy, but
-                // this optimization is not important enough to bother with here.
-
-/// Unlike combine_and_compile_layers this one does not have a backwards step.
-let mutable_mapcoef num_in names_in num_const names_const num_out names_out kernel_name forward_fun =
-     mapcoef_module_forward num_in names_in num_const names_const num_out names_out kernel_name forward_fun
-     |> map_fst (load_kernel kernel_name)
-
-let gradclip = // TODO: This should be using the mutable_map stuff.
-    lazy 
-        let name = KernelName "GradClip"
-        mutable_mapcoef 1 ["x"] 1 ["bound"] 1 ["o"] name 
-            (fun (InputFArgs [x]) (InputFArgs [bound]) (OutputFArgs [o]) -> 
-                [o == if_ (x .< -bound) -bound (if_ (x .> bound) bound x)])
-         
-let sgd = 
-    lazy
-        let name = KernelName "Sgd"
-        mutable_mapcoef 0 [] 1 ["learning_rate"] 1 ["in_pr";"in_adj"] name 
-            (fun (InputFArgs []) (InputFArgs [learning_rate]) (OutputFArgs [in_pr;in_adj]) -> 
-                [in_pr += in_adj * learning_rate
-                 in_adj == zero])
-
-let clipped_sgd =
-    lazy
-        let name = KernelName "ClippedSgd"
-        mutable_mapcoef 0 [] 1 ["learning_rate";"clipping_threshold"] 1 ["in_pr";"in_adj"] name 
-            (fun (InputFArgs []) (InputFArgs [learning_rate;clipping_threshold]) (OutputFArgs [in_pr;in_adj]) -> 
-                [in_pr += if_ (in_adj .< -clipping_threshold) zero (if_ (in_adj .> clipping_threshold) zero (in_adj * learning_rate))
-                 in_adj == zero])
-
-// For normalizing after random initialization of the weight matrices.
-let random_normalization =
-    lazy
-        let name = KernelName "RandomNormalization"
-        mutable_mapcoef 0 [] 1 ["scaling_factor";"location"] 1 ["x_pr";"x_adj"] name 
-            (fun (InputFArgs []) (InputFArgs [scaling_factor;location]) (OutputFArgs [x_pr;x_adj]) -> 
-                [ x_pr == scaling_factor * (x_pr - value "0.5") + location])
-
+let mapcoef_module args_in args_coef args_out kernel_name map_macro =
+    let process_ins ((num_in, names_in),(num_const,names_const)) =
+        let ins = List.map (fun n -> CudaArray(n,CudaConst CudaFloat,["n"])) names_in |> cuda_group num_in
+        let consts = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const |> cuda_group num_const
+        (ins, consts), (fun ac -> cudaar_to_exp ins ac, cudavar_to_exp consts)
+    let process_outs (num_out, names_out) =
+        let outs = List.map (fun n -> CudaArray(n,CudaFloat,["n"])) names_out |> cuda_group num_out
+        outs, cudaar_to_exp outs
+    let process_args (ins, consts) outs =
+        [ins;consts;outs] |> List.concat
+    
+    map_module_template process_ins process_outs process_args (args_in, args_coef) args_out kernel_name map_macro
