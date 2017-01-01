@@ -71,7 +71,7 @@ let inline cross_entropy_cost
         (log_runner, scalar_matrix_add_runner, seqhadmult_runner, sum_runner, scale_runner) 
         num_examples_of target input env =
     let log x = log_runner (fun x -> Primitives.log x env) x
-    let one_minus x = scalar_matrix_add_runner (fun x coef scalar -> Primitives.scalar_matrix_add x -1.0f 1.0f env) x
+    let one_minus x = scalar_matrix_add_runner (fun x -> Primitives.scalar_matrix_add x -1.0f 1.0f env) x
     let seqhadmult x = seqhadmult_runner (fun x -> Primitives.seqhadmult x env) x
     let sum x = sum_runner (fun x -> Primitives.sum x env) x
     let scale alpha x = scale_runner (fun alpha x -> Primitives.scale alpha x env) alpha x
