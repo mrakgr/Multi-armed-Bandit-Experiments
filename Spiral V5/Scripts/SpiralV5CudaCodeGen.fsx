@@ -408,8 +408,8 @@ let cuda_map_module_template in_exp out_exp args name map_macro =
 let map_module_template 
         process_ins process_outs process_args
         args_in args_out kernel_name map_macro =
-    let ins, in_exp = process_ins args_in
-    let outs, out_exp = process_outs args_out
+    let ins, in_exp = process_ins args_in args_out
+    let outs, out_exp = process_outs args_in args_out
 
     let args = process_args ins outs
     cuda_map_module_template in_exp out_exp args kernel_name map_macro
@@ -421,11 +421,11 @@ let cudavar_to_exp l =
     List.map (function
         | CudaVar(name,typ) -> Var name) l
 
-let map_module args_in args_out kernel_name map_macro =
-    let process_ins (num_in, names_in) =
+let map_module_forward args_in args_out kernel_name map_macro =
+    let process_ins (num_in, names_in) _ =
         let ins = List.map (fun n -> CudaArray(n,CudaConst CudaFloat,["n"])) names_in |> cuda_group num_in
         ins, cudaar_to_exp ins
-    let process_outs (num_out, names_out) =
+    let process_outs _ (num_out, names_out) =
         let outs = List.map (fun n -> CudaArray(n,CudaFloat,["n"])) names_out |> cuda_group num_out
         outs, cudaar_to_exp outs
     let process_args ins outs =
@@ -433,15 +433,45 @@ let map_module args_in args_out kernel_name map_macro =
     
     map_module_template process_ins process_outs process_args args_in args_out kernel_name map_macro
 
-let mapcoef_module args_in args_coef args_out kernel_name map_macro =
-    let process_ins ((num_in, names_in),(num_const,names_const)) =
+let mapcoef_module_forward args_in args_coef args_out kernel_name map_macro =
+    let process_ins ((num_in, names_in),(num_const,names_const)) _ =
         let ins = List.map (fun n -> CudaArray(n,CudaConst CudaFloat,["n"])) names_in |> cuda_group num_in
         let consts = List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) names_const |> cuda_group num_const
         (ins, consts), (fun ac -> cudaar_to_exp ins ac, cudavar_to_exp consts)
-    let process_outs (num_out, names_out) =
+    let process_outs _ (num_out, names_out) =
         let outs = List.map (fun n -> CudaArray(n,CudaFloat,["n"])) names_out |> cuda_group num_out
         outs, cudaar_to_exp outs
     let process_args (ins, consts) outs =
         [ins;consts;outs] |> List.concat
+    
+    map_module_template process_ins process_outs process_args (args_in, args_coef) args_out kernel_name map_macro
+
+let mapcoef_module_backward args_in args_coef args_out kernel_name map_macro =
+    let names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal_";name+"_adjoint_"]) names
+    let names_into_primals names = List.map (fun name -> name+"_primal_") names
+    let names_into_adjoints names = List.map (fun name -> name+"_adjoint_") names
+
+    let process_ins ((num_in, names_in),(num_const,names_const)) (num_out, names_out) =
+        let ins_prim = 
+            List.map (fun n -> CudaArray(n,CudaConst CudaFloat,["n"])) 
+                     (names_into_primals names_in)
+            |> cuda_group num_in
+        let consts = 
+            List.map (fun x -> CudaVar(x,CudaConst CudaFloat)) 
+                     names_const 
+            |> cuda_group num_const
+        let outs = 
+            List.map (fun n -> CudaArray(n,CudaConst CudaFloat,["n"])) 
+                     (names_into_prim_and_adj names_out)
+            |> cuda_group num_out
+        (ins_prim, consts, outs), (fun ac -> cudaar_to_exp ins_prim ac, cudavar_to_exp consts, cudaar_to_exp outs ac)
+    let process_outs ((num_in, names_in),_) _ =
+        let ins_adj = 
+            List.map (fun n -> CudaArray(n,CudaFloat,["n"])) 
+                     (names_into_adjoints names_in)
+            |> cuda_group num_in
+        ins_adj, cudaar_to_exp ins_adj
+    let process_args (ins_prim, consts, outs) ins_adj =
+        [ins_prim;consts;outs;ins_adj] |> List.concat
     
     map_module_template process_ins process_outs process_args (args_in, args_coef) args_out kernel_name map_macro
