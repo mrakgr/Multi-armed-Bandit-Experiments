@@ -424,7 +424,13 @@ let get_unfolded_signature (args: CudaVar list): CudaVar list =
     let env = CudaEnvironment.create()
     get_method_arguments args env |> fst
 
-let cuda_map_module_template ins_to_exps outs_to_exps to_args in_group out_group name map_macro =
+type InputArgs = InputArgs of CudaVar list
+type OutputArgs = OutputArgs of CudaVar list
+
+type InputFArgs = InputFArgs of CudaExpr list
+type OutputFArgs = OutputFArgs of CudaExpr list
+
+let map_module_template ins_to_exps outs_to_exps to_args in_group out_group name map_macro =
     let args = to_args in_group out_group
     cuda_codegen <|
         [
@@ -503,14 +509,14 @@ let map_redo_map_module' (InputArgs in_group) (OutputArgs out_group) name map_lo
         ]
     |> fun code -> code, get_unfolded_signature args
 
-let map_module_template 
+let mapcoef_module_template 
         process_ins process_outs process_args
         num_in names_in num_const names_const num_out names_out kernel_name map_macro =
     let ins, ins_to_exps = process_ins num_in names_in num_const names_const
     let outs, outs_to_exps = process_outs num_out names_out
 
     let in_group, out_group, to_args = process_args ins outs
-    cuda_map_module_template ins_to_exps outs_to_exps to_args in_group out_group kernel_name map_macro
+    map_module_template ins_to_exps outs_to_exps to_args in_group out_group kernel_name map_macro
 
 let mapcoef_module_forward_template num_in ins num_const cvars num_out outs kernel_name =
     let len_in = num_in * List.length ins
@@ -789,4 +795,3 @@ let random_normalization =
         mutable_mapcoef 0 [] 1 ["scaling_factor";"location"] 1 ["x_pr";"x_adj"] name 
             (fun (InputFArgs []) (InputFArgs [scaling_factor;location]) (OutputFArgs [x_pr;x_adj]) -> 
                 [ x_pr == scaling_factor * (x_pr - value "0.5") + location])
-
