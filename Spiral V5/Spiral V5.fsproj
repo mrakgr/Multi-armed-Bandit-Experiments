@@ -80,6 +80,7 @@
     <None Include="Scripts\SpiralV5Eval.fsx" />
     <None Include="Scripts\SpiralV5CudaCodeGen_v2.fsx" />
     <None Include="Scripts\CudaV5CodeGen.fsx" />
+    <None Include="Scripts\reader_monad.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
