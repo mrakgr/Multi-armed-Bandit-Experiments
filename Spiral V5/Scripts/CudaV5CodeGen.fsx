@@ -39,6 +39,9 @@ let cuda_tag =
 let ind i = String.replicate i " "
 
 let cuda_map_all n map_macro s =
+    let program = Text.StringBuilder()
+    let p (x: string) = program.Append x |> ignore
+
     let plus x y = [|"(";x;" + ";y;")"|] |> String.concat ""
     let times x y = [|"(";x;" * ";y;")"|] |> String.concat ""
     let less_than x y = [|"(";x;" < ";y;")"|] |> String.concat ""
@@ -47,10 +50,12 @@ let cuda_map_all n map_macro s =
     let var x = 
         let v = "auto var_" + string (cuda_tag())
         let decl = [|ind s;v;" = ";x|] |> String.concat ""
-        v, decl
+        v
     let for_ (v,decl) cond incr body =
-        [|ind s;"for(";decl;", ";cond v;", ";incr v;") {\n";body v (s+4);ind s;"}\n"|]
-        |> String.concat ""
+        [|ind s;"for(";decl;", ";cond v;", ";incr v;") {\n"|] |> Array.iter p
+        body v (s+4) |> p
+        [|ind s;"}\n"|] |> Array.iter p
+        
     cuda_map_all_template 
         times plus less_than // basic operators
         gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
@@ -74,13 +79,13 @@ let cuda_map_module_compile map_module =
     let p (x: string) = program.Append x |> ignore
 
     let method_ rtyp kernel_name args body s =
-        [|ind s;rtyp;kernel_name;"(";args;") {\n"|] |> String.concat "" |> p
+        [|ind s;rtyp;kernel_name;"(";args;") {\n"|] |> Array.iter p
         body (s+4) |> p
-        [|ind s;"}"|] |> String.concat "" |> p
+        [|ind s;"}"|] |> Array.iter p
     let externCBlock body =
-        [|"extern \"C\" {"|] |> String.concat "" |> p
+        [|"extern \"C\" {"|] |> Array.iter p
         body 4
-        [|"}\n"|] |> String.concat "" |> p
+        [|"}\n"|] |> Array.iter p
     let include_ str =
         p "#include "; p (quote str); p "\n"
 
