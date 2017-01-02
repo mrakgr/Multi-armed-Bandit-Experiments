@@ -391,19 +391,36 @@ let cuda_group num_in ins =
     List.collect (fun i ->
         List.map (f i) ins) [1..num_in]
 
-//let cuda_map_module_template in_exp out_exp args name map_macro =
-//    cuda_codegen <|
-//        [
-//        include_ "thrust/tuple.h"
-//        include_ "cub/cub.cuh"
-//        externCBlock [
-//            method_ CudaGlobal CudaVoid name args [
-//                for_ [CudaVar("i",CudaInt),Value "blockIdx.x*blockDim.x + threadIdx.x"] (Var "i" .< Var "n") [Var "i" += Value "gridDim.x*blockDim.x"]
-//                    (map_macro (in_exp (Var "i")) (out_exp (Var "i")))
-//                ]
-//            ]
-//        ]
-//    |> fun code -> code, get_unfolded_signature args
+let cuda_map_all_template 
+        times plus less_than // basic operators
+        gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
+        var for_ // kernel primitives
+        n in_exp out_exp map_macro = // kernel params
+    for_ 
+        (var (plus (times blockIdx_x blockDim_x) threadIdx_x)) 
+        (fun i -> less_than i n) 
+        (fun i -> plus i (times gridDim_x blockDim_x))
+        (fun i -> map_macro (in_exp i) (out_exp i))
+
+let cuda_map_all n in_exp out_exp map_macro =
+    let var = 
+
+let cuda_map_module_template 
+        times plus less_than // basic operators
+        gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
+        var for_ method_ externCBlock include_ // kernel primitives
+        n in_exp out_exp args kernel_name map_macro = // kernel params
+    include_ "thrust/tuple.h"
+    include_ "cub/cub.cuh"
+    externCBlock (
+        method_ "__global__ void " kernel_name args (
+            for_ 
+                (var (plus (times blockIdx_x blockDim_x) threadIdx_x)) 
+                (fun i -> less_than i n) 
+                (fun i -> plus i (times gridDim_x blockDim_x))
+                (fun i -> map_macro (in_exp i) (out_exp i))
+            )
+        )
 
 
 
