@@ -41,7 +41,7 @@ type CudaExpr =
 | Statement of string
 | Statements of ResizeArray<CudaExpr>
 
-let cuda_map_all n map_macro s =
+let cuda_map_all n map_macro =
     let program = ResizeArray()
 
     let exp x = String.concat "" x
@@ -68,12 +68,14 @@ let cuda_map_all n map_macro s =
         for_ var // kernel primitives
         n map_macro
 
+    program
+
 let cuda_map_module_template 
             n args kernel_name map_macro // kernel params
             method_ externCBlock include_ = // kernel primitives
         include_ "thrust/tuple.h"
         include_ "cub/cub.cuh"
-        externCBlock (
+        externCBlock ( fun () ->
             method_ "__global__ void " kernel_name args (
                 cuda_map_all n map_macro
                 )
@@ -86,13 +88,13 @@ let cuda_map_module_compile map_module =
     let state x = exp x |> Statement |> program.Add
     let states x = Statements x |> program.Add
 
-    let method_ rtyp kernel_name args body s =
+    let method_ rtyp kernel_name args body =
         [|rtyp;kernel_name;"(";args;") {"|] |> state
         body |> states
         [|"}"|] |> state
     let externCBlock body =
         [|"extern \"C\" {"|] |> state
-        body |> states
+        body()
         [|"}"|] |> state
     let include_ str =
         [|"#include "; quote str|] |> state
@@ -112,7 +114,7 @@ let cuda_map_module_compile map_module =
 
 let cudavar_template get_method_arg get_var name typ size =
     let method_arg = get_method_arg name typ
-    let var = get_var name // TODO: Put in Sthe signature here later.
+    let var = get_var name // TODO: Put in the signature here later.
     method_arg, var
 
 let cudavar_var name typ =
@@ -143,7 +145,7 @@ let map_module_template
 
     let args = process_args n ins_arg outs_arg
 
-    let f = cuda_map_module_template n args kernel_name (map_macro ins_var outs_var)
+    let f x = cuda_map_module_template n args kernel_name (map_macro ins_var outs_var) x
        
     cuda_map_module_compile f
     
