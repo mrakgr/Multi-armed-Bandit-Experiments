@@ -71,14 +71,12 @@ let cuda_map_all n map_macro =
     program
 
 let cuda_map_module_template 
-            n args kernel_name map_macro // kernel params
+            kernel_name args method_body // kernel_param
             method_ externCBlock include_ = // kernel primitives
         include_ "thrust/tuple.h"
         include_ "cub/cub.cuh"
         externCBlock ( fun () ->
-            method_ "__global__ void " kernel_name args (
-                cuda_map_all n map_macro
-                )
+            method_ "__global__ void " kernel_name args method_body
             )
 
 let cuda_map_module_compile map_module =
@@ -145,34 +143,32 @@ let map_module_template
 
     let args = process_args n ins_arg outs_arg
 
-    let f x = cuda_map_module_template n args kernel_name (map_macro ins_var outs_var) x
-       
-    cuda_map_module_compile f
+    cuda_map_module_compile (cuda_map_module_template args kernel_name (cuda_map_all n (map_macro ins_var outs_var)))
     
-//let cuda_group (num_in, names_in) =
-//    let f i n = n + string i
-//    List.collect (fun (i: int) ->
-//        List.map (f i) names_in) [1..num_in]
-//
-//let mapcoef_module_forward args_in args_coef args_out kernel_name map_macro =
-//    let size_arg, size_var = cudavar_var "n" "const int "
-//    let process_ins (ins,consts) _ =
-//        let ins_arg, ins_var = 
-//            List.map (fun n -> cudavar_ar1d n "const float *" size_arg) (cuda_group ins)
-//            |> List.unzip
-//        let consts_arg, consts_var =
-//            List.map (fun n -> cudavar_var n "const float ") (cuda_group consts)
-//            |> List.unzip
-//        size_arg,(ins_arg,consts_arg),(size_var,ins_var,consts_var)
-//
-//    let process_outs _ outs =
-//        let outs_arg, outs_var = 
-//            List.map (fun n -> cudavar_ar1d n "float *" size_arg) (cuda_group outs)
-//            |> List.unzip
-//        outs_arg,outs_var
-//
-//    let process_args size_arg (ins_arg, consts_arg) outs_arg =
-//        size_arg :: ([ins_arg;consts_arg;outs_arg] |> List.concat) |> String.concat ", "
-//    
-//    map_module_template process_ins process_outs process_args (args_in, args_coef) args_out kernel_name map_macro
-//
+let cuda_group (num_in, names_in) =
+    let f i n = n + string i
+    List.collect (fun (i: int) ->
+        List.map (f i) names_in) [1..num_in]
+
+let mapcoef_module_forward args_in args_coef args_out kernel_name map_macro =
+    let size_arg, size_var = cudavar_var "n" "const int "
+    let process_ins (ins,consts) _ =
+        let ins_arg, ins_var = 
+            List.map (fun n -> cudavar_ar1d n "const float *" size_arg) (cuda_group ins)
+            |> List.unzip
+        let consts_arg, consts_var =
+            List.map (fun n -> cudavar_var n "const float ") (cuda_group consts)
+            |> List.unzip
+        size_arg,(ins_arg,consts_arg),(size_var,ins_var,consts_var)
+
+    let process_outs _ outs =
+        let outs_arg, outs_var = 
+            List.map (fun n -> cudavar_ar1d n "float *" size_arg) (cuda_group outs)
+            |> List.unzip
+        outs_arg,outs_var
+
+    let process_args size_arg (ins_arg, consts_arg) outs_arg =
+        size_arg :: ([ins_arg;consts_arg;outs_arg] |> List.concat) |> String.concat ", "
+    
+    map_module_template process_ins process_outs process_args (args_in, args_coef) args_out kernel_name map_macro
+
