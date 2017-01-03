@@ -72,7 +72,7 @@ let cuda_map_all n map_macro =
 let cuda_map_module_template 
         n args kernel_name map_macro // kernel params
         method_ externCBlock include_ c = // kernel primitives
-    reader {
+    reader { // TODO: Remove this.
         let! _ = include_ "thrust/tuple.h"
         let! _ = include_ "cub/cub.cuh"
         return
