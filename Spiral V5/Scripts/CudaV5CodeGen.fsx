@@ -20,21 +20,13 @@ open System.IO
 open System.Collections.Generic
 open System.Runtime.InteropServices
 
-type ReaderBuilder() =
-    member inline t.Return a = fun r -> a
-    member inline t.Bind(a,f) = fun r -> f (a r) r
-    member inline t.ReturnFrom x = x
-    member inline t.Zero() = t.Return ()
-
-let reader = ReaderBuilder()
-
 let cuda_map_all_template 
         times plus less_than // basic operators
         gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
-        for_ // kernel primitives
+        for_ var // kernel primitives
         n map_macro = // kernel params
     for_ 
-        (plus (times blockIdx_x blockDim_x) threadIdx_x) 
+        (var (plus (times blockIdx_x blockDim_x) threadIdx_x))
         (fun i -> less_than i n) 
         (fun i -> plus i (times gridDim_x blockDim_x))
         map_macro
@@ -45,61 +37,82 @@ let cuda_tag =
         i <- i+1
         i
 
-let p (x: string) (c': StringBuilder,s : int as c) = c'.Append x |> ignore
-let ind (c': StringBuilder,i : int as c) = p (String.replicate i " ") c
-let step_up (c': StringBuilder,i : int as c) = c', i+4
+type CudaExpr =
+| Statement of string
+| Statements of ResizeArray<CudaExpr>
 
-let cuda_map_all n map_macro =
-    let plus x y c = p "(" c;x c;p " + " c;y c;p ")" c
-    let times x y c = p "(" c;x c;p " + " c;y c;p ")" c
-    let less_than x y c = p "(" c;x c;p " + " c;y c;p ")" c
-    let gridDim_x c = p "gridDim.x" c
-    let blockDim_x c = p "blockDim.x" c
-    let blockIdx_x c = p "blockIdx.x" c
-    let threadIdx_x c = p "threadIdx.x" c
-    let for_ init cond incr body c =
-        let v c = p ("auto var_" + string (cuda_tag())) c
-        ind c;p "for(" c;v c;p " = " c;init c;p "; " c;cond v c;p "; " c;incr v c;p ") {\n" c
-        body v (step_up c)
-        ind c;p "}\n" c
+let cuda_map_all n map_macro s =
+    let program = ResizeArray()
+
+    let exp x = String.concat "" x
+    let state x = exp x |> Statement |> program.Add
+    let states x = Statements x |> program.Add
+
+    let plus x y = [|"(";x;" + ";y;")"|] |> exp
+    let times x y = [|"(";x;" * ";y;")"|] |> exp
+    let less_than x y = [|"(";x;" < ";y;")"|] |> exp
+    let gridDim_x, blockDim_x = "gridDim.x","blockDim.x"
+    let blockIdx_x, threadIdx_x = "blockIdx.x","threadIdx.x"
+    let var x = 
+        let v = "auto var_" + string (cuda_tag())
+        let decl = [|v;" = ";x|] |> exp
+        v, decl
+    let for_ (v,decl) cond incr body =
+        [|"for(";decl;"; ";cond v;"; ";incr v;") {"|] |> state
+        body v |> states
+        [|"}"|] |> state
         
     cuda_map_all_template 
         times plus less_than // basic operators
         gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
-        for_ // kernel primitives
+        for_ var // kernel primitives
         n map_macro
 
 let cuda_map_module_template 
-        n args kernel_name map_macro // kernel params
-        method_ externCBlock include_ c = // kernel primitives
-    reader { // TODO: Remove this.
-        let! _ = include_ "thrust/tuple.h"
-        let! _ = include_ "cub/cub.cuh"
-        return
-            externCBlock (
-                method_ "__global__ void " kernel_name args (
-                    cuda_map_all n map_macro
-                    )
+            n args kernel_name map_macro // kernel params
+            method_ externCBlock include_ = // kernel primitives
+        include_ "thrust/tuple.h"
+        include_ "cub/cub.cuh"
+        externCBlock (
+            method_ "__global__ void " kernel_name args (
+                cuda_map_all n map_macro
                 )
-        }
+            )
 
 let cuda_map_module_compile map_module =
-    let method_ rtyp kernel_name args body c =
-        ind c;p rtyp c;p kernel_name c;p "(" c;p args c;p ") {\n" c
-        body (step_up c)
-        ind c;p "}" c
-    let externCBlock body c =
-        p "extern \"C\" {" c
-        body (step_up c)
-        p "}\n" c
-    let include_ str c =
-        p "#include " c; p (quote str) c; p "\n" c
+    let program = ResizeArray()
 
+    let exp x = String.concat "" x
+    let state x = exp x |> Statement |> program.Add
+    let states x = Statements x |> program.Add
+
+    let method_ rtyp kernel_name args body s =
+        [|rtyp;kernel_name;"(";args;") {"|] |> state
+        body |> states
+        [|"}"|] |> state
+    let externCBlock body =
+        [|"extern \"C\" {"|] |> state
+        body |> states
+        [|"}"|] |> state
+    let include_ str =
+        [|"#include "; quote str|] |> state
+
+    let rec process_statement ind statement =
+        match statement with
+        | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp
+        | Statements x -> process_statements (ind+4) x
+
+    and process_statements ind (statements: ResizeArray<CudaExpr>) =
+        let code = StringBuilder()
+        Seq.iter (fun x -> process_statement ind x |> code.Append |> ignore) statements
+        code.ToString()
+    
     map_module method_ externCBlock include_
+    process_statements 0 program
 
 let cudavar_template get_method_arg get_var name typ size =
     let method_arg = get_method_arg name typ
-    let var = get_var name // TODO: Put in the signature here later.
+    let var = get_var name // TODO: Put in Sthe signature here later.
     method_arg, var
 
 let cudavar_var name typ =
