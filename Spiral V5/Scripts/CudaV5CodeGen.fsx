@@ -150,25 +150,76 @@ let cuda_group (num_in, names_in) =
     List.collect (fun (i: int) ->
         List.map (f i) names_in) [1..num_in]
 
-let mapcoef_module_forward args_in args_coef args_out kernel_name map_macro =
+let mapcoef_module_forward_template 
+        args_in args_coef args_out kernel_name map_macro 
+        map_ins map_consts map_outs
+        flatten_ins flatten_consts flatten_outs
+        =
     let size_arg, size_var = cudavar_var "n" "const int "
     let process_ins (ins,consts) _ =
         let ins_arg, ins_var = 
-            List.map (fun n -> cudavar_ar1d n "const float *" size_arg) (cuda_group ins)
-            |> List.unzip
+            map_ins (fun n -> cudavar_ar1d n "const float *" size_arg) ins
         let consts_arg, consts_var =
-            List.map (fun n -> cudavar_var n "const float ") (cuda_group consts)
-            |> List.unzip
+            map_consts (fun n -> cudavar_var n "const float ") consts
         size_arg,(ins_arg,consts_arg),(size_var,ins_var,consts_var)
 
     let process_outs _ outs =
         let outs_arg, outs_var = 
-            List.map (fun n -> cudavar_ar1d n "float *" size_arg) (cuda_group outs)
-            |> List.unzip
+            map_outs (fun n -> cudavar_ar1d n "float *" size_arg) outs
         outs_arg,outs_var
 
     let process_args size_arg (ins_arg, consts_arg) outs_arg =
-        size_arg :: ([ins_arg;consts_arg;outs_arg] |> List.concat) |> String.concat ", "
+        size_arg :: ([flatten_ins ins_arg;flatten_consts consts_arg;flatten_outs outs_arg] |> List.concat) |> String.concat ", "
     
     map_module_template process_ins process_outs process_args (args_in, args_coef) args_out kernel_name map_macro
 
+/// Mapcoef modules with generic number of arguments.
+let mapcoef_module_forward_list args_in args_coef args_out kernel_name map_macro =
+    let map f x = List.map f (cuda_group x) |> List.unzip
+    let flatten x = x
+    mapcoef_module_forward_template 
+        args_in args_coef args_out kernel_name map_macro
+        map map map flatten flatten flatten
+
+let mapcoef_module_backward_template 
+        args_in args_coef args_out kernel_name map_macro 
+        map_ins_prim map_consts map_outs map_ins_adj
+        flatten_ins_prim flatten_consts flatten_outs flatten_ins_adj =
+    let size_arg, size_var = cudavar_var "n" "const int "
+    let process_ins (ins,consts) outs =
+        let ins_prim_arg, ins_prim_var = 
+            map_ins_prim (fun n -> cudavar_ar1d n "const float *" size_arg) ins
+        let consts_arg, consts_var = 
+            map_consts (fun n -> cudavar_var n "const float ") consts
+        let outs_arg, outs_var =
+            map_outs (fun n -> cudavar_ar1d n "const float *" size_arg) outs
+        size_arg,(ins_prim_arg,consts_arg,outs_arg),(size_var,ins_prim_var,consts_var,outs_var)
+
+    let process_outs (ins,_) _ =
+        let ins_adj_arg, ins_adj_var = 
+            map_ins_adj (fun n -> cudavar_ar1d n "float *" size_arg) ins
+        ins_adj_arg,ins_adj_var
+
+    let process_args size_arg (ins_prim_arg, consts_arg, outs_arg) ins_adj_arg =
+        size_arg :: ([flatten_ins_prim ins_prim_arg;flatten_consts consts_arg;flatten_outs outs_arg
+                      flatten_ins_adj ins_adj_arg] 
+                      |> List.concat) 
+        |> String.concat ", "
+    
+    map_module_template process_ins process_outs process_args (args_in, args_coef) args_out kernel_name map_macro
+
+// The list version of the backward module for a kernel with a generic number of arguments.
+let mapcoef_module_backward_list args_in args_coef args_out kernel_name map_macro =
+    let names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal";name+"_adjoint"]) names
+    let names_into_primals names = List.map (fun name -> name+"_primal") names
+    let names_into_adjoints names = List.map (fun name -> name+"_adjoint") names
+
+    let map g f x = List.map f (cuda_group x |> g) |> List.unzip
+    let flatten x = x
+
+    mapcoef_module_backward_template
+        args_in args_coef args_out kernel_name map_macro 
+//        map_ins_prim map_consts map_outs map_ins_adj
+        (map names_into_primals) (map id) (map names_into_prim_and_adj) (map names_into_adjoints)
+//        flatten_ins_prim flatten_consts flatten_outs flatten_ins_adj
+        flatten flatten flatten flatten
