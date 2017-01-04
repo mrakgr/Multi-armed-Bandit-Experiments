@@ -20,17 +20,6 @@ open System.IO
 open System.Collections.Generic
 open System.Runtime.InteropServices
 
-let cuda_map_all_template 
-        times plus less_than // basic operators
-        gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
-        for_ var // kernel primitives
-        n map_macro = // kernel params
-    for_ 
-        (var (plus (times blockIdx_x blockDim_x) threadIdx_x))
-        (fun i -> less_than i n) 
-        (fun i -> plus i (times gridDim_x blockDim_x))
-        map_macro
-
 let cuda_tag =
     let mutable i = 0
     fun () ->
@@ -39,76 +28,154 @@ let cuda_tag =
 
 type CudaExpr =
 | Statement of string
+| Indent
+| Dedent
 | Statements of ResizeArray<CudaExpr>
 
-let cuda_map_all n map_macro =
-    let program = ResizeArray()
+let exp x = String.concat "" x
+let state (program: ResizeArray<_>) x = exp x |> Statement |> program.Add
+let enter (program: ResizeArray<_>) body v =
+    Indent |> program.Add
+    body v
+    Dedent |> program.Add
+let expand (program: ResizeArray<_>) x = Statements x |> program.Add
 
-    let exp x = String.concat "" x
-    let state x = exp x |> Statement |> program.Add
-    let states x = Statements x |> program.Add
+/// The outer level of the Cuda compiler language.
+let cuda_kernel_module_template 
+            kernel_name args method_body_macro // kernel_param
+            (method_, externCBlock, include_, expand) = // kernel primitives
+    include_ "thrust/tuple.h"
+    include_ "cub/cub.cuh"
+    externCBlock ( fun () ->
+        method_ "__global__ void " kernel_name args (fun () -> expand method_body_macro)
+        )
 
-    let plus x y = [|"(";x;" + ";y;")"|] |> exp
-    let times x y = [|"(";x;" * ";y;")"|] |> exp
-    let less_than x y = [|"(";x;" < ";y;")"|] |> exp
-    let gridDim_x, blockDim_x = "gridDim.x","blockDim.x"
-    let blockIdx_x, threadIdx_x = "blockIdx.x","threadIdx.x"
-    let var x = 
-        let v = "auto var_" + string (cuda_tag())
-        let decl = [|v;" = ";x|] |> exp
-        v, decl
-    let for_ (v,decl) cond incr body =
-        [|"for(";decl;"; ";cond v;"; ";incr v;") {"|] |> state
-        body v |> states
-        [|"}"|] |> state
-        
-    cuda_map_all_template 
-        times plus less_than // basic operators
-        gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
-        for_ var // kernel primitives
+/// The inner level of the language. Standard map.
+let cuda_map_template 
         n map_macro
+        (class_method2, class1, typedef, ifvoid, set, is, times, plus, less_than, for_, while_, madd, lambda2, text, var, init, expand)
+        = // kernel params
+    for_ 
+        (init "blockIdx.x * blockDim.x + threadIdx.x")
+        (fun i -> less_than i n) 
+        (fun i -> plus i "gridDim.x * blockDim.x")
+        (fun i -> expand (map_macro i))
 
-    program
+let map_redo_map_template 
+        block_reduce_type map_load_op_macro reduce_op_macro map_store_macro n
+        (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, lambda2, text, var, init, expand)
+        =
+    let block_reduce_typedef = typedef ("cub::BlockReduce<"+block_reduce_type+", " + string map_redo_map_launcher_block_size + ">")
+    let temp_storage = var "__shared__ BlockReduceT::TempStorage" ""
+    let block_reduce = class1 block_reduce_typedef temp_storage
 
-let cuda_map_module_template 
-            kernel_name args method_body // kernel_param
-            method_ externCBlock include_ = // kernel primitives
-        include_ "thrust/tuple.h"
-        include_ "cub/cub.cuh"
-        externCBlock ( fun () ->
-            method_ "__global__ void " kernel_name args method_body
-            )
+    let reduce_op = lambda2 reduce_op_macro
+    let i = var "int" "blockIdx.x*blockDim.x + threadIdx.x"
+    let value = var "auto" (map_load_op_macro i)
+    let stride = var "const auto" "gridDim.x*blockDim.x"
+    madd i stride
+    while_ (less_than i n) <| fun () ->
+        set value (reduce_op value (map_load_op_macro i))
+        madd i stride
 
-let cuda_map_module_compile map_module =
+    let result = var "const auto" (class_method2 block_reduce "Reduce" value reduce_op)
+    ifvoid (eq "threadIdx.x" "0")
+           (fun () -> expand (map_store_macro result))
+           (fun () -> ())
+
+let process_statements (statements: ResizeArray<CudaExpr>) =
+    let rec process_statement (code: StringBuilder,ind as state) statement =
+        match statement with
+        | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp |> code.Append, ind
+        | Indent -> code, ind+4
+        | Dedent -> code, ind-4
+        | Statements x -> process_statements state x
+    and process_statements state (statements: ResizeArray<CudaExpr>) =
+        Seq.fold process_statement state statements
+    process_statements (StringBuilder(),0) statements
+    |> fun (code,ind) -> code.ToString()
+
+let cuda_kernel_module_compile map_module =
     let program = ResizeArray()
 
-    let exp x = String.concat "" x
-    let state x = exp x |> Statement |> program.Add
-    let states x = Statements x |> program.Add
+    let state x = state program x
+    let enter x = enter program x
+    let expand x = expand program x
 
     let method_ rtyp kernel_name args body =
         [|rtyp;kernel_name;"(";args;") {"|] |> state
-        body |> states
+        enter body ()
         [|"}"|] |> state
     let externCBlock body =
         [|"extern \"C\" {"|] |> state
-        body()
+        enter body ()
         [|"}"|] |> state
     let include_ str =
         [|"#include "; quote str|] |> state
 
-    let rec process_statement ind statement =
-        match statement with
-        | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp
-        | Statements x -> process_statements (ind+4) x
+    map_module (method_, externCBlock, include_, expand)
+    program
 
-    and process_statements ind (statements: ResizeArray<CudaExpr>) =
-        let code = StringBuilder()
-        Seq.iter (fun x -> process_statement ind x |> code.Append |> ignore) statements
-        code.ToString()
+let cuda_inner_compile kernel_body =
+    let program = ResizeArray()
     
-    map_module method_ externCBlock include_
-    process_statements 0 program
+    let state x = state program x
+    let enter x = enter program x
+    let expand x = expand program x
+    let varn x = x + string (cuda_tag())
+
+    let plus x y = [|"(";x;" + ";y;")"|] |> exp
+    let times x y = [|"(";x;" * ";y;")"|] |> exp
+    let less_than x y = [|"(";x;" < ";y;")"|] |> exp
+    let init x = 
+        let v = varn "var_"
+        let decl = [|"auto ";v;" = ";x|] |> exp
+        v, decl
+    let for_ (v,decl) cond incr body =
+        [|"for(";decl;"; ";cond v;"; ";incr v;") {"|] |> state
+        enter body v
+        [|"}"|] |> state
+    let ifvoid cond true_ false_ =
+        [|"if (";cond;") {"|] |> state
+        enter true_ ()
+        [|"} else {"|] |> state
+        enter false_ ()
+        [|"}"|] |> state
+    let args2 arg_a arg_b = [|"(";arg_a;", ";arg_b;")"|] |> exp
+    let class_method2 class_name method_name arg_a arg_b =
+        [|class_name;".";method_name;args2 arg_a arg_b|] |> exp
+    let class1 class_name arg =
+        let v = varn "class_"
+        [|"auto ";v;" = ";class_name;"(";arg;");"|] |> state
+        v
+    let typedef x =
+        let v = varn "typedef_"
+        [|"typedef ";x;" ";v;";"|] |> state
+        v
+    let set x v =
+        [|x;" = ";v;";"|] |> state
+    let eq x v =
+        [|x;" == ";v|] |> exp
+    let while_ cond body =
+        [|"while (";cond;") {"|] |> state
+        enter body ()
+        [|"}"|] |> state
+    let madd x v =
+        [|x;" += ";v|] |> exp
+    let lambda2 x =
+        let v = varn "lambda_"
+        [|"const auto ";v;" = ";x;";"|] |> state
+        fun a b -> [|v;args2 a b|] |> exp
+    let text x =
+        [|x|] |> state
+    let var typ init = 
+        let v = varn "var_"
+        [|typ;" ";v;" = ";init;";"|] |> state
+        v
+    kernel_body 
+        (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, lambda2, text, var, init, expand)
+    program
+
 
 let cudavar_template get_method_arg get_var name typ size =
     let method_arg = get_method_arg name typ
@@ -143,7 +210,9 @@ let map_module_template
 
     let args = process_args n ins_arg outs_arg
 
-    cuda_map_module_compile (cuda_map_module_template args kernel_name (cuda_map_all n (map_macro ins_var outs_var)))
+    let body = cuda_inner_compile <| cuda_map_template n (map_macro ins_var outs_var)
+    let all = cuda_kernel_module_template args kernel_name body
+    cuda_kernel_module_compile all |> process_statements
     
 let cuda_group (num_in, names_in) =
     let f i n = n + string i
@@ -223,3 +292,4 @@ let mapcoef_module_backward_list args_in args_coef args_out kernel_name map_macr
         (map names_into_primals) (map id) (map names_into_prim_and_adj) (map names_into_adjoints)
 //        flatten_ins_prim flatten_consts flatten_outs flatten_ins_adj
         flatten flatten flatten flatten
+
