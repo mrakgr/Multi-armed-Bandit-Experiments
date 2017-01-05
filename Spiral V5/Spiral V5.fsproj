@@ -73,14 +73,14 @@
     <None Include="Scripts\tuple_passing_v2.fsx" />
     <None Include="Scripts\pattern_matching_with_vanilla_functions.fsx" />
     <None Include="Scripts\total_size.fsx" />
-    <None Include="Scripts\reader_monad.fsx" />
     <None Include="Scripts\SpiralV5CudaCodeGen_v2.fsx" />
+    <None Include="Scripts\SpiralV5CudaCodeGen_v3.fsx" />
     <None Include="Scripts\SpiralV5Tests.fsx" />
     <None Include="Scripts\SpiralV5.fsx" />
     <None Include="Scripts\SpiralV5DM.fsx" />
     <None Include="Scripts\SpiralV5Prims.fsx" />
     <None Include="Scripts\SpiralV5Eval.fsx" />
-    <None Include="Scripts\CudaV5CodeGen.fsx" />
+    <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

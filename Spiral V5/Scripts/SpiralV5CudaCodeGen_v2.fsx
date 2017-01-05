@@ -402,9 +402,6 @@ let cuda_map_all_template
         (fun i -> plus i (times gridDim_x blockDim_x))
         (fun i -> map_macro (in_exp i) (out_exp i))
 
-let cuda_map_all n in_exp out_exp map_macro =
-    let var = 
-
 let cuda_map_module_template 
         times plus less_than // basic operators
         gridDim_x blockDim_x blockIdx_x threadIdx_x // kernel constants
