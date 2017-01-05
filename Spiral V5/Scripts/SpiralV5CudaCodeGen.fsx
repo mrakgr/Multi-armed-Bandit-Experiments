@@ -174,9 +174,11 @@ let cuda_inner_compile kernel_body =
         let v = varn "var_"
         [|typ;" ";v;" = ";init;";"|] |> state
         v
-    kernel_body 
-        (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
-    program
+    fun x ->
+        kernel_body 
+            (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
+            x
+        program
 
 let cudavar_template get_method_arg get_var typ size name =
     let method_arg = get_method_arg name typ
@@ -311,31 +313,39 @@ let map_redo_map_backward kernel =
     backward_template size_arg map_ins_prim_f map_consts_f map_outs_f map_ins_adj_f (kernel size_var)
 
 let map_backward_list_template map_module =
-    let map f x = List.map f (cuda_group x) |> List.unzip
-    let flatten x = x
-    map_module map map map map flatten flatten flatten flatten
+    let names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal";name+"_adjoint"]) names
+    let names_into_primals names = List.map (fun name -> name+"_primal") names
+    let names_into_adjoints names = List.map (fun name -> name+"_adjoint") names
+
+    let map g f x = List.map f (cuda_group x |> g) |> List.unzip
+    let flatten_list x = x
+    map_module 
+        (map names_into_primals) (map id) (map names_into_prim_and_adj) (map names_into_adjoints)
+        flatten_list flatten_list flatten_list flatten_list
 
 let mapcoef_backward_list kernel = map_backward_list_template (mapcoef_backward kernel)
 let map_redo_map_backward_list kernel = map_backward_list_template (map_redo_map_backward kernel)
 
-//mapcoef_forward (fun size_var process_ins process_outs process_args ->
-//    ()
-//    )
+let mapcoef_compile_forward_1_0_1_template kernel_name macro =
+    mapcoef_forward_1_0_1 <| fun size_var process_ins process_outs process_args ->
+        let x = "x"
+        let c = ()
+        let o = "o"
+        let ins_arg, ins_var = process_ins (x,c) o
+        let outs_arg, outs_var = process_outs (x,c) o
+        let args = process_args ins_arg outs_arg
 
-//let map_launcher_forward_1_0_1_template macro =
-//    let x = 1,"x"
-//    let o = 1,"o"
-//    let q = map_forward_1_0_1_template (mapcoef_forward macro)
-//    ()
-//
-//let map_backward_1_0_1_template map_module =
-//    let map f x = f (cuda_group x)
-//    let map_const f () = (),()
-//    let flatten arg = [arg]
-//    let flatten_const () = []
-//    map_module map map_const map map flatten flatten_const flatten flatten
-//
-//let square_macro n x () o
-//    (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
-//    i =
-//    set (o i) (times (x i) (x i))
+        let body = 
+            let compiled_macro = cuda_inner_compile (macro size_var (fst ins_var) outs_var)
+            //let compiled_body = 
+            let s = cuda_map_template size_var compiled_macro
+            cuda_inner_compile s
+        let all = cuda_kernel_module_template args kernel_name body
+        cuda_kernel_module_compile all |> process_statements
+
+let square_macro n x o
+    (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
+    i =
+    set (o i) (times (x i) (x i))
+
+mapcoef_compile_forward_1_0_1_template "Square" square_macro
