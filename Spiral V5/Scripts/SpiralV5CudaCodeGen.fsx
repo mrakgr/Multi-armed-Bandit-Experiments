@@ -40,49 +40,6 @@ let enter (program: ResizeArray<_>) body v =
     Dedent |> program.Add
 let expand (program: ResizeArray<_>) x = Statements x |> program.Add
 
-/// The outer level of the Cuda compiler language.
-let cuda_kernel_module_template 
-            kernel_name args method_body_macro // kernel_param
-            (method_, externCBlock, include_, expand) = // kernel primitives
-    include_ "thrust/tuple.h"
-    include_ "cub/cub.cuh"
-    externCBlock ( fun () ->
-        method_ "__global__ void " kernel_name args (fun () -> expand method_body_macro)
-        )
-
-/// The inner level of the language. Standard map.
-let cuda_map_template 
-        n map_macro
-        (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
-        = // kernel params
-    for_ 
-        (init "blockIdx.x * blockDim.x + threadIdx.x")
-        (fun i -> less_than i n) 
-        (fun i -> plus i "gridDim.x * blockDim.x")
-        (fun i -> expand (map_macro i))
-
-let cuda_map_redo_map_template 
-        block_reduce_type n map_load_op_macro reduce_op_macro map_store_macro
-        (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
-        =
-    let block_reduce_typedef = typedef ("cub::BlockReduce<"+block_reduce_type+", " + string map_redo_map_launcher_block_size + ">")
-    let temp_storage = var "__shared__ BlockReduceT::TempStorage" ""
-    let block_reduce = class1 block_reduce_typedef temp_storage
-
-    let reduce_op_name, reduce_op = lambda2 reduce_op_macro
-    let i = var "int" "blockIdx.x*blockDim.x + threadIdx.x"
-    let value = var "auto" (map_load_op_macro i)
-    let stride = var "const auto" "gridDim.x*blockDim.x"
-    madd' i stride
-    while_ (less_than i n) <| fun () ->
-        set value (reduce_op value (map_load_op_macro i))
-        madd' i stride
-
-    let result = var "const auto" (class_method2 block_reduce "Reduce" value reduce_op_name)
-    ifvoid (eq "threadIdx.x" "0")
-           (fun () -> expand (map_store_macro result))
-           (fun () -> ())
-
 let process_statements (statements: ResizeArray<CudaExpr>) =
     let rec process_statement (code: StringBuilder,ind as state) statement =
         match statement with
@@ -95,7 +52,7 @@ let process_statements (statements: ResizeArray<CudaExpr>) =
     process_statements (StringBuilder(),0) statements
     |> fun (code,ind) -> code.ToString()
 
-let cuda_kernel_module_compile map_module =
+let cuda_outer_compile map_module =
     let program = ResizeArray()
 
     let state x = state program x
@@ -174,11 +131,49 @@ let cuda_inner_compile kernel_body =
         let v = varn "var_"
         [|typ;" ";v;" = ";init;";"|] |> state
         v
-    fun x ->
-        kernel_body 
-            (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
-            x
-        program
+    
+    kernel_body 
+        (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
+    program
+
+
+/// The outer level of the Cuda compiler language.
+let cuda_kernel_module_template kernel_name args method_body_macro = 
+    cuda_outer_compile <| fun (method_, externCBlock, include_, expand) ->
+        include_ "thrust/tuple.h"
+        include_ "cub/cub.cuh"
+        externCBlock ( fun () ->
+            method_ "__global__ void " kernel_name args (fun () -> expand method_body_macro)
+            )
+
+/// The inner level of the language. Standard map.
+let cuda_map_template n map_macro =
+    cuda_inner_compile <| fun (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+        for_ 
+            (init "blockIdx.x * blockDim.x + threadIdx.x")
+            (fun i -> less_than i n) 
+            (fun i -> madd i "gridDim.x * blockDim.x")
+            (fun i -> expand (map_macro i))
+
+let cuda_map_redo_map_template block_reduce_type n map_load_op_macro reduce_op_macro map_store_macro =
+    cuda_inner_compile <| fun (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+        let block_reduce_typedef = typedef ("cub::BlockReduce<"+block_reduce_type+", " + string map_redo_map_launcher_block_size + ">")
+        let temp_storage = var "__shared__ BlockReduceT::TempStorage" ""
+        let block_reduce = class1 block_reduce_typedef temp_storage
+
+        let reduce_op_name, reduce_op = lambda2 reduce_op_macro
+        let i = var "int" "blockIdx.x*blockDim.x + threadIdx.x"
+        let value = var "auto" (map_load_op_macro i)
+        let stride = var "const auto" "gridDim.x*blockDim.x"
+        madd' i stride
+        while_ (less_than i n) <| fun () ->
+            set value (reduce_op value (map_load_op_macro i))
+            madd' i stride
+
+        let result = var "const auto" (class_method2 block_reduce "Reduce" value reduce_op_name)
+        ifvoid (eq "threadIdx.x" "0")
+               (fun () -> expand (map_store_macro result))
+               (fun () -> ())
 
 let cudavar_template get_method_arg get_var typ size name =
     let method_arg = get_method_arg name typ
@@ -335,17 +330,12 @@ let mapcoef_compile_forward_1_0_1_template kernel_name macro =
         let outs_arg, outs_var = process_outs (x,c) o
         let args = process_args ins_arg outs_arg
 
-        let body = 
-            let compiled_macro = cuda_inner_compile (macro size_var (fst ins_var) outs_var)
-            //let compiled_body = 
-            let s = cuda_map_template size_var compiled_macro
-            cuda_inner_compile s
-        let all = cuda_kernel_module_template args kernel_name body
-        cuda_kernel_module_compile all |> process_statements
+        let body = cuda_map_template size_var (macro (fst ins_var) outs_var)
+        cuda_kernel_module_template kernel_name args body
+        |> process_statements
 
-let square_macro n x o
-    (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand)
-    i =
-    set (o i) (times (x i) (x i))
+let square_macro x o i =
+    cuda_inner_compile <| fun (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+        set (o i) (times (x i) (x i))
 
 mapcoef_compile_forward_1_0_1_template "Square" square_macro
