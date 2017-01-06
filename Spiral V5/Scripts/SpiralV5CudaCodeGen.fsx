@@ -346,13 +346,6 @@ let compile_template module_ num_args ins outs kernel_name macro =
 let mapcoef_forward_compile num_args ins outs kernel_name macro =
     compile_template mapcoef_forward num_args ins outs kernel_name macro
 
-let square_macro (x, ()) o i =
-    cuda_inner_compile <| fun (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        set (o i) (times (x i) (x i))
-
-let square_code = mapcoef_forward_compile (f_one, f_zero, f_one) ("x", ()) "o" "Square" square_macro
-printfn "%s" square_code
-
 let name_no_change f name = f name
 let name_into_primal f name = f (name+"_primal")
 let name_into_adjoint f name = f (name+"_adjoint")
@@ -387,12 +380,39 @@ let b_args (num_ins, num_consts, num_outs) =
     (num_outs (name_into_prim_adj,name_into_prim_adj_flatten)),
     (num_ins (name_into_adjoint,name_into_x_flatten))
 
+let mapcoef_backward_compile num_args ins outs kernel_name macro =
+    compile_template mapcoef_backward (b_args num_args) ins outs kernel_name macro
+
+let a_zero = f_zero, b_zero
+let a_one = f_one, b_one
+let a_two = f_two, b_two
+let a_three = f_three, b_three
+
+let mapcoef() = mapcoef_forward, mapcoef_backward
+let map_redo_map() = map_redo_map_forward, map_redo_map_backward
+
+let compile_fb_template module_ num_args ins outs kernel_name (macro_forward, macro_backward) =
+    let a_args ((fa,ba),(fb,bb),(fc,bc)) = (fa,fb,fc), b_args (ba,bb,bc)
+    let f_args,b_args = a_args num_args
+    let module_forward,module_backward = module_()
+    compile_template module_forward f_args ins outs kernel_name macro_forward,
+    compile_template module_backward b_args ins outs (kernel_name+"Backward") macro_backward
+
+// Kernels
+
+let square_macro (x, ()) o i =
+    cuda_inner_compile <| fun (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+        set (o i) (times (x i) (x i))
+
 let square_macro_backward (x_pr,(),(o_pr,o_adj)) x_adj i =
     cuda_inner_compile <| fun (class_method2, class1, typedef, ifvoid, set, eq, times, plus, less_than, for_, while_, madd, madd', lambda2, text, var, init, expand) ->
         madd' (x_adj i) (times (x_pr i) "2.0" |> times (o_adj i))
 
-let mapcoef_backward_compile num_args ins outs kernel_name macro =
-    compile_template mapcoef_backward (b_args num_args) ins outs kernel_name macro
+let square_code = mapcoef_forward_compile (f_one, f_zero, f_one) ("x", ()) "o" "Square" square_macro
+printfn "%s" square_code
 
 let square_backward_code = mapcoef_backward_compile (b_one,b_zero,b_one) ("x",()) "o" "SquareBackward" square_macro_backward
 printfn "%s" square_backward_code
+
+let square_fb = compile_fb_template mapcoef (a_one, a_zero, a_one) ("x", ()) "o" "Square" (square_macro, square_macro_backward)
+printfn "%A" square_fb
