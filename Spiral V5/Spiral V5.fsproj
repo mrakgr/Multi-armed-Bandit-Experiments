@@ -80,7 +80,7 @@
     <None Include="Scripts\SpiralV5DM.fsx" />
     <None Include="Scripts\SpiralV5Prims.fsx" />
     <None Include="Scripts\SpiralV5Eval.fsx" />
-    <None Include="Scripts\SpiralV5CudaCodeGen_type_bug.fsx" />
+    <None Include="Scripts\SpiralV5CudaCodeGen_v4.fsx" />
     <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
   </ItemGroup>
   <ItemGroup>
