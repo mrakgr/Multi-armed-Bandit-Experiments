@@ -1,7 +1,6 @@
-﻿#load "SpiralV5CudaCodeGen.fsx"
+﻿#load "SpiralV5.fsx"
 
 open SpiralV5
-open SpiralV5CudaCodeGen
 
 open ManagedCuda
 open ManagedCuda.BasicTypes
@@ -212,7 +211,7 @@ type SpiralEnv<'user_state> =
     Str : CudaStream
     Mem : ObjectPool
     Tape : Stack<unit -> unit>
-    Weights : Stack<obj []>
+    Weights : Stack<DM<int,float32>>
     // State (immutable)
     IsInferenceOnly : bool
     }
@@ -224,6 +223,7 @@ type SpiralEnv<'user_state> =
         Str = new CudaStream()
         Mem = new ObjectPool()
         Tape = new Stack<_>()
+        Weights = new Stack<_>()
         IsInferenceOnly = false
         }
 
