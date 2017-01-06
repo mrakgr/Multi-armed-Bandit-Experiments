@@ -262,7 +262,7 @@ let f_one =
     let flatten x = [x]
     map,flatten
 
-let f_two = // TODO: Fix these two.
+let f_two = 
     let map f (x1,x2) = 
         let (a1,v1,s1),(a2,v2,s2) = f x1, f x2
         (a1,a2),(v1,v2),(s1,s2)
@@ -282,6 +282,11 @@ let f_four =
         (a1,a2,a3,a4),(v1,v2,v3,v4),(s1,s2,s3,s4)
     let flatten (x1,x2,x3,x4) = [x1;x2;x3;x4]
     map,flatten
+
+let f_list =
+    let map f x = List.map f (cuda_group x) |> List.unzip3
+    let flatten x = x
+    map, flatten
 
 let backward_template 
         size_arg map_ins_prim_f map_consts_f map_outs_f map_ins_adj_f kernel
@@ -390,6 +395,16 @@ let b_four (g_map,g_flatten) =
         (a1,a2,a3,a4),(v1,v2,v3,v4),(s1,s2,s3,s4)
     let flatten (x1,x2,x3,x4) = [g_flatten x1;g_flatten x2;g_flatten x3;g_flatten x4] |> List.concat
     map, flatten
+
+let b_list (g_map,g_flatten) =
+    let names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal";name+"_adjoint"]) names
+    let names_into_primals names = List.map (fun name -> name+"_primal") names
+    let names_into_adjoints names = List.map (fun name -> name+"_adjoint") names
+
+    let map f x = List.map (g_map f) (cuda_group x) |> List.unzip3
+    let flatten_list x = List.collect g_flatten x
+    ((map names_into_primals),flatten_list), ((map id),flatten_list), 
+    ((map names_into_prim_and_adj),flatten_list),((map names_into_adjoints),flatten_list)
 
 let b_args (num_ins, num_consts, num_outs) =
     (num_ins (name_into_primal,name_into_x_flatten)),
