@@ -356,11 +356,8 @@ let backward_map_flatten_one g =
     map, flatten
 
 let map_backward_1_0_1_template map_module =
-    let name_into_primal f name = f (name+"_primal")
-    let name_into_adjoint f name = f (name+"_adjoint")
-    let name_into_prim_adj f name = 
-        let (pr_arg,pr_var),(adj_arg,adj_var) = f (name+"_primal"), f (name+"_adjoint")
-        ((pr_arg,adj_arg),(pr_var,adj_var))
+    let name_into_primal name = name+"_primal"
+    let name_into_adjoint name = name+"_adjoint"
 
     let map_ins_prim f x = f (name_into_primal x)
     let map_const f () = (),()
