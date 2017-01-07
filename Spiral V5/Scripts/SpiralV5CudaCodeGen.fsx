@@ -289,8 +289,8 @@ let backward_template
             map_ins_adj map_ins_adj_f
         ins_adj_arg, ins_adj_var, ins_adj_sig
     let args =
-        let ins_prim_arg, consts_arg, outs_arg = ins
-        let ins_adj_arg = outs
+        let (ins_prim_arg, consts_arg, outs_arg),_,_ = ins
+        let ins_adj_arg,_,_ = outs
         size_arg :: ([flatten_ins_prim ins_prim_arg;flatten_consts consts_arg;flatten_outs outs_arg
                       flatten_ins_adj ins_adj_arg] 
                       |> List.concat)
