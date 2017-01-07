@@ -688,7 +688,7 @@ let tanh =
         let name = KernelName "Tanh"
         map_module_1_1 name 
             (fun x -> Tanh(x))
-            (fun (er_pr,er_adj) inp_pr -> er_adj * er_pr * (one - er_pr))
+            (fun (er_pr,er_adj) inp_pr -> er_adj * (one - er_pr * er_pr))
 let relu = 
     lazy
         let name = KernelName "Relu"
