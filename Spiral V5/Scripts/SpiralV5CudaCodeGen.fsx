@@ -36,18 +36,17 @@ type CudaExpr =
 | Dedent
 | Statements of ResizeArray<CudaExpr>
 
-let exp x = String.concat "" x
-let state (program: ResizeArray<_>) x = exp x |> Statement |> program.Add
+let expr x = String.concat "" x
+let state (program: ResizeArray<_>) x = expr x |> Statement |> program.Add
 let enter (program: ResizeArray<_>) body v =
     Indent |> program.Add
     body v
     Dedent |> program.Add
-let expand (program: ResizeArray<_>) x = Statements x |> program.Add
 
 let process_statements (statements: ResizeArray<CudaExpr>) =
     let rec process_statement (code: StringBuilder,ind as state) statement =
         match statement with
-        | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp |> code.Append, ind
+        | Statement x -> [|String.replicate ind " "; x; "\n"|] |> expr |> code.Append, ind
         | Indent -> code, ind+4
         | Dedent -> code, ind-4
         | Statements x -> process_statements state x
@@ -61,7 +60,6 @@ let cuda_outer_compile map_module =
 
     let state x = state program x
     let enter x = enter program x
-    let expand x = expand program x
 
     let method_ rtyp kernel_name args body =
         [|rtyp;kernel_name;"(";args;") {"|] |> state
@@ -73,21 +71,52 @@ let cuda_outer_compile map_module =
         [|"}"|] |> state
     let include_ str =
         [|"#include "; quote str|] |> state
+    let expand x = Statements x |> program.Add
 
     map_module (method_, externCBlock, include_, expand)
     program
+
+//// Expressions
+let init x = 
+    let v = varn "var_"
+    let decl = [|"auto ";v;" = ";x|] |> expr
+    v, decl
+let args2 arg_a arg_b = [|"(";arg_a;", ";arg_b;")"|] |> expr
+let class_method2 class_name method_name arg_a arg_b =
+    [|class_name;".";method_name;args2 arg_a arg_b|] |> expr
+let madd x v = [|x;" += ";v|] |> expr
+
+let unary_fun_op op x = [|op;"(";x;")"|] |> expr
+let exp x = unary_fun_op "exp" x
+let log x = unary_fun_op "log" x
+let tanh x = unary_fun_op "tanh" x
+    
+let unary_op op x = [|"(";op;x;")"|] |> expr
+let neg x = unary_op "-" x
+
+let binary_op op x y = [|"(";x;op;y;")"|] |> expr
+let (.=) x y = binary_op " == " x y
+let (.<) x y = binary_op " < " x y
+let (.<=) x y = binary_op " <= " x y
+let (.>) x y = binary_op " > " x y
+let (.>=) x y = binary_op " >= " x y
+
+let (.||) x y = binary_op " || " x y
+let (.&&) x y = binary_op " && " x y
+
+let (.+) x y = binary_op " + " x y
+let (.*) x y = binary_op " * " x y
+let (./) x y = binary_op " / " x y
+let (.-) x y = binary_op " - " x y
+
+let if_ cond true_ false_ = [|"((";cond;") ? (";true_;") : (";false_;"))"|] |> expr
 
 let cuda_inner_compile kernel_body =
     let program = ResizeArray()
     
     let state x = state program x
     let enter x = enter program x
-    let expand x = expand program x
-    
-    let init x = 
-        let v = varn "var_"
-        let decl = [|"auto ";v;" = ";x|] |> exp
-        v, decl
+ 
     let for_ (v,decl) cond incr body =
         [|"for(";decl;"; ";cond v;"; ";incr v;") {"|] |> state
         enter body v
@@ -98,9 +127,6 @@ let cuda_inner_compile kernel_body =
         [|"} else {"|] |> state
         enter false_ ()
         [|"}"|] |> state
-    let args2 arg_a arg_b = [|"(";arg_a;", ";arg_b;")"|] |> exp
-    let class_method2 class_name method_name arg_a arg_b =
-        [|class_name;".";method_name;args2 arg_a arg_b|] |> exp
     let class1 class_name arg =
         let v = varn "class_"
         [|"auto ";v;" = ";class_name;"(";arg;");"|] |> state
@@ -115,14 +141,12 @@ let cuda_inner_compile kernel_body =
         [|"while (";cond;") {"|] |> state
         enter body ()
         [|"}"|] |> state
-    let madd x v =
-        [|x;" += ";v|] |> exp
     let madd' x v =
         [|x;" += ";v;";"|] |> state
-    let lambda2 x =
+    let lambda2 x = // TODO: Lambda needs more work.
         let v = varn "lambda_"
         [|"const auto ";v;" = ";x;";"|] |> state
-        v, fun a b -> [|v;args2 a b|] |> exp
+        v, fun a b -> [|v;args2 a b|] |> expr
     let text x =
         [|x|] |> state
     let var typ init = 
@@ -130,31 +154,7 @@ let cuda_inner_compile kernel_body =
         [|typ;" ";v;" = ";init;";"|] |> state
         v
 
-    let unary_fun_op op x = [|op;"(";x;")"|] |> exp
-    let exp' x = unary_fun_op "exp" x
-    let log x = unary_fun_op "log" x
-    let tanh x = unary_fun_op "tanh" x
-    
-    let unary_op op x = [|"(";op;x;")"|] |> exp
-    let neg x = unary_op "-" x
-
-    let binary_op op x y = [|"(";x;op;y;")"|] |> exp
-    let (=) x y = binary_op " == " x y
-    let (<) x y = binary_op " < " x y
-    let (<=) x y = binary_op " <= " x y
-    let (>) x y = binary_op " > " x y
-    let (>=) x y = binary_op " >= " x y
-
-    let (+) x y = binary_op " + " x y
-    let (*) x y = binary_op " * " x y
-    let (/) x y = binary_op " / " x y
-    let (-) x y = binary_op " - " x y
-
-    let if_ cond true_ false_ = [|"(";cond;") ? (";true_;") : (";false_;")"|] |> exp
-    
-    let exp x = exp' x
-    kernel_body 
-        (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand)
+    kernel_body (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var)
     program
 
 
@@ -169,15 +169,15 @@ let cuda_kernel_module kernel_name args method_body_macro =
 
 /// The inner level of the language. Standard map.
 let cuda_map n map_macro =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+    cuda_inner_compile <| fun (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
         for_ 
             (init "blockIdx.x * blockDim.x + threadIdx.x")
-            (fun i -> i < n) 
+            (fun i -> i .< n) 
             (fun i -> madd i "gridDim.x * blockDim.x")
-            (fun i -> expand (map_macro i))
+            (fun i -> map_macro i funs)
 
 let cuda_map_redo_map block_reduce_type n map_load_op_macro reduce_op_macro map_store_macro =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+    cuda_inner_compile <| fun (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
         let block_reduce_typedef = typedef ("cub::BlockReduce<"+block_reduce_type+", " + string map_redo_map_launcher_block_size + ">")
         let temp_storage = var "__shared__ BlockReduceT::TempStorage" ""
         let block_reduce = class1 block_reduce_typedef temp_storage
@@ -187,13 +187,13 @@ let cuda_map_redo_map block_reduce_type n map_load_op_macro reduce_op_macro map_
         let value = var "auto" (map_load_op_macro i)
         let stride = var "const auto" "gridDim.x*blockDim.x"
         madd' i stride
-        while_ (i < n) <| fun () ->
+        while_ (i .< n) <| fun () ->
             set value (reduce_op value (map_load_op_macro i))
             madd' i stride
 
         let result = var "const auto" (class_method2 block_reduce "Reduce" value reduce_op_name)
-        ifvoid ("threadIdx.x" = "0")
-               (fun () -> expand (map_store_macro result))
+        ifvoid ("threadIdx.x" .= "0")
+               (fun () -> map_store_macro result funs)
                (fun () -> ())
 
 let cudavar_var typ sig_ suffix =
@@ -442,86 +442,40 @@ let b_list (num_in, names_in as args) (g_map,g_flatten) =
     ((map names_into_primals),flatten_list), ((map id),flatten_list), 
     ((map names_into_prim_and_adj),flatten_list),((map names_into_adjoints),flatten_list)
 
-
 // Kernels
 
-let square_macro (x, ()) o i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+let map_1_0_1 name forward_op backward_op =
+    let forward_macro macro (x, ()) o i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let x,o = x i, o i // Note that this does not get evaluated, it will instead get expanded to the full thing on the Cuda side.
-        set o (x * x)
-
-let square_macro_backward (x_pr,(),(o_pr,o_adj)) x_adj i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+        set o (macro x)
+    let backward_macro macro (x_pr,(),(o_pr,o_adj)) x_adj i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj * x_pr * "2.0")
+        madd' x_adj (o_adj .* macro x_pr o_pr)
+    lazy compile_fb_template mapcoef (a_one, a_zero, a_one) name (forward_macro forward_op, backward_macro backward_op)
 
-let sigmoid_macro (x, ()) o i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x,o = x i, o i
-        set o ("1.0" / ("1.0" + (exp (neg x))))
-
-let sigmoid_macro_backward (x_pr,(),(o_pr,o_adj)) x_adj i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
+let map_1_2_1 name forward_op backward_op =
+    let forward_macro macro (x,consts) o i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        let x,o = x i, o i // Note that this does not get evaluated, it will instead get expanded to the full thing on the Cuda side.
+        set o (macro x consts)
+    let backward_macro macro (x_pr,consts,(o_pr,o_adj)) x_adj i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj * o_pr  * ("1.0" - o_pr))
+        madd' x_adj (o_adj .* macro x_pr consts o_pr)
+    lazy compile_fb_template mapcoef (a_one, a_two, a_one) name (forward_macro forward_op, backward_macro backward_op)
 
-let tanh_macro (x, ()) o i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x,o = x i, o i
-        set o (tanh x)
+let clip_fb_template name fw_op bw_op = 
+    map_1_2_1 name
+        (fun x (min,max) -> if_ (x .< min) min (if_ (x .> max) max (fw_op x)))
+        (fun x_pr (min,max) o_pr -> if_ (x_pr .< min .|| x_pr .> max) "0" (bw_op x_pr o_pr))
 
-let tanh_macro_backward (x_pr,(),(o_pr,o_adj)) x_adj i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj * ("1.0" - o_pr * o_pr))
+let sig_fw x = "1" ./ ("1" .+ (exp (neg x)))
+let sig_bw x_pr o_pr = o_pr .* ("1" .- o_pr)
 
-let relu_macro (x, ()) o i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x,o = x i, o i
-        set o (if_ (x > "0") x "0")
+let sigmoid_fb = map_1_0_1 "Sigmoid" sig_fw sig_bw
+let tanh_fb = map_1_0_1 "Tanh" (fun x -> tanh x) (fun x_pr o_pr -> "1" .- o_pr .* o_pr)
+let relu_fb = map_1_0_1 "Relu" (fun x -> if_ (x .> "0") x "0") (fun x_pr o_pr -> if_ (x_pr .> "0") "1" "0")
+let log_fb = map_1_0_1 "Log" (fun x -> log x) (fun x_pr o_pr -> "1" ./ x_pr)
+let square_fb = map_1_0_1 "Square" (fun x -> x .* x) (fun x_pr o_pr -> x_pr .* "2")
 
-let relu_macro_backward (x_pr,(),(o_pr,o_adj)) x_adj i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (if_ (x_pr > "0") o_adj "0")
+let clip_fb = clip_fb_template "Clip" id (fun _ _ -> "1")
+let clipped_sigmoid_fb = clip_fb_template "ClippedSigmoid" sig_fw sig_bw
 
-let log_macro (x, ()) o i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x,o = x i, o i
-        set o (log x)
-
-let log_macro_backward (x_pr,(),(o_pr,o_adj)) x_adj i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj / x_pr)
-
-let square_fb = lazy compile_fb_template mapcoef (a_one, a_zero, a_one) "Square" (square_macro, square_macro_backward)
-let sigmoid_fb = lazy compile_fb_template mapcoef (a_one, a_zero, a_one) "Sigmoid" (sigmoid_macro, sigmoid_macro_backward)
-let tanh_fb = lazy compile_fb_template mapcoef (a_one, a_zero, a_one) "Tanh" (tanh_macro, tanh_macro_backward)
-let relu_fb = lazy compile_fb_template mapcoef (a_one, a_zero, a_one) "Relu" (relu_macro, relu_macro_backward)
-let log_fb = lazy compile_fb_template mapcoef (a_one, a_zero, a_one) "Log" (log_macro, log_macro_backward)
-
-let clip_macro (x,(min,max)) o i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x,o = x i, o i
-        set o (if_ (x < min) min (if_ (x > max) max x))
-
-let clip_macro_backward (x_pr,(min,max),(o_pr,o_adj)) x_adj i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (if_ (x_pr < min) "0" (if_ (x_pr > max) "0" o_adj))
-
-let clipped_sigmoid_macro (x,(min,max)) o i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x,o = x i, o i
-        let sig_ = "1.0" / ("1.0" + (exp (neg x)))
-        set o (if_ (x < min) min (if_ (x > max) max sig_))
-
-let clipped_sigmoid_macro_backward (x_pr,(min,max),(o_pr,o_adj)) x_adj i =
-    cuda_inner_compile <| fun (neg, tanh, log, exp, (*), (/), (-), (+), class_method2, class1, typedef, ifvoid, if_, set, (=), (<), (<=), (>), (>=), for_, while_, madd, madd', lambda2, text, var, init, expand) ->
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        let sig_ = o_adj * o_pr  * ("1.0" - o_pr)
-        madd' x_adj (if_ (o_pr <= min) "0" (if_ (o_pr >= max) "0" sig_))
-
-let clip_fb = lazy compile_fb_template mapcoef (a_one, a_two, a_one) "Clip" (clip_macro, clip_macro_backward)
-let clipped_sigmoid_fb = lazy compile_fb_template mapcoef (a_one, a_two, a_one) "ClippedSigmoid" (clipped_sigmoid_macro, clipped_sigmoid_macro_backward)
