@@ -143,9 +143,11 @@ let cuda_inner_compile kernel_body =
         [|"}"|] |> state
     let madd' x v =
         [|x;" += ";v;";"|] |> state
-    let lambda2 x = // TODO: Lambda needs more work.
-        let v = varn "lambda_"
-        [|"const auto ";v;" = ";x;";"|] |> state
+    let lambda2 lam =
+        let v,a,b = varn "lambda_", varn "lambda_arg_", varn "lambda_arg_"
+        [|"const auto ";v;" = [](const auto ";a;", const auto ";b;") {"|] |> state
+        lam a b
+        [|"}"|] |> state
         v, fun a b -> [|v;args2 a b|] |> expr
     let text x =
         [|x|] |> state
@@ -153,8 +155,9 @@ let cuda_inner_compile kernel_body =
         let v = varn "var_"
         [|typ;" ";v;" = ";init;";"|] |> state
         v
+    let return_ x = [|"return ";x;";"|] |> state
 
-    kernel_body (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var)
+    kernel_body (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var)
     program
 
 
@@ -169,20 +172,20 @@ let cuda_kernel_module kernel_name args method_body_macro =
 
 /// The inner level of the language. Standard map.
 let cuda_map n map_macro =
-    cuda_inner_compile <| fun (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
+    cuda_inner_compile <| fun (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
         for_ 
             (init "blockIdx.x * blockDim.x + threadIdx.x")
             (fun i -> i .< n) 
             (fun i -> madd i "gridDim.x * blockDim.x")
             (fun i -> map_macro i funs)
 
-let cuda_map_redo_map block_reduce_type n map_load_op_macro reduce_op_macro map_store_macro =
-    cuda_inner_compile <| fun (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
+let cuda_map_redo_map block_reduce_type n (map_load_op_macro, reduce_op_macro, map_store_macro) =
+    cuda_inner_compile <| fun (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
         let block_reduce_typedef = typedef ("cub::BlockReduce<"+block_reduce_type+", " + string map_redo_map_launcher_block_size + ">")
         let temp_storage = var "__shared__ BlockReduceT::TempStorage" ""
         let block_reduce = class1 block_reduce_typedef temp_storage
 
-        let reduce_op_name, reduce_op = lambda2 reduce_op_macro
+        let reduce_op_name, reduce_op = lambda2 (reduce_op_macro funs)
         let i = var "int" "blockIdx.x*blockDim.x + threadIdx.x"
         let value = var "auto" (map_load_op_macro i)
         let stride = var "const auto" "gridDim.x*blockDim.x"
@@ -445,22 +448,22 @@ let b_list (num_in, names_in as args) (g_map,g_flatten) =
 // Kernels
 
 let map_1_0_1 name forward_op backward_op =
-    let forward_macro macro (x, ()) o i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+    let forward_macro (x, ()) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let x,o = x i, o i // Note that this does not get evaluated, it will instead get expanded to the full thing on the Cuda side.
-        set o (macro x)
-    let backward_macro macro (x_pr,(),(o_pr,o_adj)) x_adj i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        set o (forward_op x)
+    let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj .* macro x_pr o_pr)
-    lazy compile_fb_template mapcoef (a_one, a_zero, a_one) name (forward_macro forward_op, backward_macro backward_op)
+        madd' x_adj (o_adj .* backward_op x_pr o_pr)
+    lazy compile_fb_template mapcoef (a_one, a_zero, a_one) name (forward_macro, backward_macro)
 
 let map_1_2_1 name forward_op backward_op =
-    let forward_macro macro (x,consts) o i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+    let forward_macro (x,consts) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let x,o = x i, o i // Note that this does not get evaluated, it will instead get expanded to the full thing on the Cuda side.
-        set o (macro x consts)
-    let backward_macro macro (x_pr,consts,(o_pr,o_adj)) x_adj i (lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        set o (forward_op x consts)
+    let backward_macro (x_pr,consts,(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj .* macro x_pr consts o_pr)
-    lazy compile_fb_template mapcoef (a_one, a_two, a_one) name (forward_macro forward_op, backward_macro backward_op)
+        madd' x_adj (o_adj .* backward_op x_pr consts o_pr)
+    lazy compile_fb_template mapcoef (a_one, a_two, a_one) name (forward_macro, backward_macro)
 
 let clip_fb_template name fw_op bw_op = 
     map_1_2_1 name
@@ -479,3 +482,16 @@ let square_fb = map_1_0_1 "Square" (fun x -> x .* x) (fun x_pr o_pr -> x_pr .* "
 let clip_fb = clip_fb_template "Clip" id (fun _ _ -> "1")
 let clipped_sigmoid_fb = clip_fb_template "ClippedSigmoid" sig_fw sig_bw
 
+let map_redo_map_1_0_1 name (forward_map_load_op, forward_reduce_op, forward_store_op) backward_op =
+    let forward_macro_load (x, ()) i =
+        forward_map_load_op (x i)
+    let forward_macro_reduce (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) a b = 
+        return_ (forward_reduce_op a b)
+    let forward_macro_store o result (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        set (o "0") (forward_store_op result)
+    let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
+        madd' x_adj (o_adj .* backward_op x_pr o_pr)
+    let forward_macro ins outs =
+        forward_macro_load ins, forward_macro_reduce, forward_macro_store outs
+    compile_fb_template mapcoef (a_one, a_zero, a_one) name (forward_macro, backward_macro)
