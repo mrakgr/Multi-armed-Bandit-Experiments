@@ -526,30 +526,29 @@ let random_nomalization =
 // The hadmult module generic in the number of input arguments.
 let hadmult_generic =
     memoize <| fun num_input_pairs ->
-        lazy
-            let rec forward_hadmult i = function
-                | a :: b :: [] ->
-                    (a i) .* (b i)
-                | a :: b :: t ->
-                    (a i) .* (b i) .+ forward_hadmult i t
-                | x -> failwithf "Should never reach here. x = %A" x
+        let rec forward_hadmult i = function
+            | a :: b :: [] ->
+                (a i) .* (b i)
+            | a :: b :: t ->
+                (a i) .* (b i) .+ forward_hadmult i t
+            | x -> failwithf "Should never reach here. x = %A" x
 
-            let name = "Hadmult"
-            let forward (ins,()) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-                set (o i) (forward_hadmult i ins)
-            let backward (ins_prim,(),(o_pr,o_adj)) ins_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-                let chunk2 l =
-                    List.chunkBySize 2 l
-                    |> List.map (fun [a;b] -> (a,b))
-                let adjl = chunk2 ins_adj
-                let priml = chunk2 ins_prim // Organizes the primals and the adjoints into pairs of two.
+        let name = "Hadmult"
+        let forward (ins,()) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+            set (o i) (forward_hadmult i ins)
+        let backward (ins_prim,(),(o_pr,o_adj)) ins_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+            let chunk2 l =
+                List.chunkBySize 2 l
+                |> List.map (fun [a;b] -> (a,b))
+            let adjl = chunk2 ins_adj
+            let priml = chunk2 ins_prim // Organizes the primals and the adjoints into pairs of two.
 
-                let o_adj = var "auto" (o_adj i)
-                List.iter2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
-                    madd' (adj_a i) (o_adj .* (prim_b i))
-                    madd' (adj_b i) (o_adj .* (prim_a i))
-                    ) adjl priml
+            let o_adj = var "auto" (o_adj i)
+            List.iter2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
+                madd' (adj_a i) (o_adj .* (prim_b i))
+                madd' (adj_b i) (o_adj .* (prim_a i))
+                ) adjl priml
                 
-            let args_in = a_list num_input_pairs ["a";"b"]
-            lazy compile_fb_template mapcoef (args_in, a_zero, a_one) name (forward, backward)
+        let args_in = a_list num_input_pairs ["a";"b"]
+        lazy compile_fb_template mapcoef (args_in, a_zero, a_one) name (forward, backward)
                 
