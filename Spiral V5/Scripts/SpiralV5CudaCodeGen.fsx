@@ -361,9 +361,6 @@ let compile_template module_ num_args kernel_name macro =
             kernel.BlockDimensions <- dim3 block_size
             kernel.RunAsync(str,signature_checker size_sig ins_sig outs_sig)
 
-let mapcoef_forward_compile num_args kernel_name macro =
-    compile_template mapcoef_forward num_args kernel_name macro
-
 let name_no_change f = f ""
 let name_into_primal f = f "_primal"
 let name_into_adjoint f = f "_adjoint"
@@ -404,9 +401,6 @@ let b_args (num_ins, num_consts, num_outs) =
     (num_outs (name_into_prim_adj,name_into_prim_adj_flatten)),
     (num_ins (name_into_adjoint,name_into_x_flatten))
 
-let mapcoef_backward_compile num_args kernel_name macro =
-    compile_template mapcoef_backward (b_args num_args) kernel_name macro
-
 let a_zero = f_zero, b_zero
 let a_one = f_one, b_one
 let a_two = f_two, b_two
@@ -431,44 +425,44 @@ let cuda_group (num_in, names_in) =
         List.map (f i) names_in) [1..num_in]
 
 let f_list (num_in, names_in as args) =
-    let map f x = List.map f (cuda_group args) |> List.unzip3
+    let map f = List.map (fun _ -> f ()) (cuda_group args) |> List.unzip3
     let flatten x = x
     map, flatten
 
 let b_list (num_in, names_in as args) (g_map,g_flatten) =
-    let names_into_prim_and_adj names = List.collect (fun name -> [name+"_primal";name+"_adjoint"]) names
-    let names_into_primals names = List.map (fun name -> name+"_primal") names
-    let names_into_adjoints names = List.map (fun name -> name+"_adjoint") names
-
-    let map f x = List.map (g_map f) (cuda_group args) |> List.unzip3
+    let map f = List.map (fun _ -> g_map f) (cuda_group args) |> List.unzip3
     let flatten_list x = List.collect g_flatten x
-    ((map names_into_primals),flatten_list), ((map id),flatten_list), 
-    ((map names_into_prim_and_adj),flatten_list),((map names_into_adjoints),flatten_list)
+    map, flatten_list
+
+let a_list num_in names_in = f_list (num_in, names_in), b_list (num_in, names_in)
 
 // Kernels
 
 let map_1_0_1 name forward_op backward_op =
     let forward_macro (x, ()) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-        let x,o = x i, o i // Note that this does not get evaluated, it will instead get expanded to the full thing on the Cuda side.
-        set o (forward_op x)
+        let def = var "auto"
+        let x = def (x i)
+        set (o i) (forward_op x)
     let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj .* backward_op x_pr o_pr)
+        let def = var "auto"
+        let x_pr, o_pr, o_adj = def (x_pr i), def (o_pr i), def (o_adj i)
+        madd' (x_adj i) (o_adj .* backward_op x_pr o_pr)
     lazy compile_fb_template mapcoef (a_one, a_zero, a_one) name (forward_macro, backward_macro)
 
 let map_1_2_1 name forward_op backward_op =
     let forward_macro (x,consts) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-        let x,o = x i, o i // Note that this does not get evaluated, it will instead get expanded to the full thing on the Cuda side.
-        set o (forward_op x consts)
+        let def = var "auto"
+        let x = def (x i)
+        set (o i) (forward_op x consts)
     let backward_macro (x_pr,consts,(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj .* backward_op x_pr consts o_pr)
+        let def = var "auto"
+        let x_pr, o_pr, o_adj = def (x_pr i), def (o_pr i), def (o_adj i)
+        madd' (x_adj i) (o_adj .* backward_op x_pr consts o_pr)
     lazy compile_fb_template mapcoef (a_one, a_two, a_one) name (forward_macro, backward_macro)
 
-let clip_fb_template name fw_op bw_op = 
-    map_1_2_1 name
-        (fun x (min,max) -> if_ (x .< min) min (if_ (x .> max) max (fw_op x)))
-        (fun x_pr (min,max) o_pr -> if_ (x_pr .< min .|| x_pr .> max) "0" (bw_op x_pr o_pr))
+let clip_fw fw_op x (min, max) = if_ (x .< min) min (if_ (x .> max) max (fw_op x))
+let clip_bw bw_op x_pr (min, max) o_pr = if_ (x_pr .< min .|| x_pr .> max) "0" (bw_op x_pr o_pr)
+let clip_fb_template name fw_op bw_op = map_1_2_1 name (clip_fw fw_op) (clip_bw bw_op)
 
 let sig_fw x = "1" ./ ("1" .+ (exp (neg x)))
 let sig_bw x_pr o_pr = o_pr .* ("1" .- o_pr)
@@ -492,10 +486,70 @@ let map_redo_map_1_0_1 name (forward_map_load_op, forward_reduce_op, forward_sto
     let forward_macro ins outs =
         forward_macro_load ins, forward_macro_reduce, forward_macro_store outs
     let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr, o_adj, x_adj i
-        madd' x_adj (o_adj .* backward_op x_pr o_pr)
-    compile_fb_template map_redo_map (a_one, a_zero, a_one) name (forward_macro, backward_macro)
+        let def = var "auto"
+        let x_pr = def (x_pr i)
+        madd' (x_adj i) (o_adj .* backward_op x_pr o_pr)
+    lazy compile_fb_template map_redo_map (a_one, a_zero, a_one) name (forward_macro, backward_macro)
 
 let sum_fb = map_redo_map_1_0_1 "Sum" (id,(.+),id) (fun _ _ -> "1")
 
-printfn "%A" sum_fb
+let mutable_mapcoef kernel_name num_args macro_forward =
+    compile_template mapcoef_forward num_args kernel_name macro_forward
+
+let gradclip = 
+    mutable_mapcoef "GradClip" (f_zero,f_one,f_one)
+    <| fun ((),bound) x i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
+        let x = x i
+        set x (if_ (x .< neg bound) (neg bound) (if_ (x .> bound) bound x))
+
+let sgd = 
+    mutable_mapcoef "Sgd" (f_zero,f_one,f_two)
+    <| fun ((),learning_rate) (x_pr,x_adj) i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
+        let x_pr, x_adj = x_pr i, x_adj i
+        madd' x_pr (x_adj .* learning_rate)
+        set x_adj "0"
+
+let clipped_sgd = 
+    mutable_mapcoef "ClippedSgd" (f_zero,f_two,f_two)
+    <| fun ((),(learning_rate,bound)) (x_pr,x_adj) i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
+        let x_pr, x_adj = x_pr i, x_adj i
+        let x_adj_clipped = clip_fw id x_adj (neg bound,bound)
+        madd' x_pr (x_adj_clipped .* learning_rate)
+        set x_adj "0"
+
+let random_nomalization = 
+    mutable_mapcoef "RandomNormalization" (f_zero,f_two,f_one)
+    <| fun ((),(scaling_factor,location)) x i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
+        let x = x i
+        set x (scaling_factor .* (x .- "0.5") .+ location)
+
+// The hadmult module generic in the number of input arguments.
+let hadmult_generic =
+    memoize <| fun num_input_pairs ->
+        lazy
+            let rec forward_hadmult i = function
+                | a :: b :: [] ->
+                    (a i) .* (b i)
+                | a :: b :: t ->
+                    (a i) .* (b i) .+ forward_hadmult i t
+                | x -> failwithf "Should never reach here. x = %A" x
+
+            let name = "Hadmult"
+            let forward (ins,()) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+                set (o i) (forward_hadmult i ins)
+            let backward (ins_prim,(),(o_pr,o_adj)) ins_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+                let chunk2 l =
+                    List.chunkBySize 2 l
+                    |> List.map (fun [a;b] -> (a,b))
+                let adjl = chunk2 ins_adj
+                let priml = chunk2 ins_prim // Organizes the primals and the adjoints into pairs of two.
+
+                let o_adj = var "auto" (o_adj i)
+                List.iter2 (fun (adj_a,adj_b) (prim_a,prim_b) ->
+                    madd' (adj_a i) (o_adj .* (prim_b i))
+                    madd' (adj_b i) (o_adj .* (prim_a i))
+                    ) adjl priml
+                
+            let args_in = a_list num_input_pairs ["a";"b"]
+            lazy compile_fb_template mapcoef (args_in, a_zero, a_one) name (forward, backward)
+                
