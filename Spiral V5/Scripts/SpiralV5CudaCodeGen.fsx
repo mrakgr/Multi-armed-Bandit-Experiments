@@ -146,8 +146,8 @@ let cuda_inner_compile kernel_body =
     let lambda2 lam =
         let v,a,b = varn "lambda_", varn "lambda_arg_", varn "lambda_arg_"
         [|"const auto ";v;" = [](const auto ";a;", const auto ";b;") {"|] |> state
-        lam a b
-        [|"}"|] |> state
+        enter (fun (a,b) -> lam a b) (a, b)
+        [|"};"|] |> state
         v, fun a b -> [|v;args2 a b|] |> expr
     let text x =
         [|x|] |> state
@@ -261,7 +261,7 @@ let map_redo_map_forward num_args kernel =
     let map_outs_f () =
         cudavar_ar1d "float *" "1" (fun (x: DM<int,float32>) -> [|box x.P.DevicePointer|]) ""
 
-    forward_template size_arg map_ins_f map_consts_f map_outs_f (kernel (cuda_map_redo_map size_var) size_sig) num_args
+    forward_template size_arg map_ins_f map_consts_f map_outs_f (kernel (cuda_map_redo_map "float" size_var) size_sig) num_args
 
 let f_zero =
     let map f = (),(),()
@@ -489,9 +489,13 @@ let map_redo_map_1_0_1 name (forward_map_load_op, forward_reduce_op, forward_sto
         return_ (forward_reduce_op a b)
     let forward_macro_store o result (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         set (o "0") (forward_store_op result)
-    let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
-        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr i, o_adj i, x_adj i
-        madd' x_adj (o_adj .* backward_op x_pr o_pr)
     let forward_macro ins outs =
         forward_macro_load ins, forward_macro_reduce, forward_macro_store outs
-    compile_fb_template mapcoef (a_one, a_zero, a_one) name (forward_macro, backward_macro)
+    let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        let x_pr, o_pr, o_adj, x_adj = x_pr i, o_pr, o_adj, x_adj i
+        madd' x_adj (o_adj .* backward_op x_pr o_pr)
+    compile_fb_template map_redo_map (a_one, a_zero, a_one) name (forward_macro, backward_macro)
+
+let sum_fb = map_redo_map_1_0_1 "Sum" (id,(.+),id) (fun _ _ -> "1")
+
+printfn "%A" sum_fb
