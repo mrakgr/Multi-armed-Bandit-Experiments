@@ -1,4 +1,4 @@
-﻿#load "SpiralV5DM.fsx"
+﻿#load "SpiralV5CudaCodeGen.fsx"
 open System
 open System.Diagnostics
 open SpiralV5
