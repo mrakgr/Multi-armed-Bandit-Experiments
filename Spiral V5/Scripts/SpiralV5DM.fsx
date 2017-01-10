@@ -84,7 +84,7 @@ let new_var (total_size: int) =
     x.Memset(0u)
     x
 
-let inline createDM (size: 's) (num_vars: int) =
+let inline create_dm (size: 's) (num_vars: int) =
     let total_size = size_to_total_size size
     new DM<'s,_>(size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
 
@@ -116,7 +116,7 @@ type DM with
 //        List.init num_auxes (fun i -> x.Data.[2+i])
 
     static member inline create (c,r) num_vars (x: float32[]) =
-        let d = createDM (c,r) num_vars
+        let d = create_dm (c,r) num_vars
         copyToDevice x d.P
         d
 

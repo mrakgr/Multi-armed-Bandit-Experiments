@@ -141,7 +141,7 @@ let cuda_inner_compile kernel_body =
         [|"while (";cond;") {"|] |> state
         enter body ()
         [|"}"|] |> state
-    let madd' x v =
+    let madd' x v = // TODO: Make madd' check for null first.
         [|x;" += ";v;";"|] |> state
     let lambda2 lam =
         let v,a,b = varn "lambda_", varn "lambda_arg_", varn "lambda_arg_"
@@ -251,15 +251,15 @@ let mapcoef_forward num_args kernel =
 
 let map_redo_map_forward num_args kernel =
     let size_arg, size_var, size_sig =
-        cudavar_var "const int" (fun (size: int) -> [|box size|]) ""
+        cudavar_var "const int" (fun (size: int) -> box size) ""
     
     let map_ins_f () =
-        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> [|box x.P.DevicePointer|]) ""
+        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) ""
     let map_consts_f () =
-        cudavar_var "const float" (fun (x: float32) -> [|box x|]) ""
+        cudavar_var "const float" (fun (x: float32) -> box x) ""
 
     let map_outs_f () =
-        cudavar_ar1d "float *" "1" (fun (x: DM<int,float32>) -> [|box x.P.DevicePointer|]) ""
+        cudavar_ar1d "float *" "1" (fun (x: DM<Scalar,float32>) -> box x.P.DevicePointer) ""
 
     forward_template size_arg map_ins_f map_consts_f map_outs_f (kernel (cuda_map_redo_map "float" size_var) size_sig) num_args
 
@@ -295,67 +295,78 @@ let f_four =
     map,flatten
 
 let backward_template 
-        size_arg map_ins_prim_f map_consts_f map_outs_f map_ins_adj_f kernel
-        ((map_ins_prim,flatten_ins_prim), (map_consts,flatten_consts), (map_outs,flatten_outs), (map_ins_adj,flatten_ins_adj))
+        size_arg map_ins_prim_f map_consts_f map_outs_prim_f map_outs_adj_f map_ins_adj_f kernel
+        ((map_ins_prim,flatten_ins_prim), (map_consts,flatten_consts), 
+         (map_outs_prim,flatten_outs_prim), (map_outs_adj,flatten_outs_adj),
+         (map_ins_adj,flatten_ins_adj))
         =
     let ins =
         let ins_prim_arg, ins_prim_var, ins_prim_sig = 
             map_ins_prim map_ins_prim_f
         let consts_arg, consts_var, consts_sig =
             map_consts map_consts_f
-        let outs_arg, outs_var, outs_sig =
-            map_outs map_outs_f
-        (ins_prim_arg,consts_arg,outs_arg),(ins_prim_var,consts_var,outs_var),(ins_prim_sig,consts_sig,outs_sig)
+        let outs_prim_arg, outs_prim_var, outs_prim_sig =
+            map_outs_prim map_outs_prim_f
+        let outs_adj_arg, outs_adj_var, outs_adj_sig =
+            map_outs_adj map_outs_adj_f
+        (ins_prim_arg,consts_arg,outs_prim_arg,outs_adj_arg),(ins_prim_var,consts_var,outs_prim_var,outs_adj_var),
+        (ins_prim_sig,consts_sig,outs_prim_sig,outs_adj_sig)
     let outs =
         let ins_adj_arg, ins_adj_var, ins_adj_sig = 
             map_ins_adj map_ins_adj_f
         ins_adj_arg, ins_adj_var, ins_adj_sig
     let args =
-        let (ins_prim_arg, consts_arg, outs_arg),_,_ = ins
+        let (ins_prim_arg, consts_arg, outs_prim_arg, outs_adj_arg),_,_ = ins
         let ins_adj_arg,_,_ = outs
-        size_arg :: ([flatten_ins_prim ins_prim_arg;flatten_consts consts_arg;flatten_outs outs_arg
-                      flatten_ins_adj ins_adj_arg] 
+        size_arg :: ([flatten_ins_prim ins_prim_arg;flatten_consts consts_arg;
+                      flatten_outs_prim outs_prim_arg;flatten_outs_adj outs_adj_arg // ins
+
+                      flatten_ins_adj ins_adj_arg] //outs
                       |> List.concat)
         |> String.concat ", "
     kernel ins outs args
 
 let mapcoef_backward num_args kernel =
     let size_arg, size_var,size_sig = 
-        cudavar_var "const int" (fun (size: int) -> [|box size|]) ""
+        cudavar_var "const int" (fun (size: int) -> box size) ""
     
     let map_ins_prim_f suffix = 
-        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> [|box x.P.DevicePointer|]) suffix
+        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) suffix
     let map_consts_f suffix = 
-        cudavar_var "const float" (fun (x: float32) -> [|box x|]) suffix
-    let map_outs_f suffix = 
-        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> [|box x.P.DevicePointer;box x.A.DevicePointer|]) suffix
+        cudavar_var "const float" (fun (x: float32) -> box x) suffix
+    let map_outs_prim_f suffix = 
+        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) suffix
+    let map_outs_adj_f suffix =
+        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.A.DevicePointer) suffix
     
     let map_ins_adj_f suffix = 
-        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> [|box x.A.DevicePointer|]) suffix
+        cudavar_ar1d "float *" size_var (fun (x: DM<int,float32>) -> box x.A.DevicePointer) suffix
 
-    backward_template size_arg map_ins_prim_f map_consts_f map_outs_f map_ins_adj_f (kernel (cuda_map size_var) size_sig) num_args
+    backward_template size_arg map_ins_prim_f map_consts_f map_outs_prim_f map_outs_adj_f map_ins_adj_f (kernel (cuda_map size_var) size_sig) num_args
 
 let map_redo_map_backward num_args kernel =
     let size_arg, size_var,size_sig = 
-        cudavar_var "const int" (fun (size: int) -> [|box size|]) ""
+        cudavar_var "const int" (fun (size: int) -> box size) ""
             
     let map_ins_prim_f suffix = 
-        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> [|box x.P.DevicePointer|]) suffix
+        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) suffix
     let map_consts_f suffix = 
-        cudavar_var "const float" (fun (x: float32) -> [|box x|]) suffix
-    let map_outs_f suffix = 
-        cudavar_var "const float" (fun (x: Df) -> [|box x.P.Value;box x.A.Value|]) suffix
+        cudavar_var "const float" (fun (x: float32) -> box x) suffix
+    let map_outs_prim_f suffix = 
+        cudavar_var "const float" (fun (x: Df) -> box x.P.Value) suffix
+    let map_outs_adj_f suffix = 
+        cudavar_var "const float" (fun (x: Df) -> box x.A.Value) suffix
     
     let map_ins_adj_f suffix = 
-        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> [|box x.A.DevicePointer|]) suffix
+        cudavar_ar1d "float *" size_var (fun (x: DM<int,float32>) -> box x.A.DevicePointer) suffix
 
-    backward_template size_arg map_ins_prim_f map_consts_f map_outs_f map_ins_adj_f (kernel (cuda_map size_var) size_sig) num_args
+    backward_template size_arg map_ins_prim_f map_consts_f map_outs_prim_f map_outs_adj_f map_ins_adj_f (kernel (cuda_map size_var) size_sig) num_args
 
 let compile_template module_ num_args kernel_name macro =
     module_ num_args <| fun cuda_kernel size_sig (_, ins_var, ins_sig) (_, outs_var, outs_sig) args ->
         let body = cuda_kernel (macro ins_var outs_var)
         let cuda_code = cuda_kernel_module kernel_name args body |> process_statements
-        let kernel = load_kernel_nvcc kernel_name cuda_code
+        let kernel = compile_kernel_using_nvcc_bat_router kernel_name cuda_code
         cuda_code, fun str (grid_size: int, block_size: int) signature_checker ->
             kernel.GridDimensions <- dim3 grid_size
             kernel.BlockDimensions <- dim3 block_size
@@ -364,42 +375,37 @@ let compile_template module_ num_args kernel_name macro =
 let name_no_change f = f ""
 let name_into_primal f = f "_primal"
 let name_into_adjoint f = f "_adjoint"
-let name_into_prim_adj f =
-    let (pr_arg,pr_var,pr_sig),(adj_arg,adj_var,adj_sig) = f "_primal", f "_adjoint"
-    (pr_arg,adj_arg),(pr_var,adj_var),(pr_sig,adj_sig)
 
-let name_into_x_flatten a = [a]
-let name_into_prim_adj_flatten (a, b) = [a;b] // The flatteners for the rest are name_into_x_flatten
-
-let b_zero (g_map,g_flatten) = f_zero
-let b_one (g_map,g_flatten) = 
+let b_zero g_map = f_zero
+let b_one g_map = 
     let map f = g_map f
-    let flatten x = [g_flatten x] |> List.concat
+    let flatten x = [x]
     map, flatten
-let b_two (g_map,g_flatten) = 
+let b_two g_map = 
     let map f = 
         let (a1,v1,s1),(a2,v2,s2) = g_map f, g_map f
         (a1,a2),(v1,v2),(s1,s2)
-    let flatten (x1,x2) = [g_flatten x1;g_flatten x2] |> List.concat
+    let flatten (x1,x2) = [x1;x2]
     map, flatten
-let b_three (g_map,g_flatten) = 
+let b_three g_map = 
     let map f = 
         let (a1,v1,s1),(a2,v2,s2),(a3,v3,s3) = g_map f, g_map f, g_map f
         (a1,a2,a3),(v1,v2,v3),(s1,s2,s3)
-    let flatten (x1,x2,x3) = [g_flatten x1;g_flatten x2;g_flatten x3] |> List.concat
+    let flatten (x1,x2,x3) = [x1;x2;x3]
     map, flatten
-let b_four (g_map,g_flatten) = 
+let b_four g_map = 
     let map f = 
         let (a1,v1,s1),(a2,v2,s2),(a3,v3,s3),(a4,v4,s4) = g_map f, g_map f, g_map f, g_map f
         (a1,a2,a3,a4),(v1,v2,v3,v4),(s1,s2,s3,s4)
-    let flatten (x1,x2,x3,x4) = [g_flatten x1;g_flatten x2;g_flatten x3;g_flatten x4] |> List.concat
+    let flatten (x1,x2,x3,x4) = [x1;x2;x3;x4]
     map, flatten
 
 let b_args (num_ins, num_consts, num_outs) =
-    (num_ins (name_into_primal,name_into_x_flatten)),
-    (num_consts (name_no_change,name_into_x_flatten)),
-    (num_outs (name_into_prim_adj,name_into_prim_adj_flatten)),
-    (num_ins (name_into_adjoint,name_into_x_flatten))
+    (num_ins name_into_primal),
+    (num_consts name_no_change),
+    (num_outs name_into_primal),
+    (num_outs name_into_adjoint),
+    (num_ins name_into_adjoint)
 
 let a_zero = f_zero, b_zero
 let a_one = f_one, b_one
@@ -429,9 +435,9 @@ let f_list (num_in, names_in as args) =
     let flatten x = x
     map, flatten
 
-let b_list (num_in, names_in as args) (g_map,g_flatten) =
+let b_list (num_in, names_in as args) g_map =
     let map f = List.map (fun _ -> g_map f) (cuda_group args) |> List.unzip3
-    let flatten_list x = List.collect g_flatten x
+    let flatten_list x = x
     map, flatten_list
 
 let a_list num_in names_in = f_list (num_in, names_in), b_list (num_in, names_in)
@@ -443,7 +449,7 @@ let map_1_0_1 name forward_op backward_op =
         let def = var "auto"
         let x = def (x i)
         set (o i) (forward_op x)
-    let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+    let backward_macro (x_pr,(),o_pr,o_adj) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let def = var "auto"
         let x_pr, o_pr, o_adj = def (x_pr i), def (o_pr i), def (o_adj i)
         madd' (x_adj i) (o_adj .* backward_op x_pr o_pr)
@@ -454,7 +460,7 @@ let map_1_2_1 name forward_op backward_op =
         let def = var "auto"
         let x = def (x i)
         set (o i) (forward_op x consts)
-    let backward_macro (x_pr,consts,(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+    let backward_macro (x_pr,consts,o_pr,o_adj) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let def = var "auto"
         let x_pr, o_pr, o_adj = def (x_pr i), def (o_pr i), def (o_adj i)
         madd' (x_adj i) (o_adj .* backward_op x_pr consts o_pr)
@@ -475,6 +481,10 @@ let square_fb = map_1_0_1 "Square" (fun x -> x .* x) (fun x_pr o_pr -> x_pr .* "
 
 let clip_fb = clip_fb_template "Clip" id (fun _ _ -> "1")
 let clipped_sigmoid_fb = clip_fb_template "ClippedSigmoid" sig_fw sig_bw
+let scalar_matrix_add_fb = 
+    map_1_2_1 "ScalarMatrixAdd" 
+        (fun x (coef,scalar) -> coef .* x .+ scalar) 
+        (fun x_pr (coef,scalar) o_pr -> coef)
 
 let map_redo_map_1_0_1 name (forward_map_load_op, forward_reduce_op, forward_store_op) backward_op =
     let forward_macro_load (x, ()) i =
@@ -485,7 +495,7 @@ let map_redo_map_1_0_1 name (forward_map_load_op, forward_reduce_op, forward_sto
         set (o "0") (forward_store_op result)
     let forward_macro ins outs =
         forward_macro_load ins, forward_macro_reduce, forward_macro_store outs
-    let backward_macro (x_pr,(),(o_pr,o_adj)) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+    let backward_macro (x_pr,(),o_pr,o_adj) x_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
         let def = var "auto"
         let x_pr = def (x_pr i)
         madd' (x_adj i) (o_adj .* backward_op x_pr o_pr)
@@ -536,7 +546,7 @@ let hadmult_generic =
         let name = "Hadmult"
         let forward (ins,()) o i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
             set (o i) (forward_hadmult i ins)
-        let backward (ins_prim,(),(o_pr,o_adj)) ins_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        let backward (ins_prim,(),o_pr,o_adj) ins_adj i (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
             let chunk2 l =
                 List.chunkBySize 2 l
                 |> List.map (fun [a;b] -> (a,b))

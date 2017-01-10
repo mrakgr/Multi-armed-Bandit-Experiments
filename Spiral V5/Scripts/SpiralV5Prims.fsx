@@ -228,69 +228,78 @@ module Primitives =
     let grid_size_and_block_size_for_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
 
-    let map_operation_template signature_checker_backward has_adjoint signature_checker_forward total_size outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
+    let operation_template grid_and_block_sizes signature_checker_backward has_adjoint signature_checker_forward total_size outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
         let (_,f_launch),(_,b_launch) = kernels.Value
         let str = env.Str.Stream
-        let grid_and_block_sizes = grid_size_and_block_size_for_map total_size
 
         f_launch str grid_and_block_sizes signature_checker_forward
         outs, fun () -> 
-            if env.IsInferenceOnly = false && has_adjoint then
+            if env.IsInferenceOnly = false && has_adjoint then // TODO: Maybe this should be removed?
                 b_launch str grid_and_block_sizes signature_checker_backward
 
-    let map_operation_template' total_size ins cvars outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
-        let (_,f_launch),(_,b_launch) = square_fb.Value
-        let str = env.Str.Stream
-        let grid_and_block_sizes = grid_size_and_block_size_for_map total_size
+    let map_operation_template signature_checker_backward has_adjoint signature_checker_forward total_size outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
+        operation_template (grid_size_and_block_size_for_map total_size) signature_checker_backward has_adjoint 
+                            signature_checker_forward total_size outs kernels env
 
-        let c = dm_like_with_primals ins env
-        f_launch str grid_and_block_sizes <| fun size_sig (ins_sig, cvars_sig) outs_sig ->
-            [|size_sig total_size;ins_sig ins; outs_sig c|]
+    // Creates a flattened view on a DM.
+    let inline flatten_dm (a: DM<_,_>) = new DM<_,_>(size_to_total_size a.Size,a.Data)
 
-    let map_operation_1_0_1 (ins: DM<_,_>) (cvars: unit) (kernels: Lazy<_>) (env: SpiralEnv<_>) =
-        //signature_checker_backward has_adjoint signature_checker_forward total_size
-        let total_size = size_to_total_size ins.Size
-        let outs = dm_like ins
+    let inline map_operation_1_0_1 (a: DM<_,_>) (kernels: Lazy<_>) (env: SpiralEnv<_>) =
+        let c = dm_like a env
+        let total_size = size_to_total_size a.Size
+        let ins = flatten_dm a
+        let outs = flatten_dm c
         let signature_checker_forward size_sig (ins_sig, cvars_sig) outs_sig =
             [|size_sig total_size;ins_sig ins; outs_sig outs|]
         let has_adjoint = ins.HasAdjoint
-        let signature_checker_backward size_sig (ins_prim_sig, cvars_sig, (outs_prim_sig,outs_adj_sig)) ins_adj_sig =
-            [|size_sig total_size;ins_sig ins; outs_sig outs|]
-        ()
+        let signature_checker_backward size_sig (ins_prim_sig, cvars_sig, outs_prim_sig, outs_adj_sig) ins_adj_sig =
+            [|size_sig total_size;ins_prim_sig ins;outs_prim_sig outs;outs_adj_sig outs;ins_adj_sig ins|]
+        map_operation_template
+            signature_checker_backward has_adjoint signature_checker_forward total_size 
+            c (kernels: Lazy<_>) (env: SpiralEnv<_>)
+
+    let inline map_operation_1_2_1 (a: DM<_,_>) (cvar1, cvar2) (kernels: Lazy<_>) (env: SpiralEnv<_>) =
+        let c = dm_like a env
+        let total_size = size_to_total_size a.Size
+        let ins = flatten_dm a
+        let outs = flatten_dm c
+        let signature_checker_forward size_sig (ins_sig, (cvars_sig1, cvars_sig2)) outs_sig =
+            [|size_sig total_size;ins_sig ins;cvars_sig1 cvar1;cvars_sig2 cvar2;outs_sig outs|]
+        let has_adjoint = ins.HasAdjoint
+        let signature_checker_backward size_sig (ins_prim_sig, (cvars_sig1, cvars_sig2), outs_prim_sig, outs_adj_sig) ins_adj_sig =
+            [|size_sig total_size;ins_prim_sig ins;outs_prim_sig outs;cvars_sig1 cvar1;cvars_sig2 cvar2;outs_adj_sig outs;ins_adj_sig ins|]
+        map_operation_template
+            signature_checker_backward has_adjoint signature_checker_forward total_size 
+            c (kernels: Lazy<_>) (env: SpiralEnv<_>)
 
     let grid_size_and_block_size_for_map_redo_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size
 
-    let inline map_redo_map_operation (a: _ list) cvars kernels env =
-        generic_operation env <| fun () ->
-            let h = a.Head
-            let c = env.Mem.GetDM(Scalar,default_num_vars,env)
+    let map_redo_map_operation_template signature_checker_backward has_adjoint signature_checker_forward total_size outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
+        operation_template (grid_size_and_block_size_for_map_redo_map total_size) signature_checker_backward has_adjoint 
+                            signature_checker_forward total_size outs kernels env
 
-            let input_prims, input_adjs, cvars, out_prim, _ = operation_prelude a c cvars
-
-            let h_total_size = size_to_total_size h.Size
-            let grid_size, block_size = grid_size_and_block_size_for_map_redo_map h_total_size
-            let size = CInt h_total_size
-
-            kernel_caller grid_size block_size
-                env.Str fst kernels (size :: input_prims @ cvars) [out_prim]
-
-            let c' = Df.create(lazy c.P.Gather().[0])
-            c', fun () ->
-                let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
-                if as_have_adjoint then
-                    let out_prim = c'.P.Value |> CF32
-                    let out_adj = c'.A.Value |> CF32
-                    kernel_caller grid_size block_size 
-                        env.Str snd kernels (out_prim :: out_adj :: size :: input_prims @ cvars) input_adjs
-    
-    let inline seqhadmult (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
-        let l = ab.Length
-        let args = ab |> List.collect (fun (a,b) -> [a;b])
-        map_operation args [] (hadmult_generic l) env
-
-    let inline hadmult  (ab: DM<'s,float32> * DM<'s,float32>) env =
-        seqhadmult [ab] env
+    let inline map_redo_map_operation_1_0_1 (a: DM<_,_>) (kernels: Lazy<_>) (env: SpiralEnv<_>) =
+        let outs = env.Mem.GetDM(Scalar,a.NumVars,env)
+        let total_size = size_to_total_size a.Size
+        let ins = flatten_dm a
+        let c = Df.create(lazy outs.P.Gather().[0])
+        let signature_checker_forward size_sig (ins_sig, cvars_sig) outs_sig =
+            [|size_sig total_size;ins_sig ins; outs_sig outs|]
+        let has_adjoint = ins.HasAdjoint
+        let signature_checker_backward size_sig (ins_prim_sig, cvars_sig, outs_prim_sig, outs_adj_sig) ins_adj_sig =
+            [|size_sig total_size;ins_prim_sig ins;outs_prim_sig c;outs_adj_sig c;ins_adj_sig ins|]
+        map_redo_map_operation_template
+            signature_checker_backward has_adjoint signature_checker_forward total_size 
+            c (kernels: Lazy<_>) (env: SpiralEnv<_>)
+                              
+//    let inline seqhadmult (ab: (DM<'s,float32> * DM<'s,float32>) list) env =
+//        let l = ab.Length
+//        let args = ab |> List.collect (fun (a,b) -> [a;b])
+//        map_operation args [] (hadmult_generic l) env
+//
+//    let inline hadmult  (ab: DM<'s,float32> * DM<'s,float32>) env =
+//        seqhadmult [ab] env
 
     /// alpha * a
     let scale (alpha: float32) (a:Df) (env: SpiralEnv<_>) =
@@ -313,20 +322,20 @@ module Primitives =
             c, fun _ -> ()
 
     let inline relu x = 
-        map_operation  [x] [] relu
+        map_operation_1_0_1 x relu_fb
     let inline tanh x =
-        map_operation  [x] [] tanh
+        map_operation_1_0_1 x tanh_fb
     let inline sigmoid x =
-        map_operation  [x] [] sigmoid
+        map_operation_1_0_1 x sigmoid_fb
     let inline clipped_sigmoid x min max =
-        map_operation  [x] [min;max] clipped_sigmoid
+        map_operation_1_2_1 x (min,max) clipped_sigmoid_fb
     let inline clip x min max =
-        map_operation  [x] [min;max] clip
+        map_operation_1_2_1 x (min,max) clip_fb
     let inline square x =
-        map_operation  [x] [] square
+        map_operation_1_0_1 x square_fb
     let inline sum x =
-        map_redo_map_operation [x] [] sum
+        map_redo_map_operation_1_0_1 x sum_fb
     let inline log x =
-        map_operation [x] [] log_
+        map_operation_1_0_1 x log_fb
     let inline scalar_matrix_add x coef scalar =
-        map_operation [x] [coef;scalar] scalar_matrix_add
+        map_operation_1_2_1 x (coef,scalar) scalar_matrix_add_fb
