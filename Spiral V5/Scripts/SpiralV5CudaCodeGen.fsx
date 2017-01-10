@@ -330,11 +330,11 @@ let mapcoef_backward num_args kernel =
     let size_arg, size_var,size_sig = 
         cudavar_var "const int" (fun (size: int) -> box size) ""
     
-    let map_ins_prim_f suffix = 
+    let map_ins_prim_f suffix =
         cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) suffix
-    let map_consts_f suffix = 
+    let map_consts_f suffix =
         cudavar_var "const float" (fun (x: float32) -> box x) suffix
-    let map_outs_prim_f suffix = 
+    let map_outs_prim_f suffix =
         cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) suffix
     let map_outs_adj_f suffix =
         cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.A.DevicePointer) suffix

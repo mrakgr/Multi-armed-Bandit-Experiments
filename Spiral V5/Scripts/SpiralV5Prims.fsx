@@ -228,6 +228,29 @@ module Primitives =
     let grid_size_and_block_size_for_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
 
+    let o_map_zero () () = ()
+    let o_map_one f1 x1 = f1 x1
+    let o_map_two (f1,f2) (x1,x2) = f1 x1, f2 x2
+    let o_map_three (f1,f2,f3) (x1,x2,x3) = f1 x1, f2 x2, f3 x3
+    let o_map_four (f1,f2,f3,f4) (x1,x2,x3,x4) = f1 x1, f2 x2, f3 x3, f4 x4
+
+    let o_toar_zero () = [||]
+    let o_toar_one x1 = [|x1|]
+    let o_toar_two (x1,x2) = [|x1;x2|]
+    let o_toar_three (x1,x2,x3) = [|x1;x2;x3|]
+    let o_toar_four (x1,x2,x3,x4) = [|x1;x2;x3;x4|]
+
+    let o_zero f x = o_map_zero f x |> o_toar_zero
+    let o_one f x = o_map_one f x |> o_toar_one
+    let o_two f x = o_map_two f x |> o_toar_two
+    let o_three f x = o_map_three f x |> o_toar_three
+    let o_four f x = o_map_four f x |> o_toar_four
+
+    let o_map_one' f x1 = f x1
+    let o_map_two' f (x1,x2) = f x1, f x2
+    let o_map_three' f (x1,x2,x3) = f x1, f x2, f x3
+    let o_map_four' f (x1,x2,x3,x4) = f x1, f x2, f x3, f x4
+
     let operation_template grid_and_block_sizes signature_checker_backward has_adjoint signature_checker_forward total_size outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
         let (_,f_launch),(_,b_launch) = kernels.Value
         let str = env.Str.Stream
@@ -243,6 +266,20 @@ module Primitives =
 
     // Creates a flattened view on a DM.
     let inline flatten_dm (a: DM<_,_>) = new DM<_,_>(size_to_total_size a.Size,a.Data)
+
+    let inline map_operation num_ins num_consts num_outs ins consts outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
+        let c = dm_like a env
+        let total_size = size_to_total_size a.Size
+        let ins = o_map_ flatten_dm a
+        let outs = flatten_dm c
+        let signature_checker_forward size_sig (ins_sig, cvars_sig) outs_sig =
+            [|size_sig total_size;ins_sig ins; outs_sig outs|]
+        let has_adjoint = ins.HasAdjoint
+        let signature_checker_backward size_sig (ins_prim_sig, cvars_sig, outs_prim_sig, outs_adj_sig) ins_adj_sig =
+            [|size_sig total_size;ins_prim_sig ins;outs_prim_sig outs;outs_adj_sig outs;ins_adj_sig ins|]
+        map_operation_template
+            signature_checker_backward has_adjoint signature_checker_forward total_size 
+            c (kernels: Lazy<_>) (env: SpiralEnv<_>)
 
     let inline map_operation_1_0_1 (a: DM<_,_>) (kernels: Lazy<_>) (env: SpiralEnv<_>) =
         let c = dm_like a env
