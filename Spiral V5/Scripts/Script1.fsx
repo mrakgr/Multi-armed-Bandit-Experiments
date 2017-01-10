@@ -11,6 +11,48 @@ open ManagedCuda.VectorTypes
 open ManagedCuda.CudaBlas
 
 module Primitives =
+//    type CallerVar =
+//    | CInt of int
+//    | CF32 of float32
+//    | CArrayInt of CudaDeviceVariable<int>
+//    | CArrayF32 of CudaDeviceVariable<float32>
+//
+//    let kernel_caller (grid_size: int) (block_size: int) (str: CudaStream) ex (ks: Lazy<_>) (args_in: CallerVar list) (args_out: CallerVar list) =
+//        let kernel, signs: CudaKernel * _ = ex ks.Value
+//        kernel.GridDimensions <- dim3 grid_size
+//        kernel.BlockDimensions <- dim3 block_size
+//        let signs_in, signs_out = List.splitAt args_in.Length signs
+//
+//        List.iter2 (fun arg sign ->
+//            match arg, sign with
+//            | CInt _, CudaVar(_, CudaConst CudaInt) -> ()
+//            | CF32 _, CudaVar(_, CudaConst CudaFloat) -> ()
+//            | CArrayInt _, CudaArray(_, CudaConst CudaInt, _) -> ()
+//            | CArrayF32 _, CudaArray(_, CudaConst CudaFloat, _) -> ()
+//            | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+//            ) args_in signs_in
+//
+//        List.iter2 (fun arg sign ->
+//            match arg, sign with
+//            | CInt _, CudaVar(_, CudaInt) -> ()
+//            | CF32 _, CudaVar(_, CudaFloat) -> ()
+//            | CArrayInt _, CudaArray(_, CudaInt, _) -> ()
+//            | CArrayF32 _, CudaArray(_, CudaFloat, _) -> ()
+//            | x,y -> failwithf "Typechecking failed for input arguments of kernel %s.\nThe non-matching types are %A,%A" kernel.KernelName x y
+//            ) args_out signs_out
+//
+//        let f x = x |> List.map (function
+//            | CInt x -> box x
+//            | CF32 x -> box x
+//            | CArrayInt x -> box x
+//            | CArrayF32 x -> box x
+//            )
+//
+//        let a1 = f args_in
+//        let a2 = f args_out
+//
+//        kernel.RunAsync(str.Stream, a1 @ a2 |> List.toArray)
+
     type VarF32 = CudaDeviceVariable<float32>
 
     let guardSizes (x: seq<'a>) =
@@ -132,12 +174,11 @@ module Primitives =
     let copy (to_: VarF32) (from: VarF32) (num_elems: int) (env: SpiralEnv<_>) =
         to_.AsyncCopyToDevice(from.DevicePointer,SizeT 0,SizeT 0,SizeT (sizeof<float32> * num_elems),env.Str)
 
-    /// Does not copy the values.
     let inline dm_like (a: DM<_,_>) (env: SpiralEnv<_>) =
         env.Mem.GetDM(a.Size,default_num_vars,env)
 
     /// Copies only the primals.
-    let inline dm_like_with_primals (a: DM<_,_>)  (env: SpiralEnv<_>) =
+    let inline dm_like_using_obj_pool (a: DM<_,_>)  (env: SpiralEnv<_>) =
         let c = dm_like a env
         copy c.P a.P (size_to_total_size c.Size) env
         c
@@ -225,38 +266,55 @@ module Primitives =
     let matmult (a: DM<int*int,float32>) (b: DM<int*int,float32>) (env: SpiralEnv<_>) =
         seqmatmult [a,b] env
 
+    let guarded_map_to_caller_var (a: DM<_,_> list) f =
+        a 
+        |> List.map (fun x -> x.Size)
+        |> guardSizes
+
+        a |> List.map (fun x -> f x)
+
+    let operation_prelude (a: DM<_,_> list) (c: DM<_,_>) cvars =
+        let input_prims = guarded_map_to_caller_var a <| fun x -> CArrayF32 x.P
+        let input_adjs = a |> List.map (fun x -> CArrayF32 x.A)
+        let cvars = List.map (fun x -> CF32 x) cvars
+        let out_prim = CArrayF32 c.P
+        let out_adj = CArrayF32 c.A
+
+        input_prims, input_adjs, cvars, out_prim, out_adj
+
     let grid_size_and_block_size_for_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_launcher_block_size), map_launcher_block_size
 
-    let map_operation_template signature_checker_backward has_adjoint signature_checker_forward total_size outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
-        let (_,f_launch),(_,b_launch) = kernels.Value
-        let str = env.Str.Stream
-        let grid_and_block_sizes = grid_size_and_block_size_for_map total_size
+//    let inline mutable_map_operation desired_args (a: DM<_,_>) cvars kernel env =
+//        let cvars = cvars |> List.map CF32
+//        let ins = get_args a desired_args |> List.map CArrayF32
+//
+//        let a_total_size = size_to_total_size a.Size
+//        let grid_size, block_size = grid_size_and_block_size_for_map a_total_size
+//        let size = CInt a_total_size
+//
+//        kernel_caller grid_size block_size
+//            env.Str id kernel cvars (size :: ins)
 
-        f_launch str grid_and_block_sizes signature_checker_forward
-        outs, fun () -> 
-            if env.IsInferenceOnly = false && has_adjoint then
-                b_launch str grid_and_block_sizes signature_checker_backward
+    let inline map_operation (a: _ list) cvars kernels env =
+        generic_operation env <| fun () ->
+            let h = a.Head
+            let c = dm_like h env
 
-    let map_operation_template' total_size ins cvars outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
-        let (_,f_launch),(_,b_launch) = square_fb.Value
-        let str = env.Str.Stream
-        let grid_and_block_sizes = grid_size_and_block_size_for_map total_size
+            let input_prims, input_adjs, cvars, out_prim, out_adj = operation_prelude a c cvars
 
-        let c = dm_like_with_primals ins env
-        f_launch str grid_and_block_sizes <| fun size_sig (ins_sig, cvars_sig) outs_sig ->
-            [|size_sig total_size;ins_sig ins; outs_sig c|]
+            let h_total_size = size_to_total_size h.Size
+            let grid_size, block_size = grid_size_and_block_size_for_map h_total_size
+            let size = CInt h_total_size
 
-    let map_operation_1_0_1 (ins: DM<_,_>) (cvars: unit) (kernels: Lazy<_>) (env: SpiralEnv<_>) =
-        //signature_checker_backward has_adjoint signature_checker_forward total_size
-        let total_size = size_to_total_size ins.Size
-        let outs = dm_like ins
-        let signature_checker_forward size_sig (ins_sig, cvars_sig) outs_sig =
-            [|size_sig total_size;ins_sig ins; outs_sig outs|]
-        let has_adjoint = ins.HasAdjoint
-        let signature_checker_backward size_sig (ins_prim_sig, cvars_sig, (outs_prim_sig,outs_adj_sig)) ins_adj_sig =
-            [|size_sig total_size;ins_sig ins; outs_sig outs|]
-        ()
+            kernel_caller grid_size block_size 
+                env.Str fst kernels (size :: input_prims @ cvars) [out_prim]
+
+            c, fun () ->
+                let as_have_adjoint = a |> List.exists (fun x -> x.HasAdjoint)
+                if as_have_adjoint then
+                    kernel_caller grid_size block_size 
+                        env.Str snd kernels (size :: out_prim :: out_adj :: input_prims @ cvars) input_adjs
 
     let grid_size_and_block_size_for_map_redo_map total_size =
         min (2*numSm*(1024/map_launcher_block_size)) (divup total_size map_redo_map_launcher_block_size), map_redo_map_launcher_block_size

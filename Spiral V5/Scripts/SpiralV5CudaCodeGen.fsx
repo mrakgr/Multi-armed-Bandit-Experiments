@@ -355,8 +355,8 @@ let compile_template module_ num_args kernel_name macro =
     module_ num_args <| fun cuda_kernel size_sig (_, ins_var, ins_sig) (_, outs_var, outs_sig) args ->
         let body = cuda_kernel (macro ins_var outs_var)
         let cuda_code = cuda_kernel_module kernel_name args body |> process_statements
-        cuda_code, fun str compiler_caller (grid_size: int) (block_size: int) signature_checker ->
-            let kernel: CudaKernel = compiler_caller cuda_code
+        let kernel = load_kernel_nvcc kernel_name cuda_code
+        cuda_code, fun str (grid_size: int, block_size: int) signature_checker ->
             kernel.GridDimensions <- dim3 grid_size
             kernel.BlockDimensions <- dim3 block_size
             kernel.RunAsync(str,signature_checker size_sig ins_sig outs_sig)
