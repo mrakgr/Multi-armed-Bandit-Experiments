@@ -245,6 +245,7 @@ module Primitives =
     let o_two f x = o_map_two f x |> o_toar_two
     let o_three f x = o_map_three f x |> o_toar_three
     let o_four f x = o_map_four f x |> o_toar_four
+    // 2017/1/11: Taking a 'break' from this library. I can't get it right in F#.
 
     let o_map_one' f x1 = f x1
     let o_map_two' f (x1,x2) = f x1, f x2
