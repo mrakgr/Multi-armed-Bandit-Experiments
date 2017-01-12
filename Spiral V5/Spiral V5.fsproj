@@ -82,7 +82,7 @@
     <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
     <None Include="Scripts\SpiralV5Prims.fsx" />
     <None Include="Scripts\SpiralV5Eval.fsx" />
-    <None Include="Scripts\Script1.fsx" />
+    <None Include="Scripts\typeshape_v0.fsx" />
     <None Include="Script1.fsx" />
   </ItemGroup>
   <ItemGroup>
@@ -113,6 +113,10 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Numerics" />
+    <Reference Include="TypeShape">
+      <HintPath>..\packages\TypeShape.2.8\lib\net40\TypeShape.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
   </ItemGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
