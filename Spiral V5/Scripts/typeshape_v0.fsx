@@ -14,10 +14,20 @@ module CudaShape =
     let (|CudaInt|_|) s = test<CudaInt> s
     let (|CudaFloat|_|) s = test<CudaFloat> s
 
-let mkCudaType<'T>() : 'T =
-    match shapeof<'T> with
-    | CudaShape.CudaInt -> unbox<'T> CudaInt
-    | CudaShape.CudaFloat -> unbox<'T> CudaFloat
-    | _ -> failwith "Unsupported type."
+type MapLambda<'ins,'consts,'outs> = 'ins -> 'consts -> 'outs
 
-let x: CudaFloat = mkCudaType()
+let mkCudaLambda<'ins, 'consts,'outs>(f: 'ins -> 'consts -> 'outs) : 'ins * 'consts * 'outs =
+    let rec mkElem (field : IShapeMember<'DeclaringType>) =
+        field.Accept {
+            new IMemberVisitor<'DeclaringType, ('DeclaringType -> _)> with
+                member __.Visit(field : ShapeMember<'DeclaringType, 'Field>) =
+                    field.Project
+        }
+
+    let ins =
+        match shapeof<'ins> with
+        | CudaShape.CudaInt -> unbox<'T> CudaInt
+        | CudaShape.CudaFloat -> unbox<'T> CudaFloat
+        | Shape.Tuple (:? ShapeTuple<'T> as shape) ->
+            let elems = shape.Elements |> Array.map mkElem
+        | _ -> failwith "Unsupported type."
