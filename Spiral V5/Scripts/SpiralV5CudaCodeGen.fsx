@@ -220,9 +220,36 @@ type CudaIntAr2D = CudaIntAr2D
 type CudaFloatAr2D = CudaFloatAr2D
 type CudaIntAr1D = CudaIntAr1D
 type CudaFloatAr1D = CudaFloatAr1D
-// These two are supposed to be expressions.
-type CudaInt = CudaInt of string
-type CudaFloat = CudaFloat of string
+// These two are supposed to be expression types.
+type CudaInt = CudaInt of string with
+    member t.DefaultValue() = ""
 
-let mkCudaLambdaArgs<'ins, 'consts,'outs>(f: 'ins -> 'consts -> 'outs) : 'ins * 'consts * 'outs =
-    Unchecked.defaultof<'ins>,Unchecked.defaultof<'consts>,Unchecked.defaultof<'outs>
+    // Mapcoef helpers
+    member t.ToMapIns() = "const int *"
+    member t.ToMapConsts() = "const int"
+    member t.ToMapOuts() = "int *"
+type CudaFloat = CudaFloat of string with
+    member t.DefaultValue() = ""
+
+    // Mapcoef helpers
+    member t.ToMapIns() = "const float *"
+    member t.ToMapConsts() = "const float"
+    member t.ToMapOuts() = "float *"
+
+/// For turning the nulls from defaultof into actual variables.
+let inline default_value x = (^a: (member DefaultValue: unit -> ^a) x)
+
+let inline mkCudaLambdaArgs(f: ^ins -> ^consts -> ^outs) : ^ins * ^consts * ^outs =
+    default_value Unchecked.defaultof< ^ins>, default_value Unchecked.defaultof< ^consts>, default_value Unchecked.defaultof< ^outs>
+
+let map_args ins consts outs =
+    let size_arg, size_var, size_sig = 
+        "const int", CudaInt "",  (fun (size: int) -> box size) ""
+    
+    let map_ins_f () = 
+        "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) ""
+    let map_consts_f () = 
+        "const float" (fun (x: float32) -> box x) ""
+
+    let map_outs_f () = 
+        "float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) ""
