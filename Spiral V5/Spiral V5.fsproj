@@ -83,9 +83,11 @@
     <None Include="Scripts\SpiralV5Tests.fsx" />
     <None Include="Scripts\SpiralV5.fsx" />
     <None Include="Scripts\SpiralV5DM.fsx" />
-    <None Include="Scripts\SpiralV5CudaCodeGen.fsx" />
+    <None Include="Scripts\SpiralV5CudaMetaCodeGen.fsx" />
     <None Include="Scripts\SpiralV5Prims.fsx" />
     <None Include="Scripts\SpiralV5Eval.fsx" />
+    <None Include="Scripts\Script1.fsx" />
+    <None Include="Scripts\SpiralV5CudaModules.fsx" />
     <None Include="Script1.fsx" />
   </ItemGroup>
   <ItemGroup>
