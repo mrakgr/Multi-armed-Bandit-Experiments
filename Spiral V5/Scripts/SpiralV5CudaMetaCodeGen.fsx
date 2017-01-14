@@ -45,28 +45,39 @@ let meta_mapcoef_arg name f =
         let names = String.concat ", " x
         sprintf """let %s = %s "" """ names v, arg, var, (sig_type, sig_expr))
 
-let sig_dm_int x = sprintf "(%s: DM<int,int>)" x, sprintf "box %s.P.DevicePointer" x
-let sig_dm_float x = sprintf "(%s: DM<int,float32>)" x, sprintf "box %s.P.DevicePointer" x
 
-let meta_mapcoef_ins_arg =
-    function
-    | CudaInt -> "cudavar_ar1d", "const int *", "size_var", sig_dm_int
-    | CudaFloat -> "cudavar_ar1d", "const float *", "size_var", sig_dm_float
-    |> meta_mapcoef_arg "ins"
+module MapForwardArgs =
+    let sig_dm_int x = sprintf "(%s: DM<int,int>)" x, sprintf "box %s.P.DevicePointer" x
+    let sig_dm_float x = sprintf "(%s: DM<int,float32>)" x, sprintf "box %s.P.DevicePointer" x
+
+    let sig_scalar_dm_int x = sprintf "(%s: DM<Scalar,int>)" x, sprintf "box %s.P.DevicePointer" x
+    let sig_scalar_dm_float x = sprintf "(%s: DM<Scalar,float32>)" x, sprintf "box %s.P.DevicePointer" x
+
+    let meta_map_ins_arg =
+        function
+        | CudaInt -> "cudavar_ar1d", "const int *", "size_var", sig_dm_int
+        | CudaFloat -> "cudavar_ar1d", "const float *", "size_var", sig_dm_float
+        |> meta_mapcoef_arg "ins"
+
+    let meta_mapcoef_outs_arg =
+        function
+        | CudaInt -> "cudavar_ar1d", "int *", "size_var", sig_dm_int
+        | CudaFloat -> "cudavar_ar1d", "float *", "size_var", sig_dm_float
+        |> meta_mapcoef_arg "outs"
+
+    let meta_map_redo_map_outs arg =
+        function
+        | CudaInt -> "cudavar_ar1d", "int *", "1", sig_scalar_dm_int
+        | CudaFloat -> "cudavar_ar1d", "float *", "1", sig_scalar_dm_float
+        |> meta_mapcoef_arg "outs"
         
-let meta_mapcoef_consts_arg =
+let meta_consts_arg =
     function
     | CudaInt -> "cudavar_var", "const int", "", (fun x -> sprintf "(%s: int)" x, sprintf "box %s" x)
     | CudaFloat -> "cudavar_var", "const float", "", (fun x -> sprintf "(%s: float32)" x, sprintf "box %s" x)
     |> meta_mapcoef_arg "consts"
 
-let meta_mapcoef_outs_arg =
-    function
-    | CudaInt -> "cudavar_ar1d", "int *", "size_var", sig_dm_int
-    | CudaFloat -> "cudavar_ar1d", "float *", "size_var", sig_dm_float
-    |> meta_mapcoef_arg "outs"
-
-let meta_mapcoef_forward_body map_ins map_consts map_outs ins consts outs (program: ResizeArray<_>) =
+let meta_forward_body map_ins map_consts map_outs ins consts outs (program: ResizeArray<_>) =
     let state = state program
     let states = states program
 
@@ -94,7 +105,7 @@ let meta_mapcoef_forward_body map_ins map_consts map_outs ins consts outs (progr
     sprintf "let sigs %s" (process_sigs ("(size: int)", "box size") ins_sig consts_sig outs_sig) |> state
     sprintf "kernel args size_var %s sigs" (List.choose id [ins_var; consts_var; outs_var] |> String.concat " ") |> state
 
-let meta_mapcoef_forward_outer ins consts outs f =
+let meta_outer interface_name ins consts outs f =
     let program = ResizeArray()
     let make_name (prefix,l) =
         List.map (function
@@ -103,7 +114,7 @@ let meta_mapcoef_forward_outer ins consts outs f =
     let name =
         List.collect make_name ["i",ins;"c",consts;"o",outs]
         |> String.concat "_"
-        |> (+) "mapcoef_forward_"
+        |> (+) interface_name
         
     sprintf "let %s kernel = " name |> state program
     enter program (f ins consts outs)
@@ -119,7 +130,7 @@ let mapcoef_forward_ii_ii_cf_of kernel =
     let sigs (size: int) ((ins_sig0: DM<int,int>), (ins_sig1: DM<int,int>)) ((consts_sig0: float32)) ((outs_sig0: DM<int,float32>)) = [|box size; box ins_sig0.P.DevicePointer; box ins_sig1.P.DevicePointer; box consts_sig0; box outs_sig0.P.DevicePointer|]
     kernel (ins_var0, ins_var1) (consts_var0) (outs_var0) sigs
 
-meta_mapcoef_forward_body meta_mapcoef_ins_arg meta_mapcoef_consts_arg meta_mapcoef_outs_arg
-|> meta_mapcoef_forward_outer [CudaInt;CudaInt] [CudaFloat] [CudaFloat]
+meta_forward_body MapForwardArgs.meta_map_ins_arg meta_consts_arg MapForwardArgs.meta_mapcoef_outs_arg
+|> meta_outer "mapcoef_forward_" [CudaInt;CudaInt] [CudaFloat] [CudaFloat]
 |> process_statements
 |> printfn "%s"
