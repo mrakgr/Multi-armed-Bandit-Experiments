@@ -44,45 +44,70 @@ let meta_arg name suffix f =
             [sprintf "%s_arg%i" name i; sprintf "%s_var%i" name i]
         let names = String.concat ", " x
         sprintf """let %s = %s %s """ names v suffix, arg, var, (sig_type, sig_expr))
-
-
-module MapForwardArgs =
-    let sig_dm_int x = sprintf "(%s: DM<int,int>)" x, sprintf "box %s.P.DevicePointer" x
-    let sig_dm_float x = sprintf "(%s: DM<int,float32>)" x, sprintf "box %s.P.DevicePointer" x
+        
+module Args =
+    let sig_1d_dm_int x = sprintf "(%s: DM<int,int>)" x, sprintf "box %s.P.DevicePointer" x
+    let sig_1d_dm_float x = sprintf "(%s: DM<int,float32>)" x, sprintf "box %s.P.DevicePointer" x
 
     let sig_scalar_dm_int x = sprintf "(%s: DM<Scalar,int>)" x, sprintf "box %s.P.DevicePointer" x
     let sig_scalar_dm_float x = sprintf "(%s: DM<Scalar,float32>)" x, sprintf "box %s.P.DevicePointer" x
 
-    let meta_map_ins_arg suffixes =
-        List.map (fun suffix ->
-            function
-            | CudaInt -> "cudavar_ar1d", "const int *", "size_var", sig_dm_int
-            | CudaFloat -> "cudavar_ar1d", "const float *", "size_var", sig_dm_float
-            |> meta_arg "ins" suffix) suffixes
+    let sig_int x = sprintf "(%s: int)" x, sprintf "box %s" x
+    let sig_float x = sprintf "(%s: float32)" x, sprintf "box %s" x
 
-    let meta_mapcoef_outs_arg suffixes =
-        List.map (fun suffix ->
-            function
-            | CudaInt -> "cudavar_ar1d", "int *", "size_var", sig_dm_int
-            | CudaFloat -> "cudavar_ar1d", "float *", "size_var", sig_dm_float
-            |> meta_arg "outs" suffix) suffixes
+    type VarFun =
+    | Var
+    | Ar1D of string
+    | Ar2D of string * string
 
-    let meta_map_redo_map_outs_arg suffixes =
-        List.map (fun suffix ->
-            function
-            | CudaInt -> "cudavar_ar1d", "int *", "1", sig_scalar_dm_int
-            | CudaFloat -> "cudavar_ar1d", "float *", "1", sig_scalar_dm_float
-            |> meta_arg "outs" suffix) suffixes
-        
+    type SigFun =
+    | SigAr1d
+    | SigArScalar
+    | SigArHostScalar
+
+    type IsConst =
+    | IsConst
+    | NotConst
+
+    type Suffix = Suffix of string
+
+    let arg_template var_fun size_var (sig_int, sig_float) name is_const (suffix: string) =
+        let suffix = if suffix.Length = 0 then quote "" else suffix
+        function
+         | CudaInt -> var_fun, is_const + " int *", size_var, sig_int
+         | CudaFloat -> var_fun, is_const + " float *", size_var, sig_float
+         |> meta_arg name suffix
+
+    let map_fun name is_const suffix = arg_template "cudavar_ar1d" "size_var" (sig_1d_dm_int, sig_1d_dm_float) name is_const suffix
+
+    let meta_map_ins_forward_arg =
+        [map_fun "ins" "const" ""]
+    let meta_map_ins_backward_arg =
+        [map_fun "ins" "const" "primal"; map_fun "ins" "" "adjoint"]
+
+    let meta_mapcoef_outs_forward_arg =
+        [map_fun "outs" "" ""]
+    let meta_mapcoef_outs_backward_arg =
+        [map_fun "outs" "const" "primal"; map_fun "outs" "const" "adjoint"]
+    let meta_map_redo_map_outs_forward_arg =
+        [arg_template "cudavar_ar1d" "1" (sig_scalar_dm_int,sig_scalar_dm_float) "outs" "" ""]
+    let meta_map_redo_map_outs_backward_arg =
+        [arg_template "cudavar_var" "" (sig_scalar_dm_int,sig_scalar_dm_float) "outs" "const" "primal"
+         arg_template "cudavar_var" "" (sig_scalar_dm_int,sig_scalar_dm_float) "outs" "const" "adjoint"]
+
 let meta_consts_arg =
-    [function
-     | CudaInt -> "cudavar_var", "const int", "", (fun x -> sprintf "(%s: int)" x, sprintf "box %s" x)
-     | CudaFloat -> "cudavar_var", "const float", "", (fun x -> sprintf "(%s: float32)" x, sprintf "box %s" x)
-     |> meta_arg "consts" ""]
+    let const_sig_int x = sprintf "(%s: int)" x, sprintf "box %s" x
+    let const_sig_float x = sprintf "(%s: float32)" x, sprintf "box %s" x
+    Args.arg_template 
+        "cudavar_var" ""
+        (const_sig_int,const_sig_float)
+
+//    [function
+//     | CudaInt -> , "const int", "", (fun x -> sprintf "(%s: int)" x, sprintf "box %s" x)
+//     | CudaFloat -> "cudavar_var", "const float", "", (fun x -> sprintf "(%s: float32)" x, sprintf "box %s" x)
+//     |> meta_arg "consts" ""]
 
 let meta_map1d_forward_body map_ins map_consts map_outs ins consts outs (program: ResizeArray<_>) =
-    let map_ins, map_consts, map_outs = (MapForwardArgs.meta_map_ins_arg [""]), meta_consts_arg, (MapForwardArgs.meta_mapcoef_outs_arg [""])
-
     let state = state program
     let states = states program
 
@@ -94,7 +119,7 @@ let meta_map1d_forward_body map_ins map_consts map_outs ins consts outs (program
         |> List.unzip3 |> fun (arg,var,sig_) -> List.concat arg, process_vars (List.concat var), List.concat sig_
 
     let ins_arg, ins_var, ins_sig = print_and_get_arg_and_var (List.map (fun f -> f ins) map_ins)
-    let consts_arg, consts_var, consts_sig = print_and_get_arg_and_var (List.map (fun f -> f outs) map_outs)
+    let consts_arg, consts_var, consts_sig = print_and_get_arg_and_var (List.map (fun f -> f consts) map_consts)
     let outs_arg, outs_var, outs_sig = print_and_get_arg_and_var (List.map (fun f -> f outs) map_outs)
     sprintf "let args = [size_arg; %s] |> String.concat \", \"" ([ins_arg;consts_arg;outs_arg] |> List.concat |> String.concat "; ") |> state
 
@@ -129,13 +154,13 @@ let mapcoef_forward_ii_ii_cf_of kernel =
     let size_arg, size_var = cudavar_var "const int" "" 
     let ins_arg0, ins_var0 = cudavar_ar1d "const int *" size_var "" 
     let ins_arg1, ins_var1 = cudavar_ar1d "const int *" size_var "" 
-    let consts_arg0, consts_var0 = cudavar_var "const float"  "" 
-    let outs_arg0, outs_var0 = cudavar_ar1d "float *" size_var "" 
+    let consts_arg0, consts_var0 = cudavar_var "const float"   
+    let outs_arg0, outs_var0 = cudavar_ar1d " float *" size_var "" 
     let args = [size_arg; ins_arg0; ins_arg1; consts_arg0; outs_arg0] |> String.concat ", "
     let sigs (size: int) ((ins_sig0: DM<int,int>), (ins_sig1: DM<int,int>)) ((consts_sig0: float32)) ((outs_sig0: DM<int,float32>)) = [|box size; box ins_sig0.P.DevicePointer; box ins_sig1.P.DevicePointer; box consts_sig0; box outs_sig0.P.DevicePointer|]
-    kernel (ins_var0, ins_var1) (consts_var0) (outs_var0) sigs
+    kernel args size_var (ins_var0, ins_var1) (consts_var0) (outs_var0) sigs
 
-meta_map1d_forward_body (MapForwardArgs.meta_map_ins_arg "") meta_consts_arg (MapForwardArgs.meta_mapcoef_outs_arg "")
+meta_map1d_forward_body (Args.meta_map_ins_forward_arg) meta_consts_arg (Args.meta_mapcoef_outs_forward_arg)
 |> meta_outer "mapcoef_forward_" [CudaInt;CudaInt] [CudaFloat] [CudaFloat]
 |> process_statements
 |> printfn "%s"
