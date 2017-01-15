@@ -310,7 +310,7 @@ let map_redo_map_1_0_1 name (forward_map_load_op, forward_reduce_op, forward_sto
 let sum_fb = map_redo_map_1_0_1 "Sum" (id,(.+),id) (fun _ _ -> "1")
 
 let mutable_mapcoef kernel_name num_args macro_forward =
-    compile_template mapcoef_forward num_args kernel_name macro_forward
+    lazy compile_template mapcoef_forward num_args kernel_name macro_forward
 
 let gradclip = 
     mutable_mapcoef "GradClip" (f_zero,f_one,f_one)
@@ -367,4 +367,38 @@ let hadmult_generic =
                 
         let args_in = a_list num_input_pairs ["a";"b"]
         lazy compile_fb_template mapcoef (args_in, a_zero, a_one) name (forward, backward)
-                
+  
+let get_accuracy_forward num_args kernel =
+    let size_arg, size_var, size_sig =
+        cudavar_var "const int" (fun (size: int) -> box size) ""
+    
+    let map_ins_f () =
+        cudavar_ar1d "const float *" size_var (fun (x: DM<int,float32>) -> box x.P.DevicePointer) ""
+    let map_consts_f () =
+        cudavar_var "const float" (fun (x: float32) -> box x) ""
+
+    let map_outs_f () =
+        cudavar_ar1d "float *" "1" (fun (x: DM<Scalar,float32>) -> box x.P.DevicePointer) "",
+        cudavar_ar1d "int *" "1" (fun (x: DM<Scalar,int>) -> box x.P.DevicePointer) ""
+
+    forward_template size_arg map_ins_f map_consts_f map_outs_f (kernel (cuda_map_redo_map "thrust::tuple<int,float>" size_var) size_sig) num_args
+
+let f_accuracy = 
+    let map f =
+        let (a1,v1,s1),(a2,v2,s2) = f ()
+        (a1,a2),(v1,v2),(s1,s2)
+    let flatten (x1,x2) = [x1;x2]
+    map,flatten
+
+let get_accuracy =
+    let forward_macro_load (x, ()) i =
+        thrust_make_tuple [|"float";"int"|] [|x i; i|]
+    let forward_macro_reduce (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) a b = 
+        return_ (if_ (a .> b) a b)
+    let forward_macro_store (o1,o2) result (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) =
+        set (o1 "0") (thrust_get_tuple "0" result)
+        set (o2 "0") (thrust_get_tuple "1" result) // TODO, fix this.
+    let forward_macro ins outs =
+        forward_macro_load ins, forward_macro_reduce, forward_macro_store outs
+
+    lazy compile_template get_accuracy_forward (f_one, f_zero, f_accuracy) "GetAccuracy" forward_macro

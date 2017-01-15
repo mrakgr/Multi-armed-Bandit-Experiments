@@ -3,6 +3,7 @@ open System
 open System.Diagnostics
 open SpiralV5
 open SpiralV5DM
+open SpiralV5CudaModules
 open SpiralV5CudaCodeGen
 
 open ManagedCuda
@@ -267,20 +268,6 @@ module Primitives =
 
     // Creates a flattened view on a DM.
     let inline flatten_dm (a: DM<_,_>) = new DM<_,_>(size_to_total_size a.Size,a.Data)
-
-    let inline map_operation num_ins num_consts num_outs ins consts outs (kernels: Lazy<_>) (env: SpiralEnv<_>) =
-        let c = dm_like a env
-        let total_size = size_to_total_size a.Size
-        let ins = o_map_ flatten_dm a
-        let outs = flatten_dm c
-        let signature_checker_forward size_sig (ins_sig, cvars_sig) outs_sig =
-            [|size_sig total_size;ins_sig ins; outs_sig outs|]
-        let has_adjoint = ins.HasAdjoint
-        let signature_checker_backward size_sig (ins_prim_sig, cvars_sig, outs_prim_sig, outs_adj_sig) ins_adj_sig =
-            [|size_sig total_size;ins_prim_sig ins;outs_prim_sig outs;outs_adj_sig outs;ins_adj_sig ins|]
-        map_operation_template
-            signature_checker_backward has_adjoint signature_checker_forward total_size 
-            c (kernels: Lazy<_>) (env: SpiralEnv<_>)
 
     let inline map_operation_1_0_1 (a: DM<_,_>) (kernels: Lazy<_>) (env: SpiralEnv<_>) =
         let c = dm_like a env

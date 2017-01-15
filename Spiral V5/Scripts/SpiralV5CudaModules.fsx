@@ -111,6 +111,14 @@ let (.-) x y = binary_op " - " x y
 
 let if_ cond true_ false_ = [|"((";cond;") ? (";true_;") : (";false_;"))"|] |> expr
 
+let thrust_make_tuple typs ins =
+    let typs = String.concat ", " typs
+    let ins = String.concat ", " ins
+    [|"thrust::make_tuple<";typs;">(";ins;")"|] |> expr
+
+let thrust_get_tuple ind t =
+    [|"thrust::get<";ind;">(";t;")"|] |> expr
+
 let cuda_inner_compile kernel_body =
     let program = ResizeArray()
     
@@ -151,9 +159,12 @@ let cuda_inner_compile kernel_body =
         v, fun a b -> [|v;args2 a b|] |> expr
     let text x =
         [|x|] |> state
-    let var typ init = 
+    let var typ (init: string) = 
         let v = varn "var_"
-        [|typ;" ";v;" = ";init;";"|] |> state
+        if init.Length > 0 then
+            [|typ;" ";v;" = ";init;";"|] |> state
+        else
+            [|typ;" ";v;";"|] |> state
         v
     let return_ x = [|"return ";x;";"|] |> state
 
@@ -165,6 +176,7 @@ let cuda_inner_compile kernel_body =
 let cuda_kernel_module kernel_name args method_body_macro = 
     cuda_outer_compile <| fun (method_, externCBlock, include_, expand) ->
         include_ "thrust/tuple.h"
+        include_ "thrust/functional.h"
         include_ "cub/cub.cuh"
         externCBlock ( fun () ->
             method_ "__global__ void " kernel_name args (fun () -> expand method_body_macro)
@@ -182,7 +194,7 @@ let cuda_map n map_macro =
 let cuda_map_redo_map block_reduce_type n (map_load_op_macro, reduce_op_macro, map_store_macro) =
     cuda_inner_compile <| fun (return_,lambda2, class1, typedef, ifvoid, set, for_, while_, madd', text, var as funs) ->
         let block_reduce_typedef = typedef ("cub::BlockReduce<"+block_reduce_type+", " + string map_redo_map_launcher_block_size + ">")
-        let temp_storage = var "__shared__ BlockReduceT::TempStorage" ""
+        let temp_storage = var ("__shared__ "+block_reduce_typedef+"::TempStorage") ""
         let block_reduce = class1 block_reduce_typedef temp_storage
 
         let reduce_op_name, reduce_op = lambda2 (reduce_op_macro funs)
