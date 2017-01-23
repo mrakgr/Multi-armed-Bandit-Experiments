@@ -95,11 +95,7 @@ type CudaExpr =
     static member (*)(x,y) = Mult(x,y)
     static member (/)(x,y) = Div(x,y)
     static member (%)(x,y) = Mod(x,y)
-    static member (.<)(x,y) = LT(x,y)
-    static member (.<=)(x,y) = LTE(x,y)
-    static member (.=)(x,y) = EQ(x,y)
-    static member (.>)(x,y) = GT(x,y)
-    static member (.>=)(x,y) = GTE(x,y)
+
     static member (<<<)(x,y) = LeftShift(x,y)
     static member (>>>)(x,y) = RightShift(x,y)
     /// The mutable assignment operator.
