@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main where
 
@@ -69,7 +70,7 @@ pr (Tanh x) = fun_call "tanh" [x]
 
 pr (If cond true false) = triop "if" cond "then" true "else" false
 
-q = (Add (C (2 :: Float)) (C 3)) |> Mul (C 6) |> Log |> pr
+--q = (Add (C (2 :: Float)) (C 3)) |> Mul (C 6) |> Log |> pr
 
 data CudaVarAr2d x where VarAr2d :: CudaVarScalar Int -> CudaVarScalar Int -> ByteString -> CudaVarAr2d x
 data CudaVarAr1d x where VarAr1d :: CudaVarScalar Int -> ByteString -> CudaVarAr1d x
@@ -98,12 +99,18 @@ varar1d_into_prim_adj (VarAr1d' (VarAr1d size name)) = VarTuple2 x1 x2 where
   x1 = f "_primal"
   x2 = f "_adjoint"
 
---map_into_prim_adj :: CudaVariable x -> CudaVariable x
+type family ResType t :: * where
+  ResType (x, y) = ((x, x), (y, y))
+  ResType (x, y, z) = ((x, x), (y, y), (z, z))
+
+map_into_prim_adj :: CudaVariable x -> CudaVariable (ResType x)
 map_into_prim_adj x =
   let f = varar1d_into_prim_adj in
   case x of
     VarTuple2 a b -> VarTuple2 (f a) (f b)
     VarTuple3 a b c -> VarTuple3 (f a) (f b) (f c)
+
+q = map_into_prim_adj x1
 
 main :: IO ()
 main = print "Hello"
