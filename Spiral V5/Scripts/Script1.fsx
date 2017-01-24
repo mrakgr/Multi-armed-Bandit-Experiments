@@ -4,7 +4,7 @@
 type TypePrinter = TypePrinter
 
 let inline print_type x =
-    let call (tok: ^T) = ((^T or ^in_) : (static member PrintType: TypePrinter * ^in_ -> string) tok, x)
+    let inline call (tok: ^T) = ((^T or ^in_) : (static member PrintType: TypePrinter * ^in_ -> string) tok, x)
     call TypePrinter
 
 type TypePrinter with

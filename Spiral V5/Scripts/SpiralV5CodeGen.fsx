@@ -96,6 +96,7 @@ let inline print_type x =
 
 type TypePrinter with
     static member inline PrintType(_: TypePrinter<float32>) = "float32"
+type TypePrinter with
     static member inline PrintType(_: TypePrinter<int>) = "int"
 
 type ArgsPrinter = ArgsPrinter
@@ -106,76 +107,81 @@ let inline print_arg x =
 type ArgsPrinter with
     static member inline PrintArg(_: ArgsPrinter, t: CudaScalar< ^t>) = 
         [|print_type (TypePrinter< ^t>()); t.Name|] |> String.concat " "
+type ArgsPrinter with
     static member inline PrintArg(_: ArgsPrinter, t: CudaAr1D< ^t>) = 
         [|print_type (TypePrinter< ^t>()); "*"; t.Name|] |> String.concat " "
+type ArgsPrinter with
     static member inline PrintArg(_: ArgsPrinter, t: CudaAr2D< ^t>) = 
         [|print_type (TypePrinter< ^t>()); "*"; t.Name|] |> String.concat " "
-
+type ArgsPrinter with
     static member inline PrintArg(_: ArgsPrinter, (x1, x2)) = 
         [|print_arg x1;print_arg x2|] |> String.concat ", "
+type ArgsPrinter with
     static member inline PrintArg(_: ArgsPrinter, (x1, x2, x3)) = 
         [|print_arg x1;print_arg x2;print_arg x3|] |> String.concat ", "
-//    static member inline PrintArg(_: ArgsPrinter, (x1, x2, x3, x4)) = 
-//        [|print_arg x1;print_arg x2;print_arg x3;print_arg x4|] |> String.concat ", "
-//    static member inline PrintArg(_: ArgsPrinter, (x1, x2, x3, x4, x5)) = 
-//        [|print_arg x1;print_arg x2;print_arg x3;print_arg x4;print_arg x5|] |> String.concat ", "
+type ArgsPrinter with
+    static member inline PrintArg(_: ArgsPrinter, (x1, x2, x3, x4)) = 
+        [|print_arg x1;print_arg x2;print_arg x3;print_arg x4|] |> String.concat ", "
+type ArgsPrinter with
+    static member inline PrintArg(_: ArgsPrinter, (x1, x2, x3, x4, x5)) = 
+        [|print_arg x1;print_arg x2;print_arg x3;print_arg x4;print_arg x5|] |> String.concat ", "
 
-//type CudaProgram =
-//| Statement of string
-//| Indent
-//| Dedent
-//| Statements of ResizeArray<CudaProgram>
-//
-//let process_statements (statements: ResizeArray<CudaProgram>) =
-//    let rec process_statement (code: StringBuilder,ind as state) statement =
-//        match statement with
-//        | Statement x -> [|String.replicate ind " "; x; "\n"|] |> expr |> code.Append, ind
-//        | Indent -> code, ind+4
-//        | Dedent -> code, ind-4
-//        | Statements x -> process_statements state x
-//    and process_statements state (statements: ResizeArray<CudaProgram>) =
-//        Seq.fold process_statement state statements
-//    process_statements (StringBuilder(),0) statements
-//    |> fun (code,ind) -> code.ToString()
-//
-//let state x (program: ResizeArray<_>) = x |> String.concat "" |> Statement |> program.Add
-//let enter body v (program: ResizeArray<_>) =
-//    Indent |> program.Add
-//    body v
-//    Dedent |> program.Add
-//
-//let (|?>) a b program = a program; b program; ()
-//
-//// Outer language.
-//
-//let inline method_ rtype kernel_name ins consts outs body =
-//    let args = print_arg (ins, consts, outs)
-//    state [|rtype;kernel_name;"(";args;") {"|]
-//    |?> enter body ()
-//    |?> state [|"}"|]
-//
-//let externCBlock body =
-//    state [|"extern \"C\" {"|]
-//    |?> enter body ()
-//    |?> state [|"}"|]
-//
-//let include_ str =
-//    [|"#include "; quote str|] |> state
-//
-//// The reader monad
-//
-//type ReaderBuilder() =
-//    member t.Return x = fun r -> x
-//    member t.Bind(a,f) = fun r -> f (a r) r
-//    member t.ReturnFrom x = x
-//
-//let reader = ReaderBuilder()
-//
-//// Inner language.
-//
-//let var_1d (init: CudaExpr<'t> option) = 
-//    let v = varn "var_"
-//    match init with
-//    | Some init -> [|typ;" ";v;" = ";init;";"|] |> state
-//    | None -> [|typ;" ";v;";"|] |> state
-//    v
+type CudaProgram =
+| Statement of string
+| Indent
+| Dedent
+| Statements of ResizeArray<CudaProgram>
+
+let process_statements (statements: ResizeArray<CudaProgram>) =
+    let rec process_statement (code: StringBuilder,ind as state) statement =
+        match statement with
+        | Statement x -> [|String.replicate ind " "; x; "\n"|] |> expr |> code.Append, ind
+        | Indent -> code, ind+4
+        | Dedent -> code, ind-4
+        | Statements x -> process_statements state x
+    and process_statements state (statements: ResizeArray<CudaProgram>) =
+        Seq.fold process_statement state statements
+    process_statements (StringBuilder(),0) statements
+    |> fun (code,ind) -> code.ToString()
+
+let state x (program: ResizeArray<_>) = x |> String.concat "" |> Statement |> program.Add
+let enter body v (program: ResizeArray<_>) =
+    Indent |> program.Add
+    body v
+    Dedent |> program.Add
+
+let (|?>) a b program = a program; b program; ()
+
+// Outer language.
+
+let inline method_ rtype kernel_name ins consts outs body =
+    let args = print_arg (ins, consts, outs)
+    state [|rtype;kernel_name;"(";args;") {"|]
+    |?> enter body ()
+    |?> state [|"}"|]
+
+let externCBlock body =
+    state [|"extern \"C\" {"|]
+    |?> enter body ()
+    |?> state [|"}"|]
+
+let include_ str =
+    [|"#include "; quote str|] |> state
+
+// The reader monad
+
+type ReaderBuilder() =
+    member t.Return x = fun r -> x
+    member t.Bind(a,f) = fun r -> f (a r) r
+    member t.ReturnFrom x = x
+
+let reader = ReaderBuilder()
+
+// Inner language.
+
+let var_1d (init: CudaExpr<'t> option) = 
+    let v = varn "var_"
+    match init with
+    | Some init -> [|typ;" ";v;" = ";init;";"|] |> state
+    | None -> [|typ;" ";v;";"|] |> state
+    v
