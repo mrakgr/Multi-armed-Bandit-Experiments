@@ -92,6 +92,7 @@
     <None Include="Scripts\Script2.fsx" />
     <None Include="Scripts\min_repro.fsx" />
     <None Include="Scripts\Script3.fsx" />
+    <None Include="Scripts\Script4.fsx" />
     <None Include="Script1.fsx" />
   </ItemGroup>
   <ItemGroup>
