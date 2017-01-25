@@ -1,18 +1,28 @@
+-- I have no idea what is going on here.
+
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+-- {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
+
 module Main where
 
-import CountEntries (listDirectory)
-import System.Directory (doesDirectoryExist)
-import System.FilePath ((</>))
-import Control.Monad (forM_, when)
-import Control.Monad.Trans (liftIO)
-import Control.Monad.Writer (WriterT, tell)
+import Control.Monad.Writer
+import Control.Monad.State
 
-countEntries :: FilePath -> WriterT [(FilePath, Int)] IO ()
-countEntries path = do
-  contents <- liftIO . listDirectory $ path
-  tell [(path, length contents)]
-  forM_ contents $ \name -> do
-    let newName = path </> name
-    isDir <- liftIO . doesDirectoryExist $ newName
-    when isDir $ countEntries newName
-  return password
+-- stati :: Int -> State Int Int
+stati x = state $ const x
+logi (x :: [Char]) = lift $ writer (2,x)
+
+-- test_monad :: WriterT d m x
+test_monad = do
+  logi "Hello, "
+  logi "Writter."
+
+-- w = do
+--   x <- runState $ runWriterT test_monad
+--   return x
+
+main = do
+  -- (q,result) <- w
+  print "hello"

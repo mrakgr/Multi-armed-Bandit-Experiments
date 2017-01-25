@@ -5,6 +5,7 @@
 
 module Main where
 
+import Control.Monad.Writer
 import qualified Prelude as P
 import Data.String (fromString)
 import qualified Data.ByteString.Char8 as B
@@ -133,6 +134,7 @@ instance CudaFun Print where
   exp = fun_call "exp"
   log = fun_call "log"
   tanh = fun_call "tanh"
+
 
 test = if c True then c 1 + c 2 * (- (c 3)) else c 999 |> log
 
