@@ -1,3 +1,5 @@
+-- This thing is such a mess. Let me try again.
+
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
