@@ -135,10 +135,51 @@ instance CudaFun Print where
   log = fun_call "log"
   tanh = fun_call "tanh"
 
-
 test = if c True then c 1 + c 2 * (- (c 3)) else c 999 |> log
 
 q = eval test
 w = pr test
+
+class CudaOuter repr where
+  include :: ByteString -> repr ()
+  externCBlock :: repr () -> repr ()
+  method :: ByteString -> repr (ins -> outs) -> repr ()
+
+data Statements =
+  Statement ByteString
+  | Indent
+  | Dedent
+  | Statements [Statements]
+
+newtype StatementsParser x = StatementsParser {st :: Writer [Statements] ()}
+
+quote x = ["\"",x,"\""] |> B.concat
+
+instance CudaOuter StatementsParser where
+  include x = StatementsParser $ writer ((), [Statement $ quote x])
+  externCBlock body =
+    let f x = writer ((),x) in
+    let body' = st body |> execWriter in
+    [Indent, Statements body', Dedent] |> f |> StatementsParser
+
+  method name body = -- These variables are simplified right now.
+    let f x = writer ((),x) in
+    let prefix = "__global__ void" in
+    let args = "(int *x)" in
+    let body_op = "{" in
+    let body' = st body |> execWriter in
+    let body_end = "}" in
+    let pt1 = [[prefix, name, args, body_op] |> B.intercalate " " |> Statement] in
+    let pt2 = [Indent, Statements body', Dedent] in
+    let pt3 = [Statement body_end] in
+    [pt1,pt2,pt3] |> concat |> f |> StatementsParser
+
+--- The outer level of the Cuda compiler language.
+cuda_kernel_module kernel_name method_body_macro = do
+  include "thrust/tuple.h"
+  include "thrust/functional.h"
+  include "cub/cub.cuh"
+  externCBlock $ do
+    method kernel_name method_body_macro
 
 main = print "Hello"
