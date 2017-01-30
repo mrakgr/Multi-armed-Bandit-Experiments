@@ -8,7 +8,7 @@
 
 module Main where
 
-import Control.Monad.Writer
+import Control.Monad.RWS
 import qualified Prelude as P
 import Data.String (fromString)
 import qualified Data.ByteString.Char8 as B
@@ -158,24 +158,28 @@ data Statements =
 
 quote x = ["\"",x,"\""] |> B.concat
 
-type StatementsParser = Writer [Statements]
+type StatementsParser = RWS () [Statements] Int
+
+enter body = do
+  tell [Indent]
+  f <- body
+  tell [Dedent]
+  return f
 
 instance CudaOuter StatementsParser where
   include x = [quote x |> Statement] |> tell
-  externCBlock body =
-    let body' = body |> execWriter in
-    [[Indent],body',[Dedent]] |> concat |> tell
-
+  externCBlock = enter
   method name body = -- These variables are simplified right now.
     let prefix = "__global__ void" in
     let args = "(int *x)" in
     let body_op = "{" in
-    let (f,body') = runWriter body in
     let body_end = "}" in
     let pt1 = [[prefix, name, args, body_op] |> B.intercalate " " |> Statement] in
-    let pt2 = [[Indent], body', [Dedent]] |> concat in
-    let pt3 = [Statement body_end] in
-    (Method(name,f), [pt1,pt2,pt3] |> concat) |> writer
+    let pt3 = [Statement body_end] in do
+    tell pt1
+    f <- enter body
+    tell pt3
+    return $ Method(name,f)
 
 --- The outer level of the Cuda compiler language.
 cuda_kernel_module kernel_name method_body_macro = do
@@ -192,7 +196,7 @@ empty_function =
 
 test_outer =
   cuda_kernel_module "TestKernel" empty_function
-  |> execWriter
+  |> execRWS
 
 newtype Class types = Class {class' :: ByteString}
 newtype Typedef typ = Typedef {typedef' :: ByteString}
@@ -200,14 +204,20 @@ newtype Var typ = Var {var' :: ByteString}
 newtype Lambda typ = Lambda {lambda' :: ByteString}
 
 class CudaInner repr where
-  for :: repr vars -> repr (vars -> Bool) -> repr (vars -> vars) -> repr ()
+  for :: repr vars -> repr (vars -> Bool) -> repr (vars -> vars) -> repr (vars -> ()) -> repr ()
   if_ :: repr Bool -> repr x -> repr x -> repr ()
-  class_ :: ByteString -> repr args -> repr (Class (typesof args)) -- TODO: Bring in type families for this.
+  class_ :: ByteString -> repr args -> repr (Class args)
   typedef :: ByteString -> repr (Typedef typ)
   set :: repr (Var typ) -> repr typ -> repr ()
   while :: repr Bool -> repr (() -> ()) -> repr ()
   lambda :: repr (ins -> outs) -> repr (Lambda (ins -> outs))
   var :: repr typ -> repr (Var typ)
   return_ :: repr typ
+
+-- instance CudaInner StatementsParser where
+--   for init cond incr body =
+--     let vars = get_vars init in do
+
+
 
 main = print "Hello"
