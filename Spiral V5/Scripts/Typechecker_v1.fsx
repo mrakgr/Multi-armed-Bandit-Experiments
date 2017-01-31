@@ -37,13 +37,21 @@ let rec cg e =
     | AppC(f,a) ->
         [cg f; cg a; [EqCon (TExp f,TArrow(TExp a,TExp e))]] |> List.concat
 
-type Substitution = Map<Term,Term>
+type Substitution = (Term * Term) list
 
-let lookup x sub = Map.tryFind x sub
-let extend_replace var is sub = 
-    match lookup var sub with
-    | Some v -> failwith "the term already exists in the map."
-    | None -> Map.add var is sub
+let lookup l sub = List.tryFind (fun x -> fst x = l) sub
+let rec extend_replace var is sub =
+    match sub with
+    | [] -> (var, is) :: sub
+    | (var', is') :: xs -> 
+        if var = var' then failwith "Variable occurs twice in the mapping set."
+        let rec replace cur = 
+            match cur with
+            | TExp _ | TVar _ | TNum -> if var <> cur then cur else is
+            | TArrow (d,r) ->
+                if var <> cur then TArrow(replace d, replace r)
+                else is
+        (var', replace is') :: extend_replace var is xs
 
 let unify c =
     let rec unify c sub =
@@ -55,13 +63,13 @@ let unify c =
             match l,r with
             | TVar _, _ | TExp _, _ ->
                 match lookup l sub with
-                | Some bound -> unify (EqCon(bound,r) :: cs) sub
+                | Some bound -> unify (EqCon(snd bound,r) :: cs) sub
                 | None -> unify cs (extend_replace l r sub)
             | TNum, TNum -> unify cs sub
             | TArrow(d,r), TArrow(d',r') ->
                 unify (EqCon(d,d') :: EqCon(r,r') :: cs) sub
             | _ -> failwithf "unify %A and %A" l r
-    unify c Map.empty
+    unify c []
 
 let id = LamC("x",IdC "x")
 let appId = AppC(id,NumC 5)
