@@ -14,6 +14,7 @@ type TyExprC =
 | PlusC of TyExprC * TyExprC
 | MultC of TyExprC * TyExprC
 | LamC of arg: Symbol * argT: Type * retT: Type * body: TyExprC
+| RecC of name: Symbol * arg: Symbol * argT: Type * retT: Type * body: TyExprC * use_: TyExprC
 
 type Env = Map<Symbol, Value>
 
@@ -41,7 +42,13 @@ let rec tc expr tenv =
         match ft,at with
         | FunT(ft',at'), at -> if at' = at then ft else failwith "app arg mismatch"
         | _, _ -> failwith "not a function"
-    | LamC (name,argT,retT,body) ->
-        if retT = tc body (tenv.Add (name, argT)) then FunT(argT,retT)
+    | LamC (arg,argT,retT,body) ->
+        if retT = tc body (tenv.Add (arg, argT)) then FunT(argT,retT)
         else failwith "lam type mismatch"
+    | RecC (name,arg,argT,retT,body,use_) ->
+        let extended_tenv = tenv.Add (name, FunT (argT, retT))
+        if retT <> tc body (extended_tenv.Add (arg,argT)) then failwith "body return type not correct"
+        else tc use_ extended_tenv
+
+let t1 = PlusC (NumC 1, NumC 2)
 
