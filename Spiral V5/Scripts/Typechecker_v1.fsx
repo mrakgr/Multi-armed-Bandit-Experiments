@@ -1,4 +1,6 @@
-﻿// http://cs.brown.edu/courses/cs173/2012/book/types.html
+﻿// 2/1/2017: To be continued...
+
+// http://cs.brown.edu/courses/cs173/2012/book/types.html
 
 type Number = int
 type Symbol = string
