@@ -94,6 +94,7 @@
     <None Include="Scripts\Typechecker_v0.fsx" />
     <None Include="Scripts\Typechecker_v1.fsx" />
     <None Include="Script1.fsx" />
+    <None Include="Try Two\Typechecker.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
