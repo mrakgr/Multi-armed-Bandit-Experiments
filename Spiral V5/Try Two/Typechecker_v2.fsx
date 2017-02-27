@@ -20,45 +20,51 @@ type Expr =
     | LitBool of bool
     | T of Expr list // T stands for tuple
 
-and TyEvalResult =
+and TyOrExpr =
     | Ty of Ty
     | Expr of Expr
 
-and EnvType = Map<string,TyEvalResult>
+and EnvType = Map<string,TyOrExpr>
 
 type TyExpr = Expr * Ty
+type TyV = string * Ty
 
 type TypedExpr =
-    | TyV of string * Ty
+    | TyV of TyV
     | TyIf of TyExpr * TyExpr * TyExpr
-    | TyLet of (string * Ty) * TyExpr * TyExpr
+    | TyLet of TyV * TyExpr * TyExpr
     | TyLitInt of int
     | TyLitFloat of float
     | TyLitBool of bool
     | TyT of TyExpr list // T stands for tuple
     
-let rec teval (env: EnvType) exp =
+let rec teval (env: EnvType) inline_args exp: TypedExpr =
     match exp with
     | V x -> 
         match Map.tryFind x env with
-        | Some x -> x
+        | Some l ->
+            match l with
+            | Expr(Inlineable(x,b,env)) -> 
+                let r = 
+                    match inline_args with
+                    | Some x -> x
+                    | None -> failwith "Args not present in evaluation of Inlineable."
+                let env = // Extract the previous environment
+                    match !env with
+                    | Some x -> x
+                    | None -> failwith "Previous env not found for Inlineable."
+                let env = // Add the arguments to it.
+                    List.fold (fun env (arg,typ) ->
+                        Map.add arg typ env
+                        ) env (List.zip x r)
+                teval env None b
+            | Expr _ -> failwithf "Expected: inlineable, type\nGot: %A and args(%A) instead" l inline_args
+            | Ty t -> TyV(x,t)
         | None -> failwith "Variable not bound."
     | Inline(l,r) ->
-        let l,r = teval env l, List.map (teval env) r
-        match l with
-        | Expr(Inlineable(x,b,env)) -> 
-            let env = // Extract the previous environment
-                match !env with
-                | Some x -> x
-                | None -> failwith "Previous env not found for inlineable."
-            let env = // Add the arguments to it.
-                List.fold (fun env (arg,typ) ->
-                    Map.add arg typ env
-                    ) env (List.zip x r)
-            match teval env b with
-            | Expr _ as x -> failwithf "Expected: base type\nGot: %A" x
-            | Ty _ as x -> x
-        | _ -> failwithf "Expected: inlineable, type\nGot: %A and %A instead" l r
+        let r = List.map (teval env inline_args) r
+        teval env (Some r) l
+        
     | If(cond,tr,fl) ->
         match teval env cond with
         | Ty Bool -> ()
