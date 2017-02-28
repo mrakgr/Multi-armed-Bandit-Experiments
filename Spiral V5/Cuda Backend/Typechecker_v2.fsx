@@ -15,7 +15,7 @@ type Expr =
     | LitBool of bool
     | T of Expr list // T stands for tuple
 
-type TyV = string * Ty
+type TyV = int64 * string * Ty
 
 type TypedExpr =
     | TyV of TyV
@@ -27,7 +27,7 @@ type TypedExpr =
     | TyT of TypedExpr list
 
 let rec get_type = function
-    | TyV(_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
+    | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
     | TyLitInt _ -> Int
     | TyLitFloat _ -> Float
     | TyLitBool _ -> Bool
@@ -38,6 +38,13 @@ type ReturnCases =
     | RExpr of Expr * EnvType
     | RError of string
 and EnvType = Map<string,ReturnCases>
+
+let get_tag =
+    let mutable x = 0L
+    fun () -> 
+        let x' = x
+        x <- x + 1L
+        x'
 
 let rec teval (env: EnvType) inline_args exp: ReturnCases =
     match exp with
@@ -78,9 +85,9 @@ let rec teval (env: EnvType) inline_args exp: ReturnCases =
         match teval env [] b with
         | RTypedExpr b' ->
             let b'_type = get_type b'
-            let v' = TyV(v,b'_type)
-            match teval (Map.add v (RTypedExpr v') env) inline_args e with
-            | RTypedExpr e' -> RTypedExpr(TyLet((v,b'_type),b',e',get_type e'))
+            let v' = get_tag(),v,b'_type
+            match teval (Map.add v (RTypedExpr <| TyV(v')) env) inline_args e with
+            | RTypedExpr e' -> RTypedExpr(TyLet(v',b',e',get_type e'))
             | RExpr(_,_) -> RExpr(orig,env)
             | RError er -> RError er
         | RExpr _ as b -> teval (Map.add v b env) inline_args e
@@ -95,14 +102,14 @@ let rec teval (env: EnvType) inline_args exp: ReturnCases =
                 | RTypedExpr x -> loop (x::acc) ls
                 | RExpr _ as x -> RExpr (orig, env)
                 | RError _ as x -> x
-            | [] -> RTypedExpr (TyT acc)
+            | [] -> RTypedExpr (TyT (List.rev acc))
         loop [] ls
 
 let inl x y = Inlineable(x,y)
 let inap x y = Inline(x,y)
 let l x b i = Let(x,b,i)
 
-// Some tests
+// Assorted tests
 let term1 = inap (inl ["x";"y"] (V "x")) [LitInt 1; LitInt 2] 
 let t1 = teval Map.empty [] term1
 
@@ -122,3 +129,46 @@ let term3 =
                     inap (V "inl") [V "c";V "d"]]))
             (inap (V "fun") [V "inlineable"; LitInt 1; LitInt 2; LitFloat 1.5; LitInt 2]))
 let t3 = teval Map.empty [] term3
+
+let term4 = 
+    l "a" (LitInt 2)
+        (l "b" (LitBool true)
+            (T [V "a"; V "b"]))
+let t4 = teval Map.empty [] term4
+
+let term5 = // If test
+    l "if" (inl ["cond";"tr";"fl"] (If(V "cond",V "tr",V "fl")))
+        (l "cond" (LitBool true)
+            (l "tr" (LitFloat 3.33)
+                (l "fl" (LitFloat 4.44)
+                    (inap (V "if") [V "cond";V "tr";V "fl"]))))
+let t5 = teval Map.empty [] term5
+
+let term6 = // Error in conditional
+    l "if" (inl ["cond";"tr";"fl"] (If(V "cond",V "tr",V "fl")))
+        (l "cond" (LitInt 2)
+            (l "tr" (LitFloat 3.33)
+                (l "fl" (LitFloat 4.44)
+                    (inap (V "if") [V "cond";V "tr";V "fl"]))))
+let t6 = teval Map.empty [] term6
+
+let term7 = // Error in branches
+    l "if" (inl ["cond";"tr";"fl"] (If(V "cond",V "tr",V "fl")))
+        (l "cond" (LitBool true)
+            (l "tr" (LitInt 3)
+                (l "fl" (LitFloat 4.44)
+                    (inap (V "if") [V "cond";V "tr";V "fl"]))))
+let t7 = teval Map.empty [] term7
+
+let term8 = // Hygiene test
+    l "f" 
+        (inl ["g"] 
+            (l "a" (LitInt 2)
+                (l "b" (LitBool true)
+                    (T [(inap (V "g") []);V "a";V "b"]))))
+        (l "g" (inl [] 
+            (l "a" (LitFloat 4.4)
+                (l "b" (LitInt 4) (T [V "a"; V "b"]))))
+            (inap (V "f") [V "g"]))
+                
+let t8 = teval Map.empty [] term8
