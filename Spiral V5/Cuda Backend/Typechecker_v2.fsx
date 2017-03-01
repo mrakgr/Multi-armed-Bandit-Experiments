@@ -1,4 +1,5 @@
 ﻿type Ty = 
+    | Unit
     | Int
     | Float
     | Bool
@@ -14,6 +15,8 @@ type Expr =
     | LitFloat of float
     | LitBool of bool
     | T of Expr list // T stands for tuple
+    | Method of string list * Expr
+    | Annotate of Expr * Expr list
 
 type TyV = int64 * string * Ty
 
@@ -25,14 +28,15 @@ type TypedExpr =
     | TyLitFloat of float
     | TyLitBool of bool
     | TyT of TypedExpr list
+    | TyMethod of TyV list * TypedExpr * Ty
 
 let rec get_type = function
-    | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
+    | TyMethod(_,_,t) | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
     | TyLitInt _ -> Int
     | TyLitFloat _ -> Float
     | TyLitBool _ -> Bool
     | TyT l -> List.map get_type l |> Tuple
-
+    
 type ReturnCases =
     | RTypedExpr of TypedExpr
     | RExpr of Expr * EnvType
@@ -46,20 +50,20 @@ let get_tag =
         x <- x + 1L
         x'
 
-let rec teval (env: EnvType) inline_args exp: ReturnCases =
+let rec teval (env: EnvType) inline_args (apply_args: (string list * EnvType) list) exp: ReturnCases =
     match exp with
     | V x -> 
         match Map.tryFind x env with
         | Some (RTypedExpr _ as v) -> v
-        | Some (RExpr(v,env)) -> teval env inline_args v
+        | Some (RExpr(v,env)) -> teval env inline_args apply_args v
         | Some (RError _ as e) -> e
         | None -> RError <| sprintf "Variable %A not bound." x
     | Inline(expr,args) ->
-        teval env ((args,env) :: inline_args) expr
+        teval env ((args,env) :: inline_args) apply_args expr
     | If(cond,tr,fl) as orig ->
-        match teval env inline_args cond with
+        match teval env inline_args apply_args cond with
         | RTypedExpr cond' when get_type cond' = Bool ->
-            match teval env inline_args tr, teval env inline_args fl with
+            match teval env inline_args apply_args tr, teval env inline_args apply_args fl with
             | RTypedExpr tr, RTypedExpr fl -> 
                 if get_type tr = get_type fl then
                     RTypedExpr <| TyIf(cond',tr,fl,get_type tr)
@@ -75,22 +79,22 @@ let rec teval (env: EnvType) inline_args exp: ReturnCases =
                 let env =
                     (args, cur_args) ||>
                     List.fold2 (fun env' arg cur_arg -> 
-                        Map.add arg (teval env'' [] cur_arg) env'
+                        Map.add arg (teval env'' [] apply_args cur_arg) env'
                         ) env
-                teval env other_args body
+                teval env other_args apply_args body
             else
                 RError "args.Length = cur_args.Length failed in the Inlineable case"
         | [] -> RExpr(inl,env)
     | Let(v,b,e) as orig ->
-        match teval env [] b with
+        match teval env [] apply_args b with
         | RTypedExpr b' ->
             let b'_type = get_type b'
             let v' = get_tag(),v,b'_type
-            match teval (Map.add v (RTypedExpr <| TyV(v')) env) inline_args e with
+            match teval (Map.add v (RTypedExpr <| TyV(v')) env) inline_args apply_args e with
             | RTypedExpr e' -> RTypedExpr(TyLet(v',b',e',get_type e'))
             | RExpr(_,_) -> RExpr(orig,env)
             | RError er -> RError er
-        | RExpr _ as b -> teval (Map.add v b env) inline_args e
+        | RExpr _ as b -> teval (Map.add v b env) inline_args apply_args e
         | RError _ as e -> e
     | LitInt x -> RTypedExpr (TyLitInt x)
     | LitFloat x -> RTypedExpr (TyLitFloat x)
@@ -98,12 +102,29 @@ let rec teval (env: EnvType) inline_args exp: ReturnCases =
     | T ls as orig ->
         let rec loop acc = function
             | l::ls ->
-                match teval env inline_args l with
+                match teval env inline_args apply_args l with
                 | RTypedExpr x -> loop (x::acc) ls
                 | RExpr _ as x -> RExpr (orig, env)
                 | RError _ as x -> x
             | [] -> RTypedExpr (TyT (List.rev acc))
         loop [] ls
+    | Method(args,body) ->
+        match apply_args with
+        | (cur_args,env'') :: other_args ->
+            if args.Length = cur_args.Length then
+                let rec loop acc = function
+                    | l::ls ->
+                        match Map.tryFind l env'' with
+                        | Some(RTypedExpr _ as x) -> loop (Map.add l x acc) ls
+                        | _ -> None
+                    | [] -> Some acc
+                match loop Map.empty cur_args with
+                | Some env -> 
+                    let body = teval env [] [] body // This is a significant restriction...
+                    RTypedExpr(TyMethod(cur_args,body,get_type body))
+            else
+                RError "args.Length = cur_args.Length failed in the Method case"
+        | [] -> RError "No arguments to apply to the Method"
 
 let inl x y = Inlineable(x,y)
 let inap x y = Inline(x,y)
