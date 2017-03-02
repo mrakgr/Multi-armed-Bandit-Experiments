@@ -1,10 +1,11 @@
-﻿type Ty = 
+﻿type Ty =
     | Unit
     | Int
     | Float
     | Bool
     | Tuple of Ty list
-    | TArr of Ty list * Ty
+    | TArr of arg_types: Ty list * return_type: Ty // No type variables allowed in instantiated types. Prenex polymorhism only for now.
+    | TVar of string
 
 type Expr = 
     | V of string
@@ -16,11 +17,13 @@ type Expr =
     | LitFloat of float
     | LitBool of bool
     | T of Expr list // T stands for tuple
-    | Method of string list * Expr
-    | Apply of Expr * Expr list
+    | Method of tag: int64 * type_vars: Ty list * args: (string * Ty) list * body: Expr * return_type: Ty
+    | ApplyType of Expr * type_vars: Ty list
+    | Apply of Expr * args: Expr list
 
 type TyV = int64 * string * Ty
 
+// This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 type TypedExpr =
     | TyV of TyV
     | TyIf of TypedExpr * TypedExpr * TypedExpr * Ty
@@ -29,11 +32,11 @@ type TypedExpr =
     | TyLitFloat of float
     | TyLitBool of bool
     | TyT of TypedExpr list
-    | TyMethod of TyV list * TypedExpr * Ty
+    | TyMethod of tag: int64 * TyV list * TypedExpr * whole_type: Ty // Not just the return type. The TypedExpr body has the return type.
     | TyApply of TypedExpr * TypedExpr list * Ty
 
 let rec get_type = function
-    | TyApply(_,_,t) | TyMethod(_,_,t) | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
+    | TyApply(_,_,t) | TyMethod(_,_,_,t) | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
     | TyLitInt _ -> Int
     | TyLitFloat _ -> Float
     | TyLitBool _ -> Bool
@@ -44,6 +47,7 @@ type ReturnCases =
     | RExpr of Expr * EnvType
     | RError of string
 and EnvType = Map<string,ReturnCases>
+type TypeEnvType = Map<string,Ty>
 
 let get_tag =
     let mutable x = 0L
@@ -52,31 +56,35 @@ let get_tag =
         x <- x + 1L
         x'
 
+type ArgCases =
+    | InlineArgs of Expr list * EnvType
+    | ApplyTypeArgs of Ty list * TypeEnvType
+
 open System.Collections.Generic
 type Data =
     {
     // Immutable
     env : EnvType
-    inline_args : (Expr list * EnvType) list
-    apply_args : (Expr list * EnvType) list
+    type_env: TypeEnvType
+    args : ArgCases list
     // Mutable
-    global_methods : Dictionary<int64 * Ty list,string * TypedExpr> // For hoisted out global methods.
+    //global_methods : Dictionary<int64 * Ty list,string * TypedExpr> // For hoisted out global methods.
     }
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
-let d0() = {env=Map.empty;inline_args=[];apply_args=[];global_methods=Dictionary()}
+let d0() = {env=Map.empty;type_env=Map.empty;args=[]}
 
 let rec teval (d: Data) exp: ReturnCases =
     match exp with
     | V x -> 
         match Map.tryFind x d.env with
         | Some (RTypedExpr _ as v) -> v
-        | Some (RExpr(v,env)) -> teval d v
+        | Some (RExpr(v,env)) -> teval {d with env=env} v
         | Some (RError _ as e) -> e
         | None -> RError <| sprintf "Variable %A not bound." x
     | Inline(expr,args) ->
-        teval {d with inline_args = (args,d.env) :: d.inline_args} expr
+        teval {d with args = InlineArgs (args,d.env) :: d.args} expr
     | If(cond,tr,fl) as orig ->
         match teval d cond with
         | RTypedExpr cond' when get_type cond' = Bool ->
@@ -90,47 +98,138 @@ let rec teval (d: Data) exp: ReturnCases =
             | a, b -> RError <| sprintf "Expected either both equal types or non-evaluated in conditional.\nGot true: %A\nGot false: %A" a b
         | x -> RError <| sprintf "Expected bool in conditional.\nGot: %A" x
     | Inlineable(args,body) as inl ->
-        match d.inline_args with
-        | (cur_args,env'') :: other_args ->
+        match d.args with
+        | InlineArgs (cur_args,env'') :: other_args ->
             if args.Length = cur_args.Length then
                 let env =
                     (args, cur_args) ||>
                     List.fold2 (fun env' arg cur_arg -> 
-                        Map.add arg (teval {d with env=env''; inline_args=[]} cur_arg) env'
+                        Map.add arg (teval {d with env=env''; args=[]} cur_arg) env'
                         ) d.env
-                teval {d with env=env; inline_args=other_args} body
+                teval {d with env=env; args=other_args} body
             else
                 RError "args.Length = cur_args.Length failed in the Inlineable case"
+        | x :: other_args -> RError "Unexpected arguments in Inlineable."
         | [] -> RExpr(inl,d.env)
     | Let(v,b,e) as orig ->
-        match teval {d with inline_args=[]; apply_args=[]} b with
+        match teval {d with args=[]} b with
         | RTypedExpr b' ->
             let b'_type = get_type b'
             let v' = get_tag(),v,b'_type
             match teval {d with env=Map.add v (RTypedExpr <| TyV(v')) d.env} e with
             | RTypedExpr e' -> RTypedExpr(TyLet(v',b',e',get_type e'))
-            | RExpr(e,_) -> RError <| sprintf "Got expression %A on the right side of a Let" e
+            // If there aren't enough arguments to apply to the final expression, just save it for later evaluation.
+            | RExpr(e,_) -> RExpr(orig,d.env)
             | RError er -> RError er
         | RExpr _ as b -> teval {d with env=Map.add v b d.env} e
         | RError _ as e -> e
-    | LitInt x -> RTypedExpr (TyLitInt x)
-    | LitFloat x -> RTypedExpr (TyLitFloat x)
-    | LitBool x -> RTypedExpr (TyLitBool x)
+    | LitInt x -> 
+        match d.args with
+        | [] -> RTypedExpr (TyLitInt x)
+        | _ -> RError "Cannot apply a int literal."
+    | LitFloat x -> 
+        match d.args with
+        | [] -> RTypedExpr (TyLitFloat x)
+        | _ -> RError "Cannot apply a float literal."
+    | LitBool x -> 
+        match d.args with
+        | [] -> RTypedExpr (TyLitBool x)
+        | _ -> RError "Cannot apply a bool literal."
     | T ls as orig ->
-        let rec loop acc = function
-            | l::ls ->
-                match teval d l with
-                | RTypedExpr x -> loop (x::acc) ls
-                | RExpr _ as x -> RExpr (orig, d.env)
-                | RError _ as x -> x
-            | [] -> RTypedExpr (TyT (List.rev acc))
-        loop [] ls
+        match d.args with
+        | [] ->
+            let rec loop acc = function
+                | l::ls ->
+                    match teval d l with
+                    | RTypedExpr x -> loop (x::acc) ls
+                    | RExpr _ as x -> RError "Only typed expressions are allowed in tuples." //RExpr (orig, d.env)
+                    | RError _ as x -> x
+                | [] -> RTypedExpr (TyT (List.rev acc))
+            loop [] ls
+        | _ -> RError "Tuples can't be applied."
+    | Method(tag, type_vars, args, body, return_type) as orig ->
+        match d.args with
+        | [] -> RExpr (orig, d.env)
+        | ApplyTypeArgs (cur_vars,tenv'') :: other_args ->
+            let rec create_map_from_tvars_to_cvars acc = function
+                | TVar tv :: tvs, cv :: cvs -> create_map_from_tvars_to_cvars (Map.add tv cv acc) (tvs,cvs)
+                | _, cv :: cvs -> Fail "Only type variable declarations are allowed in the type_vars field of the Method definition."
+                | [], [] -> Succ acc
+                | _ -> Fail "Declaration and application argument lengths do not match in the Method case."
+                 
+            match create_map_from_tvars_to_cvars tenv'' (type_vars,cur_vars) with
+            | Fail er -> RError er
+            | Succ tenv -> 
+                let rec substitute_tvars_with_cvars l = 
+                    let rest t n xs =
+                        match substitute_tvars_with_cvars xs with
+                        | Some y -> Some ((get_tag(),n,t) :: y)
+                        | None -> None
+                    match l with
+                    | (n, TVar t) :: xs ->
+                        match Map.tryFind t tenv with
+                        | Some t -> rest t n xs
+                        | None -> None
+                    | (n, t) :: xs -> rest t n xs
+                    | [] -> Some []
 
-//    | Method of string list * Expr
-//    | Apply of Expr * Expr list
+                let return_type = 
+                    match return_type with
+                    | TVar t -> Map.tryFind t tenv
+                    | t -> Some t
 
-//    | TyMethod of TyV list * TypedExpr * Ty
-//    | TyApply of TypedExpr * TypedExpr list * Ty
+                match substitute_tvars_with_cvars args, return_type with
+                | Some (args : TyV list), Some return_type ->
+                    let whole_type =
+                        let args = List.map (fun (_,_,x) -> x) args
+                        TArr(args,return_type)
+                    match teval {d with type_env=tenv} body with
+                    | RTypedExpr body when get_type body = return_type -> RTypedExpr(TyMethod(get_tag(),args,body,whole_type))
+                    | RTypedExpr body -> RError "Body's return type in the method evaluation must equal the annotated type."
+                    | RExpr _ -> RError "The method must be fully evaluated."
+                    | RError _ as er -> er
+                | None, _ -> RError "Argument substitution failed in the Method evaluation."
+                | _, None -> RError "Return type substitution failed in the Method evaluation."
+        | _ -> RError "Incorrect argument type on the argument stack."
+    | ApplyType(body,type_vars) ->
+        teval {d with args=ApplyTypeArgs(type_vars,d.type_env) :: d.args} body
+    | Apply(body,vars) ->
+        let rec get_typed_vars = function
+            | v :: vs ->
+                match teval {d with args=[]} v with
+                | RTypedExpr v -> 
+                    match get_typed_vars vs with
+                    | Succ vs -> Succ <| v :: vs
+                    | Fail _ as er -> er
+                | RExpr _ -> Fail "An argument in Apply returned an Expr."
+                | RError er -> Fail er
+            | [] -> Succ []
+        let get_typedvar_types x = List.map get_type x
+        
+        match teval d body with
+        | RError _ as er -> er
+        | RExpr(expr,_) -> 
+            match get_typed_vars vars with
+            | Succ vars ->  teval d (ApplyType(expr,get_typedvar_types vars))
+            | Fail er -> RError er
+        | RTypedExpr f ->
+            match get_type f with
+            | TArr(arg_types,ret) ->
+                match get_typed_vars vars with
+                | Succ vars -> 
+                    let var_types = get_typedvar_types vars 
+                    let rec loop = function
+                        | ar :: ars, v :: vs when ar = v -> loop (ars,vs)
+                        | ar :: ars, v :: vs -> 
+                            Fail "An argument in Apply is not of correct type."
+                        | _ -> 
+                            Fail "The number of arguments in a function does match the number being applied."
+                        | [], [] -> Succ ()
+                    match loop (arg_types,var_types) with
+                    | Succ () -> RTypedExpr(TyApply(f,vars,ret))
+                    | Fail er -> RError er
+                | Fail er -> RError er
+            | _ -> RError "The expression being applied is not a function."
 
 let inl x y = Inlineable(x,y)
 let inap x y = Inline(x,y)
