@@ -96,6 +96,7 @@
     <None Include="Script1.fsx" />
     <None Include="Cuda Backend\Typechecker_v1.fsx" />
     <None Include="Cuda Backend\Typechecker_v2.fsx" />
+    <None Include="Cuda Backend\Typechecker_v3.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
