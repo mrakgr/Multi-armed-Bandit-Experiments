@@ -89,6 +89,7 @@ let rec teval (d: Data) exp: ReturnCases =
                     RError "Types in branches of if do not match."
             | a, b -> RError <| sprintf "Expected both sides to be types and to be equal types.\nGot true: %A\nGot false: %A" a b
         | x -> RError <| sprintf "Expected bool in conditional.\nGot: %A" x
+
 //    | Let(v,b,e) ->
 //        match teval {d with args=[]} b with
 //        | RDual(exp_to_be_hoisted,macro) ->
