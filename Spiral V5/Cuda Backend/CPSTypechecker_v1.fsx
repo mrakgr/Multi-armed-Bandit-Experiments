@@ -75,3 +75,8 @@ let term1 =
     let snd = inl ["a";"b"] (V "b")
     l ["x";"y";"z"] [LitUnit;LitBool true;LitInt 5] 
         (l ["q"] [snd] (ap (V "q") [V "y";V "z"]))
+
+let term2 =
+    let fst = inl ["a";"b"] (V "a")
+    let snd = inl ["a";"b"] (V "b")
+    l ["a";"b"] [LitInt 2;LitFloat 3.3] (ap (If(LitBool true,fst,snd)) [V "a";V "b"])
