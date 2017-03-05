@@ -80,3 +80,5 @@ let term2 =
     let fst = inl ["a";"b"] (V "a")
     let snd = inl ["a";"b"] (V "b")
     l ["a";"b"] [LitInt 2;LitFloat 3.3] (ap (If(LitBool true,fst,snd)) [V "a";V "b"])
+
+// Resuming soon...
