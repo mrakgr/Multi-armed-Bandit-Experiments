@@ -1,4 +1,6 @@
-﻿type Ty =
+﻿open System.Collections.Generic
+
+type Ty =
     | Unit
     | Int
     | Float
@@ -7,18 +9,19 @@
 
 type TyV = int64 * string * Ty
 // No return type polymorphism like in Haskell for now. Local type inference only.
+// tag * higher order function tags * free variables * argument types
 type TyMethod = int64 * int64 list * Ty list 
 
-type Expr = 
+and Expr = 
     | V of string
     | If of Expr * Expr * Expr
-    | Inlineable of string list * Expr * EnvType option
+    | Inlineable of string list * Expr * Env option
     | LitUnit
     | LitInt of int
     | LitFloat of float
     | LitBool of bool
     | Apply of Expr * args: Expr list
-    | Method of (int64 * EnvType) option * args: string list * body: Expr * return_type: Ty option
+    | Method of (int64 * Env) option * args: string list * body: Expr * return_type: Ty option
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedExpr =
@@ -36,7 +39,7 @@ and ReturnCases =
     | RExpr of Expr
     | RError of string
 
-and EnvType = Map<string,ReturnCases>
+and Env = Map<string,ReturnCases>
 
 let rec get_type = function
     | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
@@ -44,6 +47,7 @@ let rec get_type = function
     | TyLitFloat _ -> Float
     | TyLitBool _ -> Bool
     | TyUnit -> Unit
+    | TyMethodCall(_,_,t) -> t
 
 let get_tag =
     let mutable x = 0L
@@ -52,50 +56,46 @@ let get_tag =
         x <- x + 1L
         x'
 
-type ArgCases = Expr list * EnvType
-
-open System.Collections.Generic
+type ArgCases = Expr list * Env
 type Data =
     {
     // Immutable
-    env : EnvType
+    env : Env
     args : ArgCases list
     // Mutable
-    memoized_methods : Dictionary<TyMethod, TypedExpr> // For hoisted out global methods.
+    memoized_methods : Dictionary<TyMethod, int64 * TypedExpr * Set<TyV>> // For hoisted out global methods.
     sequences : Stack<TyV * TypedExpr>
+    used_variables : Set<TyV> ref
     }
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
-let d0() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary()}
-
-let inl x y = Inlineable(x,y,None)
-let ap x y = Apply(x,y)
-
-let term0 =
-    let snd = inl ["a";"b"] (V "b")
-    ap (inl ["x";"y";"z";"r"] (ap (V "r") [V "y";V "z"])) ([LitUnit;LitBool true;LitInt 5;snd])
-
-let l v b e = Apply(Inlineable(v,e,None),b)
-
-let term1 =
-    let snd = inl ["a";"b"] (V "b")
-    l ["x";"y";"z"] [LitUnit;LitBool true;LitInt 5] 
-        (l ["q"] [snd] (ap (V "q") [V "y";V "z"]))
-
-let term2 =
-    let fst = inl ["a";"b"] (V "a")
-    let snd = inl ["a";"b"] (V "b")
-    l ["a";"b"] [LitInt 2;LitFloat 3.3] (ap (If(LitBool true,fst,snd)) [V "a";V "b"])
+let d0() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary();used_variables=ref Set.empty}
 
 let sequences_to_typed_expr (sequences: Stack<_>) final_expr =
     let type_fin = get_type final_expr
     Seq.fold (fun exp (v,body) -> TyLet(v,body,exp,type_fin)) final_expr sequences
 
+let get_free_variables (env: Env) (used_variables: Set<TyV>) =
+    env
+    |> Seq.choose (fun kv -> 
+        match kv.Value with
+        | RTypedExpr(TyV v) -> Some v
+        | _ -> None)
+    |> Set
+    // Bound outside the method's scope that is.
+    |> fun bound_variables ->
+        Set.intersect bound_variables used_variables
+        
+
 let rec teval (d: Data) exp: ReturnCases =
+    let add_bound_variable env arg_name ty_arg =
+        Map.add arg_name (RTypedExpr(TyV ty_arg)) env
+
     match exp with
     | V x -> 
         match Map.tryFind x d.env with
+        | Some (RTypedExpr (TyV v) as v') -> d.used_variables := (!d.used_variables).Add v; v'
         | Some (RTypedExpr _ as v) -> v
         | Some (RExpr v) -> teval d v
         | Some (RError _ as e) -> e
@@ -103,7 +103,7 @@ let rec teval (d: Data) exp: ReturnCases =
     | Apply(expr,args) ->
         teval {d with args = (args,d.env) :: d.args} expr
     | If(cond,tr,fl) ->
-        match teval d cond with
+        match teval {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = Bool -> 
             match teval d tr, teval d fl with
             | RTypedExpr tr, RTypedExpr fl -> 
@@ -111,7 +111,7 @@ let rec teval (d: Data) exp: ReturnCases =
                 if type_tr = type_fl then
                     RTypedExpr <| TyIf(cond',tr,fl,type_tr)
                 else
-                    RError "Types in branches of if do not match."
+                    RError <| sprintf "Types in branches of if do not match.\nGot: %A and %A" type_tr type_fl
             | a, b -> RError <| sprintf "Expected both sides to be types and to be equal types.\nGot true: %A\nGot false: %A" a b
         | x -> RError <| sprintf "Expected bool in conditional.\nGot: %A" x
     | Inlineable(args, body, None) as orig -> 
@@ -128,7 +128,7 @@ let rec teval (d: Data) exp: ReturnCases =
                         // Pushes the sequence onto the stack
                         d.sequences.Push(ty_arg,ty_exp)
                         // Binds the name to the said sequence's name and loops to the next argument
-                        loop (Map.add arg_name (RTypedExpr(TyV ty_arg)) acc) (ars,crs)
+                        loop (add_bound_variable acc arg_name ty_arg) (ars,crs)
                     | RExpr _ as exp ->
                         loop (Map.add arg_name exp acc) (ars,crs)
                     | RError er -> Fail er
@@ -140,7 +140,7 @@ let rec teval (d: Data) exp: ReturnCases =
         | [] -> RExpr orig
     | Method(None, args, body, return_type) ->
         teval d (Method(Some(get_tag(),d.env), args, body, return_type))
-    | Method(Some(tag,env), arg_names, body, return_type) as orig ->
+    | Method(Some(tag,initial_env), arg_names, body, return_type) as orig ->
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
@@ -150,19 +150,21 @@ let rec teval (d: Data) exp: ReturnCases =
                     | RTypedExpr ty_exp ->
                         let b'_type = get_type ty_exp
                         let ty_arg: TyV = get_tag(),arg_name,b'_type
-                        loop method_tags (ty_exp :: typed_exprs) (Map.add arg_name (RTypedExpr(TyV ty_arg)) acc) (ars,crs)
+                        loop method_tags (ty_exp :: typed_exprs) (add_bound_variable acc arg_name ty_arg) (ars,crs)
                     | RExpr(Method(Some(tag',_),_,_,_) as met) as exp ->
                         loop (tag' :: method_tags) typed_exprs (Map.add arg_name (RExpr met) acc) (ars,crs)
                     | RExpr _ -> Fail "In Method application the only Expr type allowed to be passed via an argument is another Method."
                     | RError er -> Fail er
                 | [], [] -> Succ(List.rev method_tags,List.rev typed_exprs,acc)
                 | _ -> Fail "Incorrect number of arguments in Method application."
-            match loop [] [] env (arg_names,cur_args) with
+
+            match loop [] [] initial_env (arg_names,cur_args) with
             | Succ(method_tags,typed_exprs,env) ->
                 let arg_types = List.map get_type typed_exprs
-                let method_: TyMethod = tag,method_tags,arg_types
-                let eval_body body =
-                    d.memoized_methods.Add(method_, body)
+                let method_: TyMethod = tag,method_tags, arg_types
+                let eval_body body used_variables =
+                    if d.memoized_methods.ContainsKey method_ = false then 
+                        d.memoized_methods.Add(method_, (get_tag(), body, get_free_variables initial_env used_variables))
                     let x = RTypedExpr(TyMethodCall(method_,typed_exprs,get_type body))
                     match return_type with
                     | None -> x
@@ -171,12 +173,85 @@ let rec teval (d: Data) exp: ReturnCases =
                 match d.memoized_methods.TryGetValue method_ with
                 | false, _ ->
                     let sequences' = Stack()
-                    match teval {d with env=env;sequences=sequences'} body with
+                    let d = {d with env=env; sequences=sequences'; args=[]; used_variables=ref !d.used_variables}
+                    match teval d body with
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
                     | RTypedExpr body -> 
                         // All the intermediate expressions get sequenced in the Inlineable case. 
                         // The body here is just the final return hence the call to sequences_to_typed_expr.
-                        eval_body (sequences_to_typed_expr sequences' body) 
-                | true, body -> eval_body body
+                        eval_body (sequences_to_typed_expr sequences' body) !d.used_variables
+                | true, (_, body, used_variables') -> eval_body body used_variables'
             | Fail er -> RError er
+    | LitInt x -> 
+        match d.args with
+        | [] -> RTypedExpr (TyLitInt x)
+        | _ -> RError "Cannot apply a int literal."
+    | LitFloat x -> 
+        match d.args with
+        | [] -> RTypedExpr (TyLitFloat x)
+        | _ -> RError "Cannot apply a float literal."
+    | LitBool x -> 
+        match d.args with
+        | [] -> RTypedExpr (TyLitBool x)
+        | _ -> RError "Cannot apply a bool literal."
+    | LitUnit -> 
+        match d.args with
+        | [] -> RTypedExpr TyUnit
+        | _ -> RError "Cannot apply a bool literal."
+
+let inl x y = Inlineable(x,y,None)
+let ap x y = Apply(x,y)
+
+let term0 =
+    let snd = inl ["a";"b"] (V "b")
+    ap (inl ["x";"y";"z";"r"] (ap (V "r") [V "y";V "z"])) ([LitUnit;LitBool true;LitInt 5;snd])
+
+let l v b e = Apply(Inlineable(v,e,None),b)
+
+let teval0 x = teval (d0()) x
+
+let term1 =
+    let fst = inl ["a";"b"] (V "a")
+    let snd = inl ["a";"b"] (V "b")
+    l ["x";"y";"z"] [LitUnit;LitBool true;LitInt 5] 
+        (l ["q"] [fst] (ap (V "q") [V "y";V "z"]))
+
+let t1 = teval0 term1
+    
+let term2 =
+    let fst = inl ["a";"b"] (V "a")
+    let snd = inl ["a";"b"] (V "b")
+    l ["a";"b"] [LitInt 2;LitFloat 3.3] (ap (If(LitBool true,snd,snd)) [V "a";V "b"])
+
+let t2 = teval0 term2
+
+let term3 =
+    l ["inlineable"]
+        [inl ["a";"b"] (V "b")]
+        (l ["fun"] 
+            [inl ["inl";"a";"b";"c";"d"] (ap (V "inl") [V "b";V "c"])]
+            (ap (V "fun") [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2]))
+let t3 = teval0 term3
+
+let term4 = // If test
+    l ["if"] [inl ["cond";"tr";"fl"] (If(V "cond",V "tr",V "fl"))]
+        (l ["cond"] [LitBool true]
+            (l ["tr"] [LitFloat 3.33]
+                (l ["fl"] [LitFloat 4.44]
+                    (ap (V "if") [V "cond";V "tr";V "fl"]))))
+let t4 = teval0 term4
+
+let teval1 x = 
+    let d = d0() 
+    teval d x, d.memoized_methods
+let meth x y = Method(None,x,y,None)
+
+let meth1 =
+    l ["fun";"id"] 
+        [meth ["x";"y";"z";"f"] 
+            (l ["t"] [LitInt 3] 
+                (l ["u"] [LitBool false] (ap (V "f") [V "z"])))
+         meth ["x"] (V "x")]
+        (ap (V "fun") [LitBool true; LitInt 2; LitFloat 4.4;V "id"])
+let m1 = teval1 meth1
