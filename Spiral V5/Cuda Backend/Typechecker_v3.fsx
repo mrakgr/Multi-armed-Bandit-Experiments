@@ -1,4 +1,14 @@
-﻿open System.Collections.Generic
+﻿//Let me call it a day here.
+//
+//I think I know what my problem is. Stress. And the reason why I am having so much difficulty here is not because bad sleep – the bad sleep is because I am having difficulty programming. 
+//
+//Quite frankly, this code is so thick and purposeful. It is not that propagating free variables is hard; it is just that I cannot handle that task while keeping all the previous tasks in my head. It is simply too heavy a burden for me to carry. I need to step back a little.
+//
+//It is obviously that what I've written here has serious architectural problems. It is not good code. I can't do it all in a single function and in a single pass even though in theory it should be possible.
+//
+//I've heard about it before. Tomorrow I will take a step back again and instead of focusing right on the problem at hand, what I will do is read up on `nanopasses` and think more carefully how to split all the various features of my compiler into various parts.
+
+open System.Collections.Generic
 
 type Ty =
     | Unit
@@ -178,7 +188,7 @@ let rec teval (d: Data) exp: ReturnCases =
                 | false, _ ->
                     let sequences' = Stack()
                     printfn "Haven't evaled body. !d.used_variables=%A" !d.used_variables
-                    let d = {d with env=env; sequences=sequences'; args=[]; used_variables=ref !d.used_variables}
+                    let d = {d with env=env; sequences=sequences'; args=[]; used_variables=ref Set.empty}
                     match teval d body with
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
@@ -268,7 +278,7 @@ let m1 = teval1 meth1
 let intpow =
     l ["intpow"] 
         [meth ["a";"n"] (
-            l ["loop"] [meth ["acc";"q"] (If(LitBool true,LitInt 1,LitInt 2))]
+            l ["loop"] [meth ["acc";"q"] (If(LitBool true,V "a",V "acc"))]
                 (ap (V "loop") [LitInt 1; V "n"])
             )]
         (ap (V "intpow") [LitInt 3;LitInt 2])
