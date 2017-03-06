@@ -9,8 +9,9 @@ type Ty =
 
 type TyV = int64 * string * Ty
 // No return type polymorphism like in Haskell for now. Local type inference only.
+type TyMethodKey = int64 * int64 list * Ty list  // The key does not need to know the free variables.
 // tag * higher order function tags * free variables * argument types
-type TyMethod = int64 * int64 list * Ty list 
+type TyMethod = int64 * int64 list * Ty list * TypedExpr * Set<TyV> 
 
 and Expr = 
     | V of string
@@ -32,7 +33,7 @@ and TypedExpr =
     | TyLitInt of int
     | TyLitFloat of float
     | TyLitBool of bool
-    | TyMethodCall of TyMethod * TypedExpr list * Ty
+    | TyMethodCall of TyMethodKey * TypedExpr list * Ty
 
 and ReturnCases =
     | RTypedExpr of TypedExpr
@@ -63,7 +64,7 @@ type Data =
     env : Env
     args : ArgCases list
     // Mutable
-    memoized_methods : Dictionary<TyMethod, int64 * TypedExpr * Set<TyV>> // For hoisted out global methods.
+    memoized_methods : Dictionary<TyMethodKey, TypedExpr * Set<TyV>> // For hoisted out global methods.
     sequences : Stack<TyV * TypedExpr>
     used_variables : Set<TyV> ref
     }
@@ -77,6 +78,8 @@ let sequences_to_typed_expr (sequences: Stack<_>) final_expr =
     Seq.fold (fun exp (v,body) -> TyLet(v,body,exp,type_fin)) final_expr sequences
 
 let get_free_variables (env: Env) (used_variables: Set<TyV>) =
+    printfn "Getting free variables."
+    printfn "env=%A, used_variables=%A" env used_variables
     env
     |> Seq.choose (fun kv -> 
         match kv.Value with
@@ -141,6 +144,9 @@ let rec teval (d: Data) exp: ReturnCases =
     | Method(None, args, body, return_type) ->
         teval d (Method(Some(get_tag(),d.env), args, body, return_type))
     | Method(Some(tag,initial_env), arg_names, body, return_type) as orig ->
+        printfn "I am in Method(%i)." tag
+        printfn "initial_env=%A" initial_env
+
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
@@ -161,27 +167,30 @@ let rec teval (d: Data) exp: ReturnCases =
             match loop [] [] initial_env (arg_names,cur_args) with
             | Succ(method_tags,typed_exprs,env) ->
                 let arg_types = List.map get_type typed_exprs
-                let method_: TyMethod = tag,method_tags, arg_types
-                let eval_body body used_variables =
-                    if d.memoized_methods.ContainsKey method_ = false then 
-                        d.memoized_methods.Add(method_, (get_tag(), body, get_free_variables initial_env used_variables))
-                    let x = RTypedExpr(TyMethodCall(method_,typed_exprs,get_type body))
+                let method_key: TyMethodKey = tag, method_tags, arg_types
+                let make_method_call body =
+                    let x = RTypedExpr(TyMethodCall(method_key,typed_exprs,get_type body))
                     match return_type with
                     | None -> x
                     | Some return_type when return_type = get_type body -> x
                     | Some _ -> RError "The evaluated return type does not match the one given in Method evaluation."
-                match d.memoized_methods.TryGetValue method_ with
+                match d.memoized_methods.TryGetValue method_key with
                 | false, _ ->
                     let sequences' = Stack()
+                    printfn "Haven't evaled body. !d.used_variables=%A" !d.used_variables
                     let d = {d with env=env; sequences=sequences'; args=[]; used_variables=ref !d.used_variables}
                     match teval d body with
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
-                    | RTypedExpr body -> 
-                        // All the intermediate expressions get sequenced in the Inlineable case. 
+                    | RTypedExpr body ->
+                        // All the intermediate expressions get sequenced in the Inlineable case.
                         // The body here is just the final return hence the call to sequences_to_typed_expr.
-                        eval_body (sequences_to_typed_expr sequences' body) !d.used_variables
-                | true, (_, body, used_variables') -> eval_body body used_variables'
+                        let body = sequences_to_typed_expr sequences' body
+                        let free_variables = get_free_variables initial_env !d.used_variables
+                        d.memoized_methods.Add(method_key, (body, free_variables))
+                        make_method_call body
+                | true, (body, free_variables) ->
+                    make_method_call body
             | Fail er -> RError er
     | LitInt x -> 
         match d.args with
@@ -255,3 +264,12 @@ let meth1 =
          meth ["x"] (V "x")]
         (ap (V "fun") [LitBool true; LitInt 2; LitFloat 4.4;V "id"])
 let m1 = teval1 meth1
+
+let intpow =
+    l ["intpow"] 
+        [meth ["a";"n"] (
+            l ["loop"] [meth ["acc";"q"] (If(LitBool true,LitInt 1,LitInt 2))]
+                (ap (V "loop") [LitInt 1; V "n"])
+            )]
+        (ap (V "intpow") [LitInt 3;LitInt 2])
+let ip = teval1 intpow
