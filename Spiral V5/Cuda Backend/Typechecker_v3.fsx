@@ -8,8 +8,13 @@ type Ty =
     | TVar of string
 
 type TyV = int64 * string * Ty
+
+type TyOrTag =
+    | Ty of Ty
+    | Tag of int64
+
 // No return type polymorphism like in Haskell for now. Local type inference only.
-type TyMethodKey = int64 * int64 list * Ty list  // The key does not need to know the free variables.
+type TyMethodKey = int64 * TyOrTag list // The key does not need to know the free variables.
 // tag * higher order function tags * argument types * method body * outside bound variables * used variables
 //type TyMethod = int64 * int64 list * Ty list * TypedExpr * Set<Ty> * Set<TyV> 
 
@@ -145,29 +150,26 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
     | Method(None, args, body, return_type) ->
         exp_and_seq d (Method(Some(get_tag(),d.env), args, body, return_type))
     | Method(Some(tag,initial_env), arg_names, body, return_type) as orig ->
-//        printfn "I am in Method(%i)." tag
-//        printfn "initial_env=%A" initial_env
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
-            let rec loop method_tags typed_exprs acc = function
+            let rec loop ty_or_tag typed_exprs acc = function
                 | arg_name :: ars, arg_expr :: crs ->
                     match exp_and_seq {d with env=env''; args=[]} arg_expr with
                     | RTypedExpr ty_exp ->
                         let b'_type = get_type ty_exp
                         let ty_arg: TyV = get_tag(),arg_name,b'_type
-                        loop method_tags (ty_exp :: typed_exprs) (add_bound_variable acc arg_name ty_arg) (ars,crs)
+                        loop (Ty (get_type ty_exp) :: ty_or_tag) (ty_exp :: typed_exprs) (add_bound_variable acc arg_name ty_arg) (ars,crs)
                     | RExpr(Method(Some(tag',_),_,_,_) as met) as exp ->
-                        loop (tag' :: method_tags) typed_exprs (Map.add arg_name (RExpr met) acc) (ars,crs)
+                        loop (Tag tag' :: ty_or_tag) typed_exprs (Map.add arg_name (RExpr met) acc) (ars,crs)
                     | RExpr _ -> Fail "In Method application the only Expr type allowed to be passed via an argument is another Method."
                     | RError er -> Fail er
-                | [], [] -> Succ(List.rev method_tags,List.rev typed_exprs,acc)
+                | [], [] -> Succ(List.rev ty_or_tag, List.rev typed_exprs,acc)
                 | _ -> Fail "Incorrect number of arguments in Method application."
 
             match loop [] [] initial_env (arg_names,cur_args) with
-            | Succ(method_tags,typed_exprs,env) ->
-                let arg_types = List.map get_type typed_exprs
-                let method_key: TyMethodKey = tag, method_tags, arg_types
+            | Succ(ty_or_tag,typed_exprs,env) ->
+                let method_key: TyMethodKey = tag, ty_or_tag
                 let make_method_call body =
                     let x = RTypedExpr(TyMethodCall(method_key,typed_exprs,get_type body))
                     match return_type with
@@ -177,7 +179,6 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
                 match d.memoized_methods.TryGetValue method_key with
                 | false, _ ->
                     let sequences' = Stack()
-//                    printfn "Haven't evaled body. !d.used_variables=%A" !d.used_variables
                     let d = {d with env=env; sequences=sequences'; args=[]; used_variables=HashSet(HashIdentity.Structural)}
                     match exp_and_seq d body with
                     | RError _ as er -> er
