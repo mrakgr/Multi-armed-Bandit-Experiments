@@ -106,135 +106,134 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
     let tev d exp = exp_and_seq d exp
     
     let add_bound_variable env arg_name ty_arg =
-        Map.add arg_name (RTypedExpr(TyV ty_arg)) env
+        let v = TyV ty_arg
+        v, Map.add arg_name (RTypedExpr v) env
 
     let bind_er er = Fail er
-    let bind_expr_fail arg_name exp acc =
+    let bind_expr_fail acc arg_name exp =
         Fail "Cannot bind untyped expressions in value structures like Vars."
-    let bind_expr arg_name exp acc =
+    let bind_expr acc arg_name exp =
         Succ (Map.add arg_name exp acc)
-    let bind_typedexpr_fail arg_name ty_exp acc =
+    let bind_typedexpr_fail acc arg_name ty_exp =
         Fail "Cannot bind typed expressions in expression tuples."
-    
-    let sequence_typedexpr ty_exp =
-
-    let bind_typedexpr arg_name ty_exp acc =
+    let bind_typedexpr' acc arg_name ty_exp =
         let b'_type = get_type ty_exp
         let ty_arg: TyV = get_tag(),arg_name,b'_type
         // Pushes the sequence onto the stack
         d.sequences.Push(ty_arg,ty_exp)
         // Binds the name to the said sequence's name and loops to the next argument
-        Succ (add_bound_variable acc arg_name ty_arg)  
-
-    match exp with
-    | LitInt x -> 
-        match d.args with
-        | [] -> RTypedExpr (TyLitInt x)
-        | _ -> RError "Cannot apply a int literal."
-    | LitFloat x -> 
-        match d.args with
-        | [] -> RTypedExpr (TyLitFloat x)
-        | _ -> RError "Cannot apply a float literal."
-    | LitBool x -> 
-        match d.args with
-        | [] -> RTypedExpr (TyLitBool x)
-        | _ -> RError "Cannot apply a bool literal."
-    | LitUnit -> 
-        match d.args with
-        | [] -> RTypedExpr TyUnit
-        | _ -> RError "Cannot apply a bool literal."
-    | V x -> 
-        match Map.tryFind x d.env with
-        | Some (RTypedExpr (TyV v) as v') -> d.used_variables.Add v |> ignore; v'
-        | Some (RTypedExpr _ as v) -> v
-        | Some (RExpr v) -> exp_and_seq d v
-        | Some (RError _ as e) -> e
-        | None -> RError <| sprintf "Variable %A not bound." x
-    | Apply(expr,args) ->
-        exp_and_seq {d with args = (args,d.env) :: d.args} expr
-    | If(cond,tr,fl) ->
-        match exp_and_seq {d with args=[]} cond with
-        | RTypedExpr cond' when get_type cond' = BoolT -> 
-            match exp_and_seq d tr, exp_and_seq d fl with
-            | RTypedExpr tr, RTypedExpr fl -> 
-                let type_tr, type_fl = get_type tr, get_type fl
-                if type_tr = type_fl then
-                    RTypedExpr <| TyIf(cond',tr,fl,type_tr)
-                else
-                    RError <| sprintf "Types in branches of if do not match.\nGot: %A and %A" type_tr type_fl
-            | a, b -> RError <| sprintf "Expected both sides to be types and to be equal types.\nGot true: %A\nGot false: %A" a b
-        | x -> RError <| sprintf "Expected bool in conditional.\nGot: %A" x
-    | Inlineable(args, body, None) as orig -> 
-        exp_and_seq d (Inlineable(args, body, Some d.env))
-    | Inlineable(args, body, Some env) as orig -> 
-        match d.args with
-        | (cur_args,env'') :: other_args ->
-            let bind_template bind_er bind_expr bind_typedexpr acc (arg_name, right_arg) =
-                match tev {d with env=env''; args=[]} right_arg with
-                | RError er -> bind_er er
-                | RExpr _ as exp -> bind_expr arg_name exp acc
-                | RTypedExpr ty_exp -> bind_typedexpr arg_name ty_exp acc
-
-            let bind_any = bind_template bind_er bind_expr bind_typedexpr
-            let bind_expr_only = bind_template bind_er bind_expr bind_typedexpr_fail
-            let bind_typedexpr_only = bind_template bind_er bind_expr_fail bind_typedexpr
-                
-            let rec parse bind acc = function
-                | V arg_name, right_arg -> bind acc (arg_name, right_arg)
-                | VV (x :: left_rest), VV (right_arg :: right_rest) -> 
-                    match parse bind acc (x, right_arg) with
-                    | Succ acc -> parse bind acc (VV left_rest, VV right_rest)
-                    | Fail _ as er -> er
-                | VV _ as left_arg, ET right_arg -> parse bind_expr_only acc (left_arg, VV right_arg)
-                | VV _ as left_arg, Vars right_arg -> parse bind_typedexpr_only acc (left_arg, VV right_arg)
-                | VV args, right_arg ->
-                    match tev {d with env=env''; args=[]} right_arg with
-                    | RError er -> Fail er
-                    | RExpr exp -> Fail <| sprintf "Strange expression for destructuring: %A" exp
-                    | RTypedExpr (TyVars(exprs,_)) -> 
-                        let rec destructure_values acc = function
-                            | V arg :: args, expr :: exprs ->
-                                destructure_values (Map.add arg (RTypedExpr expr) acc) (args,exprs)
-                            | VV arg :: args, TyVars(expr,_) :: exprs ->
-                                
-                            | [], [] -> Succ acc
-                            | _ -> Fail "Mismatched number of arguments in value destructuring."
-                            
-                        destructure_values acc (args, exprs)
-                            
-                        
-                | VV [], VV [] -> Succ acc
-                | VV [], VV x | VV x, VV [] -> Fail <| sprintf "Incorrect number of arguments on two sides of a pattern match.\nRemainings args: %A" x
-                | left_arg, right_arg -> Fail <| sprintf "Something is wrong. Got: %A and %A" left_arg right_arg
-
-            match parse bind_any env (args,cur_args) with
-            | Succ env -> exp_and_seq {d with env=env} body
-            | Fail er -> RError er
-        | [] -> RExpr orig
-    | VV _ -> RError "Typechecking should never be called on VV. VV is only for immediate destructuring."
-    | Vars vars ->
+        add_bound_variable acc arg_name ty_arg
+    let bind_typedexpr acc arg_name ty_exp =
+        bind_typedexpr' acc arg_name ty_exp |> snd |> Succ
+    let rec bind_typed_vars acc names typed_exprs =
         let rec loop acc = function
-            | x :: xs ->
-                match tev {d with args=[]} x with
-                | RExpr _ -> Fail "Expressions not allowed in Vars. Vars is only used to represented typed variable sized arguments."
-                | RTypedExpr ty_expr -> 
-                    // TODO: This can't be right.
-                    loop (ty_expr :: acc) xs
-                | RError er -> Fail er
-            | [] -> List.rev acc |> Succ
-        match loop [] vars with
-        | Succ args -> 
-            let ty = List.map get_type args |> VarsT
-            RTypedExpr <| TyVars(args,ty)
-        | Fail er -> RError er
-    | ET exprs ->
-        let rec loop acc = function
-            | x :: xs ->
-                match tev {d with args=[]} x with
-                | RExpr expr -> loop (expr :: acc) xs
-                | RTypedExpr ty_expr -> Fail "Typed Expressions not allowed in Expression Tuples."
-                | RError er -> Fail er
-            | [] -> List.rev acc |> Succ
-        match loop [] exprs with
-        | Succ args -> RExpr <| ET args
-        | Fail er -> RError er
+            | V x :: left_rest, exp :: right_rest -> bind_typedexpr' acc x exp |> Succ
+            | VV x :: _, TyVars(exp,t) :: _ -> 
+                match bind_typed_vars acc x exp with
+                | Succ (exp,acc) -> Succ(TyVars(exp,t),acc)
+                | Fail _ as er -> er
+        loop acc (names, typed_exprs)
+    RError "placeholder"
+//        List.mapFold (fun acc -> function
+//            
+//
+//            ) acc (List.zip names typed_exprs)
+        //bind_typedexpr' acc (List.zip names typed_exprs)
+
+//    match exp with
+//    | LitInt x -> 
+//        match d.args with
+//        | [] -> RTypedExpr (TyLitInt x)
+//        | _ -> RError "Cannot apply a int literal."
+//    | LitFloat x -> 
+//        match d.args with
+//        | [] -> RTypedExpr (TyLitFloat x)
+//        | _ -> RError "Cannot apply a float literal."
+//    | LitBool x -> 
+//        match d.args with
+//        | [] -> RTypedExpr (TyLitBool x)
+//        | _ -> RError "Cannot apply a bool literal."
+//    | LitUnit -> 
+//        match d.args with
+//        | [] -> RTypedExpr TyUnit
+//        | _ -> RError "Cannot apply a bool literal."
+//    | V x -> 
+//        match Map.tryFind x d.env with
+//        | Some (RTypedExpr (TyV v) as v') -> d.used_variables.Add v |> ignore; v'
+//        | Some (RTypedExpr _ as v) -> v
+//        | Some (RExpr v) -> exp_and_seq d v
+//        | Some (RError _ as e) -> e
+//        | None -> RError <| sprintf "Variable %A not bound." x
+//    | Apply(expr,args) ->
+//        exp_and_seq {d with args = (args,d.env) :: d.args} expr
+//    | If(cond,tr,fl) ->
+//        match exp_and_seq {d with args=[]} cond with
+//        | RTypedExpr cond' when get_type cond' = BoolT -> 
+//            match exp_and_seq d tr, exp_and_seq d fl with
+//            | RTypedExpr tr, RTypedExpr fl -> 
+//                let type_tr, type_fl = get_type tr, get_type fl
+//                if type_tr = type_fl then
+//                    RTypedExpr <| TyIf(cond',tr,fl,type_tr)
+//                else
+//                    RError <| sprintf "Types in branches of if do not match.\nGot: %A and %A" type_tr type_fl
+//            | a, b -> RError <| sprintf "Expected both sides to be types and to be equal types.\nGot true: %A\nGot false: %A" a b
+//        | x -> RError <| sprintf "Expected bool in conditional.\nGot: %A" x
+//    | Inlineable(args, body, None) as orig -> 
+//        exp_and_seq d (Inlineable(args, body, Some d.env))
+//    | Inlineable(args, body, Some env) as orig -> 
+//        match d.args with
+//        | (cur_args,env'') :: other_args ->
+//            let bind_template bind_er bind_expr bind_typedexpr acc (arg_name, right_arg) =
+//                match tev {d with env=env''; args=[]} right_arg with
+//                | RError er -> bind_er er
+//                | RExpr _ as exp -> bind_expr acc arg_name exp
+//                | RTypedExpr ty_exp -> bind_typedexpr acc arg_name ty_exp
+//
+//            let bind_any = bind_template bind_er bind_expr bind_typedexpr
+//            let bind_expr_only = bind_template bind_er bind_expr bind_typedexpr_fail
+//            let bind_typedexpr_only = bind_template bind_er bind_expr_fail bind_typedexpr
+//                
+//            let rec parse bind acc = function
+//                | V arg_name, right_arg -> bind acc (arg_name, right_arg)
+//                | VV (x :: left_rest), VV (right_arg :: right_rest) -> 
+//                    match parse bind acc (x, right_arg) with
+//                    | Succ acc -> parse bind acc (VV left_rest, VV right_rest)
+//                    | Fail _ as er -> er
+//                | VV _ as left_arg, ET right_arg -> parse bind_expr_only acc (left_arg, VV right_arg)
+//                | VV _ as left_arg, Vars right_arg -> parse bind_typedexpr_only acc (left_arg, VV right_arg)
+//                | VV [], VV [] -> Succ acc
+//                | VV [], VV x | VV x, VV [] -> Fail <| sprintf "Incorrect number of arguments on two sides of a pattern match.\nRemainings args: %A" x
+//                | left_arg, right_arg -> Fail <| sprintf "Something is wrong. Got: %A and %A" left_arg right_arg
+//
+//            match parse bind_any env (args,cur_args) with
+//            | Succ env -> exp_and_seq {d with env=env} body
+//            | Fail er -> RError er
+//        | [] -> RExpr orig
+//    | VV _ -> RError "Typechecking should never be called on VV. VV is only for immediate destructuring."
+//    | Vars vars ->
+//        let rec loop acc = function
+//            | x :: xs ->
+//                match tev {d with args=[]} x with
+//                | RExpr _ -> Fail "Expressions not allowed in Vars. Vars is only used to represented typed variable sized arguments."
+//                | RTypedExpr ty_expr -> 
+//                    loop (ty_expr :: acc) xs
+//                | RError er -> Fail er
+//            | [] -> List.rev acc |> Succ
+//        match loop [] vars with
+//        | Succ args -> 
+//            let ty = List.map get_type args |> VarsT
+//            let empty_names = List.map (fun _ -> "") args
+//            let args,_ = bind_typed_vars d.env empty_names args
+//            RTypedExpr <| TyVars(args,ty)
+//        | Fail er -> RError er
+//    | ET exprs ->
+//        let rec loop acc = function
+//            | x :: xs ->
+//                match tev {d with args=[]} x with
+//                | RExpr expr -> loop (expr :: acc) xs
+//                | RTypedExpr ty_expr -> Fail "Typed Expressions not allowed in Expression Tuples."
+//                | RError er -> Fail er
+//            | [] -> List.rev acc |> Succ
+//        match loop [] exprs with
+//        | Succ args -> RExpr <| ET args
+//        | Fail er -> RError er
