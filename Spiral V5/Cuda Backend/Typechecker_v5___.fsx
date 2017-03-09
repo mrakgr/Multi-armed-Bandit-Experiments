@@ -113,6 +113,33 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
     let bind_expr_fail acc arg_name exp =
         Fail "Cannot bind untyped expressions in value structures like Vars."
     let bind_expr acc arg_name exp =
+//        let rec loop acc = function
+//            | x :: xs ->
+//                match tev {d with args=[]} x with
+//                | RExpr expr -> loop (expr :: acc) xs
+//                | RTypedExpr ty_expr -> Fail "Typed Expressions not allowed in Expression Tuples."
+//                | RError er -> Fail er
+//            | [] -> List.rev acc |> Succ
+//        match loop [] exprs with
+//        | Succ args -> RExpr <| ET args
+//        | Fail er -> RError er
+        match exp with
+        | LitInt x -> 
+            match d.args with
+            | [] -> RTypedExpr (TyLitInt x)
+            | _ -> RError "Cannot apply a int literal."
+        | LitFloat x -> 
+            match d.args with
+            | [] -> RTypedExpr (TyLitFloat x)
+            | _ -> RError "Cannot apply a float literal."
+        | LitBool x -> 
+            match d.args with
+            | [] -> RTypedExpr (TyLitBool x)
+            | _ -> RError "Cannot apply a bool literal."
+        | LitUnit -> 
+            match d.args with
+            | [] -> RTypedExpr TyUnit
+            | _ -> RError "Cannot apply a bool literal."
         Succ (Map.add arg_name exp acc)
     let bind_typedexpr_fail acc arg_name ty_exp =
         Fail "Cannot bind typed expressions in expression tuples."
@@ -200,18 +227,8 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
                 | RExpr _ as exp -> bind_expr acc arg_name exp
                 | RTypedExpr ty_exp -> bind_typedexpr acc arg_name ty_exp
 
-            let bind_any = bind_template bind_er bind_expr bind_typedexpr
-            let bind_expr_only = bind_template bind_er bind_expr bind_typedexpr_fail
-            let bind_typedexpr_only = bind_template bind_er bind_expr_fail bind_typedexpr
-                
             let rec parse bind acc = function
                 | V arg_name, right_arg -> bind acc (arg_name, right_arg)
-                | VV (x :: left_rest), VV (right_arg :: right_rest) -> 
-                    match parse bind acc (x, right_arg) with
-                    | Succ acc -> parse bind acc (VV left_rest, VV right_rest)
-                    | Fail _ as er -> er
-                | VV [], VV [] -> Succ acc
-                | VV [], VV x | VV x, VV [] -> Fail <| sprintf "Incorrect number of arguments on two sides of a pattern match.\nRemainings args: %A" x
                 | left_arg, right_arg -> Fail <| sprintf "Something is wrong. Got: %A and %A" left_arg right_arg
 
             match parse bind_any env (args,cur_args) with
@@ -223,4 +240,3 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
     | VV _ -> RError "Typechecking should never be called on VV. VV is only for immediate destructuring."
     | Vars vars -> RError "Vars should have been evaluated already."
     | ET exprs as orig -> RExpr orig
-
