@@ -180,7 +180,7 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
     | If(cond,tr,fl) ->
         match exp_and_seq {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = BoolT -> 
-            match exp_and_seq d tr, exp_and_seq d fl with
+            match exp_and_seq d tr, exp_and_seq d fl with // TODO: These two should have their own sequencers.
             | RTypedExpr tr, RTypedExpr fl -> 
                 let type_tr, type_fl = get_type tr, get_type fl
                 if type_tr = type_fl then
@@ -212,8 +212,20 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
                     | Fail _ as er -> er
                 | VV [], VV [] -> Succ acc
                 | VV [], VV x | VV x, VV [] -> Fail <| sprintf "Incorrect number of arguments on two sides of a pattern match.\nRemainings args: %A" x
+                | VV arg_names as left_arg, right_arg -> 
+                    match right_arg with
+                    | ET right_arg -> parse bind_expr_only acc (left_arg, VV right_arg)
+                    | Vars right_arg -> parse bind_typedexpr_only acc (left_arg, VV right_arg)
+                    | right_arg ->
+                        match tev {d with env=env''; args=[]} right_arg with
+                        | RError er -> Fail er
+                        | RExpr _ as exp -> Fail <| sprintf "Destructuring not supported for this expression.\n%A" exp
+                        | RTypedExpr (TyVars(exp,t)) -> 
+                            match bind_typed_vars env'' (arg_names, exp) with
+                            | Succ(_,acc) -> Succ acc
+                            | Fail er -> Fail er
+                        | RTypedExpr x -> Fail <| sprintf "This typed expression is not supported for destructuring.\n%A" x
                 | left_arg, right_arg -> Fail <| sprintf "Something is wrong. Got: %A and %A" left_arg right_arg
-
             match parse bind_any env (args,cur_args) with
             | Succ env -> exp_and_seq {d with env=env} body
             | Fail er -> RError er
