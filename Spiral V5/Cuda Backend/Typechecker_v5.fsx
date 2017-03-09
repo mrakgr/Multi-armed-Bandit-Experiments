@@ -230,7 +230,7 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
             | Succ env -> exp_and_seq {d with env=env} body
             | Fail er -> RError er
         | [] -> RExpr orig
-    // Note: All the cases here can only be accessed through a V. 
+    // Note: All the cases here can only be accessed through a V.   
     // The actual evaluation of them should be happening Inlineable and Method cases.
     | VV _ -> RError "Typechecking should never be called on VV. VV is only for immediate destructuring."
     | Vars vars -> RError "Vars should have been evaluated already."
