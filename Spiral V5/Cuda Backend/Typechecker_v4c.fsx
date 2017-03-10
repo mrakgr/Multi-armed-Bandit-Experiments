@@ -139,42 +139,61 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         let v = TyV ty_arg
         v, Map.add arg_name (RTypedExpr v) env
 
-    let bind_expr_fail acc arg_name exp =
+    let bind_expr_fail acc (arg_name, exp) =
         Fail "Cannot bind untyped expressions in value structures like Vars."
-    let bind_expr acc arg_name exp =
+    let bind_expr acc (arg_name, exp) =
         Succ (Map.add arg_name exp acc)
-    let bind_typedexpr_fail acc arg_name ty_exp =
+    let bind_typedexpr_fail acc (arg_name, ty_exp) =
         Fail "Cannot bind typed expressions in expression tuples."
-    let bind_typedexpr' acc arg_name ty_exp =
+    let bind_typedexpr' acc (arg_name, ty_exp) =
         let b'_type = get_type ty_exp
         let ty_arg: TyV = get_tag(),arg_name,b'_type
         // Pushes the sequence onto the stack
         d.sequences.Push(ty_arg,ty_exp)
         // Binds the name to the said sequence's name and loops to the next argument
         add_bound_variable acc arg_name ty_arg
-    let bind_typedexpr acc arg_name ty_exp =
-        bind_typedexpr' acc arg_name ty_exp |> snd |> Succ
+    let bind_typedexpr acc (arg_name, ty_exp) =
+        bind_typedexpr' acc (arg_name, ty_exp) |> snd |> Succ
     let bind_template bind_expr bind_typedexpr eval_env acc (arg_name, right_arg) =
         match tev {d with env=eval_env; args=[]} right_arg with
         | RError er -> Fail er
-        | RExpr _ as exp -> bind_expr acc arg_name exp
-        | RTypedExpr ty_exp -> bind_typedexpr acc arg_name ty_exp
+        | RExpr _ as exp -> bind_expr acc (arg_name, exp)
+        | RTypedExpr ty_exp -> bind_typedexpr acc (arg_name, ty_exp)
 
     let bind_any = bind_template bind_expr bind_typedexpr
     let bind_expr_only = bind_template bind_expr bind_typedexpr_fail
     let bind_typedexpr_only = bind_template bind_expr_fail bind_typedexpr
 
-    let rec match_vv (eval_env: Env) (acc: Env) (l: Expr list,r) = 
-        match r with
-        | VV r -> fold2Er (match_v (bind_any eval_env) eval_env) acc (l,r)
-        | Vars r -> fold2Er (match_v (bind_typedexpr_only eval_env) eval_env) acc (l,r)
-        | ET r -> fold2Er (match_v (bind_expr_only eval_env) eval_env) acc (l,r)
-    and match_v bind (eval_env: Env) (acc: Env) = function
+    let match_v match_vv bind (eval_env: Env) (acc: Env) = function
         | V arg_name, right_arg ->
             bind acc (arg_name, right_arg)
         | VV args, right_arg ->
             match_vv eval_env acc (args, right_arg)
-        | x -> Fail <| sprintf "Unexpected arguments in pattern matching.\n%A" x
+        | x -> Fail <| sprintf "Unexpected arguments in match_v.\n%A" x
+
+    let rec match_vars (eval_env: Env) (acc: Env) (l,r) = 
+        match r with
+        | Vars r -> fold2Er (match_v match_vars (bind_typedexpr_only eval_env) eval_env) acc (l,r)
+        | x -> Fail <| sprintf "Unexpected arguments in match_vars.\n%A" x
+
+    let rec match_et (eval_env: Env) (acc: Env) (l,r) = 
+        match r with
+        | ET r -> fold2Er (match_v match_et (bind_expr_only eval_env) eval_env) acc (l,r)
+        | x -> Fail <| sprintf "Unexpected arguments in match_et.\n%A" x
+
+    let rec match_tyvars eval_env (acc: Env) (l,r) = 
+        match r with
+        | TyVars(r,t) -> fold2Er (match_v match_tyvars bind_typedexpr eval_env) acc (l,r)
+        | x -> Fail <| sprintf "Unexpected arguments in match_tyvars.\n%A" x
+
+    let bind_tyvars eval_env = bind_template bind_expr_fail (match_tyvars eval_env) eval_env
+
+    let rec match_vv (eval_env: Env) (acc: Env) (l,r) = 
+        match r with
+        | VV r -> fold2Er (match_v match_vv (bind_any eval_env) eval_env) acc (l,r)
+        | Vars _ as r -> match_vars eval_env acc (l,r)
+        | ET _ as r -> match_et eval_env acc (l,r)
+        | r -> bind_tyvars eval_env acc (l,r)
 
     match exp with
     | LitInt x -> 
