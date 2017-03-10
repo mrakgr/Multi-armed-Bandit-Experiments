@@ -115,6 +115,13 @@ let mapFold2Er f state (x,y) =
     else
         Fail <| sprintf "Argument size mismatch in mapFoldEr2. Args: %A" (x,y)
 
+let mapResult f = function
+    | Succ x -> Succ <| f x
+    | Fail er -> Fail er
+
+let mapFst f (a,b) = (f a, b)
+let mapResultFst f = mapResult (mapFst f)
+
 let rec fold2Er f state (x,y) =
     if List.length x = List.length y then
         let rec loop f state = function
@@ -196,6 +203,33 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         | ET _ as r -> match_et eval_env acc (l,r)
         | r -> bind_tyvars eval_env acc (l,r)
 
+// -----
+
+    let bind_expr_any_method acc (arg_name, exp) =
+        let x = 
+            match exp with
+            | Method(Some(tag,_), _, _, _) -> MTag tag
+            | 
+
+        //Succ (Map.add arg_name exp acc)
+    let bind_typedexpr' acc (arg_name, ty_exp) =
+        let b'_type = get_type ty_exp
+        let ty_arg: TyV = get_tag(),arg_name,b'_type
+        // Pushes the sequence onto the stack
+        d.sequences.Push(ty_arg,ty_exp)
+        // Binds the name to the said sequence's name and loops to the next argument
+        add_bound_variable acc arg_name ty_arg
+    let bind_typedexpr acc (arg_name, ty_exp) =
+        bind_typedexpr' acc (arg_name, ty_exp) |> snd |> Succ
+
+
+    let rec match_vv_method (eval_env: Env) (acc: Env) (l,r) = 
+        match r with
+        | VV r -> mapFold2Er (match_v match_vv_method (bind_any eval_env) eval_env) acc (l,r)
+//        | Vars _ as r -> match_vars eval_env acc (l,r)
+//        | ET _ as r -> match_et eval_env acc (l,r)
+//        | r -> bind_tyvars eval_env acc (l,r)
+
     match exp with
     | LitInt x -> 
         match d.args with
@@ -241,3 +275,4 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         | (cur_args,env'') :: other_args ->
             
         | [] -> RExpr orig
+
