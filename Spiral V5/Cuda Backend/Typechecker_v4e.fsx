@@ -397,3 +397,90 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
                 impl_args
         Set.union method_implicit_args (grab_implicit_args ar)
 
+let inl x y = Inlineable(x,y,None)
+let ap x y = Apply(x,y)
+
+let l v b e = Apply(Inlineable(v,e,None),b)
+
+let exp_and_seq0 x = exp_and_seq (d0()) x
+let exp_and_seq1 x = 
+    let d = d0() 
+    exp_and_seq d x, d.memoized_methods
+let eval x = 
+    let d = d0()
+    match exp_and_seq d x with
+    | RTypedExpr exp ->
+        let imemo = Dictionary(HashIdentity.Structural)
+        let s = closure_conv imemo d.memoized_methods exp
+        printfn "set=%A" s
+        //if closure_conv imemo d.memoized_methods exp <> Set.empty then failwith "Set should be empty at the end of this call"
+        Succ (exp, imemo)
+    | RExpr exp ->
+        Fail <| sprintf "Expected: typed expression.\nGot: expression %A" exp
+    | RError er ->
+        Fail er
+
+let term0 =
+    let snd = inl (VV [V "a";V "b"]) (V "b")
+    ap (inl (VV [V "x";V "y";V "z";V "r"]) (ap (V "r") (VV [V "y";V "z"]))) (VV [LitUnit;LitBool true;LitInt 5;snd])
+
+let t0 = exp_and_seq0 term0
+
+let term1 =
+    let fst = inl (VV [V "a";V "b"]) (V "a")
+    let snd = inl (VV [V "a";V "b"]) (V "b")
+    l (VV [V "x";V "y";V "z"]) (VV [LitUnit;LitBool true;LitInt 5])
+        (l (V "q") (fst) (ap (V "q") (VV [V "y";V "z"])))
+
+let t1 = exp_and_seq0 term1
+    
+let term2 =
+    let fst = inl (VV [V "a";V "b"]) (V "a")
+    let snd = inl (VV [V "a";V "b"]) (V "b")
+    l (VV [V "a";V "b"]) (VV [LitInt 2;LitFloat 3.3]) (ap (If(LitBool true,snd,snd)) (VV [V "a";V "b"]))
+
+let t2 = exp_and_seq0 term2
+
+let term3 =
+    l (V "inlineable") (VV [inl (VV [V "a";V "b"]) (V "b")])
+        (l (V "fun")
+            (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
+            (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2])))
+let t3 = exp_and_seq0 term3
+
+let term3' =
+    l (V "inlineable") (inl (VV [V "a";V "b"]) (V "b"))
+        (l (V "fun")
+            (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
+            (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2])))
+let t3' = exp_and_seq0 term3'
+
+let term4 = // If test
+    l (V "if") (inl (VV [V "cond";V "tr";V "fl"]) (If(V "cond",V "tr",V "fl")))
+        (l (V "cond") (LitBool true)
+            (l (V "tr") (LitFloat 3.33)
+                (l (V "fl") (LitFloat 4.44)
+                    (ap (V "if") (VV [V "cond";V "tr";V "fl"])))))
+let t4 = exp_and_seq0 term4
+
+let meth x y = Method(None,x,y,None)
+
+let meth1 =
+    l (VV [V "fun";V "id"])
+        (VV [meth (VV [V "x";V "y";V "z";V "f"])
+                (l (V "t") (LitInt 3)
+                    (l (V "u") (LitBool false) (ap (V "f") (V "z"))))
+             meth (V "x") (V "x")])
+        (ap (V "fun") (VV [LitBool true; LitInt 2; LitFloat 4.4;V "id"]))
+let m1 = eval meth1
+
+let meth2 = // closure conversion test
+    l (V "m") 
+        (meth (VV [V "a";V "n";V "qwe"]) 
+            (l (V "loop") 
+                (meth (VV [V "acc";V "q"]) 
+                    (l (V "loop_method") (meth (VV [V "a";V "n"]) (If(LitBool true,V "a",V "n")))
+                        (ap (V "loop_method") (VV [V "a"; V "n"]))))
+                (ap (V "loop") (VV [LitInt 1; V "n"]))))
+        (ap (V "m") (VV [LitInt 3;LitInt 2;LitUnit]))
+let ip = eval meth2
