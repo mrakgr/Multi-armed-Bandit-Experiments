@@ -10,12 +10,21 @@ type Ty =
 type TyV = int64 * string * Ty
 
 type MethodArgs =
-    | MTy of Ty
-    | MTag of int64
-    | MVV of MethodArgs list
+    | MATy of Ty
+    | MATag of int64
+    | MAVV of MethodArgs list
+    | MAET of MethodArgs list
+    | MAVars of MethodArgs list
+
+type MethodCall =
+    | MCTypedExpr of TypedExpr
+    | MCTag of int64
+    | MCVV of MethodCall list
+    | MCET of MethodCall list
+    | MCVars of MethodCall list
 
 // No return type polymorphism like in Haskell for now. Local type inference only.
-type TyMethodKey = int64 * MethodArgs // The key does not need to know the free variables.
+and TyMethodKey = int64 * MethodArgs // The key does not need to know the free variables.
 
 and Expr = 
     | V of string // standard variable
@@ -40,7 +49,7 @@ and TypedExpr =
     | TyLitInt of int
     | TyLitFloat of float
     | TyLitBool of bool
-    | TyMethodCall of TyMethodKey * TypedExpr list * Ty
+    | TyMethodCall of TyMethodKey * MethodCall * Ty
     | TyVars of TypedExpr list * Ty
 
 and ReturnCases =
@@ -65,6 +74,13 @@ let get_tag =
         let x' = x
         x <- x + 1L
         x'
+
+let rec call_to_args = function
+    | MCVV x -> MAVV (List.map call_to_args x)
+    | MCTag x -> MATag x
+    | MCTypedExpr x -> MATy (get_type x)
+    | MCVars x -> MAVars (List.map call_to_args x)
+    | MCET x -> MAET (List.map call_to_args x)
 
 // method key * method body * bound variables * used variables
 type MethodDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV> * Set<TyV>>
@@ -138,9 +154,16 @@ let rec fold2Er f state (x,y) =
     else
         Fail <| sprintf "Argument size mismatch in foldEr2. Args: %A" (x,y)
 
+let rec with_empty_seq (d: Data) expr =
+    let d' = {d with sequences = Stack()}
+    match exp_and_seq d' expr with
+    | RExpr _ as x -> x
+    | RTypedExpr x -> RTypedExpr <| sequences_to_typed_expr d'.sequences x
+    | RError _ as er -> er
+
 // Does macros expansion, sequtialization and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
-let rec exp_and_seq (d: Data) exp: ReturnCases =
+and exp_and_seq (d: Data) exp: ReturnCases =
     let tev d exp = exp_and_seq d exp
     
     let add_bound_variable env arg_name ty_arg =
@@ -183,19 +206,19 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
     let bind_method acc (arg_name, exp) =
         match exp with
         | Method(Some(tag,_),_,_,_) -> 
-            let exp' = MTag tag
+            let exp' = MCTag tag
             Succ (exp', Map.add arg_name (RExpr exp) acc)
         | x -> Fail <| sprintf "Expected: method.\nGot: %A" x
     
     let bind_ty acc (arg_name, ty_exp) =
         let acc = bind_typedexpr' acc (arg_name, ty_exp)
-        Succ (MTy (get_type ty_exp), acc)
+        Succ (MCTypedExpr ty_exp, acc)
 
     let bind_method_only = bind_template bind_method bind_typedexpr_fail
     let bind_ty_only = bind_template bind_expr_fail bind_ty
     let bind_any_method = bind_template bind_method bind_ty
 
-    let traverse_method f s l = mapFold2Er f s l |> mapResultFst MVV
+    let traverse_generic tuple_constructor f s l = mapFold2Er f s l |> mapResultFst tuple_constructor
 
     let rec match_vars_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_vars_template traverse bind
@@ -204,7 +227,7 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         | x -> Fail <| sprintf "Unexpected arguments in match_vars.\n%A" x
 
     let match_vars = match_vars_template fold2Er bind_typedexpr_only
-    let match_vars_method = match_vars_template traverse_method bind_ty_only
+    let match_vars_method = match_vars_template (traverse_generic MCVars) bind_ty_only
 
     let rec match_et_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_et_template traverse bind
@@ -213,7 +236,7 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         | x -> Fail <| sprintf "Unexpected arguments in match_et.\n%A" x
 
     let match_et = match_et_template fold2Er bind_expr_only
-    let match_et_method = match_et_template traverse_method bind_method_only
+    let match_et_method = match_et_template (traverse_generic MCET) bind_method_only
 
     let rec match_tyvars_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_tyvars_template traverse bind
@@ -222,7 +245,7 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         | x -> Fail <| sprintf "Unexpected arguments in match_tyvars.\n%A" x
 
     let match_tyvars = match_tyvars_template fold2Er bind_typedexpr
-    let match_tyvars_method = match_tyvars_template traverse_method bind_ty
+    let match_tyvars_method = match_tyvars_template (traverse_generic MCVars) bind_ty
 
     let bind_tyvars eval_env = bind_template bind_expr_fail (match_tyvars eval_env) eval_env
     let bind_tyvars_method eval_env = bind_template bind_expr_fail (match_tyvars_method eval_env) eval_env
@@ -236,7 +259,7 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         | r -> bind_tyvars eval_env acc (l,r)
 
     let match_vv = match_vv_template fold2Er bind_any match_vars match_et bind_tyvars
-    let match_vv_method = match_vv_template traverse_method bind_any_method match_vars_method match_et_method bind_tyvars_method
+    let match_vv_method = match_vv_template (traverse_generic MCVV) bind_any_method match_vars_method match_et_method bind_tyvars_method
 
     let match_v eval_env = match_v_template match_vv (bind_any eval_env) eval_env
     let match_v_method eval_env = match_v_template match_vv_method (bind_any_method eval_env) eval_env
@@ -270,7 +293,7 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
     | If(cond,tr,fl) ->
         match exp_and_seq {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = BoolT -> 
-            match exp_and_seq d tr, exp_and_seq d fl with // TODO: Fix this. tr and fl need their own sequentialization.
+            match with_empty_seq d tr, with_empty_seq d fl with
             | RTypedExpr tr, RTypedExpr fl -> 
                 let type_tr, type_fl = get_type tr, get_type fl
                 if type_tr = type_fl then
@@ -283,8 +306,94 @@ let rec exp_and_seq (d: Data) exp: ReturnCases =
         exp_and_seq d (Inlineable(args, body, Some d.env))
     | Inlineable(args, body, Some env) as orig -> 
         match d.args with
-        | (cur_args,env'') :: other_args ->
-            
         | [] -> RExpr orig
+        | (cur_args,env'') :: other_args ->
+            match match_v env'' env (args, cur_args) with
+            | Fail er -> RError er
+            | Succ env -> exp_and_seq {d with env=env;args=other_args} body
+    | Method(None,args,body,return_type) ->
+        exp_and_seq d (Method(Some(get_tag(),d.env),args,body,return_type))
+    | Method(Some(tag,initial_env),args,body,return_type) as orig -> 
+        match d.args with
+        | [] -> RExpr orig
+        | (cur_args,env'') :: other_args ->
+            match match_v_method env'' initial_env (args, cur_args) with
+            | Fail er -> RError er
+            | Succ(evaled_cur_args,env) -> 
+                let method_key: TyMethodKey = tag, call_to_args evaled_cur_args
 
+                let make_method_call body =
+                    let x = RTypedExpr(TyMethodCall(method_key,evaled_cur_args,get_type body))
+                    match return_type with
+                    | None -> x
+                    | Some return_type when return_type = get_type body -> x
+                    | Some _ -> RError "The evaluated return type does not match the one given in Method evaluation."
+
+                match d.memoized_methods.TryGetValue method_key with
+                | false, _ ->
+                    let d = {d with env=env; args=[]; used_variables=HashSet(HashIdentity.Structural)}
+                    match with_empty_seq d body with
+                    | RError _ as er -> er
+                    | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
+                    | RTypedExpr body ->
+                        let bound_variables = get_bound_variables initial_env
+                        d.memoized_methods.Add(method_key, (body, bound_variables, Set d.used_variables))
+                        make_method_call body
+                | true, (body, bound_variables, used_variables) ->
+                    make_method_call body
+    | VV _ -> RError "Typechecking should never be called on VV. VV is only for immediate destructuring."
+    | ET exprs ->
+        let rec loop acc = function
+            | x :: xs ->
+                match tev {d with args=[]} x with
+                | RExpr expr -> loop (expr :: acc) xs
+                | RTypedExpr ty_expr -> Fail "Typed Expressions not allowed in Expression Tuples."
+                | RError er -> Fail er
+            | [] -> List.rev acc |> Succ
+        match loop [] exprs with
+        | Succ args -> RExpr <| ET args
+        | Fail er -> RError er
+    | Vars vars as orig ->
+        let empty_names = List.map (fun _ -> V "") vars
+        match match_vars_method d.env d.env (empty_names, orig) with
+        | Succ(MCVars(evaled_vars),env) ->
+            let fields = List.map (function
+                | (MCTypedExpr x) -> x
+                | _ -> failwith "Impossible") evaled_vars
+            let ty = List.map get_type fields |> VarsT
+            RTypedExpr <| TyVars(fields,ty)
+        | Succ _ -> failwith "Impossible"
+        | Fail er -> RError er
+            
+// Unions the free variables from top to bottom of the call chain.
+let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
+    let c x = closure_conv imemo memo x
+    let rec grab_implicit_args = function
+        | MCVars x | MCVV x -> Set.unionMany (List.map grab_implicit_args x)
+        | MCTag _ | MCET _ -> Set.empty
+        | MCTypedExpr x -> c x
+    match exp with
+    | TyV(_,_,t) -> Set.empty
+    | TyIf(cond,tr,fl,t) ->
+        let cond, tr, fl = c cond, c tr, c fl
+        Set.unionMany [|cond; tr; fl|]
+    | TyLet(_,body,e,t) ->
+        let body = c body
+        let e = c e
+        Set.union body e
+    | TyLitInt _ -> Set.empty
+    | TyLitFloat _ -> Set.empty
+    | TyLitBool _ -> Set.empty
+    | TyUnit -> Set.empty
+    | TyVars(vars,_) -> Set.unionMany (List.map c vars)
+    | TyMethodCall(m,ar,t) ->
+        let method_implicit_args =
+            match imemo.TryGetValue m with
+            | true, (_,impl_args) -> impl_args
+            | false, _ ->
+                let m', bound_variables, used_variables = memo.[m]
+                let impl_args = Set.union (c m') used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
+                imemo.Add(m,(m',impl_args))
+                impl_args
+        Set.union method_implicit_args (grab_implicit_args ar)
 
