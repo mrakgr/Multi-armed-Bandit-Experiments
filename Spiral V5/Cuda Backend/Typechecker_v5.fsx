@@ -11,9 +11,10 @@ type Ty =
     | BoolT
     | VarsT of Ty list // represents variable argument method fields
     | NominalT of string // for classes and such
-    | Const of Ty
-    | Shared of Ty
-    | Array of TyV list
+    | ConstT of Ty
+    | SharedT of Ty
+    | ArrayT of TyV list
+    | ArrT of Ty list * Ty
 and TyV = int64 * string * Ty
 
 type MethodArgs =
@@ -74,6 +75,8 @@ and Expr =
     | AtomicAdd of out: Expr * in_: Expr
     // Loops
     | While of Expr * Expr * Expr
+    // Magic
+    | Typecase of (Data -> Expr -> ReturnCases) * Expr
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedExpr =
@@ -85,6 +88,7 @@ and TypedExpr =
     | TyLitFloat of float
     | TyLitBool of bool
     | TyMethodCall of TyMethodKey * MethodCall * Ty
+    | TyMethod of TyMethodKey * MethodCall * Ty
     | TyVars of TypedExpr list * Ty
     
     // Primitive operations on expressions.
@@ -110,8 +114,8 @@ and TypedExpr =
     | TyTanh of TypedExpr * Ty
     | TyNeg of TypedExpr * Ty
     // Mutable operations.
-    | TyMSet of var: TypedExpr * body: TypedExpr
-    | TyAtomicAdd of out: TypedExpr * in_: TypedExpr * Ty
+    | TyMSet of TypedExpr * TypedExpr
+    | TyAtomicAdd of TypedExpr * TypedExpr * Ty
     | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
 
 and ReturnCases =
@@ -120,6 +124,28 @@ and ReturnCases =
     | RError of string
 
 and Env = Map<string,ReturnCases>
+// method key * method body * bound variables * used variables
+and MethodDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV> * Set<TyV>>
+// method key * method body * implicit arguments
+and MethodImplDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV>>
+
+and Sequence =
+    | SeqLet of TyV * TypedExpr
+    | SeqWhile of TypedExpr * TypedExpr
+
+and ArgCases = Expr * Env
+and Data =
+    {
+    // Immutable
+    env : Env
+    args : ArgCases list
+    // Mutable
+    memoized_methods : MethodDict // For hoisted out global methods.
+    sequences : Stack<Sequence>
+    used_variables : HashSet<TyV>
+    }
+
+type Result<'a,'b> = Succ of 'a | Fail of 'b
 
 let rec get_type = function
     | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
@@ -145,6 +171,7 @@ let rec get_type = function
     | TyAtomicAdd(_,_,t) -> t
     // Loops
     | TyWhile(_,_,_,t) -> t
+    | TyMethod(_,t) -> t
 
 
 let is_numeric a =
@@ -181,8 +208,8 @@ let is_vars a =
 
 let is_const a =
     let rec loop = function
-        | Const _ -> true
-        | Shared x -> loop x
+        | ConstT _ -> true
+        | SharedT x -> loop x
         | _ -> false
     loop (get_type a)
 
@@ -199,29 +226,6 @@ let rec call_to_args = function
     | MCTypedExpr x -> MATy (get_type x)
     | MCVars x -> MAVars (List.map call_to_args x)
     | MCET x -> MAET (List.map call_to_args x)
-
-// method key * method body * bound variables * used variables
-type MethodDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV> * Set<TyV>>
-// method key * method body * implicit arguments
-type MethodImplDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV>>
-
-type Sequence =
-    | SeqLet of TyV * TypedExpr
-    | SeqWhile of TypedExpr * TypedExpr
-
-type ArgCases = Expr * Env
-type Data =
-    {
-    // Immutable
-    env : Env
-    args : ArgCases list
-    // Mutable
-    memoized_methods : MethodDict // For hoisted out global methods.
-    sequences : Stack<Sequence>
-    used_variables : HashSet<TyV>
-    }
-
-type Result<'a,'b> = Succ of 'a | Fail of 'b
 
 let d0() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural);used_variables=HashSet(HashIdentity.Structural)}
 
@@ -597,7 +601,26 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             | BoolT, UnitT -> d.sequences.Push(SeqWhile(cond,body)); tev d e
             | BoolT, _ -> RError "Expected UnitT as the type of While's body."
             | _ -> RError "Expected BoolT as the type of While's conditional."
-        | x -> RError <| sprintf "Expected both body and cond of While to be typed expressions.\n Got: %A" x
+        | x -> RError <| sprintf "Expected both body and cond of While to be typed expressions.\nGot: %A" x
+    // Magic
+    | Typecase(f,x) -> f d x
+
+let methodcall_to_method_type (tag,args) t =
+    let rec get_arg_type = function
+            | MAET _ | MATag _ -> []
+            | MAVars x | MAVV x -> List.map get_arg_type x |> List.concat
+            | MATy x -> [x]
+    let r = get_arg_type args
+    ArrT(r,t)
+
+let ignore_call_and_get_methodkey x =
+    let f d x =
+        match exp_and_seq d x with
+        | RTypedExpr(TyMethodCall(k,c,t)) -> 
+            RTypedExpr(TyMethod(k, c, methodcall_to_method_type k t))
+        | x -> RError <| sprintf "Expected TyMethodCall in ignore_call_and_get_methodkey.\nGot: %A" x
+
+    Typecase(f,x)
 
             
 // Unions the free variables from top to bottom of the call chain.
@@ -621,7 +644,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyLitBool _ -> Set.empty
     | TyUnit -> Set.empty
     | TyVars(vars,_) -> Set.unionMany (List.map c vars)
-    | TyMethodCall(m,ar,t) ->
+    | TyMethod(m,ar,_) | TyMethodCall(m,ar,_) ->
         let method_implicit_args =
             match imemo.TryGetValue m with
             | true, (_,impl_args) -> impl_args
@@ -631,6 +654,15 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
                 imemo.Add(m,(m',impl_args))
                 impl_args
         Set.union method_implicit_args (grab_implicit_args ar)
+    // Primitive operations on expressions.
+    | TySyncthreads -> Set.empty
+    | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
+    | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
+    | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
+    | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
+    | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleSource(a,b,_) 
+    | TyMSet(a,b) | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
+    | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
 
 let inl x y = Inlineable(x,y,None)
 let ap x y = Apply(x,y)
