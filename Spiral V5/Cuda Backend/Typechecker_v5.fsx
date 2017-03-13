@@ -72,6 +72,8 @@ and Expr =
     // Mutable operations.
     | MSet of var: Expr * body: Expr
     | AtomicAdd of out: Expr * in_: Expr
+    // Loops
+    | While of Expr * Expr * Expr
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedExpr =
@@ -110,7 +112,7 @@ and TypedExpr =
     // Mutable operations.
     | TyMSet of var: TypedExpr * body: TypedExpr
     | TyAtomicAdd of out: TypedExpr * in_: TypedExpr * Ty
-
+    | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
 
 and ReturnCases =
     | RTypedExpr of TypedExpr
@@ -125,12 +127,35 @@ let rec get_type = function
     | TyLitFloat _ -> Float32T
     | TyLitBool _ -> BoolT
     | TyUnit -> UnitT
-    | TyMethodCall(_,_,t) -> t
-    | TyVars(_,t) -> t
+    | TyMethodCall(_,_,t) | TyVars(_,t) -> t
+
+    // Primitive operations on expressions.
+    | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
+    | TyDiv(_,_,t) | TyMod(_,_,t) -> t
+    | TyLT _ | TyLTE _ | TyEQ _ | TyGT _
+    | TyGTE _ -> BoolT
+    | TyLeftShift(_,_,t) | TyRightShift(_,_,t) -> t
+    | TySyncthreads -> UnitT
+    | TyShuffleXor(_,_,t) | TyShuffleUp(_,_,t)
+    | TyShuffleDown(_,_,t) | TyShuffleSource(_,_,t) -> t
+    | TyLog(_,t) | TyExp(_,t) | TyTanh(_,t)
+    | TyNeg(_,t) -> t
+    // Mutable operations.
+    | TyMSet _ -> UnitT
+    | TyAtomicAdd(_,_,t) -> t
+    // Loops
+    | TyWhile(_,_,_,t) -> t
+
 
 let is_numeric a =
     match get_type a with
     | UInt32T | UInt64T | Int32T | Int64T 
+    | Float32T | Float64T -> true
+    | _ -> false
+
+let is_atomic_add_supported a =
+    match get_type a with
+    | UInt32T | UInt64T | Int32T
     | Float32T | Float64T -> true
     | _ -> false
 
@@ -180,6 +205,10 @@ type MethodDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV> * Set<TyV>>
 // method key * method body * implicit arguments
 type MethodImplDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV>>
 
+type Sequence =
+    | SeqLet of TyV * TypedExpr
+    | SeqWhile of TypedExpr * TypedExpr
+
 type ArgCases = Expr * Env
 type Data =
     {
@@ -188,7 +217,7 @@ type Data =
     args : ArgCases list
     // Mutable
     memoized_methods : MethodDict // For hoisted out global methods.
-    sequences : Stack<TyV * TypedExpr>
+    sequences : Stack<Sequence>
     used_variables : HashSet<TyV>
     }
 
@@ -196,9 +225,11 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 
 let d0() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural);used_variables=HashSet(HashIdentity.Structural)}
 
-let sequences_to_typed_expr (sequences: Stack<_>) final_expr =
+let sequences_to_typed_expr (sequences: Stack<Sequence>) final_expr =
     let type_fin = get_type final_expr
-    Seq.fold (fun exp (v,body) -> TyLet(v,body,exp,type_fin)) final_expr sequences
+    Seq.fold (fun rest -> function 
+        | SeqLet(v,body) -> TyLet(v,body,rest,type_fin)
+        | SeqWhile(cond,body) -> TyWhile(cond,body,rest,type_fin)) final_expr sequences
 
 let get_bound_variables (env: Env) =
     env
@@ -260,7 +291,6 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let tev d exp = exp_and_seq d exp
 
     /// Patterm matching functions
-    
     let add_bound_variable env arg_name ty_arg =
         let v = TyV ty_arg |> RTypedExpr
         Map.add arg_name v env
@@ -276,7 +306,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         let b'_type = get_type ty_exp
         let ty_arg: TyV = get_tag(),arg_name,b'_type
         // Pushes the sequence onto the stack
-        d.sequences.Push(ty_arg,ty_exp)
+        d.sequences.Push(SeqLet(ty_arg,ty_exp))
         // Binds the name to the said sequence's name and loops to the next argument
         add_bound_variable acc arg_name ty_arg
     let bind_typedexpr acc (arg_name, ty_exp) =
@@ -378,18 +408,28 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         let er = sprintf "`get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = get_type a = get_type b
         prim_bin_op_template er check (fun t a b -> t (a,b))
+
     let prim_arith_op = 
         let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_numeric a && get_type a = get_type b
         prim_bin_op_template er check append_typeof_fst
+
+    let prim_atomic_add_op = 
+        let er = sprintf "`is_atomic_add_supported a && get_type a = get_type b` is false.\na=%A, b=%A"
+        let check a b = is_atomic_add_supported a && get_type a = get_type b
+        prim_bin_op_template er check append_typeof_fst
+        
+
     let prim_bool_op = 
         let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
         prim_bin_op_template er check (fun t a b -> t (a,b))
+
     let prim_shift_op =
         let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
         let check a b = is_int a && is_int b
         prim_bin_op_template er check append_typeof_fst
+
     let prim_shuffle_op =
         let er = sprintf "`is_int b` is false.\na=%A, b=%A"
         let check a b = is_int b
@@ -414,6 +454,11 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         let er = sprintf "`true` is false.\na=%A"
         let check a = true
         prim_un_op_template er check (fun t a -> t (a, get_type a))
+
+    let prim_atomic_add_op = 
+        let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
+        let check a b = is_numeric a && get_type a = get_type b
+        prim_bin_op_template er check append_typeof_fst
 
     match exp with
     | LitInt x -> 
@@ -544,7 +589,15 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | Neg a -> prim_un_numeric a TyNeg
     // Mutable operations.
     | MSet(a,b) -> prim_mset_op a b TyMSet
-    | AtomicAdd(a,b) -> prim_arith_op a b TyAtomicAdd
+    | AtomicAdd(a,b) -> prim_atomic_add_op a b TyAtomicAdd
+    | While(cond,body,e) ->
+        match tev d cond, tev d body with
+        | RTypedExpr cond, RTypedExpr body ->
+            match get_type cond, get_type body with
+            | BoolT, UnitT -> d.sequences.Push(SeqWhile(cond,body)); tev d e
+            | BoolT, _ -> RError "Expected UnitT as the type of While's body."
+            | _ -> RError "Expected BoolT as the type of While's conditional."
+        | x -> RError <| sprintf "Expected both body and cond of While to be typed expressions.\n Got: %A" x
 
             
 // Unions the free variables from top to bottom of the call chain.
