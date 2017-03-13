@@ -13,7 +13,7 @@ type Ty =
     | NominalT of string // for classes and such
     | ConstT of Ty
     | SharedT of Ty
-    | ArrayT of TyV list
+    | ArrayT of TyV list * Ty
     | ArrT of Ty list * Ty
 and TyV = int64 * string * Ty
 
@@ -47,6 +47,10 @@ and Expr =
     | VV of Expr list // immediately destructure
     | Vars of Expr list // variable arguments
     | ET of Expr list // expression tuple
+
+    // Array cases
+    | IndexArray of Expr * Expr list * Ty
+    | CreateArray of Expr list * Ty
 
     // Primitive operations on expressions.
     | Add of Expr * Expr
@@ -90,6 +94,10 @@ and TypedExpr =
     | TyMethodCall of TyMethodKey * MethodCall * Ty
     | TyMethod of TyMethodKey * MethodCall * Ty
     | TyVars of TypedExpr list * Ty
+
+    // Array cases
+    | TyIndexArray of TypedExpr * TypedExpr list * Ty
+    | TyCreateArray of TypedExpr list * Ty
     
     // Primitive operations on expressions.
     | TyAdd of TypedExpr * TypedExpr * Ty
@@ -155,6 +163,9 @@ let rec get_type = function
     | TyUnit -> UnitT
     | TyMethodCall(_,_,t) | TyVars(_,t) -> t
 
+    // Array cases
+    | TyIndexArray(_,_,t) | TyCreateArray(_,t) -> t
+
     // Primitive operations on expressions.
     | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
     | TyDiv(_,_,t) | TyMod(_,_,t) -> t
@@ -171,7 +182,7 @@ let rec get_type = function
     | TyAtomicAdd(_,_,t) -> t
     // Loops
     | TyWhile(_,_,_,t) -> t
-    | TyMethod(_,t) -> t
+    | TyMethod(_,_,t) -> t
 
 
 let is_numeric a =
@@ -243,7 +254,7 @@ let get_bound_variables (env: Env) =
         | _ -> None)
     |> Set
 
-let mapFold2Er f state (x,y) =
+let map_fold_2_Er f state (x,y) =
     if List.length x = List.length y then
         let rec loop f state = function
             | x :: xs, y :: ys ->
@@ -254,10 +265,24 @@ let mapFold2Er f state (x,y) =
                     | Fail _ as er -> er
                 | Fail er -> Fail er
             | [], [] -> Succ ([], state)
-            | x -> failwith "Argument size mismatch in mapFoldEr2."
+            | x -> failwith "Argument size mismatch in map_fold_2_Er."
         loop f state (x,y)
     else
-        Fail <| sprintf "Argument size mismatch in mapFoldEr2. Args: %A" (x,y)
+        Fail <| sprintf "Argument size mismatch in map_fold_2_Er. Args: %A" (x,y)
+
+let map_typed f x =
+    let rec loop = function
+        | x :: xs -> 
+            match f x with
+            | RTypedExpr x ->
+                match loop xs with
+                | Succ xs -> Succ (x :: xs)
+                | Fail _ as er -> er
+            | RExpr x -> Fail <| sprintf "Expected: typed expression.\nGot: %A" x
+            | RError er -> Fail er
+        | [] -> Succ []
+    loop x
+            
 
 let mapResult f = function
     | Succ x -> Succ <| f x
@@ -266,7 +291,7 @@ let mapResult f = function
 let mapFst f (a,b) = (f a, b)
 let mapResultFst f = mapResult (mapFst f)
 
-let rec fold2Er f state (x,y) =
+let rec fold_2_er f state (x,y) =
     if List.length x = List.length y then
         let rec loop f state = function
             | x :: xs, y :: ys ->
@@ -277,10 +302,10 @@ let rec fold2Er f state (x,y) =
                     | Fail _ as er -> er
                 | Fail er -> Fail er
             | [], [] -> Succ state
-            | x -> failwith "Argument size mismatch in fold2Er."
+            | x -> failwith "Argument size mismatch in fold_2_er."
         loop f state (x,y)
     else
-        Fail <| sprintf "Argument size mismatch in foldEr2. Args: %A" (x,y)
+        Fail <| sprintf "Argument size mismatch in fold_2_er. Args: %A" (x,y)
 
 let rec with_empty_seq (d: Data) expr =
     let d' = {d with sequences = Stack()}
@@ -296,8 +321,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
     /// Patterm matching functions
     let add_bound_variable env arg_name ty_arg =
-        let v = TyV ty_arg |> RTypedExpr
-        Map.add arg_name v env
+        let v = TyV ty_arg
+        v, Map.add arg_name (RTypedExpr v) env
 
     let bind_expr_fail acc (arg_name, exp) =
         Fail "Cannot bind untyped expressions in value structures like Vars."
@@ -306,13 +331,14 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         Succ (Map.add arg_name exp acc)
     let bind_typedexpr_fail acc (arg_name, ty_exp) =
         Fail "Cannot bind typed expressions in expression tuples."
-    let bind_typedexpr' acc (arg_name, ty_exp) =
+    let bind_typedexpr'' acc (arg_name, ty_exp) =
         let b'_type = get_type ty_exp
         let ty_arg: TyV = get_tag(),arg_name,b'_type
         // Pushes the sequence onto the stack
         d.sequences.Push(SeqLet(ty_arg,ty_exp))
         // Binds the name to the said sequence's name and loops to the next argument
         add_bound_variable acc arg_name ty_arg
+    let bind_typedexpr' a b = bind_typedexpr'' a b |> snd
     let bind_typedexpr acc (arg_name, ty_exp) =
         bind_typedexpr' acc (arg_name, ty_exp) |> Succ
     let bind_template bind_expr bind_typedexpr eval_env acc (arg_name, right_arg) =
@@ -347,7 +373,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let bind_ty_only = bind_template bind_expr_fail bind_ty
     let bind_any_method = bind_template bind_method bind_ty
 
-    let traverse_generic tuple_constructor f s l = mapFold2Er f s l |> mapResultFst tuple_constructor
+    let traverse_generic tuple_constructor f s l = map_fold_2_Er f s l |> mapResultFst tuple_constructor
 
     let rec match_vars_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_vars_template traverse bind
@@ -355,7 +381,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | Vars r -> traverse (match_v_template match_vv (bind eval_env) eval_env) acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_vars.\n%A" x
 
-    let match_vars = match_vars_template fold2Er bind_typedexpr_only
+    let match_vars = match_vars_template fold_2_er bind_typedexpr_only
     let match_vars_method = match_vars_template (traverse_generic MCVars) bind_ty_only
 
     let rec match_et_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
@@ -364,7 +390,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | ET r -> traverse (match_v_template match_vv (bind eval_env) eval_env) acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_et.\n%A" x
 
-    let match_et = match_et_template fold2Er bind_expr_only
+    let match_et = match_et_template fold_2_er bind_expr_only
     let match_et_method = match_et_template (traverse_generic MCET) bind_method_only
 
     let rec match_tyvars_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
@@ -373,7 +399,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | TyVars(r,t) -> traverse (match_v_template match_vv bind eval_env) acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_tyvars.\n%A" x
 
-    let match_tyvars = match_tyvars_template fold2Er bind_typedexpr
+    let match_tyvars = match_tyvars_template fold_2_er bind_typedexpr
     let match_tyvars_method = match_tyvars_template (traverse_generic MCVars) bind_ty
 
     let bind_tyvars eval_env = bind_template bind_expr_fail (match_tyvars eval_env) eval_env
@@ -387,7 +413,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | ET _ as r -> match_et eval_env acc (l,r)
         | r -> bind_tyvars eval_env acc (l,r)
 
-    let match_vv = match_vv_template fold2Er bind_any match_vars match_et bind_tyvars
+    let match_vv = match_vv_template fold_2_er bind_any match_vars match_et bind_tyvars
     let match_vv_method = match_vv_template (traverse_generic MCVV) bind_any_method match_vars_method match_et_method bind_tyvars_method
 
     let match_v eval_env = match_v_template match_vv (bind_any eval_env) eval_env
@@ -564,6 +590,25 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | Succ _ -> failwith "Impossible"
         | Fail er -> RError er
 
+    // Array cases
+    | IndexArray(exp,args,t) ->
+        match tev d exp, map_typed (tev d) args with
+        | RTypedExpr exp, Succ args ->
+            match get_type exp with
+            | ArrayT(vs, t) when List.forall is_int args && List.length vs = List.length args ->
+                RTypedExpr <| TyIndexArray(exp,args,t)
+            | _ -> RError <| sprintf "Something is wrong in IndexArray.\nexp=%A, args=%A" exp args
+        | x -> RError <| sprintf "Something is wrong in IndexArray.\n%A" x
+
+    | CreateArray(args,t) ->
+        match map_typed (tev d) args with
+        | Succ args when List.forall is_int args ->
+            let args = List.map (fun x -> bind_typedexpr'' d.env ("",x) |> fst) args
+            let args' = List.map (function (TyV x) -> x | _ -> failwith "impossible") args
+            bind_typedexpr'' d.env ("",TyCreateArray(args,ArrayT(args', t)))
+            |> fst |> RTypedExpr
+        | x -> RError <| sprintf "Something is wrong in CreateArray.\n%A" x
+
     // Primitive operations on expressions.
     | Add(a,b) -> prim_arith_op a b TyAdd
     | Sub(a,b) -> prim_arith_op a b TySub
@@ -654,6 +699,9 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
                 imemo.Add(m,(m',impl_args))
                 impl_args
         Set.union method_implicit_args (grab_implicit_args ar)
+    // Array cases
+    | TyIndexArray(a,b,_) -> Set.union (c a) (Set.unionMany (List.map c b))
+    | TyCreateArray(b,_) -> Set.unionMany (List.map c b)
     // Primitive operations on expressions.
     | TySyncthreads -> Set.empty
     | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
