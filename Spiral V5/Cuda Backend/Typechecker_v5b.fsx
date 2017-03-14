@@ -25,7 +25,7 @@ type MethodArgs =
     | MAVars of MethodArgs list
 
 type MethodCall =
-    | MCTypedExpr of TypedExpr
+    | MCTypedExpr of TyV * TypedExpr
     | MCTag of int64
     | MCVV of MethodCall list
     | MCET of MethodCall list
@@ -146,9 +146,9 @@ and ReturnCases =
 
 and Env = Map<string,ReturnCases>
 // method key * method body * bound variables * used variables
-and MethodDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV> * Set<TyV>>
+and MethodDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV> * Set<TyV>>
 // method key * method body * implicit arguments
-and MethodImplDict = Dictionary<TyMethodKey, TypedExpr * Set<TyV>>
+and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV>>
 
 and Sequence =
     | SeqLet of TyV * TypedExpr
@@ -253,7 +253,7 @@ let get_tag =
 let rec call_to_args = function
     | MCVV x -> MAVV (List.map call_to_args x)
     | MCTag x -> MATag x
-    | MCTypedExpr x -> MATy (get_type x)
+    | MCTypedExpr(_,x) -> MATy (get_type x)
     | MCVars x -> MAVars (List.map call_to_args x)
     | MCET x -> MAET (List.map call_to_args x)
 
@@ -393,9 +393,10 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     
     let bind_typedexpr_method name_checker acc (arg_name, ty_exp: TypedExpr) =
         dup_name_check name_checker arg_name <| fun _ ->
-            let ty_arg = TyV(get_tag(),arg_name,get_type ty_exp)
+            let v = get_tag(),arg_name,get_type ty_exp
+            let ty_arg = TyV v
             let acc = Map.add arg_name (RTypedExpr ty_arg) acc
-            Succ (MCTypedExpr ty_exp, acc)
+            Succ (MCTypedExpr(v,ty_exp), acc)
 
     let bind_method_only name_checker = bind_template (bind_method name_checker) bind_typedexpr_fail
     let bind_ty_only name_checker = bind_template bind_expr_fail (bind_typedexpr_method name_checker)
@@ -596,10 +597,17 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
                     | RTypedExpr body ->
+                        let sole_arguments = 
+                            let rec loop = function
+                                | MCET _ | MCTag _ -> []
+                                | MCTypedExpr(v,_) -> [v]
+                                | MCVars x | MCVV x -> List.collect loop x
+                            loop evaled_cur_args
+                            
                         let bound_variables = get_bound_variables initial_env
-                        d.memoized_methods.Add(method_key, (body, bound_variables, Set d.used_variables))
+                        d.memoized_methods.Add(method_key, (sole_arguments, body, bound_variables, Set d.used_variables))
                         make_method_call body
-                | true, (body, bound_variables, used_variables) ->
+                | true, (sole_arguments, body, bound_variables, used_variables) ->
                     make_method_call body
     | VV _ -> RError "Typechecking should never be called on VV. VV is only for immediate destructuring."
     | ET exprs ->
@@ -618,7 +626,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         match match_vars_method (HashSet(HashIdentity.Structural)) d.env d.env (empty_names, orig) with
         | Succ(MCVars(evaled_vars),env) ->
             let fields = List.map (function
-                | (MCTypedExpr x) -> x
+                | (MCTypedExpr(_,x)) -> x
                 | _ -> failwith "Impossible") evaled_vars
             let ty = List.map get_type fields |> VarsT
             RTypedExpr <| TyVars(fields,ty)
@@ -722,7 +730,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     let rec grab_implicit_args = function
         | MCVars x | MCVV x -> Set.unionMany (List.map grab_implicit_args x)
         | MCTag _ | MCET _ -> Set.empty
-        | MCTypedExpr x -> c x
+        | MCTypedExpr(_,x) -> c x
     match exp with
     | TyV(_,_,t) -> Set.empty
     | TyIf(cond,tr,fl,t) ->
@@ -732,19 +740,16 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
         let body = c body
         let e = c e
         Set.union body e
-    | TyLitInt _ -> Set.empty
-    | TyLitFloat _ -> Set.empty
-    | TyLitBool _ -> Set.empty
-    | TyUnit -> Set.empty
+    | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
     | TyVars(vars,_) -> Set.unionMany (List.map c vars)
     | TyMethod(m,ar,_) | TyMethodCall(m,ar,_) ->
         let method_implicit_args =
             match imemo.TryGetValue m with
-            | true, (_,impl_args) -> impl_args
+            | true, (_,_,impl_args) -> impl_args
             | false, _ ->
-                let m', bound_variables, used_variables = memo.[m]
-                let impl_args = Set.union (c m') used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
-                imemo.Add(m,(m',impl_args))
+                let sol_arg, body, bound_variables, used_variables = memo.[m]
+                let impl_args = Set.union (c body) used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
+                imemo.Add(m,(sol_arg,body,impl_args))
                 impl_args
         Set.union method_implicit_args (grab_implicit_args ar)
     // Array cases
@@ -849,4 +854,4 @@ let meth2 = // closure conversion test
                 (ap (V "loop") (VV [LitInt 1; V "n"]))))
         (ap (V "m") (VV [LitInt 3;LitInt 2;LitUnit]))
 let ip = typecheck0 meth2
-//
+
