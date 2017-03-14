@@ -74,6 +74,11 @@ and Expr =
     | Exp of Expr
     | Tanh of Expr
     | Neg of Expr
+    // Cuda kernel constants
+    | ThreadIdxX | ThreadIdxY | ThreadIdxZ
+    | BlockIdxX | BlockIdxY | BlockIdxZ
+    | BlockDimX | BlockDimY | BlockDimZ
+    | GridDimX | GridDimY | GridDimZ
     // Mutable operations.
     | MSet of var: Expr * body: Expr
     | AtomicAdd of out: Expr * in_: Expr
@@ -94,6 +99,12 @@ and TypedExpr =
     | TyMethodCall of TyMethodKey * MethodCall * Ty
     | TyMethod of TyMethodKey * MethodCall * Ty
     | TyVars of TypedExpr list * Ty
+
+    // Cuda kernel constants
+    | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
+    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
+    | TyGridDimX | TyGridDimY | TyGridDimZ
 
     // Array cases
     | TyIndexArray of TypedExpr * TypedExpr list * Ty
@@ -162,6 +173,12 @@ let rec get_type = function
     | TyLitBool _ -> BoolT
     | TyUnit -> UnitT
     | TyMethodCall(_,_,t) | TyVars(_,t) -> t
+
+    // Cuda kernel constants
+    | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
+    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
+    | TyGridDimX | TyGridDimY | TyGridDimZ -> Int32T
 
     // Array cases
     | TyIndexArray(_,_,t) | TyCreateArray(_,t) -> t
@@ -624,6 +641,19 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             |> fst |> RTypedExpr
         | x -> RError <| sprintf "Something is wrong in CreateArray.\n%A" x
 
+    | ThreadIdxX -> RTypedExpr TyThreadIdxX 
+    | ThreadIdxY -> RTypedExpr TyThreadIdxY 
+    | ThreadIdxZ -> RTypedExpr TyThreadIdxZ
+    | BlockIdxX -> RTypedExpr TyBlockIdxX 
+    | BlockIdxY -> RTypedExpr TyBlockIdxY 
+    | BlockIdxZ -> RTypedExpr TyBlockIdxZ
+    | BlockDimX -> RTypedExpr TyBlockDimX 
+    | BlockDimY -> RTypedExpr TyBlockDimY 
+    | BlockDimZ -> RTypedExpr TyBlockDimZ
+    | GridDimX -> RTypedExpr TyGridDimX 
+    | GridDimY -> RTypedExpr TyGridDimY 
+    | GridDimZ -> RTypedExpr TyGridDimZ
+
     // Primitive operations on expressions.
     | Add(a,b) -> prim_arith_op a b TyAdd
     | Sub(a,b) -> prim_arith_op a b TySub
@@ -717,6 +747,11 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     // Array cases
     | TyIndexArray(a,b,_) -> Set.union (c a) (Set.unionMany (List.map c b))
     | TyCreateArray(b,_) -> Set.unionMany (List.map c b)
+    // Cuda kernel constants
+    | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
+    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
+    | TyGridDimX | TyGridDimY | TyGridDimZ -> Set.empty
     // Primitive operations on expressions.
     | TySyncthreads -> Set.empty
     | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
