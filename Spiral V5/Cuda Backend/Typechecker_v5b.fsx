@@ -37,13 +37,15 @@ and TyMethodKey = int64 * MethodArgs // The key does not need to know the free v
 and Expr = 
     | V of string // standard variable
     | If of Expr * Expr * Expr
+    | HoistedIf of Expr * Expr * Expr
     | Inlineable of Expr * Expr * Env option
     | LitUnit
     | LitInt of int
     | LitFloat of float
     | LitBool of bool
     | Apply of Expr * args: Expr
-    | Method of (int64 * Env) option * args: Expr * body: Expr * return_type: Ty option
+    | Method of args: Expr * body: Expr * return_type: Ty option
+    | HoistedMethod of int64 * Env * args: Expr * body: Expr * return_type: Ty option
     | VV of Expr list // immediately destructure
     | Vars of Expr list // variable arguments
     | ET of Expr list // expression tuple
@@ -255,8 +257,6 @@ let rec call_to_args = function
     | MCVars x -> MAVars (List.map call_to_args x)
     | MCET x -> MAET (List.map call_to_args x)
 
-let d0() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural);used_variables=HashSet(HashIdentity.Structural)}
-
 let sequences_to_typed_expr (sequences: Stack<Sequence>) final_expr =
     let type_fin = get_type final_expr
     Seq.fold (fun rest -> function 
@@ -362,10 +362,10 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         d.sequences.Push(SeqLet(ty_arg,ty_exp))
         // Binds the name to the said sequence's name and loops to the next argument
         add_bound_variable acc arg_name ty_arg
-    let bind_typedexpr' a b = bind_typedexpr'' a b |> snd
-    let bind_typedexpr (name_checker: HashSet<string>) acc (arg_name, ty_exp) =
-        dup_name_check name_checker arg_name <| fun _ ->
-            Succ (bind_typedexpr' acc (arg_name, ty_exp))
+//    let bind_typedexpr' a b = bind_typedexpr'' a b |> snd
+//    let bind_typedexpr (name_checker: HashSet<string>) acc (arg_name, ty_exp) =
+//        dup_name_check name_checker arg_name <| fun _ ->
+//            Succ (bind_typedexpr' acc (arg_name, ty_exp))
     let bind_template bind_expr bind_typedexpr eval_env acc (arg_name, right_arg) =
         match tev {d with env=eval_env; args=[]} right_arg with
         | RError er -> Fail er
@@ -386,7 +386,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let bind_method name_checker acc (arg_name, exp) =
         dup_name_check name_checker arg_name <| fun _ ->
             match exp with
-            | Method(Some(tag,_),_,_,_) -> 
+            | HoistedMethod(tag,_,_,_,_) -> 
                 let exp' = MCTag tag
                 Succ (exp', Map.add arg_name (RExpr exp) acc)
             | x -> Fail <| sprintf "Expected: method.\nGot: %A" x
@@ -549,7 +549,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | Apply(expr,args) ->
         exp_and_seq {d with args = (args,d.env) :: d.args} expr
     | If(cond,tr,fl) ->
-        match exp_and_seq {d with args=[]} cond with
+        tev d (Apply(Method(V "cond",HoistedIf(V "cond",tr,fl),None),cond))
+    | HoistedIf(cond,tr,fl) ->
+        match tev {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = BoolT -> 
             match with_empty_seq d tr, with_empty_seq d fl with
             | RTypedExpr tr, RTypedExpr fl -> 
@@ -569,9 +571,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             match match_v (HashSet(HashIdentity.Structural)) env'' env (args, cur_args) with
             | Fail er -> RError er
             | Succ env -> exp_and_seq {d with env=env;args=other_args} body
-    | Method(None,args,body,return_type) ->
-        exp_and_seq d (Method(Some(get_tag(),d.env),args,body,return_type))
-    | Method(Some(tag,initial_env),args,body,return_type) as orig -> 
+    | Method(args,body,return_type) ->
+        exp_and_seq d (HoistedMethod(get_tag(),d.env,args,body,return_type))
+    | HoistedMethod(tag,initial_env,args,body,return_type) as orig -> 
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
@@ -762,34 +764,31 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyMSet(a,b) | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
     | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
 
-let inl x y = Inlineable(x,y,None)
-let ap x y = Apply(x,y)
-
-let l v b e = Apply(Inlineable(v,e,None),b)
-
-let exp_and_seq0 x = exp_and_seq (d0()) x
-let exp_and_seq1 x = 
-    let d = d0() 
-    exp_and_seq d x, d.memoized_methods
-let eval x = 
-    let d = d0()
-    match exp_and_seq d x with
+let data_empty() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural);used_variables=HashSet(HashIdentity.Structural)}
+let typecheck program args = 
+    let d = data_empty()
+    match exp_and_seq d (Apply(Method(V "global",program,None),args)) with
     | RTypedExpr exp ->
         let imemo = Dictionary(HashIdentity.Structural)
-        let s = closure_conv imemo d.memoized_methods exp
-        printfn "set=%A" s
-        //if closure_conv imemo d.memoized_methods exp <> Set.empty then failwith "Set should be empty at the end of this call"
+        closure_conv imemo d.memoized_methods exp |> ignore
         Succ (exp, imemo)
     | RExpr exp ->
         Fail <| sprintf "Expected: typed expression.\nGot: expression %A" exp
     | RError er ->
         Fail er
 
+let typecheck0 program = typecheck program (Vars [])
+
+let inl x y = Inlineable(x,y,None)
+let ap x y = Apply(x,y)
+
+let l v b e = Apply(Inlineable(v,e,None),b)
+
 let term0 =
     let snd = inl (VV [V "a";V "b"]) (V "b")
     ap (inl (VV [V "x";V "y";V "z";V "r"]) (ap (V "r") (VV [V "y";V "z"]))) (VV [LitUnit;LitBool true;LitInt 5;snd])
 
-let t0 = exp_and_seq0 term0
+let t0 = typecheck0 term0
 
 let term1 =
     let fst = inl (VV [V "a";V "b"]) (V "a")
@@ -797,28 +796,28 @@ let term1 =
     l (VV [V "x";V "y";V "z"]) (VV [LitUnit;LitBool true;LitInt 5])
         (l (V "q") (fst) (ap (V "q") (VV [V "y";V "z"])))
 
-let t1 = exp_and_seq0 term1
+let t1 = typecheck0 term1
     
 let term2 =
     let fst = inl (VV [V "a";V "b"]) (V "a")
     let snd = inl (VV [V "a";V "b"]) (V "b")
     l (VV [V "a";V "b"]) (VV [LitInt 2;LitFloat 3.3]) (ap (If(LitBool true,snd,snd)) (VV [V "a";V "b"]))
 
-let t2 = exp_and_seq0 term2
+let t2 = typecheck0 term2
 
 let term3 =
     l (V "inlineable") (VV [inl (VV [V "a";V "b"]) (V "b")])
         (l (V "fun")
             (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
             (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2])))
-let t3 = exp_and_seq0 term3
+let t3 = typecheck0 term3
 
 let term3' =
     l (V "inlineable") (inl (VV [V "a";V "b"]) (V "b"))
         (l (V "fun")
             (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
             (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2])))
-let t3' = exp_and_seq0 term3'
+let t3' = typecheck0 term3'
 
 let term4 = // If test
     l (V "if") (inl (VV [V "cond";V "tr";V "fl"]) (If(V "cond",V "tr",V "fl")))
@@ -826,9 +825,9 @@ let term4 = // If test
             (l (V "tr") (LitFloat 3.33)
                 (l (V "fl") (LitFloat 4.44)
                     (ap (V "if") (VV [V "cond";V "tr";V "fl"])))))
-let t4 = exp_and_seq0 term4
+let t4 = typecheck0 term4
 
-let meth x y = Method(None,x,y,None)
+let meth x y = Method(x,y,None)
 
 let meth1 =
     l (VV [V "fun";V "id"])
@@ -837,10 +836,10 @@ let meth1 =
                     (l (V "u") (LitBool false) (ap (V "f") (V "z"))))
              meth (V "x") (V "x")])
         (ap (V "fun") (VV [LitBool true; LitInt 2; LitFloat 4.4;V "id"]))
-let m1 = eval meth1
+let m1 = typecheck0 meth1
 
 let meth2 = // closure conversion test
-    l (V "m") 
+    l (V "m")
         (meth (VV [V "a";V "n";V "qwe"]) 
             (l (V "loop") 
                 (meth (VV [V "acc";V "q"]) 
@@ -848,5 +847,5 @@ let meth2 = // closure conversion test
                         (ap (V "loop_method") (VV [V "a"; V "n"]))))
                 (ap (V "loop") (VV [LitInt 1; V "n"]))))
         (ap (V "m") (VV [LitInt 3;LitInt 2;LitUnit]))
-let ip = eval meth2
+let ip = typecheck0 meth2
 
