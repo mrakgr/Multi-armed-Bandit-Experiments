@@ -343,8 +343,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
     let dup_name_check (name_checker: HashSet<string>) arg_name f =
         match name_checker.Add arg_name with
-        | false -> f()
-        | true -> Fail <| sprintf "%s is a duplicate name in pattern matching." arg_name
+        | true -> f()
+        | false -> Fail <| sprintf "%s is a duplicate name in pattern matching." arg_name
 
     let bind_expr_fail acc (arg_name, exp) =
         Fail "Cannot bind untyped expressions in value structures like Vars."
