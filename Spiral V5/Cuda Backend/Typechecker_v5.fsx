@@ -324,11 +324,18 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         let v = TyV ty_arg
         v, Map.add arg_name (RTypedExpr v) env
 
+    let dup_name_check (name_checker: HashSet<string>) arg_name f =
+        match name_checker.Add arg_name with
+        | false -> f()
+        | true -> Fail <| sprintf "%s is a duplicate name in pattern matching." arg_name
+
     let bind_expr_fail acc (arg_name, exp) =
         Fail "Cannot bind untyped expressions in value structures like Vars."
-    let bind_expr acc (arg_name, exp) =
-        let exp = RExpr exp
-        Succ (Map.add arg_name exp acc)
+    let bind_expr (name_checker: HashSet<string>) acc (arg_name, exp) =
+        dup_name_check name_checker arg_name <| fun _ ->
+            let exp = RExpr exp
+            Succ (Map.add arg_name exp acc)
+        
     let bind_typedexpr_fail acc (arg_name, ty_exp) =
         Fail "Cannot bind typed expressions in expression tuples."
     let bind_typedexpr'' acc (arg_name, ty_exp) =
@@ -339,17 +346,18 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         // Binds the name to the said sequence's name and loops to the next argument
         add_bound_variable acc arg_name ty_arg
     let bind_typedexpr' a b = bind_typedexpr'' a b |> snd
-    let bind_typedexpr acc (arg_name, ty_exp) =
-        bind_typedexpr' acc (arg_name, ty_exp) |> Succ
+    let bind_typedexpr (name_checker: HashSet<string>) acc (arg_name, ty_exp) =
+        dup_name_check name_checker arg_name <| fun _ ->
+            Succ (bind_typedexpr' acc (arg_name, ty_exp))
     let bind_template bind_expr bind_typedexpr eval_env acc (arg_name, right_arg) =
         match tev {d with env=eval_env; args=[]} right_arg with
         | RError er -> Fail er
         | RExpr exp -> bind_expr acc (arg_name, exp)
         | RTypedExpr ty_exp -> bind_typedexpr acc (arg_name, ty_exp)
 
-    let bind_any = bind_template bind_expr bind_typedexpr
-    let bind_expr_only = bind_template bind_expr bind_typedexpr_fail
-    let bind_typedexpr_only = bind_template bind_expr_fail bind_typedexpr
+    let bind_any name_checker = bind_template (bind_expr name_checker) (bind_typedexpr name_checker)
+    let bind_expr_only name_checker = bind_template (bind_expr name_checker) bind_typedexpr_fail
+    let bind_typedexpr_only name_checker = bind_template bind_expr_fail (bind_typedexpr name_checker)
 
     let match_v_template match_vv bind (eval_env: Env) (acc: Env) = function
         | V arg_name, right_arg ->
@@ -358,20 +366,22 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             match_vv eval_env acc (args, right_arg)
         | x -> Fail <| sprintf "Unexpected arguments in match_v.\n%A" x
 
-    let bind_method acc (arg_name, exp) =
-        match exp with
-        | Method(Some(tag,_),_,_,_) -> 
-            let exp' = MCTag tag
-            Succ (exp', Map.add arg_name (RExpr exp) acc)
-        | x -> Fail <| sprintf "Expected: method.\nGot: %A" x
+    let bind_method name_checker acc (arg_name, exp) =
+        dup_name_check name_checker arg_name <| fun _ ->
+            match exp with
+            | Method(Some(tag,_),_,_,_) -> 
+                let exp' = MCTag tag
+                Succ (exp', Map.add arg_name (RExpr exp) acc)
+            | x -> Fail <| sprintf "Expected: method.\nGot: %A" x
     
-    let bind_ty acc (arg_name, ty_exp) =
-        let acc = bind_typedexpr' acc (arg_name, ty_exp)
-        Succ (MCTypedExpr ty_exp, acc)
+    let bind_ty name_checker acc (arg_name, ty_exp) =
+        dup_name_check name_checker arg_name <| fun _ ->
+            let acc = bind_typedexpr' acc (arg_name, ty_exp)
+            Succ (MCTypedExpr ty_exp, acc)
 
-    let bind_method_only = bind_template bind_method bind_typedexpr_fail
-    let bind_ty_only = bind_template bind_expr_fail bind_ty
-    let bind_any_method = bind_template bind_method bind_ty
+    let bind_method_only name_checker = bind_template (bind_method name_checker) bind_typedexpr_fail
+    let bind_ty_only name_checker = bind_template bind_expr_fail (bind_ty name_checker)
+    let bind_any_method name_checker = bind_template (bind_method name_checker) (bind_ty name_checker)
 
     let traverse_generic tuple_constructor f s l = map_fold_2_Er f s l |> mapResultFst tuple_constructor
 
@@ -381,8 +391,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | Vars r -> traverse (match_v_template match_vv (bind eval_env) eval_env) acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_vars.\n%A" x
 
-    let match_vars = match_vars_template fold_2_er bind_typedexpr_only
-    let match_vars_method = match_vars_template (traverse_generic MCVars) bind_ty_only
+    let match_vars name_checker = match_vars_template fold_2_er (bind_typedexpr_only name_checker)
+    let match_vars_method name_checker= match_vars_template (traverse_generic MCVars) (bind_ty_only name_checker)
 
     let rec match_et_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_et_template traverse bind
@@ -390,8 +400,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | ET r -> traverse (match_v_template match_vv (bind eval_env) eval_env) acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_et.\n%A" x
 
-    let match_et = match_et_template fold_2_er bind_expr_only
-    let match_et_method = match_et_template (traverse_generic MCET) bind_method_only
+    let match_et name_checker = match_et_template fold_2_er (bind_expr_only name_checker)
+    let match_et_method name_checker = match_et_template (traverse_generic MCET) (bind_method_only name_checker)
 
     let rec match_tyvars_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_tyvars_template traverse bind
@@ -399,11 +409,11 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | TyVars(r,t) -> traverse (match_v_template match_vv bind eval_env) acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_tyvars.\n%A" x
 
-    let match_tyvars = match_tyvars_template fold_2_er bind_typedexpr
-    let match_tyvars_method = match_tyvars_template (traverse_generic MCVars) bind_ty
+    let match_tyvars name_checker = match_tyvars_template fold_2_er (bind_typedexpr name_checker)
+    let match_tyvars_method name_checker = match_tyvars_template (traverse_generic MCVars) (bind_ty name_checker)
 
-    let bind_tyvars eval_env = bind_template bind_expr_fail (match_tyvars eval_env) eval_env
-    let bind_tyvars_method eval_env = bind_template bind_expr_fail (match_tyvars_method eval_env) eval_env
+    let bind_tyvars name_checker eval_env = bind_template bind_expr_fail (match_tyvars name_checker eval_env) eval_env
+    let bind_tyvars_method name_checker eval_env = bind_template bind_expr_fail (match_tyvars_method name_checker eval_env) eval_env
 
     let rec match_vv_template traverse bind_vv match_vars match_et bind_tyvars (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_vv_template traverse bind_vv match_vars match_et bind_tyvars
@@ -413,11 +423,16 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | ET _ as r -> match_et eval_env acc (l,r)
         | r -> bind_tyvars eval_env acc (l,r)
 
-    let match_vv = match_vv_template fold_2_er bind_any match_vars match_et bind_tyvars
-    let match_vv_method = match_vv_template (traverse_generic MCVV) bind_any_method match_vars_method match_et_method bind_tyvars_method
+    let match_vv name_checker = 
+        match_vv_template fold_2_er (bind_any name_checker) (match_vars name_checker) 
+            (match_et name_checker) (bind_tyvars name_checker)
+    let match_vv_method name_checker = 
+        match_vv_template (traverse_generic MCVV) (bind_any_method name_checker) (match_vars_method name_checker) 
+            (match_et_method name_checker) (bind_tyvars_method name_checker)
 
-    let match_v eval_env = match_v_template match_vv (bind_any eval_env) eval_env
-    let match_v_method eval_env = match_v_template match_vv_method (bind_any_method eval_env) eval_env
+    let match_v name_checker eval_env = 
+        match_v_template (match_vv name_checker) (bind_any name_checker eval_env) eval_env
+    let match_v_method name_checker eval_env = match_v_template (match_vv_method name_checker) (bind_any_method name_checker eval_env) eval_env
 
     // Primitive functions
 
@@ -534,7 +549,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
-            match match_v env'' env (args, cur_args) with
+            match match_v (HashSet(HashIdentity.Structural)) env'' env (args, cur_args) with
             | Fail er -> RError er
             | Succ env -> exp_and_seq {d with env=env;args=other_args} body
     | Method(None,args,body,return_type) ->
@@ -543,7 +558,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
-            match match_v_method env'' initial_env (args, cur_args) with
+            match match_v_method (HashSet(HashIdentity.Structural)) env'' initial_env (args, cur_args) with
             | Fail er -> RError er
             | Succ(evaled_cur_args,env) -> 
                 let method_key: TyMethodKey = tag, call_to_args evaled_cur_args
@@ -580,7 +595,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | Fail er -> RError er
     | Vars vars as orig ->
         let empty_names = List.map (fun _ -> V "") vars
-        match match_vars_method d.env d.env (empty_names, orig) with
+        match match_vars_method (HashSet(HashIdentity.Structural)) d.env d.env (empty_names, orig) with
         | Succ(MCVars(evaled_vars),env) ->
             let fields = List.map (function
                 | (MCTypedExpr x) -> x
