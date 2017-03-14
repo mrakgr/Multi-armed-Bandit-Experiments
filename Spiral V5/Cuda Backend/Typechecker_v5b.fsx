@@ -849,4 +849,4 @@ let meth2 = // closure conversion test
                 (ap (V "loop") (VV [LitInt 1; V "n"]))))
         (ap (V "m") (VV [LitInt 3;LitInt 2;LitUnit]))
 let ip = typecheck0 meth2
-
+//
