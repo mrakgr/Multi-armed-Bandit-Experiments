@@ -9,7 +9,7 @@ type Ty =
     | Float32T
     | Float64T
     | BoolT
-    | VarsT of Ty list // represents variable argument method fields
+    | VTT of Ty list // represents the value tuple
     | NominalT of string // for classes and such
     | ConstT of Ty
     | SharedT of Ty
@@ -22,14 +22,14 @@ type MethodArgs =
     | MATag of int64
     | MAVV of MethodArgs list
     | MAET of MethodArgs list
-    | MAVars of MethodArgs list
+    | MAVT of MethodArgs list
 
 type MethodCall =
     | MCTypedExpr of TyV * TypedExpr
     | MCTag of int64
     | MCVV of MethodCall list
     | MCET of MethodCall list
-    | MCVars of MethodCall list
+    | MCVT of MethodCall list
 
 // No return type polymorphism like in Haskell for now. Local type inference only.
 and TyMethodKey = int64 * MethodArgs // The key does not need to know the free variables.
@@ -47,8 +47,11 @@ and Expr =
     | Method of args: Expr * body: Expr * return_type: Ty option
     | HoistedMethod of int64 * Env * args: Expr * body: Expr * return_type: Ty option
     | VV of Expr list // immediately destructure
-    | Vars of Expr list // variable arguments
     | ET of Expr list // expression tuple
+
+    // Value tuple cases
+    | IndexVT of Expr * Expr
+    | VT of Expr list // value tuple
 
     // Array cases
     | IndexArray of Expr * Expr list * Ty
@@ -100,7 +103,7 @@ and TypedExpr =
     | TyLitBool of bool
     | TyMethodCall of TyMethodKey * MethodCall * Ty
     | TyMethod of TyMethodKey * MethodCall * Ty
-    | TyVars of TypedExpr list * Ty
+    | TyVT of TypedExpr list * Ty
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -174,7 +177,7 @@ let rec get_type = function
     | TyLitFloat _ -> Float32T
     | TyLitBool _ -> BoolT
     | TyUnit -> UnitT
-    | TyMethodCall(_,_,t) | TyVars(_,t) -> t
+    | TyMethodCall(_,_,t) | TyVT(_,t) -> t
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -231,9 +234,9 @@ let is_int a =
     | UInt32T | UInt64T | Int32T | Int64T -> true
     | _ -> false
 
-let is_vars a =
+let is_vt a =
     match get_type a with
-    | VarsT _ -> true
+    | VTT _ -> true
     | _ -> false
 
 let is_const a =
@@ -254,7 +257,7 @@ let rec call_to_args = function
     | MCVV x -> MAVV (List.map call_to_args x)
     | MCTag x -> MATag x
     | MCTypedExpr(_,x) -> MATy (get_type x)
-    | MCVars x -> MAVars (List.map call_to_args x)
+    | MCVT x -> MAVT (List.map call_to_args x)
     | MCET x -> MAET (List.map call_to_args x)
 
 let sequences_to_typed_expr (sequences: Stack<Sequence>) final_expr =
@@ -404,14 +407,14 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
     let traverse_generic tuple_constructor f s l = map_fold_2_Er f s l |> mapResultFst tuple_constructor
 
-    let rec match_vars_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
-        let match_vv = match_vars_template traverse bind
+    let rec match_vt_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
+        let match_vv = match_vt_template traverse bind
         match r with
-        | Vars r -> traverse (match_v_template match_vv (bind eval_env) eval_env) acc (l,r)
-        | x -> Fail <| sprintf "Unexpected arguments in match_vars.\n%A" x
+        | VT r -> traverse (match_v_template match_vv (bind eval_env) eval_env) acc (l,r)
+        | x -> Fail <| sprintf "Unexpected arguments in match_vt.\n%A" x
 
-    let match_vars name_checker = match_vars_template fold_2_er (bind_typedexpr_only name_checker)
-    let match_vars_method name_checker = match_vars_template (traverse_generic MCVars) (bind_ty_only name_checker)
+    let match_vt name_checker = match_vt_template fold_2_er (bind_typedexpr_only name_checker)
+    let match_vt_method name_checker = match_vt_template (traverse_generic MCVT) (bind_ty_only name_checker)
 
     let rec match_et_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_et_template traverse bind
@@ -422,14 +425,16 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let match_et name_checker = match_et_template fold_2_er (bind_expr_only name_checker)
     let match_et_method name_checker = match_et_template (traverse_generic MCET) (bind_method_only name_checker)
 
-    let rec match_tyvars_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
-        let match_vv = match_tyvars_template traverse bind
-        match r with
-        | TyVars(r,t) -> traverse (match_v_template match_vv bind eval_env) acc (l,r)
+    let rec match_tyvt_template match_vt (eval_env: Env) (acc: Env) (l,r) = 
+        //let match_vv = match_tyvt_template traverse bind
+        match get_type r with
+        | VTT x -> //traverse (match_v_template match_vv bind eval_env) acc (l,r)
+            let r = VT (List.mapi (fun i _ -> IndexVT(r, LitInt i)) x) 
+            match_vt eval_env acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_tyvars.\n%A" x
 
-    let match_tyvars name_checker = match_tyvars_template fold_2_er (bind_typedexpr name_checker)
-    let match_tyvars_method name_checker = match_tyvars_template (traverse_generic MCVars) (bind_typedexpr_method name_checker)
+    let match_tyvt name_checker = match_tyvt_template fold_2_er (bind_typedexpr name_checker)
+    let match_tyvt_method name_checker = match_tyvt_template (traverse_generic MCVT) (bind_typedexpr_method name_checker)
 
     let bind_tyvars name_checker eval_env = bind_template bind_expr_fail (match_tyvars name_checker eval_env) eval_env
     let bind_tyvars_method name_checker eval_env = bind_template bind_expr_fail (match_tyvars_method name_checker eval_env) eval_env
@@ -862,7 +867,7 @@ let meth3 = // vars test
 let m3 = typecheck0 meth3
 
 let meth4 = // vars test 2
-    l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c")))
+    l (V "m") (meth (V "vars") (V "vars")) //(l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c")))
         (ap (V "m") (Vars [LitInt 2; LitFloat 3.3; LitBool true]))
 
 let m4 = typecheck0 meth4
