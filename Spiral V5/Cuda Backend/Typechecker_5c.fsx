@@ -621,7 +621,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                         make_method_call body
                 | true, (sole_arguments, body, bound_variables, used_variables) ->
                     make_method_call body
-    | VV _ -> RError "Typechecking should never be called on VV. VV is only for immediate destructuring."
+    | VV _ as x -> 
+        RError <| sprintf "Typechecking should never be called on VV. VV is only for immediate destructuring.\nGot: %A" x
     | ET exprs ->
         let rec loop acc = function
             | x :: xs ->
@@ -784,10 +785,26 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyMSet(a,b) | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
     | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
 
+let l v b e = Apply(Inlineable(v,e,None),b)
+
 let data_empty() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural);used_variables=HashSet(HashIdentity.Structural)}
-let typecheck program args = 
+let typecheck program inputs = 
     let d = data_empty()
-    match exp_and_seq d (Apply(Method(V "global",program,None),args)) with
+
+    let rec rename i =
+        List.mapFold (fun i -> function
+            | ET _ | VV _ -> failwith "Only value tuples allowed as the inputs to the main function."
+            | VT x -> 
+                let r, i = rename i x
+                VV r, i
+            | x -> V <| sprintf "global_%i" i, i+1
+            ) i
+    let args = rename 0 [inputs] |> fst |> List.head
+    let args' = args |> function VV x -> VT x | _ -> failwith "impossible"
+    let program = 
+        l (V "m1") (Method(V "global",program,None))
+            (Apply(Method(args,Apply(V "m1",args'),None),inputs))
+    match exp_and_seq d program with
     | RTypedExpr exp ->
         let imemo = Dictionary(HashIdentity.Structural)
         closure_conv imemo d.memoized_methods exp |> ignore
@@ -801,8 +818,6 @@ let typecheck0 program = typecheck program (VT [])
 
 let inl x y = Inlineable(x,y,None)
 let ap x y = Apply(x,y)
-
-let l v b e = Apply(Inlineable(v,e,None),b)
 
 let term0 =
     let snd = inl (VV [V "a";V "b"]) (V "b")
@@ -878,5 +893,5 @@ let m3 = typecheck0 meth3
 let meth4 = // vars test 2
     l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
         (ap (V "m") (VT [LitInt 2; LitFloat 3.3; LitBool true]))
+let m4 = typecheck meth4 (VT [LitInt 3; LitBool true])
 
-let m4 = typecheck0 meth4
