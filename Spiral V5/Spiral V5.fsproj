@@ -102,9 +102,9 @@
     <None Include="Cuda Backend\Typechecker_v4c.fsx" />
     <None Include="Cuda Backend\Typechecker_v4d.fsx" />
     <None Include="Cuda Backend\Typechecker_v4e.fsx" />
-    <None Include="Cuda Backend\Codegen_v1.fsx" />
     <None Include="Cuda Backend\Typechecker_v5a.fsx" />
     <None Include="Cuda Backend\Typechecker_v5b.fsx" />
+    <None Include="Cuda Backend\Codegen_v1.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

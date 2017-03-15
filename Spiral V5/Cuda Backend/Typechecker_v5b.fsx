@@ -342,7 +342,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         v, Map.add arg_name (RTypedExpr v) env
 
     let dup_name_check (name_checker: HashSet<string>) arg_name f =
-        match name_checker.Add arg_name with
+        match name_checker.Add arg_name || arg_name = "" || arg_name = "_" with
         | true -> f()
         | false -> Fail <| sprintf "%s is a duplicate name in pattern matching." arg_name
 
@@ -853,5 +853,17 @@ let meth2 = // closure conversion test
                         (ap (V "loop_method") (VV [V "a"; V "n"]))))
                 (ap (V "loop") (VV [LitInt 1; V "n"]))))
         (ap (V "m") (VV [LitInt 3;LitInt 2;LitUnit]))
-let ip = typecheck0 meth2
+let m2 = typecheck0 meth2
 
+let meth3 = // vars test
+    l (V "m") (meth (VV [V "a"; V "b"; V "c"]) (V "c"))
+        (ap (V "m") (Vars [LitInt 2; LitFloat 3.3; LitBool true]))
+
+let m3 = typecheck0 meth3
+
+let meth4 = // vars test 2
+    l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c")))
+        (ap (V "m") (Vars [LitInt 2; LitFloat 3.3; LitBool true]))
+
+let m4 = typecheck0 meth4
+printfn "%A" m4
