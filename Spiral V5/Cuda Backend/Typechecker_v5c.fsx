@@ -1,4 +1,6 @@
-﻿open System.Collections.Generic
+﻿// TODO: Tuple only has 10 variants and no zero case. Fix that.
+
+open System.Collections.Generic
 
 type Ty =
     | UnitT
@@ -74,7 +76,7 @@ and Expr =
     | ShuffleXor of Expr * Expr
     | ShuffleUp of Expr * Expr
     | ShuffleDown of Expr * Expr
-    | ShuffleSource of Expr * Expr
+    | ShuffleIndex of Expr * Expr
     | Log of Expr
     | Exp of Expr
     | Tanh of Expr
@@ -85,7 +87,7 @@ and Expr =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
     // Mutable operations.
-    | MSet of var: Expr * body: Expr
+    | MSet of Expr * Expr * Expr
     | AtomicAdd of out: Expr * in_: Expr
     // Loops
     | While of Expr * Expr * Expr
@@ -135,13 +137,13 @@ and TypedExpr =
     | TyShuffleXor of TypedExpr * TypedExpr * Ty
     | TyShuffleUp of TypedExpr * TypedExpr * Ty
     | TyShuffleDown of TypedExpr * TypedExpr * Ty
-    | TyShuffleSource of TypedExpr * TypedExpr * Ty
+    | TyShuffleIndex of TypedExpr * TypedExpr * Ty
     | TyLog of TypedExpr * Ty
     | TyExp of TypedExpr * Ty
     | TyTanh of TypedExpr * Ty
     | TyNeg of TypedExpr * Ty
     // Mutable operations.
-    | TyMSet of TypedExpr * TypedExpr
+    | TyMSet of TyV * TypedExpr * TypedExpr * Ty
     | TyAtomicAdd of TypedExpr * TypedExpr * Ty
     | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
 
@@ -159,6 +161,7 @@ and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV>>
 and Sequence =
     | SeqLet of TyV * TypedExpr
     | SeqWhile of TypedExpr * TypedExpr
+    | SeqMSet of TyV * TypedExpr
 
 and ArgCases = Expr * Env
 and Data =
@@ -202,11 +205,11 @@ let rec get_type = function
     | TyLeftShift(_,_,t) | TyRightShift(_,_,t) -> t
     | TySyncthreads -> UnitT
     | TyShuffleXor(_,_,t) | TyShuffleUp(_,_,t)
-    | TyShuffleDown(_,_,t) | TyShuffleSource(_,_,t) -> t
+    | TyShuffleDown(_,_,t) | TyShuffleIndex(_,_,t) -> t
     | TyLog(_,t) | TyExp(_,t) | TyTanh(_,t)
     | TyNeg(_,t) -> t
     // Mutable operations.
-    | TyMSet _ -> UnitT
+    | TyMSet(_,_,_,t) -> t
     | TyAtomicAdd(_,_,t) -> t
     // Loops
     | TyWhile(_,_,_,t) -> t
@@ -271,7 +274,8 @@ let sequences_to_typed_expr (sequences: Stack<Sequence>) final_expr =
     let type_fin = get_type final_expr
     Seq.fold (fun rest -> function 
         | SeqLet(v,body) -> TyLet(v,body,rest,type_fin)
-        | SeqWhile(cond,body) -> TyWhile(cond,body,rest,type_fin)) final_expr sequences
+        | SeqWhile(cond,body) -> TyWhile(cond,body,rest,type_fin)
+        | SeqMSet(a,b) -> TyMSet(a,b,rest,type_fin)) final_expr sequences
 
 let get_bound_variables (env: Env) =
     env
@@ -442,6 +446,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     
     let match_tyvt name_checker = match_tyvt_template fold_2_er (bind_typedexpr name_checker)
     let match_tyvt_method name_checker = match_tyvt_template (traverse_generic MCVT) (bind_typedexpr_method name_checker)
+
+    let bind_mset =
+    let match_tyvt_mset b = match_tyvt_template fold_2_er b
 
     let bind_tyvt name_checker eval_env = bind_template bind_expr_fail (match_tyvt name_checker eval_env) eval_env
     let bind_tyvt_method name_checker eval_env = bind_template bind_expr_fail (match_tyvt_method name_checker eval_env) eval_env
@@ -663,6 +670,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | RTypedExpr exp, Succ args ->
             match get_type exp with
             | ArrayT(vs, t) when List.forall is_int args && List.length vs = List.length args ->
+                List.iter (d.used_variables.Add >> ignore) vs
                 RTypedExpr <| TyIndexArray(exp,args,t)
             | _ -> RError <| sprintf "Something is wrong in IndexArray.\nexp=%A, args=%A" exp args
         | x -> RError <| sprintf "Something is wrong in IndexArray.\n%A" x
@@ -710,7 +718,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | ShuffleXor(a,b) -> prim_shuffle_op a b TyShuffleXor
     | ShuffleUp(a,b) -> prim_shuffle_op a b TyShuffleUp
     | ShuffleDown(a,b) -> prim_shuffle_op a b TyShuffleDown
-    | ShuffleSource(a,b) -> prim_shuffle_op a b TyShuffleSource
+    | ShuffleIndex(a,b) -> prim_shuffle_op a b TyShuffleIndex
 
     | Log a -> prim_un_floating a TyLog
     | Exp a -> prim_un_floating a TyExp
@@ -781,7 +789,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
     | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
     | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
-    | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleSource(a,b,_) 
+    | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
     | TyMSet(a,b) | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
     | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
 
