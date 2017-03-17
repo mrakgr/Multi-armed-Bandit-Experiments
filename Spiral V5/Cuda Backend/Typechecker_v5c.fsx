@@ -418,14 +418,11 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
     let traverse_generic tuple_constructor f s l = map_fold_2_Er f s l |> mapResultFst tuple_constructor
 
-    let rec match_vt_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
-        let match_vv = match_vt_template traverse bind
+    let rec match_vt_template traverse bind bind_tyvars (eval_env: Env) (acc: Env) (l,r) = 
+        let match_vv = match_vt_template traverse bind bind_tyvars
         match r with
         | VT r -> traverse (match_v_template match_vv (bind eval_env) eval_env) acc (l,r)
-        | x -> Fail <| sprintf "Unexpected arguments in match_vt.\n%A" x
-
-    let match_vt name_checker = match_vt_template fold_2_er (bind_typedexpr_only name_checker)
-    let match_vt_method name_checker = match_vt_template (traverse_generic MCVT) (bind_ty_only name_checker)
+        | r -> bind_tyvars eval_env acc (l,r)
 
     let rec match_et_template traverse bind (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_et_template traverse bind
@@ -447,11 +444,24 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let match_tyvt name_checker = match_tyvt_template fold_2_er (bind_typedexpr name_checker)
     let match_tyvt_method name_checker = match_tyvt_template (traverse_generic MCVT) (bind_typedexpr_method name_checker)
 
-    let bind_mset =
-    let match_tyvt_mset b = match_tyvt_template fold_2_er b
-
     let bind_tyvt name_checker eval_env = bind_template bind_expr_fail (match_tyvt name_checker eval_env) eval_env
     let bind_tyvt_method name_checker eval_env = bind_template bind_expr_fail (match_tyvt_method name_checker eval_env) eval_env
+
+    let match_vt name_checker = match_vt_template fold_2_er (bind_typedexpr_only name_checker) (bind_tyvt name_checker)
+    let match_vt_method name_checker = match_vt_template (traverse_generic MCVT) (bind_ty_only name_checker) (bind_tyvt_method name_checker)
+
+    let bind_mset_template eval_env acc (arg_name, r) =
+        let d = {d with env=eval_env; args=[]}
+        match tev d (V arg_name) with
+        | RTypedExpr (TyV(_,_,lt as v)) when lt = get_type r ->
+            d.sequences.Push(SeqMSet(v,r))
+            Succ acc
+        | x -> Fail <| sprintf "Expected: `RTypedExpr (TyV(_,_,lt as v)) when lt = get_type r`.\nGot: %A" x
+
+    let match_tyvt_mset eval_env = match_tyvt_template fold_2_er (bind_mset_template eval_env)
+    let bind_tyvt_mset eval_env = bind_template bind_expr_fail (match_tyvt_mset eval_env eval_env) eval_env
+    let bind_mset eval_env = bind_template bind_expr_fail (bind_mset_template eval_env)
+    let match_vt_mset eval_env = match_vt_template fold_2_er (bind_mset eval_env) bind_tyvt_mset
 
     let rec match_vv_template traverse bind_vv match_vars match_et bind_tyvars (eval_env: Env) (acc: Env) (l,r) = 
         let match_vv = match_vv_template traverse bind_vv match_vars match_et bind_tyvars
@@ -468,9 +478,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         match_vv_template (traverse_generic MCVV) (bind_any_method name_checker) (match_vt_method name_checker) 
             (match_et_method name_checker) (bind_tyvt_method name_checker)
 
-    let match_v name_checker eval_env = 
-        match_v_template (match_vv name_checker) (bind_any name_checker eval_env) eval_env
+    let match_v name_checker eval_env = match_v_template (match_vv name_checker) (bind_any name_checker eval_env) eval_env
     let match_v_method name_checker eval_env = match_v_template (match_vv_method name_checker) (bind_any_method name_checker eval_env) eval_env
+    let match_v_mset eval_env = match_v_template (match_vt_mset eval_env) (bind_mset eval_env eval_env) eval_env
 
     // Primitive functions
 
@@ -725,7 +735,10 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | Tanh a -> prim_un_floating a TyTanh
     | Neg a -> prim_un_numeric a TyNeg
     // Mutable operations.
-    | MSet(a,b) -> prim_mset_op a b TyMSet
+    | MSet(a,b,rest) -> 
+        match match_v_mset d.env d.env (a,b) with
+        | Fail er -> RError er
+        | Succ env -> tev d rest
     | AtomicAdd(a,b) -> prim_atomic_add_op a b TyAtomicAdd
     | While(cond,body,e) ->
         match tev d cond, tev d body with
@@ -790,8 +803,9 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
     | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
     | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
-    | TyMSet(a,b) | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
+    | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
     | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
+    | TyMSet(a,b,c',d) -> Set.unionMany [Set.singleton a; c b; c c']
 
 let l v b e = Apply(Inlineable(v,e,None),b)
 
