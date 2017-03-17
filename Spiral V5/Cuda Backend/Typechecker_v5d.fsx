@@ -1,6 +1,4 @@
-﻿// TODO: Tuple only has 10 variants and no zero case. Fix that.
-
-open System.Collections.Generic
+﻿open System.Collections.Generic
 
 type Ty =
     | UnitT
@@ -39,8 +37,9 @@ and TyMethodKey = int64 * MethodArgs // The key does not need to know the free v
 and Expr = 
     | V of string // standard variable
     | If of Expr * Expr * Expr
-    | HoistedIf of Expr * Expr * Expr
-    | Inlineable of Expr * Expr * Env option
+    | HoistedIf of Expr * Expr * Expr * ArgCases list
+    | Inlineable of Expr * Expr
+    | HoistedInlineable of Expr * Expr * Env
     | LitUnit
     | LitInt of int
     | LitFloat of float
@@ -502,11 +501,6 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
         constraint_both_eq_numberic RError (k t)
 
-    let prim_mset_op =
-        let er = sprintf "`get_type a = get_type b` is false.\na=%A, b=%A"
-        let check a b = get_type a = get_type b
-        prim_bin_op_template er check (fun t a b -> t (a,b))
-
     let prim_arith_op = 
         let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_numeric a && get_type a = get_type b
@@ -585,8 +579,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | Apply(expr,args) ->
         exp_and_seq {d with args = (args,d.env) :: d.args} expr
     | If(cond,tr,fl) ->
-        tev d (Apply(Method(V "cond",HoistedIf(V "cond",tr,fl),None),cond))
-    | HoistedIf(cond,tr,fl) ->
+        tev d (Apply(Method(VV [],HoistedIf(cond,tr,fl,d.args),None),VV []))
+    | HoistedIf(cond,tr,fl,args) ->
+        let d = {d with args=args}
         match tev {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = BoolT -> 
             match with_empty_seq d tr, with_empty_seq d fl with
@@ -598,9 +593,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                     RError <| sprintf "Types in branches of if do not match.\nGot: %A and %A" type_tr type_fl
             | a, b -> RError <| sprintf "Expected both sides to be types and to be equal types.\nGot true: %A\nGot false: %A" a b
         | x -> RError <| sprintf "Expected bool in conditional.\nGot: %A" x
-    | Inlineable(args, body, None) as orig -> 
-        exp_and_seq d (Inlineable(args, body, Some d.env))
-    | Inlineable(args, body, Some env) as orig -> 
+    | Inlineable(args, body) as orig -> 
+        exp_and_seq d (HoistedInlineable(args, body, d.env))
+    | HoistedInlineable(args, body, env) as orig -> 
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
@@ -637,7 +632,6 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                                 | MCTypedExpr(v,_) -> [v]
                                 | MCVT x | MCVV x -> List.collect loop x
                             loop evaled_cur_args
-                            
                         let bound_variables = get_bound_variables initial_env
                         d.memoized_methods.Add(method_key, (sole_arguments, body, bound_variables, Set d.used_variables))
                         make_method_call body
@@ -812,7 +806,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
     | TyMSet(a,b,c',d) -> Set.unionMany [Set.singleton a; c b; c c']
 
-let l v b e = Apply(Inlineable(v,e,None),b)
+let l v b e = Apply(Inlineable(v,e),b)
 
 let data_empty() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural);used_variables=HashSet(HashIdentity.Structural)}
 let typecheck program inputs = 
@@ -843,7 +837,7 @@ let typecheck program inputs =
 
 let typecheck0 program = typecheck program (VT [])
 
-let inl x y = Inlineable(x,y,None)
+let inl x y = Inlineable(x,y)
 let ap x y = Apply(x,y)
 
 let term0 =

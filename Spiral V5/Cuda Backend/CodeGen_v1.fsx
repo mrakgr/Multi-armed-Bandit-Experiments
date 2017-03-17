@@ -1,5 +1,5 @@
-﻿#load "Typechecker_v5c.fsx"
-open Typechecker_v5c
+﻿#load "Typechecker_v5d.fsx"
+open Typechecker_v5d
 open System.Collections.Generic
 open System.Text
 
@@ -29,27 +29,9 @@ let process_statements (statements: ResizeArray<CudaProgram>) =
     process_statements (StringBuilder(),0) statements
     |> fun (code,ind) -> code.ToString()
 
-let rec print_type = function
-    | UnitT -> "void"
-    | UInt32T -> "unsigned int"
-    | UInt64T -> "unsigned long long int"
-    | Int32T -> "int"
-    | Int64T -> "long long int"
-    | Float32T -> "float"
-    | Float64T -> "double"
-    | BoolT -> "int"
-    | VTT ts -> 
-        let ts = List.map print_type ts |> String.concat ", "
-        sprintf "thrust::tuple <%s>" ts // TODO: Replace this with a struct.
-    | NominalT x -> x
-    | ConstT x -> sprintf "const %s" (print_type x)
-    | SharedT x -> sprintf "__shared__ %s" (print_type x)
-    | ArrayT (_,t) -> sprintf "%s *" (print_type t)
-    | ArrT _ -> failwith "This thing is just a placeholder for now."
-
-let codegen (imemo: MethodImplDict) main_expr =
+let print_method_dictionary (imemo: MethodImplDict) =
     let program = ResizeArray()
-    let tuple_definitions = HashSet(HashIdentity.Structural)
+    
 
     let state x = program.Add <| Statement x
     let enter f = 
@@ -57,15 +39,44 @@ let codegen (imemo: MethodImplDict) main_expr =
         f() |> state
         program.Add Dedent
 
+    let tuple_definitions = Dictionary(HashIdentity.Structural)
+    let tuple_def_proc t f = 
+        match tuple_definitions.TryGetValue t with
+        | true, v -> f v
+        | false, _ ->
+            let v = get_tag()
+            tuple_definitions.Add(t,v)
+            f v
+
+    let rec print_type = function
+        | UnitT -> "void"
+        | UInt32T -> "unsigned int"
+        | UInt64T -> "unsigned long long int"
+        | Int32T -> "int"
+        | Int64T -> "long long int"
+        | Float32T -> "float"
+        | Float64T -> "double"
+        | BoolT -> "int"
+        | VTT _ as t -> tuple_def_proc t (fun v -> sprintf "tuple_%i" v)
+        | NominalT x -> x
+        | ConstT x -> sprintf "const %s" (print_type x)
+        | SharedT x -> sprintf "__shared__ %s" (print_type x)
+        | ArrayT (_,t) -> sprintf "%s *" (print_type t)
+        | ArrT _ -> failwith "This thing is just a placeholder for now."
+
     let print_tyv (tag,_,_) = sprintf "var_%i" tag
+    let print_tyv_with_type (tag,_,ty) =
+        sprintf "%s var_%i" (print_type ty) tag
     let print_method tag = sprintf "method_%i" tag
+
     let rec print_methodcall = function
         | MCTag _ | MCET _ -> []
         | MCVV x | MCVT x -> List.collect print_methodcall x
         | MCTypedExpr(_,x) -> [codegen x]
+
     and codegen = function
         | TyV x -> print_tyv x
-        | TyIf(cond,tr,fl,_) -> 
+        | TyIf(cond,tr,fl,_) -> // If statements will aways be hoisted into methods in this language.
             sprintf "if (%s) {" (codegen cond) |> state
             enter <| fun _ -> sprintf "return %s;" (codegen tr)
             "}" |> state
@@ -73,14 +84,14 @@ let codegen (imemo: MethodImplDict) main_expr =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "};" |> state
             ""
-        | TyLet((tag,_,ty),TyCreateArray(ar_sizes,ar_ty),e,_) ->
+        | TyLet(tyv,TyCreateArray(ar_sizes,ar_ty),e,_) ->
             let dims =
                 List.map (codegen >> sprintf "[%s]") ar_sizes
                 |> String.concat ""
-            sprintf "%s var_%i%s;" (print_type ar_ty) tag dims |> state
+            sprintf "%s%s;" (print_tyv_with_type tyv) dims |> state
             codegen e
-        | TyLet((tag,_,ty),b,e,_) ->
-            sprintf "%s var_%i = %s;" (print_type ty) tag (codegen b) |> state
+        | TyLet(tyv,b,e,_) ->
+            sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
             codegen e
         | TyUnit -> ""
         | TyLitInt x -> string x
@@ -88,9 +99,9 @@ let codegen (imemo: MethodImplDict) main_expr =
         | TyLitBool x -> if x then "1" else "0"
         | TyMethodCall((tag,_ as mkey),call,t) ->
             let (_,_,implicit_args) = imemo.[mkey]
-            let implicit_args = Set.map print_tyv implicit_args |> String.concat ", "
-            let explicit_args = print_methodcall call |> String.concat ", "
-            let args = [implicit_args; explicit_args] |> String.concat ", "
+            let implicit_args = Set.map print_tyv implicit_args |> Set.toList
+            let explicit_args = print_methodcall call
+            let args = implicit_args @ explicit_args |> String.concat ", "
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
 
@@ -103,7 +114,7 @@ let codegen (imemo: MethodImplDict) main_expr =
         // Value tuple cases
         | TyIndexVT(v,i,_) -> sprintf "(%s.tup%s)" (codegen v) (codegen i)
         | TyVT(l,t) -> 
-            tuple_definitions.Add t |> ignore
+            tuple_def_proc t (fun _ -> ())
             List.mapi (fun i x -> sprintf ".tup%i = %s" i (codegen x)) l
             |> String.concat ", "
             |> sprintf "{ %s }"
@@ -167,15 +178,46 @@ let codegen (imemo: MethodImplDict) main_expr =
         | TyTanh (x,_) -> sprintf "tanh(%s)" (codegen x)
         | TyNeg (x,_) -> sprintf "(-%s)" (codegen x)
         // Mutable operations.
-        | TyMSet (a,b) ->
-            sprintf "%s = %s;" (codegen a) (codegen b) |> state
-            ""
-        | TyAtomicAdd of TypedExpr * TypedExpr * Ty
-        | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
+        | TyMSet (a,b,e,_) ->
+            sprintf "%s = %s;" (print_tyv a) (codegen b) |> state
+            codegen e
+        | TyAtomicAdd (a,b,_) ->
+            sprintf "atomicAdd(&(%s),%s)" (codegen a) (codegen b)
+        // Loops
+        | TyWhile (cond,body,e,_) -> 
+            sprintf "while (%s) {" (codegen cond) |> state
+            enter <| fun _ -> codegen body
+            "}" |> state
+            codegen e
 
-    ()
+    let print_method (tag,_) (explicit_args,body,implicit_args) = 
+        let check_valid_arg tag args =
+            if List.exists (fun (_,_,t) -> t = UnitT) args then
+                failwithf "UnitT arguments are not allowed in method calls. Tag=%i, Args: %A" tag args
+            else
+                args
 
-//let eval x = 
-//    match eval x with
-//    | Succ (typed_exp, imemo) ->
-//        Fail "placeholder"
+        let method_name = print_method tag
+        let args = 
+            Set.toList implicit_args @ explicit_args
+            |> check_valid_arg tag
+            |> List.map print_tyv_with_type
+            |> String.concat ", "
+        sprintf "%s %s(%s) {" (print_type (get_type body)) method_name args |> state
+        match codegen body with
+        | "" -> ()
+        | s -> enter <| fun _ -> sprintf "return %s;" s
+        "}" |> state
+
+    try
+        for x in imemo do print_method x.Key x.Value
+        process_statements program |> Succ
+    with e -> Fail e.Message
+
+
+let eval x = 
+    match typecheck0 x with
+    | Succ (typed_exp, imemo) -> print_method_dictionary imemo
+    | Fail er -> Fail er
+
+printfn "%A" (eval term2)
