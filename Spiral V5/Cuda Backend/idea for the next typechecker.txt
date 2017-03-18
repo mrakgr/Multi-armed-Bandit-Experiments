@@ -1,0 +1,21 @@
+﻿When I went to bed last night, as usual I tried to figure out how I would do typechecking for mutually recursive functions in Algorithm W style, by introducing metavariables for them and returning those metavariables instead of diving into the function which would lead to an infinite loop.
+
+Having metavariables would lead to all sort of issues, especially with connection with polymorphism. At first I considered that what the hell, just leave polymorphism out and use higher order function to get the same functionality, but it seems to me that the main issue with metavariables is that once I introduce them, they seem to infect everything.
+
+For example, if you have a function that returns a metavariable instead of a principal type then that opens the door to passing arguments with non-inferred (metavariable) types into other function.
+
+At that point you have exactly the situation found in ML and the only choice is to structure the language to be a ML.
+
+Because of that I've thought for a while that the only way to have recursive function in my language is to annotate the return type ahead of time. This is already a better situation than in Scala for example, but last night as I unfolded the decision tree in my mind and propagated the information backwards – I had this thought, what if I made that it so that a function call should always return a principal type. That is, it always must be inferred and no metavariable typed are allowed past the call boundary.
+
+With that restriction I started exploring the algorithmic space, trying to prove to myself whether or not anything was possible.
+
+From the onset it was obvious that I would need to keep some sort of a trace so that recursive calls do not make the typechecker diverge – and then I had a miraculous idea. Emboldened by the constraint that a function call must return a principal type while thinking of branches, I realized that if one branch leads to a recursive call, then the unexplored part must have information necessary to infer the type.
+
+The key insight is this instead of returning a metavariable, what if instead the call to a recursive function returns the part of the function that was not explored previously? Then to infer the type, all I had to do would be to run the typechecker on that and the type I need would propagate back.
+
+In practice, to make this work I am going to have to use a second stack in order to make the recursive call jump immediately to the unexplored part, or maybe the continuation passing style, but I am 100% certain that this would work. No need for bringing in esoteric features like metavariables or ML styled unification.
+
+The algorithm is linear in the size of the search tree and has no exponential worst cases. This is search at its finest. I have no doubt that this is how type inference in programming languages should work.
+
+It is a new baseline for statically typed language.
