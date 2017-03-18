@@ -18,4 +18,4 @@ In practice, to make this work I am going to have to use a second stack in order
 
 The algorithm is linear in the size of the search tree and has no exponential worst cases. This is search at its finest. I have no doubt that this is how type inference in programming languages should work.
 
-It is a new baseline for statically typed language.
+It is a new baseline for statically typed languages.

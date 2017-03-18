@@ -37,7 +37,7 @@ and TyMethodKey = int64 * MethodArgs // The key does not need to know the free v
 and Expr = 
     | V of string // standard variable
     | If of Expr * Expr * Expr
-    | HoistedIf of Expr * Expr * Expr * ArgCases list
+    | HoistedIf of Expr * Expr * Expr
     | Inlineable of Expr * Expr
     | HoistedInlineable of Expr * Expr * Env
     | LitUnit
@@ -579,9 +579,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | Apply(expr,args) ->
         exp_and_seq {d with args = (args,d.env) :: d.args} expr
     | If(cond,tr,fl) ->
-        tev d (Apply(Method(VV [],HoistedIf(cond,tr,fl,d.args),None),VV []))
-    | HoistedIf(cond,tr,fl,args) ->
-        let d = {d with args=args}
+        tev d (Apply(Method(VV [],HoistedIf(cond,tr,fl),None),VV []))
+    | HoistedIf(cond,tr,fl) ->
         match tev {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = BoolT -> 
             match with_empty_seq d tr, with_empty_seq d fl with
@@ -621,7 +620,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
                 match d.memoized_methods.TryGetValue method_key with
                 | false, _ ->
-                    let d = {d with env=env; args=[]; used_variables=HashSet(HashIdentity.Structural)}
+                    let d = {d with env=env; args=other_args; used_variables=HashSet(HashIdentity.Structural)}
                     match with_empty_seq d body with
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
