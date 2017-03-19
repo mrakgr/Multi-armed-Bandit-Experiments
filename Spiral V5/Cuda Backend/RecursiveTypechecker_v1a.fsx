@@ -60,7 +60,9 @@ let rec tev (d: Data) exp =
         let mutable fl_result = None
 
         d.current_stack.Push <| fun _ -> 
+            d.current_stack.Push <| fun _ -> failwith "Method is divergent."
             let x = tev d fl
+            d.current_stack.Pop() |> ignore
             fl_result <- Some x
             x
         let tr = tev d tr
@@ -100,7 +102,7 @@ let rec tev (d: Data) exp =
             match d.method_dict'.TryGetValue n with
             | false, _ ->
                 let s = Stack()
-                s.Push <| fun _ -> failwith "The method is recursive."
+                s.Push <| fun _ -> failwith "The method is divergent."
                 d.method_dict'.Add(n,s)
                 let method_typed_body = 
                     let v_dict = List.fold2 (fun m x y -> Map.add x y m) d.v_dict arg_names args'
@@ -128,5 +130,5 @@ let rec tev (d: Data) exp =
 
 let term1 = 
     let rec_call = Apply("meth",[LitBool true])
-    Method("meth",["cond"],If(V "cond",LitInt 1,rec_call),rec_call)
+    Method("meth",["cond"],If(V "cond",rec_call,rec_call),rec_call)
 let t1 = tev (d0()) term1
