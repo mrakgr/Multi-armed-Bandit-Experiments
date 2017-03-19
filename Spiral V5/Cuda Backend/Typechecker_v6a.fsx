@@ -153,7 +153,7 @@ and ReturnCases =
 
 and Env = Map<string,ReturnCases>
 // method key * method body * bound variables * used variables
-and MethodDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV> * Set<TyV>>
+and MethodDict = Dictionary<TyMethodKey, Stack<unit -> ReturnCases> * (TyV list * Set<TyV> * Set<TyV>) option>
 // method key * method body * implicit arguments
 and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV>>
 
@@ -172,6 +172,7 @@ and Data =
     memoized_methods : MethodDict // For hoisted out global methods.
     sequences : Stack<Sequence>
     used_variables : HashSet<TyV>
+    current_stack : Stack<unit -> ReturnCases>
     }
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
@@ -337,6 +338,8 @@ let rec fold_2_er f state (x,y) =
     else
         Fail <| sprintf "Argument size mismatch in fold_2_er. Args: %A" (x,y)
 
+let get_body_from (stack: Stack<unit -> ReturnCases>) = stack.Peek()() |> function RTypedExpr x -> x | _ -> failwith "impossible"
+
 let rec with_empty_seq (d: Data) expr =
     let d' = {d with sequences = Stack()}
     match exp_and_seq d' expr with
@@ -348,7 +351,7 @@ let rec with_empty_seq (d: Data) expr =
 // used variables in the method dictionary for the following passes.
 and exp_and_seq (d: Data) exp: ReturnCases =
     let tev d exp = exp_and_seq d exp
-
+    
     /// Patterm matching functions
     let add_bound_variable env arg_name ty_arg =
         let v = TyV ty_arg
@@ -583,7 +586,25 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | HoistedIf(cond,tr,fl) ->
         match tev {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = BoolT -> 
-            match with_empty_seq d tr, with_empty_seq d fl with
+            let tev e f =
+                d.current_stack.Push f
+                let x = with_empty_seq d e
+                d.current_stack.Pop |> ignore
+                x
+
+            let mutable fl_result = None
+            
+            let tr = tev tr (fun _ -> 
+                let fl = tev fl (fun _ -> failwith "Method is divergent.") 
+                fl_result <- Some fl
+                fl)
+
+            let fl = 
+                match fl_result with
+                | Some fl -> fl
+                | None -> tev fl (fun _ -> tr)
+
+            match tr, fl with
             | RTypedExpr tr, RTypedExpr fl -> 
                 let type_tr, type_fl = get_type tr, get_type fl
                 if type_tr = type_fl then
@@ -620,7 +641,10 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
                 match d.memoized_methods.TryGetValue method_key with
                 | false, _ ->
-                    let d = {d with env=env; args=other_args; used_variables=HashSet(HashIdentity.Structural)}
+                    let s = Stack() // The Stack is used for inferring types of recursive function. See the `RealityAlgorithm.fsx` for a more info.
+                    s.Push <| fun _ -> failwith "The method is divergent."
+
+                    let d = {d with env=env; args=other_args; used_variables=HashSet(HashIdentity.Structural);current_stack=s}
                     match with_empty_seq d body with
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
@@ -632,10 +656,14 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                                 | MCVT x | MCVV x -> List.collect loop x
                             loop evaled_cur_args
                         let bound_variables = get_bound_variables initial_env
-                        d.memoized_methods.Add(method_key, (sole_arguments, body, bound_variables, Set d.used_variables))
+                        
+                        s.Clear()
+                        s.Push <| fun _ -> RTypedExpr body
+                        d.memoized_methods.[method_key] <- (s, Some (sole_arguments, bound_variables, Set d.used_variables))
+
                         make_method_call body
-                | true, (sole_arguments, body, bound_variables, used_variables) ->
-                    make_method_call body
+                | true, (stack, _) ->
+                    make_method_call (get_body_from stack)
     | VV _ as x -> 
         RError <| sprintf "Typechecking should never be called on VV. VV is only for immediate destructuring.\nGot: %A" x
     | ET exprs ->
@@ -781,10 +809,13 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
             match imemo.TryGetValue m with
             | true, (_,_,impl_args) -> impl_args
             | false, _ ->
-                let sol_arg, body, bound_variables, used_variables = memo.[m]
-                let impl_args = Set.union (c body) used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
-                imemo.Add(m,(sol_arg,body,impl_args))
-                impl_args
+                match memo.[m] with
+                | stack, Some (sol_arg, bound_variables, used_variables) ->
+                    let body = get_body_from stack
+                    let impl_args = Set.union (c body) used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
+                    imemo.Add(m,(sol_arg,body,impl_args))
+                    impl_args
+                | _ -> failwith "impossible"
         Set.union method_implicit_args (grab_implicit_args ar)
     // Array cases
     | TyIndexArray(a,b,_) -> Set.union (c a) (Set.unionMany (List.map c b))
@@ -807,7 +838,9 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
 
 let l v b e = Apply(Inlineable(v,e),b)
 
-let data_empty() = {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural);used_variables=HashSet(HashIdentity.Structural)}
+let data_empty() = 
+    {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural)
+     used_variables=HashSet(HashIdentity.Structural);current_stack=Stack()}
 let typecheck program inputs = 
     let d = data_empty()
 
@@ -914,5 +947,6 @@ let meth4 = // vars test 2
     l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
         (ap (V "m") (VT [LitInt 2; LitFloat 3.3; LitBool true]))
 let m4 = typecheck meth4 (VT [LitInt 3; LitBool true])
+
 
 

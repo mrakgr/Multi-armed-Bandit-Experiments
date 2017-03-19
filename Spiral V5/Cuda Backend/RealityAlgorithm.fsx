@@ -114,12 +114,8 @@ let rec tev (d: Data) exp =
                 let method_typed_body = 
                     let v_dict = List.fold2 (fun m x y -> Map.add x y m) d.v_dict arg_names args'
                     tev {d with current_stack=s;v_dict=v_dict} method_
-                let rec method_typed_body_as_closure _ = 
-                    // It just returns method_typed_body, but makes sure to push itself back on the stack.
-                    s.Push method_typed_body_as_closure
-                    method_typed_body
                 s.Clear()
-                s.Push method_typed_body_as_closure
+                s.Push <| fun _ -> method_typed_body
                 TyMethodCall(x,args, get_type method_typed_body)
             | true, s ->
                 TyMethodCall(x, args, get_type (s.Peek()()))
