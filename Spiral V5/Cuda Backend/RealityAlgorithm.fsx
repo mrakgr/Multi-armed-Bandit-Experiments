@@ -1,4 +1,19 @@
-﻿open System.Collections.Generic
+﻿// 3/19/2017:
+
+// The prototype for the recursive typechecker.
+
+// Despite being local search, it can infer the return types of recursive and mutually
+// recursive function without introducing metavariables or doing substitution and unification.
+
+// It is guaranteed that the function will always return a well typed term instead of a metavariable
+// unless it is divergent with this scheme. In fact, that is why the algorithm works in the first place
+// because of that recurrent well-typedness guarantee.
+
+// Check out the `idea for the next typechecker.txt` for more info.
+
+// This algorithm that I just invented is called Recurrent Local Type Inference. RLTI (Reality) Algorithm for short.
+
+open System.Collections.Generic
 
 type Expr = 
     | V of string
@@ -52,41 +67,34 @@ type Data =
 let d0() = {v_dict=Map.empty;method_dict=Map.empty;method_dict'=Dictionary();current_stack=Stack()}
 
 let rec tev (d: Data) exp = 
+    let tev_with_cur_stack e f =
+        d.current_stack.Push f
+        let x = tev d e
+        d.current_stack.Pop |> ignore
+        x
     match exp with
     | V x -> TyV(x,d.v_dict.[x])
     | If (cond,tr,fl) -> // can't do recursion without branching.
         let cond = tev d cond
 
         let mutable fl_result = None
+        let tr = 
+            tev_with_cur_stack tr <| fun _ -> 
+                let fl = tev_with_cur_stack fl <| fun _ -> failwith "Method is divergent."
+                fl_result <- Some fl
+                fl
 
-        d.current_stack.Push <| fun _ -> 
-            d.current_stack.Push <| fun _ -> failwith "Method is divergent."
-            let x = tev d fl
-            d.current_stack.Pop() |> ignore
-            fl_result <- Some x
-            x
-        let tr = tev d tr
-        d.current_stack.Pop() |> ignore
+        let fl = 
+            match fl_result with
+            | Some fl -> fl
+            | None -> tev_with_cur_stack fl <| fun _ -> tr
 
-        match fl_result with
-        | Some fl -> 
-            let tr_type = get_type tr
-            let fl_type = get_type fl
-            if get_type cond <> BoolT || tr_type <> fl_type then
-                failwith "get_type cond <> BoolT || tr_type <> fl_type"
-            else
-                TyIf(cond,tr,fl,tr_type)
-        | None ->
-            d.current_stack.Push <| fun _ -> tr
-            let fl = tev d fl
-            d.current_stack.Pop() |> ignore
-
-            let tr_type = get_type tr
-            let fl_type = get_type fl
-            if get_type cond <> BoolT || tr_type <> fl_type then
-                failwith "get_type cond <> BoolT || tr_type <> fl_type"
-            else
-                TyIf(cond,tr,fl,tr_type)
+        let tr_type = get_type tr
+        let fl_type = get_type fl
+        if get_type cond <> BoolT || tr_type <> fl_type then
+            failwith "get_type cond <> BoolT || tr_type <> fl_type"
+        else
+            TyIf(cond,tr,fl,tr_type)
 
     | Apply (x,args) -> 
         let args = List.map (tev d) args
@@ -98,7 +106,6 @@ let rec tev (d: Data) exp =
         if List.length args <> List.length arg_names then
             failwith "Arg sizes do not match."
         else
-            
             match d.method_dict'.TryGetValue n with
             | false, _ ->
                 let s = Stack()
@@ -111,6 +118,7 @@ let rec tev (d: Data) exp =
                     // It just returns method_typed_body, but makes sure to push itself back on the stack.
                     s.Push method_typed_body_as_closure
                     method_typed_body
+                s.Clear()
                 s.Push method_typed_body_as_closure
                 TyMethodCall(x,args, get_type method_typed_body)
             | true, s ->
@@ -130,5 +138,11 @@ let rec tev (d: Data) exp =
 
 let term1 = 
     let rec_call = Apply("meth",[LitBool true])
-    Method("meth",["cond"],If(V "cond",rec_call,rec_call),rec_call)
+    Method("meth",["cond"],If(V "cond",LitInt 1,rec_call),rec_call)
 let t1 = tev (d0()) term1
+
+let term2 = 
+    let rec_call = Apply("meth",[LitBool true])
+    let if_ x = If(V "cond",x,rec_call)
+    Method("meth",["cond"],if_ (if_ (if_ <| LitFloat 3.3)),rec_call)
+let t2 = tev (d0()) term2
