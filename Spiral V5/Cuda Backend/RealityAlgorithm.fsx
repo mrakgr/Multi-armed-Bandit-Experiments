@@ -60,7 +60,7 @@ type Data =
     {
     v_dict: Map<string,Ty>
     method_dict: Map<string,string list * Expr>
-    method_dict': Dictionary<string * Ty list,Stack<unit -> TypedExpr>>
+    method_dict': Dictionary<string * Ty list,Ty option * Stack<unit -> TypedExpr>>
     current_stack: Stack<unit -> TypedExpr>
     }
 
@@ -110,15 +110,26 @@ let rec tev (d: Data) exp =
             | false, _ ->
                 let s = Stack()
                 s.Push <| fun _ -> failwith "The method is divergent."
-                d.method_dict'.Add(n,s)
+                d.method_dict'.Add(n,(None,s))
                 let method_typed_body = 
                     let v_dict = List.fold2 (fun m x y -> Map.add x y m) d.v_dict arg_names args'
                     tev {d with current_stack=s;v_dict=v_dict} method_
                 s.Clear()
                 s.Push <| fun _ -> method_typed_body
                 TyMethodCall(x,args, get_type method_typed_body)
-            | true, s ->
-                TyMethodCall(x, args, get_type (s.Peek()()))
+
+            // It turns out I was too hasty in saying that no unification is necessary.
+            | true, (None, s) ->
+                let t = get_type (s.Peek()())
+                d.method_dict'.[n] <- (Some t,s)
+                TyMethodCall(x, args, t)
+            | true, (Some t', s) ->
+                let t = get_type (s.Peek()())
+                if t' = t then
+                    TyMethodCall(x, args, t)
+                else
+                    failwith "Unification failed."
+                
     | Method(n,args,body,rest) -> 
         tev {d with method_dict=d.method_dict.Add(n,(args,body))} rest
     | Let(v,b,e) ->
@@ -142,3 +153,14 @@ let term2 =
     let if_ x = If(V "cond",x,rec_call)
     Method("meth",["cond"],if_ (if_ (if_ <| LitFloat 3.3)),rec_call)
 let t2 = tev (d0()) term2
+
+let term3 = 
+    let rec_call = Apply("meth",[LitBool true])
+    Method("meth",["cond"],
+        Let("x",If(V "cond",LitInt 1,rec_call),
+            If(V "cond",LitFloat 1.5,rec_call)),rec_call)
+let t3 = 
+    try
+        tev (d0()) term3
+    with e -> TyLitBool false
+

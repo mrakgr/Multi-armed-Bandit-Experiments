@@ -45,8 +45,8 @@ and Expr =
     | LitFloat of float
     | LitBool of bool
     | Apply of Expr * args: Expr
-    | Method of args: Expr * body: Expr * return_type: Ty option
-    | HoistedMethod of int64 * Env * args: Expr * body: Expr * return_type: Ty option
+    | Method of name: string * args: Expr * body: Expr
+    | HoistedMethod of name: string * int64 * Env * args: Expr * body: Expr
     | VV of Expr list // immediately destructure
     | ET of Expr list // expression tuple
 
@@ -153,7 +153,10 @@ and ReturnCases =
 
 and Env = Map<string,ReturnCases>
 // method key * method body * bound variables * used variables
-and MethodDict = Dictionary<TyMethodKey, Stack<unit -> ReturnCases> * (TyV list * Set<TyV> * Set<TyV>) option>
+and MethodCases =
+    | MethodInEvaluation of Ty option * Stack<unit -> ReturnCases>
+    | MethodDone of TyV list * TypedExpr * Set<TyV> * Set<TyV>
+and MethodDict = Dictionary<TyMethodKey, MethodCases>
 // method key * method body * implicit arguments
 and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV>>
 
@@ -402,7 +405,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let bind_method name_checker acc (arg_name, exp) =
         dup_name_check name_checker arg_name <| fun _ ->
             match exp with
-            | HoistedMethod(tag,_,_,_,_) | HoistedInlineable(_,_,tag,_)-> 
+            | HoistedMethod(_,tag,_,_,_) | HoistedInlineable(_,_,tag,_)-> 
                 let exp' = MCTag tag
                 Succ (exp', Map.add arg_name (RExpr exp) acc)
             | x -> Fail <| sprintf "Expected: method.\nGot: %A" x
@@ -513,7 +516,6 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         let er = sprintf "`is_atomic_add_supported a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_atomic_add_supported a && get_type a = get_type b
         prim_bin_op_template er check append_typeof_fst
-        
 
     let prim_bool_op = 
         let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
@@ -550,11 +552,6 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         let check a = true
         prim_un_op_template er check (fun t a -> t (a, get_type a))
 
-    let prim_atomic_add_op = 
-        let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
-        let check a b = is_numeric a && get_type a = get_type b
-        prim_bin_op_template er check append_typeof_fst
-
     match exp with
     | LitInt x -> 
         match d.args with
@@ -582,7 +579,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | Apply(expr,args) ->
         exp_and_seq {d with args = (args,d.env) :: d.args} expr
     | If(cond,tr,fl) ->
-        tev d (Apply(Method(VV [],HoistedIf(cond,tr,fl),None),VV []))
+        tev d (Apply(Method("",VV [],HoistedIf(cond,tr,fl)),VV []))
     | HoistedIf(cond,tr,fl) ->
         match tev {d with args=[]} cond with
         | RTypedExpr cond' when get_type cond' = BoolT -> 
@@ -622,9 +619,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             match match_v (HashSet(HashIdentity.Structural)) env'' env (args, cur_args) with
             | Fail er -> RError er
             | Succ env -> exp_and_seq {d with env=env;args=other_args} body
-    | Method(args,body,return_type) ->
-        exp_and_seq d (HoistedMethod(get_tag(),d.env,args,body,return_type))
-    | HoistedMethod(tag,initial_env,args,body,return_type) as orig -> 
+    | Method(name,args,body) ->
+        exp_and_seq d (HoistedMethod(name,get_tag(),d.env,args,body))
+    | HoistedMethod(name,tag,initial_env,args,body) as orig -> 
         match d.args with
         | [] -> RExpr orig
         | (cur_args,env'') :: other_args ->
@@ -633,18 +630,20 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             | Succ(evaled_cur_args,env) -> 
                 let method_key: TyMethodKey = tag, call_to_args evaled_cur_args
                 let make_method_call body =
-                    let x = RTypedExpr(TyMethodCall(method_key,evaled_cur_args,get_type body))
-                    match return_type with
-                    | None -> x
-                    | Some return_type when return_type = get_type body -> x
-                    | Some _ -> RError "The evaluated return type does not match the one given in Method evaluation."
+                    RTypedExpr(TyMethodCall(method_key,evaled_cur_args,get_type body))
 
                 match d.memoized_methods.TryGetValue method_key with
                 | false, _ ->
-                    let s = Stack() // The Stack is used for inferring types of recursive function. See the `RealityAlgorithm.fsx` for a more info.
+                    let s = 
+                        // The Stack is used for inferring the types of recursive function. 
+                        // See the `RealityAlgorithm.fsx` for a more info.
+                        Stack() 
                     s.Push <| fun _ -> failwith "The method is divergent."
+                    d.memoized_methods.[method_key] <- MethodInEvaluation(None,s)
 
-                    let d = {d with env=env; args=other_args; used_variables=HashSet(HashIdentity.Structural);current_stack=s}
+                    let d = {d with env = if name <> "" then env.Add(name, RExpr orig) else env
+                                    args=other_args
+                                    used_variables=HashSet(HashIdentity.Structural); current_stack=s}
                     match with_empty_seq d body with
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
@@ -658,12 +657,23 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                         let bound_variables = get_bound_variables initial_env
                         
                         s.Clear()
-                        s.Push <| fun _ -> RTypedExpr body
-                        d.memoized_methods.[method_key] <- (s, Some (sole_arguments, bound_variables, Set d.used_variables))
+                        d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, bound_variables, Set d.used_variables)
 
                         make_method_call body
-                | true, (stack, _) ->
-                    make_method_call (get_body_from stack)
+                | true, MethodInEvaluation (None, stack) ->
+                    let body = get_body_from stack
+                    let t = get_type body
+                    d.memoized_methods.[method_key] <- MethodInEvaluation (Some t,stack)
+                    make_method_call body
+                | true, MethodInEvaluation (Some t', stack) ->
+                    let body = get_body_from stack
+                    let t = get_type body
+                    if t' = t then
+                        make_method_call body
+                    else
+                        RError "Unification failed."
+                | true, MethodDone(_,body,_,_) ->
+                    make_method_call body
     | VV _ as x -> 
         RError <| sprintf "Typechecking should never be called on VV. VV is only for immediate destructuring.\nGot: %A" x
     | ET exprs ->
@@ -810,8 +820,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
             | true, (_,_,impl_args) -> impl_args
             | false, _ ->
                 match memo.[m] with
-                | stack, Some (sol_arg, bound_variables, used_variables) ->
-                    let body = get_body_from stack
+                | MethodDone(sol_arg, body, bound_variables, used_variables) ->
                     let impl_args = Set.union (c body) used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
                     imemo.Add(m,(sol_arg,body,impl_args))
                     impl_args
@@ -855,8 +864,8 @@ let typecheck program inputs =
     let args = rename 0 [inputs] |> fst |> List.head
     let args' = args |> function VV x -> VT x | _ -> failwith "impossible"
     let program = 
-        l (V "m1") (Method(V "global",program,None))
-            (Apply(Method(args,Apply(V "m1",args'),None),inputs))
+        l (V "m1") (Method("",V "global",program))
+            (Apply(Method("",args,Apply(V "m1",args')),inputs))
     match exp_and_seq d program with
     | RTypedExpr exp ->
         let imemo = Dictionary(HashIdentity.Structural)
@@ -915,7 +924,7 @@ let term4 = // If test
                     (ap (V "if") (VV [V "cond";V "tr";V "fl"])))))
 let t4 = typecheck0 term4
 
-let meth x y = Method(x,y,None)
+let meth x y = Method("",x,y)
 
 let meth1 =
     l (VV [V "fun";V "id"])
@@ -947,6 +956,3 @@ let meth4 = // vars test 2
     l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
         (ap (V "m") (VT [LitInt 2; LitFloat 3.3; LitBool true]))
 let m4 = typecheck meth4 (VT [LitInt 3; LitBool true])
-
-
-
