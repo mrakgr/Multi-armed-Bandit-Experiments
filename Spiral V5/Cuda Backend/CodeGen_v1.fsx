@@ -1,5 +1,5 @@
-﻿#load "Typechecker_v5d.fsx"
-open Typechecker_v5d
+﻿#load "Typechecker_v6a.fsx"
+open Typechecker_v6a
 open System.Collections.Generic
 open System.Text
 
@@ -77,7 +77,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
             "}" |> state
             "else {" |> state
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
-            "};" |> state
+            "}" |> state
             ""
         | TyLet(tyv,TyCreateArray(ar_sizes,ar_ty),e,_) ->
             let dims =
@@ -215,7 +215,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
 let eval x = 
     match typecheck0 x with
-    | Succ (typed_exp, imemo) -> print_method_dictionary imemo
+    | Succ imemo -> print_method_dictionary imemo
     | Fail er -> Fail er
 
-printfn "%A" (eval term2)
+printfn "%A" (eval term4)

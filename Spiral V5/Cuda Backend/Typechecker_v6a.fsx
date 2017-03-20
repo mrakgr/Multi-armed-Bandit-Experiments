@@ -218,13 +218,13 @@ let rec get_type = function
     | TyWhile(_,_,_,t) -> t
     | TyMethod(_,_,t) -> t
     
-
-
-let is_numeric a =
-    match get_type a with
+let rec is_numeric' a =
+    match a with
+    | SharedT x | ConstT x -> is_numeric' x
     | UInt32T | UInt64T | Int32T | Int64T 
     | Float32T | Float64T -> true
     | _ -> false
+let is_numeric a = is_numeric' (get_type a)
 
 let is_atomic_add_supported a =
     match get_type a with
@@ -232,20 +232,26 @@ let is_atomic_add_supported a =
     | Float32T | Float64T -> true
     | _ -> false
 
-let is_float a =
-    match get_type a with
+let rec is_float' a =
+    match a with
+    | SharedT x | ConstT x -> is_float' x
     | Float32T | Float64T -> true
     | _ -> false
+let is_float a = is_float' (get_type a)
 
-let is_bool a =
-    match get_type a with
+let rec is_bool' a =
+    match a with
+    | SharedT x | ConstT x -> is_bool' x
     | BoolT -> true
     | _ -> false
+let is_bool a = is_bool' (get_type a)
 
-let is_int a =
-    match get_type a with
+let rec is_int' a =
+    match a with
+    | SharedT x | ConstT x -> is_int' x
     | UInt32T | UInt64T | Int32T | Int64T -> true
     | _ -> false
+let is_int a = is_int' (get_type a)
 
 let is_vt a =
     match get_type a with
@@ -273,6 +279,13 @@ let rec call_to_args = function
     | MCTypedExpr(_,x) -> MATy (get_type x)
     | MCVT x -> MAVT (List.map call_to_args x)
     | MCET x -> MAET (List.map call_to_args x)
+
+let call_filter_vars evaled_cur_args =
+    let rec loop = function
+        | MCET _ | MCTag _ -> []
+        | MCTypedExpr(v,_) -> [v]
+        | MCVT x | MCVV x -> List.collect loop x
+    loop evaled_cur_args
 
 let sequences_to_typed_expr (sequences: Stack<Sequence>) final_expr =
     let type_fin = get_type final_expr
@@ -583,7 +596,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         tev d (Apply(Method("",VV [],HoistedIf(cond,tr,fl)),VV []))
     | HoistedIf(cond,tr,fl) ->
         match tev {d with args=[]} cond with
-        | RTypedExpr cond' when get_type cond' = BoolT -> 
+        | RTypedExpr cond' when is_bool cond' -> 
             let tev e f =
                 d.current_stack.Push f
                 let x = with_empty_seq d e
@@ -649,12 +662,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                     | RError _ as er -> er
                     | RExpr x -> RError "Only TypedExprs are allowed as returns from a Method's body evaluation."
                     | RTypedExpr body ->
-                        let sole_arguments = 
-                            let rec loop = function
-                                | MCET _ | MCTag _ -> []
-                                | MCTypedExpr(v,_) -> [v]
-                                | MCVT x | MCVV x -> List.collect loop x
-                            loop evaled_cur_args
+                        let sole_arguments = call_filter_vars evaled_cur_args
                         let bound_variables = get_bound_variables initial_env
                         
                         s.Clear()
@@ -669,10 +677,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
                 | true, MethodInEvaluation (Some t', stack) ->
                     let body = get_body_from stack
                     let t = get_type body
-                    if t' = t then
-                        make_method_call body
-                    else
-                        RError "Unification failed."
+                    if t' = t then make_method_call body
+                    else RError "Unification failed."
                 | true, MethodDone(_,body,_,_) ->
                     make_method_call body
     | VV _ as x -> 
@@ -797,87 +803,96 @@ let methodcall_to_method_type (tag,args) t =
     ArrT(r,t)
            
 // Unions the free variables from top to bottom of the call chain.
-let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
-    let c x = closure_conv imemo memo x
-    let rec grab_implicit_args = function
-        | MCVT x | MCVV x -> Set.unionMany (List.map grab_implicit_args x)
-        | MCTag _ | MCET _ -> Set.empty
-        | MCTypedExpr(_,x) -> c x
-    match exp with
-    | TyV(_,_,t) -> Set.empty
-    | TyIf(cond,tr,fl,t) ->
-        let cond, tr, fl = c cond, c tr, c fl
-        Set.unionMany [|cond; tr; fl|]
-    | TyLet(_,body,e,t) ->
-        let body = c body
-        let e = c e
-        Set.union body e
-    | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
-    | TyVT(vars,_) -> Set.unionMany (List.map c vars)
-    | TyIndexVT(t,i,_) -> Set.union (c t) (c i)
-    | TyMethod(m,ar,_) | TyMethodCall(m,ar,_) ->
-        let method_implicit_args =
-            match imemo.TryGetValue m with
-            | true, (_,_,impl_args) -> impl_args
-            | false, _ ->
-                match memo.[m] with
-                | MethodDone(sol_arg, body, bound_variables, used_variables) ->
-                    let impl_args = Set.union (c body) used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
-                    imemo.Add(m,(sol_arg,body,impl_args))
-                    impl_args
-                | _ -> failwith "impossible"
-        Set.union method_implicit_args (grab_implicit_args ar)
-    // Array cases
-    | TyIndexArray(a,b,_) -> Set.union (c a) (Set.unionMany (List.map c b))
-    | TyCreateArray(b,_) -> Set.unionMany (List.map c b)
-    // Cuda kernel constants
-    | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
-    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
-    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
-    | TyGridDimX | TyGridDimY | TyGridDimZ -> Set.empty
-    // Primitive operations on expressions.
-    | TySyncthreads -> Set.empty
-    | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
-    | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
-    | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
-    | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
-    | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
-    | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
-    | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
-    | TyMSet(a,b,c',d) -> Set.unionMany [Set.singleton a; c b; c c']
+let closure_conv (imemo: MethodImplDict) (memo: MethodDict) main_method_key =
+    let rec closure_conv (exp: TypedExpr) =
+        let c x = closure_conv x
+        let rec grab_implicit_args = function
+            | MCVT x | MCVV x -> Set.unionMany (List.map grab_implicit_args x)
+            | MCTag _ | MCET _ -> Set.empty
+            | MCTypedExpr(_,x) -> c x
+        match exp with
+        | TyV(_,_,t) -> Set.empty
+        | TyIf(cond,tr,fl,t) ->
+            let cond, tr, fl = c cond, c tr, c fl
+            Set.unionMany [|cond; tr; fl|]
+        | TyLet(_,body,e,t) ->
+            let body = c body
+            let e = c e
+            Set.union body e
+        | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
+        | TyVT(vars,_) -> Set.unionMany (List.map c vars)
+        | TyIndexVT(t,i,_) -> Set.union (c t) (c i)
+        | TyMethod(m,ar,_) | TyMethodCall(m,ar,_) ->
+            let method_implicit_args =
+                match imemo.TryGetValue m with
+                | true, (_,_,impl_args) -> impl_args
+                | false, _ ->
+                    match memo.[m] with
+                    | MethodDone(sol_arg, body, bound_variables, used_variables) ->
+                        let impl_args = Set.union (c body) used_variables |> Set.intersect bound_variables // union the free vars from top to bottom
+                        imemo.Add(m,(sol_arg,body,impl_args))
+                        impl_args
+                    | _ -> failwith "impossible"
+            Set.union method_implicit_args (grab_implicit_args ar)
+        // Array cases
+        | TyIndexArray(a,b,_) -> Set.union (c a) (Set.unionMany (List.map c b))
+        | TyCreateArray(b,_) -> Set.unionMany (List.map c b)
+        // Cuda kernel constants
+        | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+        | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
+        | TyBlockDimX | TyBlockDimY | TyBlockDimZ
+        | TyGridDimX | TyGridDimY | TyGridDimZ -> Set.empty
+        // Primitive operations on expressions.
+        | TySyncthreads -> Set.empty
+        | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
+        | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
+        | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
+        | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
+        | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
+        | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
+        | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
+        | TyMSet(a,b,c',d) -> Set.unionMany [Set.singleton a; c b; c c']
+    match memo.[main_method_key] with
+    | MethodDone(_,body,_,_) ->
+        closure_conv <| TyMethod(main_method_key,MCVV [], get_type body)
+    | _ ->
+        failwith "Expected MethodDone in closure_conv."
+
 
 let l v b e = Apply(Inlineable(v,e),b)
 
 let data_empty() = 
     {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural)
      used_variables=HashSet(HashIdentity.Structural);current_stack=Stack()}
-let typecheck program inputs = 
+
+let main_method (inputs: (string * Ty) list) body =
     let d = data_empty()
+    let evaled_cur_args =
+        inputs |> List.map (fun (n,t) ->
+            let v = get_tag(), n, t
+            MCTypedExpr(v,TyV v))
+        |> MCVV
 
-    let rec rename i =
-        List.mapFold (fun i -> function
-            | ET _ | VV _ -> failwith "Only value tuples allowed as the inputs to the main function."
-            | VT x -> 
-                let r, i = rename i x
-                VV r, i
-            | x -> V <| sprintf "global_%i" i, i+1
-            ) i
-    let args = rename 0 [inputs] |> fst |> List.head
-    let args' = args |> function VV x -> VT x | _ -> failwith "impossible"
-    let program = 
-        l (V "m1") (Method("",V "global",program))
-            (Apply(Method("",args,Apply(V "m1",args')),inputs))
-    match exp_and_seq d program with
-    | RTypedExpr exp ->
+    let main_method_key: TyMethodKey = get_tag(), call_to_args evaled_cur_args
+
+    match with_empty_seq d body with
+    | RError er -> Fail er
+    | RExpr x -> Fail "Only TypedExprs are allowed as returns from a MainMethod's body evaluation."
+    | RTypedExpr body ->
+        let sole_arguments = call_filter_vars evaled_cur_args
+        let bound_variables = get_bound_variables d.env
+        d.memoized_methods.[main_method_key] <- MethodDone(sole_arguments, body, bound_variables, Set d.used_variables)
+        Succ (main_method_key, d.memoized_methods)
+
+let typecheck inputs body = 
+    match main_method inputs body with
+    | Succ(main_method_key, memo) ->
         let imemo = Dictionary(HashIdentity.Structural)
-        closure_conv imemo d.memoized_methods exp |> ignore
-        Succ (exp, imemo)
-    | RExpr exp ->
-        Fail <| sprintf "Expected: typed expression.\nGot: expression %A" exp
-    | RError er ->
-        Fail er
+        closure_conv imemo memo main_method_key |> ignore
+        Succ imemo
+    | Fail er -> Fail er
 
-let typecheck0 program = typecheck program (VT [])
+let typecheck0 program = typecheck [] program
 
 let inl x y = Inlineable(x,y)
 let ap x y = Apply(x,y)
@@ -956,4 +971,6 @@ let m3 = typecheck0 meth3
 let meth4 = // vars test 2
     l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
         (ap (V "m") (VT [LitInt 2; LitFloat 3.3; LitBool true]))
-let m4 = typecheck meth4 (VT [LitInt 3; LitBool true])
+let m4 = typecheck0 meth4
+
+
