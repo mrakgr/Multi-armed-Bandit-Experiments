@@ -212,10 +212,34 @@ let print_method_dictionary (imemo: MethodImplDict) =
         process_statements program |> Succ
     with e -> Fail e.Message
 
-
-let eval x = 
-    match typecheck0 x with
+let eval body_conv arg_conv body inputs = 
+    match typecheck body_conv arg_conv inputs body with
     | Succ imemo -> print_method_dictionary imemo
     | Fail er -> Fail er
 
-printfn "%A" (eval term4)
+let while_ cond body rest = While(cond,body,rest)
+let s l fin = List.foldBack (fun x rest -> x rest) l fin
+
+let for_ init cond incr body rest =
+    s [l (V "init") init
+       while_ (cond (V "init")) 
+            (l (V "") (body (V "init"))
+                (MSet(V "init", incr (V "init"),LitUnit)))] rest
+
+let map_body_conv (n,sizes,ins,outs) = 
+    let f x = stan_body_conv x
+    (f [n], f sizes, f ins, f outs)
+let map_arg_conv (n,sizes,ins,outs) =
+    let f x = stan_arg_conv x
+    MCVV [f [n]; f sizes; f ins; f outs]
+
+let map_module f (n, _, ins, outs) =
+    for_ (BlockIdxX * BlockDimX + ThreadIdxX) 
+        (fun x -> x .< n) (fun x -> x + GridDimX * BlockDimX)
+        (f ins outs) LitUnit
+
+let map_1_1 = 
+    eval map_body_conv map_arg_conv 
+        (map_module (fun in_ out_ i -> MSet(IndexArray(in_,[i]),IndexArray(out_,[i]),LitUnit)))
+
+

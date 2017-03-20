@@ -55,7 +55,7 @@ and Expr =
     | VT of Expr list // value tuple
 
     // Array cases
-    | IndexArray of Expr * Expr list * Ty
+    | IndexArray of Expr * Expr list
     | CreateArray of Expr list * Ty
 
     // Primitive operations on expressions.
@@ -92,6 +92,18 @@ and Expr =
     | While of Expr * Expr * Expr
     // Magic
     | Typecase of (Data -> Expr -> ReturnCases) * Expr
+
+    static member (+)(a,b) = Add(a,b)
+    static member (-)(a,b) = Sub(a,b)
+    static member (*)(a,b) = Mult(a,b)
+    static member (/)(a,b) = Div(a,b)
+    static member (%)(a,b) = Mod(a,b)
+
+    static member (.=)(a,b) = EQ(a,b)
+    static member (.<)(a,b) = LT(a,b)
+    static member (.<=)(a,b) = LTE(a,b)
+    static member (.>)(a,b) = GT(a,b)
+    static member (.>=)(a,b) = GTE(a,b)
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedExpr =
@@ -182,9 +194,9 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 
 let rec get_type = function
     | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
-    | TyLitInt _ -> ConstT Int32T
-    | TyLitFloat _ -> ConstT Float32T
-    | TyLitBool _ -> ConstT BoolT
+    | TyLitInt _ -> Int32T
+    | TyLitFloat _ -> Float32T
+    | TyLitBool _ -> BoolT
     | TyUnit -> UnitT
     | TyMethodCall(_,_,t) -> t
 
@@ -718,7 +730,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | x -> RError <| sprintf "Expected: typed expression of type VTT and index into a tuple.\nGot: %A" x
 
     // Array cases
-    | IndexArray(exp,args,t) ->
+    | IndexArray(exp,args) ->
         match tev d exp, map_typed (tev d) args with
         | RTypedExpr exp, Succ args ->
             match get_type exp with
@@ -865,17 +877,20 @@ let data_empty() =
     {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural)
      used_variables=HashSet(HashIdentity.Structural);current_stack=Stack()}
 
-let main_method (inputs: (string * Ty) list) body =
-    let d = data_empty()
-    let evaled_cur_args =
-        inputs |> List.map (fun (n,t) ->
-            let v = get_tag(), n, t
-            MCTypedExpr(v,TyV v))
-        |> MCVV
+let stan_body_conv l = List.map (fun (x,_) -> V x) l |> VV
+let stan_arg_conv inputs = 
+    inputs |> List.map (fun (n,t) ->
+        let v = get_tag(), n, t
+        MCTypedExpr(v,TyV v))
+    |> MCVV
 
+let main_method body_conv arg_conv inputs body =
+    let d = data_empty()
+
+    let evaled_cur_args = arg_conv inputs
     let main_method_key: TyMethodKey = get_tag(), call_to_args evaled_cur_args
 
-    match with_empty_seq d body with
+    match with_empty_seq d (body <| body_conv inputs) with
     | RError er -> Fail er
     | RExpr x -> Fail "Only TypedExprs are allowed as returns from a MainMethod's body evaluation."
     | RTypedExpr body ->
@@ -884,26 +899,26 @@ let main_method (inputs: (string * Ty) list) body =
         d.memoized_methods.[main_method_key] <- MethodDone(sole_arguments, body, bound_variables, Set d.used_variables)
         Succ (main_method_key, d.memoized_methods)
 
-let typecheck inputs body = 
-    match main_method inputs body with
+let typecheck body_conv arg_conv inputs body = 
+    match main_method body_conv arg_conv inputs body with
     | Succ(main_method_key, memo) ->
         let imemo = Dictionary(HashIdentity.Structural)
         closure_conv imemo memo main_method_key |> ignore
         Succ imemo
     | Fail er -> Fail er
 
-let typecheck0 program = typecheck [] program
+let typecheck0 program = typecheck id stan_arg_conv [] program
 
 let inl x y = Inlineable(x,y)
 let ap x y = Apply(x,y)
 
-let term0 =
+let term0 _ =
     let snd = inl (VV [V "a";V "b"]) (V "b")
     ap (inl (VV [V "x";V "y";V "z";V "r"]) (ap (V "r") (VV [V "y";V "z"]))) (VV [LitUnit;LitBool true;LitInt 5;snd])
 
 let t0 = typecheck0 term0
 
-let term1 =
+let term1 _ =
     let fst = inl (VV [V "a";V "b"]) (V "a")
     let snd = inl (VV [V "a";V "b"]) (V "b")
     l (VV [V "x";V "y";V "z"]) (VV [LitUnit;LitBool true;LitInt 5])
@@ -911,28 +926,28 @@ let term1 =
 
 let t1 = typecheck0 term1
     
-let term2 =
+let term2 _ =
     let fst = inl (VV [V "a";V "b"]) (V "a")
     let snd = inl (VV [V "a";V "b"]) (V "b")
     l (VV [V "a";V "b"]) (VV [LitInt 2;LitFloat 3.3]) (ap (If(LitBool true,snd,snd)) (VV [V "a";V "b"]))
 
 let t2 = typecheck0 term2
 
-let term3 =
+let term3 _ =
     l (V "inlineable") (VV [inl (VV [V "a";V "b"]) (V "b")])
         (l (V "fun")
             (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
             (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2])))
 let t3 = typecheck0 term3
 
-let term3' =
+let term3' _ =
     l (V "inlineable") (inl (VV [V "a";V "b"]) (V "b"))
         (l (V "fun")
             (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
             (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2])))
 let t3' = typecheck0 term3'
 
-let term4 = // If test
+let term4 _ = // If test
     l (V "if") (inl (VV [V "cond";V "tr";V "fl"]) (If(V "cond",V "tr",V "fl")))
         (l (V "cond") (LitBool true)
             (l (V "tr") (LitFloat 3.33)
@@ -942,7 +957,7 @@ let t4 = typecheck0 term4
 
 let meth x y = Method("",x,y)
 
-let meth1 =
+let meth1 _ =
     l (VV [V "fun";V "id"])
         (VV [meth (VV [V "x";V "y";V "z";V "f"])
                 (l (V "t") (LitInt 3)
@@ -951,7 +966,7 @@ let meth1 =
         (ap (V "fun") (VV [LitBool true; LitInt 2; LitFloat 4.4;V "id"]))
 let m1 = typecheck0 meth1
 
-let meth2 = // closure conversion test
+let meth2 _ = // closure conversion test
     l (V "m")
         (meth (VV [V "a";V "n";V "qwe"]) 
             (l (V "loop") 
@@ -962,15 +977,13 @@ let meth2 = // closure conversion test
         (ap (V "m") (VV [LitInt 3;LitInt 2;LitUnit]))
 let m2 = typecheck0 meth2
 
-let meth3 = // vars test
+let meth3 _ = // vars test
     l (V "m") (meth (VV [V "a"; V "b"; V "c"]) (V "c"))
         (ap (V "m") (VT [LitInt 2; LitFloat 3.3; LitBool true]))
 
 let m3 = typecheck0 meth3
 
-let meth4 = // vars test 2
+let meth4 _ = // vars test 2
     l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
         (ap (V "m") (VT [LitInt 2; LitFloat 3.3; LitBool true]))
 let m4 = typecheck0 meth4
-
-
