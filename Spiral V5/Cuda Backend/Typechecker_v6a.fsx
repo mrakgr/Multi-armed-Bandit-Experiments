@@ -182,9 +182,9 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 
 let rec get_type = function
     | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
-    | TyLitInt _ -> Int32T
-    | TyLitFloat _ -> Float32T
-    | TyLitBool _ -> BoolT
+    | TyLitInt _ -> ConstT Int32T
+    | TyLitFloat _ -> ConstT Float32T
+    | TyLitBool _ -> ConstT BoolT
     | TyUnit -> UnitT
     | TyMethodCall(_,_,t) -> t
 
@@ -252,12 +252,13 @@ let is_vt a =
     | VTT _ -> true
     | _ -> false
 
-let is_const a =
+let is_const' a =
     let rec loop = function
         | ConstT _ -> true
         | SharedT x -> loop x
         | _ -> false
-    loop (get_type a)
+    loop a
+let is_const a = is_const' (get_type a)
 
 let get_tag =
     let mutable x = 0L
@@ -463,10 +464,10 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let bind_mset_template eval_env acc (arg_name, r) =
         let d = {d with env=eval_env; args=[]}
         match tev d (V arg_name) with
-        | RTypedExpr (TyV(_,_,lt as v)) when lt = get_type r ->
+        | RTypedExpr (TyV(_,_,lt as v)) when is_const' lt = false && lt = get_type r ->
             d.sequences.Push(SeqMSet(v,r))
             Succ acc
-        | x -> Fail <| sprintf "Expected: `RTypedExpr (TyV(_,_,lt as v)) when lt = get_type r`.\nGot: %A" x
+        | x -> Fail <| sprintf "Expected: `RTypedExpr (TyV(_,_,lt as v)) when is_const' lt = false && lt = get_type r`.\nGot: %A" x
 
     let match_tyvt_mset eval_env = match_tyvt_template fold_2_er (bind_mset_template eval_env)
     let bind_tyvt_mset eval_env = bind_template bind_expr_fail (match_tyvt_mset eval_env) eval_env
@@ -723,7 +724,7 @@ and exp_and_seq (d: Data) exp: ReturnCases =
 
     | CreateArray(args,t) ->
         match map_typed (tev d) args with
-        | Succ args when List.forall is_int args ->
+        | Succ args when List.forall (fun x -> is_const x && is_int x) args ->
             let args = List.map (fun x -> bind_typedexpr'' d.env ("",x) |> fst) args
             let args' = List.map (function (TyV x) -> x | _ -> failwith "impossible") args
             bind_typedexpr'' d.env ("",TyCreateArray(args,ArrayT(args', t)))
