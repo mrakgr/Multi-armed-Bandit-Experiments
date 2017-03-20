@@ -10,12 +10,6 @@ type CudaProgram =
 | Statements of ResizeArray<CudaProgram>
 
 let exp x = String.concat "" x
-let state (program: ResizeArray<_>) x = exp x |> Statement |> program.Add
-let enter (program: ResizeArray<_>) body v =
-    Indent |> program.Add
-    body v
-    Dedent |> program.Add
-let expand (program: ResizeArray<_>) x = Statements x |> program.Add
 
 let process_statements (statements: ResizeArray<CudaProgram>) =
     let rec process_statement (code: StringBuilder,ind as state) statement =
@@ -31,13 +25,14 @@ let process_statements (statements: ResizeArray<CudaProgram>) =
 
 let print_method_dictionary (imemo: MethodImplDict) =
     let program = ResizeArray()
-    
 
     let state x = program.Add <| Statement x
-    let enter f = 
+    let enter' f = 
         program.Add Indent
-        f() |> state
+        f()
         program.Add Dedent
+    let enter f = 
+        enter' (fun _ -> f() |> state)
 
     let tuple_definitions = Dictionary(HashIdentity.Structural)
     let tuple_def_proc t f = 
@@ -204,9 +199,12 @@ let print_method_dictionary (imemo: MethodImplDict) =
             |> List.map print_tyv_with_type
             |> String.concat ", "
         sprintf "%s %s(%s) {" (print_type (get_type body)) method_name args |> state
-        match codegen body with
-        | "" -> ()
-        | s -> enter <| fun _ -> sprintf "return %s;" s
+
+        enter' <| fun _ ->
+            match codegen body with
+            | "" -> ()
+            | s -> sprintf "return %s;" s |> state
+
         "}" |> state
 
     try
