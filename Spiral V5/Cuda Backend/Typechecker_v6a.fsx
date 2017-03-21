@@ -877,20 +877,20 @@ let data_empty() =
     {env=Map.empty;args=[];sequences=Stack();memoized_methods=Dictionary(HashIdentity.Structural)
      used_variables=HashSet(HashIdentity.Structural);current_stack=Stack()}
 
-let stan_body_conv l = List.map (fun (x,_) -> V x) l |> VV
+let stan_env_adder l m = List.fold (fun m (_,name,_ as v) -> Map.add name (RTypedExpr(TyV v)) m) m l
+let stan_body_conv l = List.map (fun (_,name,_) -> V name) l |> VV
 let stan_arg_conv inputs = 
-    inputs |> List.map (fun (n,t) ->
-        let v = get_tag(), n, t
-        MCTypedExpr(v,TyV v))
+    inputs 
+    |> List.map (fun v -> MCTypedExpr(v,TyV v))
     |> MCVV
 
-let main_method body_conv arg_conv inputs body =
+let main_method env_adder body_conv arg_conv inputs body =
     let d = data_empty()
 
     let evaled_cur_args = arg_conv inputs
     let main_method_key: TyMethodKey = get_tag(), call_to_args evaled_cur_args
 
-    match with_empty_seq d (body <| body_conv inputs) with
+    match with_empty_seq {d with env=env_adder inputs d.env} (body <| body_conv inputs) with
     | RError er -> Fail er
     | RExpr x -> Fail "Only TypedExprs are allowed as returns from a MainMethod's body evaluation."
     | RTypedExpr body ->
@@ -899,15 +899,15 @@ let main_method body_conv arg_conv inputs body =
         d.memoized_methods.[main_method_key] <- MethodDone(sole_arguments, body, bound_variables, Set d.used_variables)
         Succ (main_method_key, d.memoized_methods)
 
-let typecheck body_conv arg_conv inputs body = 
-    match main_method body_conv arg_conv inputs body with
+let typecheck env_adder body_conv arg_conv inputs body = 
+    match main_method env_adder body_conv arg_conv inputs body with
     | Succ(main_method_key, memo) ->
         let imemo = Dictionary(HashIdentity.Structural)
         closure_conv imemo memo main_method_key |> ignore
         Succ imemo
     | Fail er -> Fail er
 
-let typecheck0 program = typecheck id stan_arg_conv [] program
+let typecheck0 program = typecheck stan_env_adder id stan_arg_conv [] program
 
 let inl x y = Inlineable(x,y)
 let ap x y = Apply(x,y)

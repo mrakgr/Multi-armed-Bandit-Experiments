@@ -212,34 +212,40 @@ let print_method_dictionary (imemo: MethodImplDict) =
         process_statements program |> Succ
     with e -> Fail e.Message
 
-let eval body_conv arg_conv body inputs = 
-    match typecheck body_conv arg_conv inputs body with
+let eval env_adder body_conv arg_conv body inputs = 
+    match typecheck env_adder body_conv arg_conv inputs body with
     | Succ imemo -> print_method_dictionary imemo
     | Fail er -> Fail er
 
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let for_ init cond incr body rest =
+let for_ init cond body rest =
     s [l (V "init") init
        while_ (cond (V "init")) 
-            (l (V "") (body (V "init"))
-                (MSet(V "init", incr (V "init"),LitUnit)))] rest
+            (MSet(V "init", body (V "init"),LitUnit))] rest
 
-let map_body_conv (n,sizes,ins,outs) = 
+let map_env_adder (n,ins,outs) m =
+    let f l m = stan_env_adder l m
+    f [n] m |> f ins |> f outs
+let map_body_conv (n,ins,outs) = 
     let f x = stan_body_conv x
-    (f [n], f sizes, f ins, f outs)
-let map_arg_conv (n,sizes,ins,outs) =
+    (f [n], f ins, f outs)
+let map_arg_conv (n,ins,outs) =
     let f x = stan_arg_conv x
-    MCVV [f [n]; f sizes; f ins; f outs]
+    MCVV [f [n]; f ins; f outs]
 
-let map_module f (n, _, ins, outs) =
+let map_module f (VV [n], ins, outs) =
     for_ (BlockIdxX * BlockDimX + ThreadIdxX) 
-        (fun x -> x .< n) (fun x -> x + GridDimX * BlockDimX)
+        (fun x -> x .< n)
         (f ins outs) LitUnit
 
 let map_1_1 = 
-    eval map_body_conv map_arg_conv 
-        (map_module (fun in_ out_ i -> MSet(IndexArray(in_,[i]),IndexArray(out_,[i]),LitUnit)))
+    let n = get_tag(),"n",Int32T
+    let in_ = get_tag(),"in",ArrayT([n],Float32T)
+    let out_ = get_tag(),"out",ArrayT([n],Float32T)
+    eval map_env_adder map_body_conv map_arg_conv 
+        (map_module (fun (VV [in_]) (VV [out_]) i -> MSet(VV [IndexArray(in_,[i])],VV [IndexArray(out_,[i])],i + GridDimX * BlockDimX)))
+        (n,[in_],[out_])
 
-
+printfn "%A" map_1_1
