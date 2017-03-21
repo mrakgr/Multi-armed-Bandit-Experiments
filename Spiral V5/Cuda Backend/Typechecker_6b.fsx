@@ -428,9 +428,9 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             | RTypedExpr ty_exp -> bind_typedexpr acc (arg_name, ty_exp)
         | x -> Fail <| sprintf "Expected V arg_name is pattern matching. Got: %A" x
 
-    let bind_any name_checker = bind_template (bind_expr name_checker) (bind_typedexpr name_checker)
+    let bind_any name_checker = bind_template (bind_expr name_checker) (bind_typedexpr'' name_checker)
     let bind_expr_only name_checker = bind_template (bind_expr name_checker) bind_typedexpr_fail
-    let bind_typedexpr_only name_checker = bind_template bind_expr_fail (bind_typedexpr name_checker)
+    let bind_typedexpr_only name_checker = bind_template bind_expr_fail (bind_typedexpr'' name_checker)
 
     let match_v_template match_vv bind (acc: Env) = function
         | VV args, right_arg -> match_vv acc (args, right_arg)
@@ -450,6 +450,11 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             let ty_arg = TyV v
             let acc = Map.add arg_name (RTypedExpr ty_arg) acc
             Succ (MCTypedExpr(v,ty_exp), acc)
+
+    let bind_typedexpr_method' name_checker acc (left_arg, ty_exp: TypedExpr) =
+        match left_arg with
+        | V arg_name -> bind_typedexpr_method name_checker acc (arg_name, ty_exp)
+        | _ -> Fail "Expected V in pattern matching."
 
     let bind_method_only name_checker = bind_template (bind_method name_checker) bind_typedexpr_fail
     let bind_ty_only name_checker = bind_template bind_expr_fail (bind_typedexpr_method name_checker)
@@ -480,8 +485,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             traverse (match_v_template match_vv bind) acc (l,r)
         | x -> Fail <| sprintf "Unexpected arguments in match_tyvt.\n%A" x
     
-    let match_tyvt name_checker = match_tyvt_template fold_2_er (bind_typedexpr name_checker)
-    let match_tyvt_method name_checker = match_tyvt_template (traverse_generic MCVT) (bind_typedexpr_method name_checker)
+    let match_tyvt name_checker = match_tyvt_template fold_2_er (bind_typedexpr'' name_checker)
+    let match_tyvt_method name_checker = match_tyvt_template (traverse_generic MCVT) (bind_typedexpr_method' name_checker)
 
     let bind_tyvt name_checker eval_env = bind_template bind_expr_fail (match_tyvt name_checker) eval_env
     let bind_tyvt_method name_checker eval_env = bind_template bind_expr_fail (match_tyvt_method name_checker) eval_env
