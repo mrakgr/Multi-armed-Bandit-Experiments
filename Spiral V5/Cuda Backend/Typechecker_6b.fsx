@@ -318,11 +318,11 @@ let get_bound_variables (env: Env) =
         | _ -> None)
     |> Set
 
-let map_fold_2_Er f state (x,y) =
+let map_fold_2_Er f state x y =
     if List.length x = List.length y then
         let rec loop f state = function
             | x :: xs, y :: ys ->
-                match f state (x,y) with
+                match f state x y with
                 | Succ(r,state) ->
                     match loop f state (xs,ys) with
                     | Succ(rs,state) -> Succ (r::rs,state)
@@ -429,51 +429,113 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     let bind_expr_only name_checker eval_env acc = bind_template (bind_expr name_checker acc) bind_typedexpr_fail eval_env
     let bind_typedexpr_only name_checker eval_env acc = bind_template bind_expr_fail (bind_typedexpr name_checker acc) eval_env
 
-    let match_vv match_rest l r =
-        match l,r with
-        | VV l, VV r -> match_rest l r |> Hit
-        | _ -> MissedBranch
+    let bind_tagged name_checker acc arg_name exp =
+        dup_name_check name_checker arg_name <| fun _ ->
+            match exp with
+            | HoistedMethod(_,tag,_,_,_) | HoistedInlineable(_,_,tag,_)-> 
+                let exp' = MCTag tag
+                Succ (exp', Map.add arg_name (RExpr exp) acc)
+            | x -> Fail <| sprintf "Expected: method.\nGot: %A" x
 
-    let match_vt match_rest l r =
-        match l,r with
-        | VV l, VT r -> match_rest l r |> Hit
-        | _ -> MissedBranch
+    let bind_typedexpr_method name_checker acc arg_name ty_exp =
+        dup_name_check name_checker arg_name <| fun _ ->
+            let v = get_tag(), arg_name, get_type ty_exp
+            let ty_arg = TyV v
+            let acc = Map.add arg_name (RTypedExpr ty_arg) acc
+            Succ (MCTypedExpr(v,ty_exp), acc)
 
-    let match_et match_rest l r =
-        match l,r with
-        | VV l, ET r -> match_rest l r |> Hit
-        | _ -> MissedBranch
+    let bind_any_method name_checker eval_env acc = bind_template (bind_tagged name_checker acc) (bind_typedexpr_method name_checker acc) eval_env
+    let bind_tagged_only_method name_checker eval_env acc = bind_template (bind_tagged name_checker acc) bind_typedexpr_fail eval_env
+    let bind_typedexpr_only_method name_checker eval_env acc = bind_template bind_expr_fail (bind_typedexpr_method name_checker acc) eval_env
 
-    let choose l a b =
-        let rec loop = function
-            | x :: xs ->
-                match x a b with
-                | Hit x -> x
-                | MissedBranch -> loop xs
-            | [] -> Fail "All branches in pattern matching failed to trigger"
-        loop l
+    let traverse_generic tuple_constructor f s l r = map_fold_2_Er f s l r |> mapResultFst tuple_constructor
 
-    let match_v bind l r =
+    let destructure_typed_template destructure eval_env r =
+        match tev {d with env=eval_env} r with
+        | RExpr x -> sprintf "Expected a typed expression as the right argument in match_tyvt. Got: %A" x |> Fail
+        | RTypedExpr r -> destructure r 
+        | RError er -> Fail er
+
+    let destructure_vt_bind v vv acc l r =
         match l with
-        | V x -> bind x r |> Hit
-        | _ -> MissedBranch
+        | V x -> v acc x r
+        | VV x -> vv acc x r
+        | x -> Fail <| sprintf "Unexpected arguments in destructure_vt_template's bind.\nGot: %A" x
 
-    let rec match_vv' name_checker eval_env acc =
-        choose [match_v (bind_any name_checker eval_env acc)
-                match_vv (fold_2_er (match_vv' name_checker eval_env) acc)]
+    let rec destructure_vt_template traverse bind acc (l: Expr list) (r: TypedExpr) =
+        match get_type r with
+        | VTT x -> 
+            let r = List.mapi (fun i t -> TyIndexVT(r,TyLitInt i,t)) x
+            traverse (bind (destructure_vt_template traverse bind)) acc l r
+        | x -> Fail <| sprintf "Unexpected arguments in destructure_vt_template.\nGot: %A" x
 
-    let rec match_vt' name_checker eval_env acc =
-        choose [match_v (bind_typedexpr_only name_checker eval_env acc)
-                match_vt (fold_2_er (match_vt' name_checker eval_env) acc)]
+    let rec match_vv_template traverse bind_any' name_checker eval_env acc l r =
+        let f = match_vv_template traverse bind_any' name_checker eval_env
+        match l,r with
+        | V l, r -> bind_any' name_checker eval_env acc l r 
+        | VV l, VV r -> traverse f acc l r
+        | x -> Fail <| sprintf "Missed a case in match_vv_template.\nGot: %A" x
 
-    let rec match_et' name_checker eval_env acc =
-        choose [match_v (bind_expr_only name_checker eval_env acc)
-                match_et (fold_2_er (match_et' name_checker eval_env) acc)]
+    let rec match_vt_template traverse bind_typedexpr_only' name_checker eval_env acc l r =
+        let f = match_vt_template traverse bind_typedexpr_only' name_checker eval_env
+        match l,r with
+        | V l, r -> bind_typedexpr_only' name_checker eval_env acc l r 
+        | VV l, VT r -> traverse f acc l r
+        | x -> Fail <| sprintf "Missed a case in match_vt_template.\nGot: %A" x
+
+    let rec match_et_template traverse bind_expr_only' name_checker eval_env acc l r =
+        let f = match_et_template traverse bind_expr_only' name_checker eval_env
+        match l,r with
+        | V l, r -> bind_expr_only' name_checker eval_env acc l r 
+        | VV l, ET r -> traverse f acc l r
+        | x -> Fail <| sprintf "Missed a case in match_et_template.\nGot: %A" x
     
-    let rec match_any name_checker eval_env acc =
-        choose [match_v (bind_any name_checker eval_env acc)
-                match_vv (fold_2_er (match_any name_checker eval_env) acc)
-                match_et (fold_2_er (match_et' name_checker eval_env) acc)
-                match_vt (fold_2_er (match_vt' name_checker eval_env) acc)]
+    let rec match_any_template traverse_vv traverse_et traverse_vt traverse_vt' bind_any' bind_expr_only' bind_typedexpr_only' bind_typedexpr name_checker eval_env acc l r =
+        let f = match_any_template traverse_vv traverse_et traverse_vt traverse_vt' bind_any' bind_expr_only' bind_typedexpr_only' bind_typedexpr name_checker eval_env
+        match l,r with
+        | V l, r -> bind_any' name_checker eval_env acc l r 
+        | VV l, VV r -> traverse_vv f acc l r
+        | VV l, ET r -> traverse_et (match_et_template traverse_et bind_expr_only' name_checker eval_env) acc l r
+        | VV l, VT r -> traverse_vt (match_vt_template traverse_vt bind_typedexpr_only' name_checker eval_env) acc l r
+        | VV l, r -> destructure_typed_template (destructure_vt_template traverse_vt' (destructure_vt_bind (bind_typedexpr name_checker)) acc l) eval_env r
+        | x -> Fail <| sprintf "Missed a case in match_vv_template.\nGot: %A" x
+
+    let match_vv_inl = match_vv_template fold_2_er bind_any
+    let match_et_inl = match_et_template fold_2_er bind_expr_only
+    let match_vt_inl = match_vt_template fold_2_er bind_typedexpr_only
+    let match_any_inl = 
+        match_any_template 
+            fold_2_er fold_2_er fold_2_er fold_2_er
+            bind_any bind_expr_only bind_typedexpr_only bind_typedexpr
+
+    let match_vv_method = match_vv_template (traverse_generic MCVV) bind_any_method
+    let match_et_method = match_et_template (traverse_generic MCET) bind_tagged_only_method
+    let match_vt_method = match_vt_template (traverse_generic MCVT) bind_typedexpr_only_method
+    let match_any_method = 
+        match_any_template 
+            (traverse_generic MCVV) (traverse_generic MCET) (traverse_generic MCVT) (traverse_generic MCVT)
+            bind_any_method bind_tagged_only_method bind_typedexpr_only_method bind_typedexpr_method
+
+    let destructure_vt_mset set vv () l r =
+        match l with
+        | V _ | IndexArray _ as l -> set l r
+        | VV x -> vv () x r
+        | x -> Fail <| sprintf "Unexpected arguments in destructure_vt_template's bind.\nGot: %A" x
+
+    let rec mset eval_env () l r =
+        let set l r =
+            let d = {d with env=eval_env; args=[]}
+            match tev d l with
+            | RTypedExpr (TyIndexArray(_,_,lt) as v) | RTypedExpr (TyV(_,_,lt) as v) when is_const' lt = false && lt = get_type r ->
+                d.sequences.Push(SeqMSet(v,r))
+                Succ ()
+            | x -> Fail <| sprintf "Expected: `RTypedExpr (TyV(_,_,lt) as v) when is_const' lt = false && lt = get_type r`.\nGot: %A" x
+
+        let f = mset eval_env
+        match l,r with
+        | VV l, VT r | VV l, VV r -> fold_2_er f () l r
+        | (V _ | IndexArray _ as l), r -> destructure_typed_template (set l) eval_env r
+        | VV l, r -> destructure_typed_template (destructure_vt_template fold_2_er (destructure_vt_mset set) () l) eval_env r
+        | x -> Fail <| sprintf "Missed a case in mset_template.\nGot: %A" x
 
     RError "placeholder"
