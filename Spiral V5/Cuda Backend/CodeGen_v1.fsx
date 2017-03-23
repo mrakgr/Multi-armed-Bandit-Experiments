@@ -1,5 +1,5 @@
-﻿#load "Typechecker_v6a.fsx"
-open Typechecker_v6a
+﻿#load "Typechecker_v6b.fsx"
+open Typechecker_v6b
 open System.Collections.Generic
 open System.Text
 
@@ -32,7 +32,10 @@ let print_method_dictionary (imemo: MethodImplDict) =
         f()
         program.Add Dedent
     let enter f = 
-        enter' (fun _ -> f() |> state)
+        enter' (fun _ -> 
+            match f() with
+            | "" -> ()
+            | s -> state s)
 
     let tuple_definitions = Dictionary(HashIdentity.Structural)
     let tuple_def_proc t f = 
@@ -43,6 +46,8 @@ let print_method_dictionary (imemo: MethodImplDict) =
             tuple_definitions.Add(t,v)
             f v
 
+    let print_tuple v = sprintf "tuple_%i" v
+
     let rec print_type = function
         | UnitT -> "void"
         | UInt32T -> "unsigned int"
@@ -52,11 +57,10 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | Float32T -> "float"
         | Float64T -> "double"
         | BoolT -> "int"
-        | VTT _ as t -> tuple_def_proc t (fun v -> sprintf "tuple_%i" v)
+        | VTT t -> tuple_def_proc t print_tuple
         | NominalT x -> x
-        | ConstT x -> sprintf "const %s" (print_type x)
-        | SharedT x -> sprintf "__shared__ %s" (print_type x)
-        | ArrayT (_,t) -> sprintf "%s *" (print_type t)
+        | LocalArrayT (_,t) | GlobalArrayT (_,t) -> sprintf "%s *" (print_type t)
+        | SharedArrayT (_,t) -> sprintf "__shared__ %s *" (print_type t)
         | ArrT _ -> failwith "This thing is just a placeholder for now."
 
     let print_tyv (tag,_,_) = sprintf "var_%i" tag
@@ -79,12 +83,13 @@ let print_method_dictionary (imemo: MethodImplDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet(tyv,TyCreateArray(ar_sizes,ar_ty),e,_) ->
+        | TyLet(tyv,(TyCreateSharedArray(ar_sizes,_) | TyCreateLocalArray(ar_sizes,_)),e,_) ->
             let dims =
                 List.map (codegen >> sprintf "[%s]") ar_sizes
                 |> String.concat ""
             sprintf "%s%s;" (print_tyv_with_type tyv) dims |> state
             codegen e
+        | TyLet((_,_,UnitT),_,e,_) -> codegen e
         | TyLet(tyv,b,e,_) ->
             sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
             codegen e
@@ -108,33 +113,35 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
         // Value tuple cases
         | TyIndexVT(v,i,_) -> sprintf "(%s.tup%s)" (codegen v) (codegen i)
-        | TyVT(l,t) -> 
+        | TyVT(l,(VTT t)) -> 
             tuple_def_proc t (fun _ -> ())
             List.mapi (fun i x -> sprintf ".tup%i = %s" i (codegen x)) l
             |> String.concat ", "
             |> sprintf "{ %s }"
-            
+        | TyVT(l,_) -> failwith "The type of TyVT should always be VTT."
+
         // Array cases
-        | TyIndexArray(ar,i,_) ->
+        | TyIndexArray(ar,i,_) as ar' ->
             let index = 
                 let ar_sizes =
                     match get_type ar with
-                    | ArrayT(sizes,_) -> sizes
+                    | LocalArrayT(sizes,_) | SharedArrayT(sizes,_) | GlobalArrayT(sizes,_) -> sizes
                     | _ -> failwith "impossible"
-                let rec loop = function
+                let rec loop x =
+                    match x with
                     | None, s :: sx, i :: ix ->
                         loop (Some(sprintf "(%s) * %s" (codegen i) (print_tyv s)),sx,ix)
                     | None, [], [i] ->
-                        string i
+                        codegen i
                     | Some p, s :: sx, i :: ix ->
                         loop (Some(sprintf "(%s + (%s)) * %s" p (codegen i) (print_tyv s)),sx,ix)
                     | Some p, [], [i] ->
                         sprintf "%s + (%s)" p (codegen i)
                     | _ -> failwith "invalid state"
-                loop (None,ar_sizes,i)
-            sprintf "(%s).[%s]" (codegen ar) index
+                loop (None,List.tail ar_sizes,i)
+            sprintf "%s.[%s]" (codegen ar) index
 
-        | TyCreateArray _ -> failwith "This expression should never appear in isolation."
+        | TyCreateSharedArray _ | TyCreateLocalArray _ -> failwith "This expression should never appear in isolation."
 
         // Cuda kernel constants
         | TyThreadIdxX -> "threadIdx.x"
@@ -174,7 +181,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyNeg (x,_) -> sprintf "(-%s)" (codegen x)
         // Mutable operations.
         | TyMSet (a,b,e,_) ->
-            sprintf "%s = %s;" (print_tyv a) (codegen b) |> state
+            sprintf "%s = %s;" (codegen a) (codegen b) |> state
             codegen e
         | TyAtomicAdd (a,b,_) ->
             sprintf "atomicAdd(&(%s),%s)" (codegen a) (codegen b)
@@ -185,7 +192,12 @@ let print_method_dictionary (imemo: MethodImplDict) =
             "}" |> state
             codegen e
 
-    let print_method (tag,_) (explicit_args,body,implicit_args) = 
+    let print_tuple_defintion tys tag =
+        sprintf "struct %s {" (print_tuple tag) |> state
+        enter <| fun _ -> List.iteri (fun i x -> sprintf "%s tup%i;" (print_type x) i |> state) tys; ""
+        "}" |> state
+
+    let print_method prefix (tag,_) (explicit_args,body,implicit_args) = 
         let check_valid_arg tag args =
             if List.exists (fun (_,_,t) -> t = UnitT) args then
                 failwithf "UnitT arguments are not allowed in method calls. Tag=%i, Args: %A" tag args
@@ -198,7 +210,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
             |> check_valid_arg tag
             |> List.map print_tyv_with_type
             |> String.concat ", "
-        sprintf "%s %s(%s) {" (print_type (get_type body)) method_name args |> state
+        sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state
 
         enter' <| fun _ ->
             match codegen body with
@@ -208,14 +220,21 @@ let print_method_dictionary (imemo: MethodImplDict) =
         "}" |> state
 
     try
-        for x in imemo do print_method x.Key x.Value
+        
+        let min = imemo |> Seq.fold (fun s kv -> min (fst kv.Key) s) System.Int64.MaxValue
+        for x in imemo do 
+            let prefix = if fst x.Key = min then "__global__" else "__device__"
+            print_method prefix x.Key x.Value
+        for x in tuple_definitions do print_tuple_defintion x.Key x.Value
         process_statements program |> Succ
     with e -> Fail e.Message
 
-let eval env_adder body_conv arg_conv body inputs = 
+let eval env_adder body_conv arg_conv inputs body = 
     match typecheck env_adder body_conv arg_conv inputs body with
     | Succ imemo -> print_method_dictionary imemo
     | Fail er -> Fail er
+
+let eval0 body = eval stan_env_adder stan_body_conv stan_arg_conv [] body
 
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
@@ -240,12 +259,15 @@ let map_module f (VV [n], ins, outs) =
         (fun x -> x .< n)
         (f ins outs) LitUnit
 
+printfn "%A" (eval0 term4)
+
 let map_1_1 = 
     let n = get_tag(),"n",Int32T
-    let in_ = get_tag(),"in",ArrayT([n],Float32T)
-    let out_ = get_tag(),"out",ArrayT([n],Float32T)
+    let in_ = get_tag(),"in",GlobalArrayT([n],Float32T)
+    let out_ = get_tag(),"out",GlobalArrayT([n],Float32T)
     eval map_env_adder map_body_conv map_arg_conv 
-        (map_module (fun (VV [in_]) (VV [out_]) i -> MSet(VV [IndexArray(in_,[i])],VV [IndexArray(out_,[i])],i + GridDimX * BlockDimX)))
         (n,[in_],[out_])
-
+        (map_module (fun (VV [in_]) (VV [out_]) i -> MSet(VV [IndexArray(in_,[i])],VV [IndexArray(out_,[i])],i + GridDimX * BlockDimX)))
+        
 printfn "%A" map_1_1
+

@@ -11,9 +11,9 @@ type Ty =
     | BoolT
     | VTT of Ty list // represents the value tuple
     | NominalT of string // for classes and such
-    | ConstT of Ty
-    | SharedT of Ty
-    | ArrayT of TyV list * Ty
+    | GlobalArrayT of TyV list * Ty
+    | SharedArrayT of TyV list * Ty
+    | LocalArrayT of TyV list * Ty
     | ArrT of Ty list * Ty
 and TyV = int64 * string * Ty
 
@@ -56,7 +56,8 @@ and Expr =
 
     // Array cases
     | IndexArray of Expr * Expr list
-    | CreateArray of Expr list * Ty
+    | CreateSharedArray of Expr list * Ty
+    | CreateLocalArray of Expr list * Ty
 
     // Primitive operations on expressions.
     | Add of Expr * Expr
@@ -123,7 +124,8 @@ and TypedExpr =
 
     // Array cases
     | TyIndexArray of TypedExpr * TypedExpr list * Ty
-    | TyCreateArray of TypedExpr list * Ty
+    | TyCreateSharedArray of TypedExpr list * Ty
+    | TyCreateLocalArray of TypedExpr list * Ty
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -154,7 +156,7 @@ and TypedExpr =
     | TyTanh of TypedExpr * Ty
     | TyNeg of TypedExpr * Ty
     // Mutable operations.
-    | TyMSet of TyV * TypedExpr * TypedExpr * Ty
+    | TyMSet of TypedExpr * TypedExpr * TypedExpr * Ty
     | TyAtomicAdd of TypedExpr * TypedExpr * Ty
     | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
 
@@ -175,7 +177,7 @@ and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV>>
 and Sequence =
     | SeqLet of TyV * TypedExpr
     | SeqWhile of TypedExpr * TypedExpr
-    | SeqMSet of TyV * TypedExpr
+    | SeqMSet of TypedExpr * TypedExpr
 
 and ArgCases = Expr * Env
 and Data =
@@ -210,7 +212,7 @@ let rec get_type = function
     | TyVT(_,t) | TyIndexVT(_,_, t) -> t
 
     // Array cases
-    | TyIndexArray(_,_,t) | TyCreateArray(_,t) -> t
+    | TyIndexArray(_,_,t) | TyCreateLocalArray(_,t) | TyCreateSharedArray(_,t) -> t
 
     // Primitive operations on expressions.
     | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
@@ -232,7 +234,6 @@ let rec get_type = function
     
 let rec is_numeric' a =
     match a with
-    | SharedT x | ConstT x -> is_numeric' x
     | UInt32T | UInt64T | Int32T | Int64T 
     | Float32T | Float64T -> true
     | _ -> false
@@ -246,21 +247,18 @@ let is_atomic_add_supported a =
 
 let rec is_float' a =
     match a with
-    | SharedT x | ConstT x -> is_float' x
     | Float32T | Float64T -> true
     | _ -> false
 let is_float a = is_float' (get_type a)
 
 let rec is_bool' a =
     match a with
-    | SharedT x | ConstT x -> is_bool' x
     | BoolT -> true
     | _ -> false
 let is_bool a = is_bool' (get_type a)
 
 let rec is_int' a =
     match a with
-    | SharedT x | ConstT x -> is_int' x
     | UInt32T | UInt64T | Int32T | Int64T -> true
     | _ -> false
 let is_int a = is_int' (get_type a)
@@ -269,14 +267,6 @@ let is_vt a =
     match get_type a with
     | VTT _ -> true
     | _ -> false
-
-let is_const' a =
-    let rec loop = function
-        | ConstT _ -> true
-        | SharedT x -> loop x
-        | _ -> false
-    loop a
-let is_const a = is_const' (get_type a)
 
 let get_tag =
     let mutable x = 0L
@@ -314,11 +304,11 @@ let get_bound_variables (env: Env) =
         | _ -> None)
     |> Set
 
-let map_fold_2_Er f state (x,y) =
+let map_fold_2_Er f state x y =
     if List.length x = List.length y then
         let rec loop f state = function
             | x :: xs, y :: ys ->
-                match f state (x,y) with
+                match f state x y with
                 | Succ(r,state) ->
                     match loop f state (xs,ys) with
                     | Succ(rs,state) -> Succ (r::rs,state)
@@ -351,11 +341,11 @@ let mapResult f = function
 let mapFst f (a,b) = (f a, b)
 let mapResultFst f = mapResult (mapFst f)
 
-let rec fold_2_er f state (x,y) =
+let rec fold_2_er f state x y =
     if List.length x = List.length y then
         let rec loop f state = function
             | x :: xs, y :: ys ->
-                match f state (x,y) with
+                match f state x y with
                 | Succ state ->
                     match loop f state (xs,ys) with
                     | Succ state -> Succ state
@@ -369,6 +359,10 @@ let rec fold_2_er f state (x,y) =
 
 let get_body_from (stack: Stack<unit -> ReturnCases>) = stack.Peek()() |> function RTypedExpr x -> x | _ -> failwith "impossible"
 
+type PatternMatcherCases<'a,'b> =
+    | Hit of Result<'a,'b>
+    | MissedBranch
+
 let rec with_empty_seq (d: Data) expr =
     let d' = {d with sequences = Stack()}
     match exp_and_seq d' expr with
@@ -376,11 +370,11 @@ let rec with_empty_seq (d: Data) expr =
     | RTypedExpr x -> RTypedExpr <| sequences_to_typed_expr d'.sequences x
     | RError _ as er -> er
 
-// Does macros expansion, sequtialization and takes note of the bound and 
+// Does macro expansion, sequalization and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
 and exp_and_seq (d: Data) exp: ReturnCases =
     let tev d exp = exp_and_seq d exp
-    
+
     /// Patterm matching functions
     let add_bound_variable env arg_name ty_arg =
         let v = TyV ty_arg
@@ -391,132 +385,144 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | true -> f()
         | false -> Fail <| sprintf "%s is a duplicate name in pattern matching." arg_name
 
-    let bind_expr_fail acc (arg_name, exp) =
+    let bind_expr_fail arg_name exp =
         Fail "Cannot bind untyped expressions in value structures like Vars."
-    let bind_expr (name_checker: HashSet<string>) acc (arg_name, exp) =
+    let bind_expr (name_checker: HashSet<string>) acc arg_name exp =
         dup_name_check name_checker arg_name <| fun _ ->
             let exp = RExpr exp
             Succ (Map.add arg_name exp acc)
         
-    let bind_typedexpr_fail acc (arg_name, ty_exp) =
+    let bind_typedexpr_fail arg_name ty_exp =
         Fail "Cannot bind typed expressions in expression tuples."
-    let bind_typedexpr'' acc (arg_name, ty_exp) =
+    let bind_typedexpr'' acc arg_name ty_exp =
         let b'_type = get_type ty_exp
         let ty_arg: TyV = get_tag(),arg_name,b'_type
         // Pushes the sequence onto the stack
         d.sequences.Push(SeqLet(ty_arg,ty_exp))
         // Binds the name to the said sequence's name and loops to the next argument
         add_bound_variable acc arg_name ty_arg
-    let bind_typedexpr' a b = bind_typedexpr'' a b |> snd
-    let bind_typedexpr (name_checker: HashSet<string>) acc (arg_name, ty_exp) =
+    let bind_typedexpr' acc a b = bind_typedexpr'' acc a b |> snd
+    let bind_typedexpr (name_checker: HashSet<string>) acc arg_name ty_exp =
         dup_name_check name_checker arg_name <| fun _ ->
-            Succ (bind_typedexpr' acc (arg_name, ty_exp))
-    let bind_template bind_expr bind_typedexpr eval_env acc (arg_name, right_arg) =
+            Succ (bind_typedexpr' acc arg_name ty_exp)
+    let bind_template bind_expr bind_typedexpr eval_env arg_name right_arg =
         match tev {d with env=eval_env; args=[]} right_arg with
         | RError er -> Fail er
-        | RExpr exp -> bind_expr acc (arg_name, exp)
-        | RTypedExpr ty_exp -> bind_typedexpr acc (arg_name, ty_exp)
+        | RExpr exp -> bind_expr arg_name exp
+        | RTypedExpr ty_exp -> bind_typedexpr arg_name ty_exp
 
-    let bind_any name_checker = bind_template (bind_expr name_checker) (bind_typedexpr name_checker)
-    let bind_expr_only name_checker = bind_template (bind_expr name_checker) bind_typedexpr_fail
-    let bind_typedexpr_only name_checker = bind_template bind_expr_fail (bind_typedexpr name_checker)
+    let bind_any name_checker eval_env acc = bind_template (bind_expr name_checker acc) (bind_typedexpr name_checker acc) eval_env
+    let bind_expr_only name_checker eval_env acc = bind_template (bind_expr name_checker acc) bind_typedexpr_fail eval_env
+    let bind_typedexpr_only name_checker eval_env acc = bind_template bind_expr_fail (bind_typedexpr name_checker acc) eval_env
 
-    let match_v_template match_vv bind (acc: Env) = function
-        | V arg_name, right_arg ->
-            bind acc (arg_name, right_arg)
-        | VV args, right_arg ->
-            match_vv acc (args, right_arg)
-        | x -> Fail <| sprintf "Unexpected arguments in match_v.\n%A" x
-
-    let bind_method name_checker acc (arg_name, exp) =
+    let bind_tagged name_checker acc arg_name exp =
         dup_name_check name_checker arg_name <| fun _ ->
             match exp with
             | HoistedMethod(_,tag,_,_,_) | HoistedInlineable(_,_,tag,_)-> 
                 let exp' = MCTag tag
                 Succ (exp', Map.add arg_name (RExpr exp) acc)
             | x -> Fail <| sprintf "Expected: method.\nGot: %A" x
-    
-    let bind_typedexpr_method name_checker acc (arg_name, ty_exp: TypedExpr) =
+
+    let bind_typedexpr_method name_checker acc arg_name ty_exp =
         dup_name_check name_checker arg_name <| fun _ ->
-            let v = get_tag(),arg_name,get_type ty_exp
+            let v = get_tag(), arg_name, get_type ty_exp
             let ty_arg = TyV v
             let acc = Map.add arg_name (RTypedExpr ty_arg) acc
             Succ (MCTypedExpr(v,ty_exp), acc)
 
-    let bind_method_only name_checker = bind_template (bind_method name_checker) bind_typedexpr_fail
-    let bind_ty_only name_checker = bind_template bind_expr_fail (bind_typedexpr_method name_checker)
-    let bind_any_method name_checker = bind_template (bind_method name_checker) (bind_typedexpr_method name_checker)
+    let bind_any_method name_checker eval_env acc = bind_template (bind_tagged name_checker acc) (bind_typedexpr_method name_checker acc) eval_env
+    let bind_tagged_only_method name_checker eval_env acc = bind_template (bind_tagged name_checker acc) bind_typedexpr_fail eval_env
+    let bind_typedexpr_only_method name_checker eval_env acc = bind_template bind_expr_fail (bind_typedexpr_method name_checker acc) eval_env
 
-    let traverse_generic tuple_constructor f s l = map_fold_2_Er f s l |> mapResultFst tuple_constructor
+    let traverse_generic tuple_constructor f s l r = map_fold_2_Er f s l r |> mapResultFst tuple_constructor
 
-    let rec match_vt_template traverse bind bind_tyvars (acc: Env) (l,r) = 
-        let match_vv = match_vt_template traverse bind bind_tyvars
-        match r with
-        | VT r -> traverse (match_v_template match_vv bind) acc (l,r)
-        | r -> bind_tyvars acc (l,r)
+    let destructure_typed_template destructure eval_env r =
+        match tev {d with env=eval_env} r with
+        | RExpr x -> sprintf "Expected a typed expression as the right argument in match_tyvt. Got: %A" x |> Fail
+        | RTypedExpr r -> destructure r 
+        | RError er -> Fail er
 
-    let rec match_et_template traverse bind (acc: Env) (l,r) = 
-        let match_vv = match_et_template traverse bind
-        match r with
-        | ET r -> traverse (match_v_template match_vv bind) acc (l,r)
-        | x -> Fail <| sprintf "Unexpected arguments in match_et.\n%A" x
+    let destructure_vt_bind v vv acc l r =
+        match l with
+        | V x -> v acc x r
+        | VV x -> vv acc x r
+        | x -> Fail <| sprintf "Unexpected arguments in destructure_vt_template's bind.\nGot: %A" x
 
-    let match_et name_checker eval_env = match_et_template fold_2_er (bind_expr_only name_checker eval_env)
-    let match_et_method name_checker eval_env = match_et_template (traverse_generic MCET) (bind_method_only name_checker eval_env)
-
-    let rec match_tyvt_template traverse bind (acc: Env) (l,r) = 
-        let match_vv = match_tyvt_template traverse bind
+    let rec destructure_vt_template traverse bind acc (l: Expr list) (r: TypedExpr) =
         match get_type r with
         | VTT x -> 
             let r = List.mapi (fun i t -> TyIndexVT(r,TyLitInt i,t)) x
-            traverse (match_v_template match_vv bind) acc (l,r)
-        | x -> Fail <| sprintf "Unexpected arguments in match_tyvt.\n%A" x
+            traverse (bind (destructure_vt_template traverse bind)) acc l r
+        | x -> Fail <| sprintf "Unexpected arguments in destructure_vt_template.\nGot: %A" x
+
+    let rec match_vv_template traverse bind_any' name_checker eval_env acc l r =
+        let f = match_vv_template traverse bind_any' name_checker eval_env
+        match l,r with
+        | V l, r -> bind_any' name_checker eval_env acc l r 
+        | VV l, VV r -> traverse f acc l r
+        | x -> Fail <| sprintf "Missed a case in match_vv_template.\nGot: %A" x
+
+    let rec match_vt_template traverse bind_typedexpr_only' name_checker eval_env acc l r =
+        let f = match_vt_template traverse bind_typedexpr_only' name_checker eval_env
+        match l,r with
+        | V l, r -> bind_typedexpr_only' name_checker eval_env acc l r 
+        | VV l, VT r -> traverse f acc l r
+        | x -> Fail <| sprintf "Missed a case in match_vt_template.\nGot: %A" x
+
+    let rec match_et_template traverse bind_expr_only' name_checker eval_env acc l r =
+        let f = match_et_template traverse bind_expr_only' name_checker eval_env
+        match l,r with
+        | V l, r -> bind_expr_only' name_checker eval_env acc l r 
+        | VV l, ET r -> traverse f acc l r
+        | x -> Fail <| sprintf "Missed a case in match_et_template.\nGot: %A" x
     
-    let match_tyvt name_checker = match_tyvt_template fold_2_er (bind_typedexpr name_checker)
-    let match_tyvt_method name_checker = match_tyvt_template (traverse_generic MCVT) (bind_typedexpr_method name_checker)
+    let rec match_any_template traverse_vv traverse_et traverse_vt traverse_vt' bind_any' bind_expr_only' bind_typedexpr_only' bind_typedexpr name_checker eval_env acc l r =
+        let f = match_any_template traverse_vv traverse_et traverse_vt traverse_vt' bind_any' bind_expr_only' bind_typedexpr_only' bind_typedexpr name_checker eval_env
+        match l,r with
+        | V l, r -> bind_any' name_checker eval_env acc l r 
+        | VV l, VV r -> traverse_vv f acc l r
+        | VV l, ET r -> traverse_et (match_et_template traverse_et bind_expr_only' name_checker eval_env) acc l r
+        | VV l, VT r -> traverse_vt (match_vt_template traverse_vt bind_typedexpr_only' name_checker eval_env) acc l r
+        | VV l, r -> destructure_typed_template (destructure_vt_template traverse_vt' (destructure_vt_bind (bind_typedexpr name_checker)) acc l) eval_env r
+        | x -> Fail <| sprintf "Missed a case in match_vv_template.\nGot: %A" x
 
-    let bind_tyvt name_checker eval_env = bind_template bind_expr_fail (match_tyvt name_checker) eval_env
-    let bind_tyvt_method name_checker eval_env = bind_template bind_expr_fail (match_tyvt_method name_checker) eval_env
+    let match_vv_inl = match_vv_template fold_2_er bind_any
+    let match_et_inl = match_et_template fold_2_er bind_expr_only
+    let match_vt_inl = match_vt_template fold_2_er bind_typedexpr_only
+    let match_any_inl = 
+        match_any_template 
+            fold_2_er fold_2_er fold_2_er fold_2_er
+            bind_any bind_expr_only bind_typedexpr_only bind_typedexpr
 
-    let match_vt name_checker eval_env = 
-        match_vt_template fold_2_er (bind_typedexpr_only name_checker eval_env) 
-            (bind_tyvt name_checker eval_env)
+    let match_vv_method = match_vv_template (traverse_generic MCVV) bind_any_method
+    let match_et_method = match_et_template (traverse_generic MCET) bind_tagged_only_method
+    let match_vt_method = match_vt_template (traverse_generic MCVT) bind_typedexpr_only_method
+    let match_any_method = 
+        match_any_template 
+            (traverse_generic MCVV) (traverse_generic MCET) (traverse_generic MCVT) (traverse_generic MCVT)
+            bind_any_method bind_tagged_only_method bind_typedexpr_only_method bind_typedexpr_method
 
-    let match_vt_method name_checker eval_env = 
-        match_vt_template (traverse_generic MCVT) (bind_ty_only name_checker eval_env) 
-            (bind_tyvt_method name_checker eval_env)
+    let destructure_vt_mset set vv () l r =
+        match l with
+        | V _ | IndexArray _ as l -> set l r
+        | VV x -> vv () x r
+        | x -> Fail <| sprintf "Unexpected arguments in destructure_vt_template's bind.\nGot: %A" x
 
-    let bind_mset_template eval_env acc (arg_name, r) =
-        let d = {d with env=eval_env; args=[]}
-        match tev d (V arg_name) with
-        | RTypedExpr (TyV(_,_,lt as v)) when is_const' lt = false && lt = get_type r ->
-            d.sequences.Push(SeqMSet(v,r))
-            Succ acc
-        | x -> Fail <| sprintf "Expected: `RTypedExpr (TyV(_,_,lt as v)) when is_const' lt = false && lt = get_type r`.\nGot: %A" x
+    let rec mset eval_env () l r =
+        let set l r =
+            let d = {d with env=eval_env; args=[]}
+            match tev d l with
+            | RTypedExpr (TyIndexArray(_,_,lt) as v) | RTypedExpr (TyV(_,_,lt) as v) when lt = get_type r ->
+                d.sequences.Push(SeqMSet(v,r))
+                Succ ()
+            | x -> Fail <| sprintf "Expected: `RTypedExpr (TyIndexArray(_,_,lt) as v) | RTypedExpr (TyV(_,_,lt) as v) when lt = get_type r`.\nGot: %A" x
 
-    let match_tyvt_mset eval_env = match_tyvt_template fold_2_er (bind_mset_template eval_env)
-    let bind_tyvt_mset eval_env = bind_template bind_expr_fail (match_tyvt_mset eval_env) eval_env
-    let bind_mset eval_env = bind_template bind_expr_fail (bind_mset_template eval_env) eval_env
-    let match_vt_mset eval_env = match_vt_template fold_2_er (bind_mset eval_env) (bind_tyvt_mset eval_env)
-
-    let rec match_vv_template traverse bind_vv match_vars match_et bind_tyvars (acc: Env) (l,r) = 
-        let match_vv = match_vv_template traverse bind_vv match_vars match_et bind_tyvars
-        match r with
-        | VV r -> traverse (match_v_template match_vv bind_vv) acc (l,r)
-        | VT _ as r -> match_vars acc (l,r)
-        | ET _ as r -> match_et acc (l,r)
-        | r -> bind_tyvars acc (l,r)
-
-    let match_vv name_checker eval_env = 
-        match_vv_template fold_2_er (bind_any name_checker eval_env) (match_vt name_checker eval_env) 
-            (match_et name_checker eval_env) (bind_tyvt name_checker eval_env)
-    let match_vv_method name_checker eval_env = 
-        match_vv_template (traverse_generic MCVV) (bind_any_method name_checker eval_env) (match_vt_method name_checker eval_env) 
-            (match_et_method name_checker eval_env) (bind_tyvt_method name_checker eval_env)
-
-    let match_v name_checker eval_env = match_v_template (match_vv name_checker eval_env) (bind_any name_checker eval_env)
-    let match_v_method name_checker eval_env = match_v_template (match_vv_method name_checker eval_env) (bind_any_method name_checker eval_env)
-    let match_v_mset eval_env = match_v_template (match_vt_mset eval_env) (bind_mset eval_env)
+        let f = mset eval_env
+        match l,r with
+        | VV l, VT r | VV l, VV r -> fold_2_er f () l r
+        | (V _ | IndexArray _ as l), r -> destructure_typed_template (set l) eval_env r
+        | VV l, r -> destructure_typed_template (destructure_vt_template fold_2_er (destructure_vt_mset set) () l) eval_env r
+        | x -> Fail <| sprintf "Missed a case in mset_template.\nGot: %A" x
 
     // Primitive functions
     let append_typeof_fst k a b =
@@ -576,6 +582,17 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         let er = sprintf "`true` is false.\na=%A"
         let check a = true
         prim_un_op_template er check (fun t a -> t (a, get_type a))
+
+    let create_array con args =
+        match map_typed (tev d) args with
+        | Succ args when List.forall (fun x -> is_int x) args ->
+            let args = List.map (function
+                | TyV _ as x -> x
+                | x -> bind_typedexpr'' d.env "" x |> fst) args
+            let args' = List.map (function (TyV x) -> x | _ -> failwith "impossible") args
+            bind_typedexpr'' d.env "" (con args args')
+            |> fst |> RTypedExpr
+        | x -> RError <| sprintf "Something is wrong in CreateArray.\n%A" x
 
     match exp with
     | LitInt x -> 
@@ -640,8 +657,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | HoistedInlineable(args, body, tag, env) as orig -> 
         match d.args with
         | [] -> RExpr orig
-        | (cur_args,env'') :: other_args ->
-            match match_v (HashSet(HashIdentity.Structural)) env'' env (args, cur_args) with
+        | (cur_args,eval_env) :: other_args ->
+            match match_any_inl (HashSet(HashIdentity.Structural)) eval_env env args cur_args with
             | Fail er -> RError er
             | Succ env -> exp_and_seq {d with env=env;args=other_args} body
     | Method(name,args,body) ->
@@ -649,8 +666,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | HoistedMethod(name,tag,initial_env,args,body) as orig -> 
         match d.args with
         | [] -> RExpr orig
-        | (cur_args,env'') :: other_args ->
-            match match_v_method (HashSet(HashIdentity.Structural)) env'' initial_env (args, cur_args) with
+        | (cur_args,eval_env) :: other_args ->
+            match match_any_method (HashSet(HashIdentity.Structural)) eval_env initial_env args cur_args with
             | Fail er -> RError er
             | Succ(evaled_cur_args,env) -> 
                 let method_key: TyMethodKey = tag, call_to_args evaled_cur_args
@@ -706,8 +723,8 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         | Succ args -> RExpr <| ET args
         | Fail er -> RError er
     | VT vars as orig ->
-        let empty_names = List.map (fun _ -> V "") vars
-        match match_vt_method (HashSet(HashIdentity.Structural)) d.env d.env (empty_names, orig) with
+        let empty_names = List.map (fun _ -> V "") vars |> VV
+        match match_vt_method (HashSet(HashIdentity.Structural)) d.env d.env empty_names orig with
         | Succ(MCVT(evaled_vars),env) ->
             let fields = List.map (function
                 | (MCTypedExpr(_,x)) -> x
@@ -733,20 +750,16 @@ and exp_and_seq (d: Data) exp: ReturnCases =
         match tev d exp, map_typed (tev d) args with
         | RTypedExpr exp, Succ args ->
             match get_type exp with
-            | ArrayT(vs, t) when List.forall is_int args && List.length vs = List.length args ->
+            | LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t) when List.forall is_int args && List.length vs = List.length args ->
                 List.iter (d.used_variables.Add >> ignore) vs
                 RTypedExpr <| TyIndexArray(exp,args,t)
             | _ -> RError <| sprintf "Something is wrong in IndexArray.\nexp=%A, args=%A" exp args
         | x -> RError <| sprintf "Something is wrong in IndexArray.\n%A" x
 
-    | CreateArray(args,t) ->
-        match map_typed (tev d) args with
-        | Succ args when List.forall (fun x -> is_const x && is_int x) args ->
-            let args = List.map (fun x -> bind_typedexpr'' d.env ("",x) |> fst) args
-            let args' = List.map (function (TyV x) -> x | _ -> failwith "impossible") args
-            bind_typedexpr'' d.env ("",TyCreateArray(args,ArrayT(args', t)))
-            |> fst |> RTypedExpr
-        | x -> RError <| sprintf "Something is wrong in CreateArray.\n%A" x
+    | CreateLocalArray(args,t) ->
+        create_array (fun args args' -> TyCreateLocalArray(args,LocalArrayT(args', t))) args
+    | CreateSharedArray(args,t) ->
+        create_array (fun args args' -> TyCreateSharedArray(args,SharedArrayT(args', t))) args
 
     | ThreadIdxX -> RTypedExpr TyThreadIdxX 
     | ThreadIdxY -> RTypedExpr TyThreadIdxY 
@@ -790,12 +803,12 @@ and exp_and_seq (d: Data) exp: ReturnCases =
     | Neg a -> prim_un_numeric a TyNeg
     // Mutable operations.
     | MSet(a,b,rest) -> 
-        match match_v_mset d.env d.env (a,b) with
+        match mset d.env () a b with
         | Fail er -> RError er
-        | Succ env -> tev d rest
+        | Succ () -> tev d rest
     | AtomicAdd(a,b) -> prim_atomic_add_op a b TyAtomicAdd
     | While(cond,body,e) ->
-        match tev d cond, tev d body with
+        match tev d cond, with_empty_seq d body with
         | RTypedExpr cond, RTypedExpr body ->
             match get_type cond, get_type body with
             | BoolT, UnitT -> d.sequences.Push(SeqWhile(cond,body)); tev d e
@@ -847,7 +860,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) main_method_key =
             Set.union method_implicit_args (grab_implicit_args ar)
         // Array cases
         | TyIndexArray(a,b,_) -> Set.union (c a) (Set.unionMany (List.map c b))
-        | TyCreateArray(b,_) -> Set.unionMany (List.map c b)
+        | TyCreateLocalArray(b,_) | TyCreateSharedArray(b,_) -> Set.unionMany (List.map c b)
         // Cuda kernel constants
         | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
         | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
@@ -861,8 +874,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) main_method_key =
         | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
         | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
         | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
-        | TyWhile(a,b,c',_) -> Set.union (c a) (c b) |> Set.union (c c')
-        | TyMSet(a,b,c',d) -> Set.unionMany [Set.singleton a; c b; c c']
+        | TyWhile(a,b,c',_) | TyMSet(a,b,c',_) -> Set.unionMany [c a; c b; c c']
     match memo.[main_method_key] with
     | MethodDone(_,body,_,_) ->
         closure_conv <| TyMethod(main_method_key,MCVV [], get_type body)
@@ -986,3 +998,4 @@ let meth4 _ = // vars test 2
     l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
         (ap (V "m") (VT [LitInt 2; LitFloat 3.3; LitBool true]))
 let m4 = typecheck0 meth4
+
