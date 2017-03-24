@@ -318,7 +318,7 @@ let map_fold_2_Er f state x y =
                     | Fail _ as er -> er
                 | Fail er -> Fail er
             | [], [] -> Succ ([], state)
-            | x -> failwith "Argument size mismatch in map_fold_2_Er."
+            | x -> Fail "Argument size mismatch in map_fold_2_Er."
         loop f state (x,y)
     else
         Fail <| sprintf "Argument size mismatch in map_fold_2_Er. Args: %A" (x,y)
