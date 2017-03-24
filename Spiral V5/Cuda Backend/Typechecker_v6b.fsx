@@ -91,8 +91,10 @@ and Expr =
     | AtomicAdd of out: Expr * in_: Expr
     // Loops
     | While of Expr * Expr * Expr
+    // Cub operations
+    | CubBlockReduce of Expr * Expr option
     // Magic
-    | Typecase of (Data -> Expr -> ReturnCases) * Expr
+//    | Typecase of (Data -> Expr -> ReturnCases) * Expr
 
     static member (+)(a,b) = Add(a,b)
     static member (-)(a,b) = Sub(a,b)
@@ -116,7 +118,6 @@ and TypedExpr =
     | TyLitFloat of float
     | TyLitBool of bool
     | TyMethodCall of TyMethodKey * MethodCall * Ty
-    | TyMethod of TyMethodKey * MethodCall * Ty
     
     // Value tuple cases
     | TyIndexVT of TypedExpr * TypedExpr * Ty
@@ -159,6 +160,8 @@ and TypedExpr =
     | TyMSet of TypedExpr * TypedExpr * TypedExpr * Ty
     | TyAtomicAdd of TypedExpr * TypedExpr * Ty
     | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
+    // Cub operations
+    | TyCubBlockReduce of TypedExpr * TypedExpr option * Ty
 
 and ReturnCases =
     | RTypedExpr of TypedExpr
@@ -226,12 +229,12 @@ let rec get_type = function
     | TyLog(_,t) | TyExp(_,t) | TyTanh(_,t)
     | TyNeg(_,t) -> t
     // Mutable operations.
-    | TyMSet(_,_,_,t) -> t
-    | TyAtomicAdd(_,_,t) -> t
+    | TyAtomicAdd(_,_,t) | TyMSet(_,_,_,t) -> t
     // Loops
     | TyWhile(_,_,_,t) -> t
-    | TyMethod(_,_,t) -> t
-    
+    // Cub operations
+    | TyCubBlockReduce(_,_,t) -> t
+
 let rec is_numeric' a =
     match a with
     | UInt32T | UInt64T | Int32T | Int64T 
@@ -815,8 +818,24 @@ and exp_and_seq (d: Data) exp: ReturnCases =
             | BoolT, _ -> RError "Expected UnitT as the type of While's body."
             | _ -> RError "Expected BoolT as the type of While's conditional."
         | x -> RError <| sprintf "Expected both body and cond of While to be typed expressions.\nGot: %A" x
-    // Magic
-    | Typecase(f,x) -> f d x
+    | CubBlockReduce(op, num_valid) ->
+        match tev d op with
+        | RExpr (HoistedMethod _ as op) -> RExpr <| CubBlockReduce(op,num_valid)
+        | RTypedExpr (TyMethodCall(a,b,t)) ->
+            match num_valid with
+            | Some num_valid ->
+                match tev {d with args=[]} num_valid with
+                | RTypedExpr num_valid ->
+                    if is_int num_valid then
+                        RTypedExpr <| TyCubBlockReduce(TyMethodCall(a,b,t),Some num_valid,t)
+                    else
+                        RError <| sprintf "num_valid must be int.\nGot: %A" num_valid
+                | RExpr x -> RError <| sprintf "Expected a valid num_valid expression.\nGot: %A" x
+                | RError _ as er -> er
+            | None -> RTypedExpr <| TyCubBlockReduce(TyMethodCall(a,b,t),None,t)
+        | RTypedExpr x -> RError <| sprintf "The typed expression must be a TyMethodCall.\nGot: %A" x
+        | RExpr x -> RError <| sprintf "Expected TyMethodCall or HoistedMethod.\nGot: %A" x
+        | RError _ as er -> er
 
 let methodcall_to_method_type (tag,args) t =
     let rec get_arg_type = function
@@ -846,7 +865,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) main_method_key =
         | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
         | TyVT(vars,_) -> Set.unionMany (List.map c vars)
         | TyIndexVT(t,i,_) -> Set.union (c t) (c i)
-        | TyMethod(m,ar,_) | TyMethodCall(m,ar,_) ->
+        | TyMethodCall(m,ar,_) ->
             let method_implicit_args =
                 match imemo.TryGetValue m with
                 | true, (_,_,impl_args) -> impl_args
@@ -858,6 +877,14 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) main_method_key =
                         impl_args
                     | _ -> failwith "impossible"
             Set.union method_implicit_args (grab_implicit_args ar)
+        | TyCubBlockReduce(m,num_valid,t) ->
+            if (c m).IsEmpty then
+                match num_valid with
+                | Some num_valid -> c num_valid
+                | None -> Set.empty
+            else
+                failwith "The method passed to Cub should have no implicit arguments."
+            
         // Array cases
         | TyIndexArray(a,b,_) -> Set.union (c a) (Set.unionMany (List.map c b))
         | TyCreateLocalArray(b,_) | TyCreateSharedArray(b,_) -> Set.unionMany (List.map c b)
@@ -877,7 +904,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) main_method_key =
         | TyWhile(a,b,c',_) | TyMSet(a,b,c',_) -> Set.unionMany [c a; c b; c c']
     match memo.[main_method_key] with
     | MethodDone(_,body,_,_) ->
-        closure_conv <| TyMethod(main_method_key,MCVV [], get_type body)
+        closure_conv <| TyMethodCall(main_method_key,MCVV [], get_type body)
     | _ ->
         failwith "Expected MethodDone in closure_conv."
 

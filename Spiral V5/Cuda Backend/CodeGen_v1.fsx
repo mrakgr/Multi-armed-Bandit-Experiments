@@ -105,12 +105,6 @@ let print_method_dictionary (imemo: MethodImplDict) =
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
 
-        | TyMethod((tag,_ as mkey),call,t) -> 
-            // This case is not for printing method signatures.
-            // It is for passing global methods into Cub functions that do not use the usual
-            // language mechanism for higher order functions.
-            sprintf "(&%s)" (print_method tag)
-
         // Value tuple cases
         | TyIndexVT(v,i,_) -> sprintf "(%s.tup%s)" (codegen v) (codegen i)
         | TyVT(l,(VTT t)) -> 
@@ -191,6 +185,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
             enter <| fun _ -> codegen body
             "}" |> state
             codegen e
+        | TyCubBlockReduce(TyMethodCall((tag,_),_,_),num_valid,t) ->
+            match num_valid with
+            | Some num_valid -> sprintf "cub::BlockReduce<%s,blockDim.x>(%s,%s)" (print_type t) (print_method tag) (codegen num_valid)
+            | None -> sprintf "cub::BlockReduce<%s,blockDim.x>(%s)" (print_type t) (print_method tag)
+        | TyCubBlockReduce(_,_,_) -> failwith "impossible"
 
     let print_tuple_defintion tys tag =
         sprintf "struct %s {" (print_tuple tag) |> state
@@ -220,7 +219,6 @@ let print_method_dictionary (imemo: MethodImplDict) =
         "}" |> state
 
     try
-        
         let min = imemo |> Seq.fold (fun s kv -> min (fst kv.Key) s) System.Int64.MaxValue
         for x in imemo do 
             let prefix = if fst x.Key = min then "__global__" else "__device__"
