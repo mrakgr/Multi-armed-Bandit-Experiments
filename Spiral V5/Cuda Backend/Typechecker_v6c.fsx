@@ -9,7 +9,7 @@ type Ty =
     | Float32T
     | Float64T
     | BoolT
-    | VTT of Ty list // represents the value tuple
+    | VVT of Ty list
     | NominalT of string // for classes and such
     | GlobalArrayT of TyV list * Ty
     | SharedArrayT of TyV list * Ty
@@ -98,7 +98,7 @@ and TypedExpr =
     
     | TyV of TyV
     | TyIf of TypedExpr * TypedExpr * TypedExpr * Ty
-    | TyLet of TyV * TypedExpr * TypedExpr * Ty
+    | TyLet of TyV * TypedExpr // expression (in tuples) / statement (in seqs)
     | TyUnit
     | TyLitInt of int
     | TyLitFloat of float
@@ -107,8 +107,11 @@ and TypedExpr =
     
     // Tuple cases
     | TyIndexVV of TypedExpr * TypedExpr * Ty
-    | TyVV of TypedExpr list * Ty // Tuple
+    | TyVV of TypedExpr list * Ty
 
+    // Seq
+    | TySeq of TypedExpr * TypedExpr * Ty
+        
     // Array cases
     | TyIndexArray of TypedExpr * TypedExpr list * Ty
     | TyCreateSharedArray of TypedExpr list * Ty
@@ -143,9 +146,9 @@ and TypedExpr =
     | TyTanh of TypedExpr * Ty
     | TyNeg of TypedExpr * Ty
     // Mutable operations.
-    | TyMSet of TypedExpr * TypedExpr * TypedExpr * Ty
+    | TyMSet of TypedExpr * TypedExpr // statement
     | TyAtomicAdd of TypedExpr * TypedExpr * Ty
-    | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
+    | TyWhile of TypedExpr * TypedExpr // statement
     // Cub operations
     | TyCubBlockReduce of TypedExpr * TypedExpr option * Ty
 
@@ -165,6 +168,7 @@ and Data =
     // Mutable
     tagged_vars : TaggedDict // For looking up the the unapplied Inlineables and Methods
     memoized_methods : MethodDict // For hoisted out global methods.
+    sequences : Stack<TypedExpr>
     used_variables : HashSet<TyV>
     current_stack : Stack<unit -> TypedExpr>
     }
@@ -174,7 +178,7 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 let rec get_type = function
     | Inlineable'(_,_,_,t) | Method'(_,_,_,_,t) -> t
 
-    | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) -> t
+    | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet((_,_,t),_) -> t
     | TyLitInt _ -> Int32T
     | TyLitFloat _ -> Float32T
     | TyLitBool _ -> BoolT
@@ -189,6 +193,9 @@ let rec get_type = function
 
     // Tuple cases
     | TyVV(_,t) | TyIndexVV(_,_, t) -> t
+
+    // Seq
+    | TySeq(_,_,t) -> t
 
     // Array cases
     | TyIndexArray(_,_,t) | TyCreateLocalArray(_,t) | TyCreateSharedArray(_,t) -> t
@@ -205,9 +212,10 @@ let rec get_type = function
     | TyLog(_,t) | TyExp(_,t) | TyTanh(_,t)
     | TyNeg(_,t) -> t
     // Mutable operations.
-    | TyAtomicAdd(_,_,t) | TyMSet(_,_,_,t) -> t
+    | TyAtomicAdd(_,_,t) -> t
+    | TyMSet(_,_) -> UnitT
     // Loops
-    | TyWhile(_,_,_,t) -> t
+    | TyWhile(_,_) -> UnitT
     // Cub operations
     | TyCubBlockReduce(_,_,t) -> t
 
@@ -242,9 +250,9 @@ let rec is_int' a =
     | _ -> false
 let is_int a = is_int' (get_type a)
 
-let is_vt a =
+let is_vv a =
     match get_type a with
-    | VTT _ -> true
+    | VVT _ -> true
     | _ -> false
 
 let get_tag =
@@ -279,7 +287,40 @@ let get_body_from (stack: Stack<unit -> TypedExpr>) = stack.Peek()()
 let rec exp_and_seq (d: Data) exp: TypedExpr =
     let tev d exp = exp_and_seq d exp
 
-    /// Patterm matching functions
-    let add_bound_variable env arg_name ty_arg =
-        let v = TyV ty_arg
-        v, Map.add arg_name (RTypedExpr v) env
+    let dup_name_check (name_checker: HashSet<string>) arg_name f =
+        match name_checker.Add arg_name || arg_name = "" || arg_name = "_" with
+        | true -> f()
+        | false -> failwithf "%s is a duplicate name in pattern matching." arg_name
+
+    let bind_typedexpr_inl name_checker acc arg_name ty_exp =
+        dup_name_check name_checker arg_name <| fun _ ->
+            let v = get_tag(), arg_name, get_type ty_exp
+            d.sequences.Push(TyLet(v,ty_exp))
+            Map.add arg_name (TyV v) acc
+
+    let bind_typedexpr_method name_checker acc arg_name ty_exp =
+        dup_name_check name_checker arg_name <| fun _ ->
+            let v = get_tag(), arg_name, get_type ty_exp
+            TyLet(v,ty_exp), Map.add arg_name (TyV v) acc
+
+    let traverse_inl t = List.fold2
+    let traverse_method t f s a b = 
+        map_fold_2_Er f s a b
+        |> fun (l,s) -> TyVV(l,t), s
+
+    let rec match_vv traverse bind acc l r =
+        match l,r with
+        | V x, r -> bind acc x r
+        | VV l, TyVV(r,t) -> traverse t (match_vv traverse bind) acc l r
+        | VV l, r ->
+            match get_type r with
+            | VVT x as t -> 
+                let r = List.mapi (fun i t -> TyIndexVV(r,TyLitInt i,t)) x
+                traverse t (match_vv traverse bind) acc l r
+            | x -> failwithf "Unexpected arguments in destructuring.\nGot: %A" x
+        | l, r -> failwithf "Expected V or VV on the left side.\nGot: %A" l
+
+    let match_vv_inl dup_name_checker = match_vv traverse_inl (bind_typedexpr_inl dup_name_checker)
+    let match_vv_method dup_name_checker = match_vv traverse_method (bind_typedexpr_method dup_name_checker)
+
+    failwith "placeholder"
