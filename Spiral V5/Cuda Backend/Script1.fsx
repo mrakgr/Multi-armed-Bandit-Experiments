@@ -31,7 +31,7 @@ and Expr =
     | LitFloat of float
     | LitBool of bool
     | Apply of Expr * args: Expr
-    | ApplyMain of main_method: Expr * args: (string * (TyV list)) list
+    | ApplyMain of main_method: Expr * args: TypedExpr
     | Method of name: string * args: Expr * body: Expr
 
     // Tuple cases
@@ -108,7 +108,7 @@ and TypedExpr =
     
     // Tuple cases
     | TyIndexVV of TypedExpr * TypedExpr * Ty
-    | TyVV of TypedExpr list * Ty
+    | TyVV of TypedExpr list
 
     // Seq
     | TySeq of TypedExpr * TypedExpr * Ty
@@ -192,7 +192,11 @@ let rec get_type = function
     | TyGridDimX | TyGridDimY | TyGridDimZ -> Int32T
 
     // Tuple cases
-    | TyVV(_,t) | TyIndexVV(_,_,t) -> t
+    | TyVV l -> 
+        // Because when I writting down typed tuples, it would be a pain in the ass to
+        // have to spell out the type manually each time.
+        List.map get_type l |> VVT 
+    | TyIndexVV(_,_, t) -> t
 
     // Seq
     | TySeq(_,_,t) -> t
@@ -289,7 +293,7 @@ let filter_simple_vars evaled_cur_args =
     let rec loop = function
         | TyLet((_,_,t as v),_) when is_simple' t -> [v]
         | TyLet(_,_) -> []
-        | TyVV(x,_) -> List.collect loop x
+        | TyVV(x) -> List.collect loop x
         | x -> failwithf "Expected: TyVV or TyLet.\nGot: %A" x
     loop evaled_cur_args
 
@@ -297,8 +301,7 @@ let rec with_empty_seq (d: Data) expr =
     let d' = {d with sequences = Stack()}
     let expr = exp_and_seq d' expr
     let seq = Seq.toList d.sequences
-    let seq_type = List.map get_type seq |> VVT
-    TySeq(TyVV(seq,seq_type),expr,get_type expr)
+    TySeq(TyVV(seq),expr,get_type expr)
 
 // Does macro expansion and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
@@ -326,21 +329,21 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             let v = make_tyv arg_name ty_exp
             TyLet(v,ty_exp), Map.add arg_name (TyV v) acc
 
-    let traverse_inl t = List.fold2
-    let traverse_method t f s a b = map_fold_2_Er f s a b |> fun (l,s) -> TyVV(l,t), s
+    let traverse_inl = List.fold2
+    let traverse_method f s a b = map_fold_2_Er f s a b |> fun (l,s) -> TyVV(l), s
 
     let destructure traverse r =
         match get_type r with
         | VVT x as t -> 
             let r = List.mapi (fun i t -> TyIndexVV(r,TyLitInt i,t)) x
-            traverse t r
+            traverse r
         | x -> failwithf "Unexpected arguments in destructuring.\nGot: %A" x
 
     let rec match_vv traverse bind acc l r =
         match l,r with
         | V x, r -> bind acc x r
-        | VV l, TyVV(r,t) -> traverse t (match_vv traverse bind) acc l r
-        | VV l, r -> destructure (fun t r -> traverse t (match_vv traverse bind) acc l r) r
+        | VV l, TyVV(r) -> traverse (match_vv traverse bind) acc l r
+        | VV l, r -> destructure (fun r -> traverse (match_vv traverse bind) acc l r) r
         | l, r -> failwithf "Expected V or VV on the left side.\nGot: %A" l
 
     let match_vv_inl dup_name_checker = match_vv traverse_inl (bind_typedexpr_inl dup_name_checker)
@@ -348,8 +351,8 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     let rec mset l r =
         match l,r with
-        | VV l, TyVV(r,_) -> List.iter2 mset l r
-        | VV _ as l, r -> destructure (fun t r -> mset l (TyVV(r,t))) r
+        | VV l, TyVV(r) -> List.iter2 mset l r
+        | VV _ as l, r -> destructure (fun r -> mset l (TyVV(r))) r
         | l, r ->
             match tev d l with
             | (TyIndexArray(_,_,lt) as v) | (TyV(_,_,lt) as v) when lt = get_type r -> d.sequences.Push(TyMSet(v,r))
@@ -427,76 +430,63 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         d.tagged_vars.Add(t,x)
         x
 
-    let make_vvt x = List.map get_type x |> VVT
-
     let h0 () = HashSet(HashIdentity.Structural)
 
-    let apply_first f expr =
+    let apply' expr args method_matcher args_map =
         let expr = tev d expr
         match get_type expr with
         | TagT t ->
+            let ra = args_map args
             match d.tagged_vars.TryGetValue t with
-            | true, v -> f v
+            | true, (Inlineable'(la,body,env,_)) -> tev {d with env = match_vv_inl (h0()) env la ra} body, ra
+            | true, (Method'(name,la,body,initial_env,_) as orig) ->
+                let bound_args, env = method_matcher initial_env la ra
+                let method_key = t, get_type bound_args
+
+                let make_method_call body = TyMethodCall(method_key, body, get_type body), ra
+
+                match d.memoized_methods.TryGetValue method_key with
+                | false, _ ->
+                    let s = 
+                        // The Stack is used for inferring the types of recursive function. 
+                        // See the `RealityAlgorithm.fsx` for a more info.
+                        Stack() 
+                    s.Push <| fun _ -> failwith "The method is divergent."
+                    d.memoized_methods.[method_key] <- MethodInEvaluation(None,s)
+
+                    let d = {d with env = if name <> "" then Map.add name orig env else env
+                                    current_stack=s}
+                    let body = with_empty_seq d body
+                    let sole_arguments = filter_simple_vars bound_args
+                    let bound_variables = get_bound_variables initial_env
+                        
+                    s.Clear()
+                    d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, bound_variables)
+
+                    if is_simple body then make_method_call body
+                    else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
+                | true, MethodInEvaluation (None, stack) ->
+                    let body = get_body_from stack
+                    let t = get_type body
+                    d.memoized_methods.[method_key] <- MethodInEvaluation (Some t,stack)
+                    make_method_call body
+                | true, MethodInEvaluation (Some t', stack) ->
+                    let body = get_body_from stack
+                    let t = get_type body
+                    if t' <> t then failwithf "Unification failed. %A <> %A" t' t
+                    else make_method_call body
+                | true, MethodDone(_,body,_) ->
+                    make_method_call body
             | _ -> failwith "impossible"
         | _ -> failwithf "Expected: Inlineable or Method.\nGot: %A" expr
 
-    let apply_inlineable ra (la,body,env,_) =
-        tev {d with env = match_vv_inl (h0()) env la ra} body
+    let method_matcher = match_vv_method (h0())
+    let apply expr args = apply' expr args method_matcher (tev d) |> fst
 
-    let apply_method ra (name,la,body,initial_env,TagT t as orig) = 
-        let bound_args, env = match_vv_method (h0()) initial_env la ra
-        let method_key = t, get_type bound_args
-
-        let make_method_call body = TyMethodCall(method_key, body, get_type body)
-
-        match d.memoized_methods.TryGetValue method_key with
-        | false, _ ->
-            let s = 
-                // The Stack is used for inferring the types of recursive function. 
-                // See the `RealityAlgorithm.fsx` for a more info.
-                Stack() 
-            s.Push <| fun _ -> failwith "The method is divergent."
-            d.memoized_methods.[method_key] <- MethodInEvaluation(None,s)
-
-            let d = {d with env = if name <> "" then Map.add name (Method' orig) env else env
-                            current_stack=s}
-            let body = with_empty_seq d body
-            let sole_arguments = filter_simple_vars bound_args
-            let bound_variables = get_bound_variables initial_env
-                        
-            s.Clear()
-            d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, bound_variables)
-
-            if is_simple body then make_method_call body
-            else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
-        | true, MethodInEvaluation (None, stack) ->
-            let body = get_body_from stack
-            let t = get_type body
-            d.memoized_methods.[method_key] <- MethodInEvaluation (Some t,stack)
-            make_method_call body
-        | true, MethodInEvaluation (Some t', stack) ->
-            let body = get_body_from stack
-            let t = get_type body
-            if t' <> t then failwithf "Unification failed. %A <> %A" t' t
-            else make_method_call body
-        | true, MethodDone(_,body,_) ->
-            make_method_call body
-
-    let apply_second apply_inl apply_method ra la =
+    let guard_method la =
         match la with
-        | Inlineable'(a,b,c,d) -> apply_inl ra (a,b,c,d)
-        | Method'(a,b,c,d,e) -> apply_method ra (a,b,c,d,e)
-        | _ -> failwith "impossible"
-
-    let apply_both = apply_second apply_inlineable apply_method
-    let apply_method_only = apply_second (failwith "Inlineable not supported.") apply_method
-
-    let apply expr args = apply_first (fun la -> apply_both (tev d args) la) expr
-
-//    let guard_method la =
-//        match la with
-//        | TyMethodCall _ -> ()
-//        | _ -> failwithf "Expected the left side of CubBlockReduce to be a method.\nGot: %A" la
+        | TyMethodCall _ -> ()
+        | _ -> failwithf "Expected the left side of CubBlockReduce to be a method.\nGot: %A" la
 
     match exp with
     | LitInt x -> TyLitInt x
@@ -510,22 +500,17 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | Inlineable(args, body) -> add_tagged (fun t -> Inlineable'(args, body, d.env, TagT t))
     | Apply(expr,args) -> apply expr args
     | Method(name, args, body) -> add_tagged (fun t -> Method'(name, args, body, d.env, TagT t))
-//    | ApplyMain(main_method,args) ->
-//        let matcher env _ _ = // Discards the given arguments of the main method
+    | ApplyMain(main_method,args) ->
+        let matcher env _ r = // Discards the given arguments of the main method
+            let rec loop env = function
+                | TyVV r -> List.fold (fun env r -> loop env r) env r
+                | TyV (_,name,_) as v -> Map.add name v env
+                | x -> failwith "Only TyVV and TyV allowed in ApplyMain.\nGot: %A" x
+            r, loop env r
 
-//            let make_tyv r =
-//                let tyv = List.map TyV r
-//                TyVV(tyv, make_vvt tyv)
-//            let bound_args, env =
-//                List.mapFold (fun m (n,r) ->
-//                    let x = make_tyv r
-//                    x, Map.add n x m) env args
-//            TyVV(bound_args, make_vvt bound_args), env
-//
-//        //let m = //apply' main_method args matcher (tev d) |> fst
-//
-//        guard_method m
-//        m
+        let m = apply' main_method args matcher id |> fst
+        guard_method m
+        m
             
     | If(cond,tr,fl) -> tev d (Apply(Method("",VV [],HoistedIf(cond,tr,fl)),VV []))
     | HoistedIf(cond,tr,fl) ->
@@ -556,7 +541,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     | VV vars ->
         let vv = List.map (tev d) vars
-        TyVV(vv,make_vvt vv)
+        TyVV(vv)
 
     | IndexVV(v,i) ->
         match tev d v, tev d i with
@@ -631,24 +616,16 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | BoolT, UnitT -> d.sequences.Push(TyWhile(cond,body)); tev d e
         | BoolT, _ -> failwith "Expected UnitT as the type of While's body."
         | _ -> failwith "Expected BoolT as the type of While's conditional."
-    | CubBlockReduce(la, arg, num_valid) ->
-        let mutable ra = None
-        let la =
-            apply_first (fun la ->
-                ra <- apply_method_only (tev d arg) la |> Some
-                Option.get ra
-                )
-//        let la = apply_first apply_method_only (fun la ->
-//            let evaled_arg = tev d arg
-//            let x = 
-//                match get_type evaled_arg with
-//                | LocalArrayT(_,t) -> 
-//                    let arg = IndexArray(arg,[LitInt 0]) 
-//                    tev d (VV [arg;arg])
-//                | x -> tev d (VV [arg; arg])
-//            ra <- Some x
-//            x)
-        let ra = Option.get ra
+    | CubBlockReduce(op, input, num_valid) ->
+        let la, ra = apply' op input method_matcher <| fun arg -> 
+            let evaled_arg = tev d arg
+            match get_type evaled_arg with
+            | LocalArrayT(_,t) -> 
+                let arg = IndexArray(arg,[LitInt 0]) 
+                tev d (VV [arg;arg])
+            | x -> tev d (VV [arg; arg])
+
+        guard_method la
         let num_valid = Option.map (tev d) num_valid
         TyCubBlockReduce(la,ra,num_valid,get_type la)
             
