@@ -31,7 +31,7 @@ and Expr =
     | LitFloat of float
     | LitBool of bool
     | Apply of Expr * args: Expr
-    | ApplyMain of main_method: Expr * args: (string * (TyV list)) list
+    | ApplyAsIfMain of main_method: Expr * args: (string * (TyV list)) list
     | Method of name: string * args: Expr * body: Expr
 
     // Tuple cases
@@ -343,8 +343,13 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | VV l, r -> destructure (fun t r -> traverse t (match_vv traverse bind) acc l r) r
         | l, r -> failwithf "Expected V or VV on the left side.\nGot: %A" l
 
-    let match_vv_inl dup_name_checker = match_vv traverse_inl (bind_typedexpr_inl dup_name_checker)
-    let match_vv_method dup_name_checker = match_vv traverse_method (bind_typedexpr_method dup_name_checker)
+    let match_vv_inl' dup_name_checker = match_vv traverse_inl (bind_typedexpr_inl dup_name_checker)
+    let match_vv_method' dup_name_checker = match_vv traverse_method (bind_typedexpr_method dup_name_checker)
+
+    let h0 () = HashSet(HashIdentity.Structural)
+
+    let match_vv_inl = match_vv_inl' (h0())
+    let match_vv_method = match_vv_method' (h0())
 
     let rec mset l r =
         match l,r with
@@ -366,7 +371,6 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             else f (check_error a b)
 
         constraint_both_eq_numeric failwith (k t)
-
 
     let prim_arith_op = 
         let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
@@ -429,22 +433,20 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     let make_vvt x = List.map get_type x |> VVT
 
-    let h0 () = HashSet(HashIdentity.Structural)
-
-    let apply_first f expr =
+    let apply_first expr =
         let expr = tev d expr
         match get_type expr with
         | TagT t ->
             match d.tagged_vars.TryGetValue t with
-            | true, v -> f v
+            | true, v -> v
             | _ -> failwith "impossible"
         | _ -> failwithf "Expected: Inlineable or Method.\nGot: %A" expr
 
-    let apply_inlineable ra (la,body,env,_) =
-        tev {d with env = match_vv_inl (h0()) env la ra} body
+    let apply_inlineable (la,body,env,_) ra =
+        tev {d with env = match_vv_inl env la ra} body
 
-    let apply_method ra (name,la,body,initial_env,TagT t as orig) = 
-        let bound_args, env = match_vv_method (h0()) initial_env la ra
+    let apply_method match_vv (name,la,body,initial_env,TagT t as orig) ra =
+        let bound_args, env = match_vv initial_env la ra
         let method_key = t, get_type bound_args
 
         let make_method_call body = TyMethodCall(method_key, body, get_type body)
@@ -482,21 +484,18 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | true, MethodDone(_,body,_) ->
             make_method_call body
 
-    let apply_second apply_inl apply_method ra la =
+    let apply_second apply_inl apply_method la ra =
         match la with
-        | Inlineable'(a,b,c,d) -> apply_inl ra (a,b,c,d)
-        | Method'(a,b,c,d,e) -> apply_method ra (a,b,c,d,e)
+        | Inlineable'(a,b,c,d) -> apply_inl (a,b,c,d) ra
+        | Method'(a,b,c,d,e) -> apply_method (a,b,c,d,e) ra
         | _ -> failwith "impossible"
 
-    let apply_both = apply_second apply_inlineable apply_method
-    let apply_method_only = apply_second (failwith "Inlineable not supported.") apply_method
+    let apply_both = apply_second apply_inlineable (apply_method match_vv_method)
+    let apply_method_only match_vv = apply_second (failwith "Inlineable not supported.") (apply_method match_vv)
 
-    let apply expr args = apply_first (fun la -> apply_both (tev d args) la) expr
-
-//    let guard_method la =
-//        match la with
-//        | TyMethodCall _ -> ()
-//        | _ -> failwithf "Expected the left side of CubBlockReduce to be a method.\nGot: %A" la
+    let apply expr args =
+        let la = apply_first expr
+        apply_both la (tev d args)
 
     match exp with
     | LitInt x -> TyLitInt x
@@ -510,23 +509,17 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | Inlineable(args, body) -> add_tagged (fun t -> Inlineable'(args, body, d.env, TagT t))
     | Apply(expr,args) -> apply expr args
     | Method(name, args, body) -> add_tagged (fun t -> Method'(name, args, body, d.env, TagT t))
-//    | ApplyMain(main_method,args) ->
-//        let matcher env _ _ = // Discards the given arguments of the main method
+    | ApplyAsIfMain(exp,args) ->
+        let match_vv acc _ r = r, acc
+        let make_tyv r = let tyv = List.map TyV r in TyVV(tyv, make_vvt tyv)
+        let flattened_args = 
+            List.collect snd args 
+            |> List.map (fun v -> TyLet(v, TyV v)) 
+            |> fun x -> TyVV(x,make_vvt x)
+        let env = List.fold (fun m (n,r) -> Map.add n (make_tyv r) m) d.env args
 
-//            let make_tyv r =
-//                let tyv = List.map TyV r
-//                TyVV(tyv, make_vvt tyv)
-//            let bound_args, env =
-//                List.mapFold (fun m (n,r) ->
-//                    let x = make_tyv r
-//                    x, Map.add n x m) env args
-//            TyVV(bound_args, make_vvt bound_args), env
-//
-//        //let m = //apply' main_method args matcher (tev d) |> fst
-//
-//        guard_method m
-//        m
-            
+        let main_method = tev {d with env=env} (Method("",VV [],exp))
+        apply_method_only match_vv main_method flattened_args
     | If(cond,tr,fl) -> tev d (Apply(Method("",VV [],HoistedIf(cond,tr,fl)),VV []))
     | HoistedIf(cond,tr,fl) ->
         let cond = tev d cond
@@ -632,25 +625,19 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | BoolT, _ -> failwith "Expected UnitT as the type of While's body."
         | _ -> failwith "Expected BoolT as the type of While's conditional."
     | CubBlockReduce(la, arg, num_valid) ->
-        let mutable ra = None
-        let la =
-            apply_first (fun la ->
-                ra <- apply_method_only (tev d arg) la |> Some
-                Option.get ra
-                )
-//        let la = apply_first apply_method_only (fun la ->
-//            let evaled_arg = tev d arg
-//            let x = 
-//                match get_type evaled_arg with
-//                | LocalArrayT(_,t) -> 
-//                    let arg = IndexArray(arg,[LitInt 0]) 
-//                    tev d (VV [arg;arg])
-//                | x -> tev d (VV [arg; arg])
-//            ra <- Some x
-//            x)
-        let ra = Option.get ra
+        let la = apply_first la
+        let evaled_arg = tev d arg
+        let ra =
+            match get_type evaled_arg with
+            | LocalArrayT(_,t) | SharedArrayT(_,t) -> 
+                let arg = IndexArray(arg,[LitInt 0])
+                tev d (VV [arg;arg])
+            | x -> tev d (VV [arg; arg])
+
+        let la = apply_method_only match_vv_method la ra
+
         let num_valid = Option.map (tev d) num_valid
-        TyCubBlockReduce(la,ra,num_valid,get_type la)
+        TyCubBlockReduce(la,evaled_arg,num_valid,get_type la)
             
 
 // Unions the free variables from top to bottom of the call chain.
