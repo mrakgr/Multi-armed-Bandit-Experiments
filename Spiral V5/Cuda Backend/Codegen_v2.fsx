@@ -116,6 +116,9 @@ let print_method_dictionary (imemo: MethodImplDict) =
             ""
         | TyLet(_,(TyUnit | Inlineable' _ | Method' _)) -> ""
         | Inlineable' _ | Method' _ -> failwith "Inlineable' and Method' should never appear in isolation."
+        | TyLet((_,t),b) when t = UnitT ->
+            sprintf "%s;" (codegen b) |> state
+            ""
         | TyLet(tyv,b) ->
             sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
             ""
@@ -268,20 +271,40 @@ let s l fin = List.foldBack (fun x rest -> x rest) l fin
 let dref x = IndexArray(x,[LitInt 0])
 let cref x = l (V "ref") (CreateLocalArray([LitInt 1],x)) (MSet(dref (V "ref"),x,V "ref"))
     
+let for' init cond body =
+    l (V "init") (cref init)
+        (while_ (ap cond (dref <| V "init"))
+            (MSet(dref (V "init"), ap body (dref <| V "init"),LitUnit)) (V "init"))
+
 let for_ init cond body =
-    l (V "") 
-        (l (V "init") (cref init)
-            (while_ (cond (dref <| V "init"))
-                (MSet(dref (V "init"), body (dref <| V "init"),LitUnit)) LitUnit))
-        LitUnit
+    l (V "") (for' init cond body)
+
+let mset out in_ rest = MSet(out,in_,rest)
 
 let map_module =
-    l (VV [V "n"]) (V "n")
-        (for_ (BlockIdxX * BlockDimX + ThreadIdxX) 
-            (fun x -> x .< V "n")
-            (fun x -> Apply(V "f", VV [x; V "ins"; V "outs"])))
+    s [ l (VV [V "n"]) (V "n")
+        l (V "stride") (GridDimX*BlockDimX)
+        l (V "i") (BlockIdxX * BlockDimX + ThreadIdxX)
+        for_ (V "i") 
+            (inl (V "i") (V "i" .< V "n"))
+            (inl (V "i") 
+                (l (V "") (ap (V "map_op") (V "i"))
+                    (V "i" + V "stride")))
+        ] LitUnit
 
-printfn "%A" (eval0 meth2)
+let map_redo_map_module =
+    s [ l (V "stride") (GridDimX*BlockDimX)
+        l (V "i") (BlockIdxX * BlockDimX + ThreadIdxX)
+        l (VV [V "n"]) (V "n")
+        l (VV [V ""; V "value"])
+            (for' (VV [V "i";ap (V "map_load_op") (V "i")])
+                (inl (VV [V "i"; V ""]) (V "x" .< V "n"))
+                (inl (VV [V "i"; V "value"]) 
+                    (VV [V "i" + V "stride"; ap (V "reduce_op") (VV [V "value";ap (V "map_load_op") (V "i")])])))
+        l (V "result") (CubBlockReduce(V "value",V "reduce_op",None))
+        l (V "") (If(ThreadIdxX .= LitInt 0, ap (V "map_store_op") (V "result"), LitUnit))
+        ] LitUnit
+    
 
 let map_1_1 = 
     let n = get_tag(),Int32T
@@ -290,9 +313,12 @@ let map_1_1 =
 
     let args = ["n",[n];"ins",[in_];"outs",[out_]]
     let f = 
-        inl (VV [V "i";VV [V "in1"];VV [V "out1"]])
-            (MSet(VV [IndexArray(V "out1",[V "i"])],VV [IndexArray(V "in1",[V "i"])],V "i" + GridDimX * BlockDimX))
-    eval map_module args ["f",f]
+        inl (V "i")
+            (s [l (VV [V "in1"]) (V "ins")
+                l (VV [V "out1"]) (V "outs")
+                mset (VV [IndexArray(V "out1",[V "i"])]) (VV [IndexArray(V "in1",[V "i"])])
+                ] LitUnit)
+    eval map_module args ["map_op",f]
 
 printfn "%A" map_1_1
 
