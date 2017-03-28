@@ -30,7 +30,7 @@ and Expr =
     | LitFloat of float
     | LitBool of bool
     | Apply of Expr * args: Expr
-    | ApplyAsIfMain of main_method: Expr * args: (string * (TyV list)) list
+    | ApplyAsIfMain of main_method: Expr * args: (string * (TyV list)) list * macros: (string * Expr) list
     | Method of name: string * args: Expr * body: Expr
 
     // Tuple cases
@@ -110,7 +110,7 @@ and TypedExpr =
     | TyVV of TypedExpr list * Ty
 
     // Seq
-    | TySeq of TypedExpr * TypedExpr * Ty
+    | TySeq of TypedExpr list * TypedExpr * Ty
         
     // Array cases
     | TyIndexArray of TypedExpr * TypedExpr list * Ty
@@ -298,8 +298,7 @@ let rec with_empty_seq (d: Data) expr =
     let d = {d with sequences = Stack()}
     let expr = exp_and_seq d expr
     let seq = Seq.toList d.sequences |> List.rev
-    let seq_type = List.map get_type seq |> VVT
-    TySeq(TyVV(seq,seq_type),expr,get_type expr)
+    TySeq(seq,expr,get_type expr)
 
 // Does macro expansion and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
@@ -524,7 +523,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | Inlineable(args, body) -> add_tagged (fun t -> Inlineable'(args, body, d.env, TagT t))
     | Apply(expr,args) -> apply expr args
     | Method(name, args, body) -> add_tagged (fun t -> Method'(name, args, body, d.env, TagT t))
-    | ApplyAsIfMain(exp,args) ->
+    | ApplyAsIfMain(exp,args,macros) ->
         // Hack so it flattens the arguments.
         let match_vv acc _ r = r, acc
         let make_tyv r = let tyv = List.map TyV r in TyVV(tyv, make_vvt tyv)
@@ -532,8 +531,11 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             List.collect snd args 
             |> List.map (fun v -> TyLet(v, TyV v)) 
             |> fun x -> TyVV(x,make_vvt x)
-        // Hack so it puts the tuple macros in the the env
-        let env = List.fold (fun m (n,r) -> Map.add n (make_tyv r) m) d.env args
+
+        // Hack so it puts the macros in the the env
+        let env = 
+            List.fold (fun m (n,r) -> Map.add n (make_tyv r) m) d.env args
+            |> fun env -> List.fold (fun m (n,r) -> Map.add n (tev {d with env=m} r) m) env macros
 
         let main_method = tev {d with env=env} (Method("",VV [],exp))
         // Hack so closure conversion does not give incorrect arguments.
@@ -680,7 +682,8 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
             | false, _ ->
                 match memo.[m] with
                 | MethodDone(sol_arg, body, bound_variables) ->
-                    let impl_args = Set.intersect bound_variables (c body) // union the free vars from top to bottom
+                    // union the free vars from top to bottom
+                    let impl_args = Set.intersect bound_variables (c body) - Set(sol_arg)
                     imemo.Add(m,(sol_arg,body,impl_args))
                     impl_args
                 | _ -> failwith "impossible"
@@ -714,7 +717,8 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
     | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
     | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
-    | TyAtomicAdd(a,b,_) | TyWhile(a,b) | TyMSet(a,b) | TySeq(a,b,_) -> Set.union (c a) (c b)
+    | TyAtomicAdd(a,b,_) | TyWhile(a,b) | TyMSet(a,b) -> Set.union (c a) (c b)
+    | TySeq(a,b,_) -> Set.union (Set.unionMany (List.map c a)) (c b)
 
 
 let l v b e = Apply(Inlineable(v,e),b)
@@ -724,11 +728,11 @@ let data_empty() =
     {memoized_methods=d0();tagged_vars=d0();
      env=Map.empty;sequences=Stack();current_stack=Stack()}
 
-let typecheck body inputs = 
+let typecheck body inputs macros = 
     try
         let main_method, memo = 
             let d = data_empty()
-            exp_and_seq d (ApplyAsIfMain(body,inputs)), d.memoized_methods
+            exp_and_seq d (ApplyAsIfMain(body,inputs,macros)), d.memoized_methods
         let imemo = Dictionary(HashIdentity.Structural)
         closure_conv imemo memo main_method |> ignore
         Succ imemo
@@ -805,7 +809,7 @@ let meth2 = // closure conversion test
                     (l (V "loop_method") (meth (VV [V "a";V "n"]) (If(LitBool true,V "a",V "n")))
                         (ap (V "loop_method") (VV [V "a"; V "n"]))))
                 (ap (V "loop") (VV [LitInt 1; V "n"]))))
-        (ap (V "m") (VV [LitInt 3;LitInt 2;LitUnit]))
+        (ap (V "m") (VV [LitInt 3;LitInt 2;LitFloat 3.5]))
 let m2 = typecheck0 meth2
 
 let meth3 = // vv test

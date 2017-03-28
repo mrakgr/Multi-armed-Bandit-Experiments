@@ -70,6 +70,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
     let rec print_methodcall x = filter_simple_vars_template (snd >> codegen) x
     and codegen = function
+        | TySeq(seq,rest,_) ->
+            List.map codegen seq
+            |> List.forall ((=) "")
+            |> fun r -> if r then () else failwith "In TySeq the sequences should all be statements."
+            codegen rest
         | TyV x -> print_tyv x
         | TyIf(cond,tr,fl,_) -> // If statements will aways be hoisted into methods in this language.
             sprintf "if (%s) {" (codegen cond) |> state
@@ -85,6 +90,8 @@ let print_method_dictionary (imemo: MethodImplDict) =
                 |> String.concat ""
             sprintf "%s%s;" (print_tyv_with_type tyv) dims |> state
             ""
+        | TyLet(_,(TyUnit | Inlineable' _ | Method' _)) -> ""
+        | Inlineable' _ | Method' _ -> failwith "Inlineable' and Method' should never appear in isolation."
         | TyLet(tyv,b) ->
             sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
             ""
@@ -224,12 +231,12 @@ let print_method_dictionary (imemo: MethodImplDict) =
         process_statements program |> Succ
     with e -> Fail (e.Message, e.StackTrace)
 
-let eval body inputs = 
-    match typecheck body inputs with
+let eval body inputs macros = 
+    match typecheck body inputs macros with
     | Succ imemo -> print_method_dictionary imemo
     | Fail er -> Fail er
 
-let eval0 body = eval body []
+let eval0 body = eval body [] []
 
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
@@ -237,17 +244,19 @@ let s l fin = List.foldBack (fun x rest -> x rest) l fin
 let dref x = IndexArray(x,[LitInt 0])
 let cref x = l (V "ref") (CreateLocalArray([LitInt 1],x)) (MSet(dref (V "ref"),x,V "ref"))
     
-let for_ init cond body rest =
-    s [l (V "init") (cref init)
-       while_ (cond (V "init")) 
-            (MSet(dref (V "init"), body (V "init"),LitUnit))] rest
+let for_ init cond body =
+    l (V "") 
+        (l (V "init") (cref init)
+            (while_ (cond (V "init"))
+                (MSet(dref (V "init"), body (V "init"),LitUnit)) LitUnit))
+        LitUnit
 
-let map_module f (VV [n], ins, outs) =
+let map_module =
     for_ (BlockIdxX * BlockDimX + ThreadIdxX) 
-        (fun x -> x .< n)
-        (f ins outs) LitUnit
+        (fun x -> x .< V "n")
+        (fun x -> Apply(V "f", VV [x; V "ins"; V "outs"]))
 
-printfn "%A" (eval0 term4)
+printfn "%A" (eval0 meth2)
 
 let map_1_1 = 
     let n = get_tag(),"n",Int32T
