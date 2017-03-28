@@ -342,7 +342,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | VVT x as t -> 
             let r = List.mapi (fun i t -> TyIndexVV(r,TyLitInt i,t)) x
             traverse t r
-        | x -> failwithf "Unexpected arguments in destructuring.\nGot: %A" x
+        | x -> failwithf "Unexpected arguments in destructuring.\nGot: %A\nExp: %A" x exp
 
     let rec match_vv traverse bind acc l r =
         match l,r with
@@ -645,20 +645,18 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | BoolT, UnitT -> d.sequences.Push(TyWhile(cond,body)); tev d e
         | BoolT, _ -> failwith "Expected UnitT as the type of While's body."
         | _ -> failwith "Expected BoolT as the type of While's conditional."
-    | CubBlockReduce(la, arg, num_valid) ->
-        let la = apply_first la
-        let evaled_arg = tev d arg
-        let ra =
-            match get_type evaled_arg with
+    | CubBlockReduce(input, method_, num_valid) ->
+        let evaled_input = tev d input
+        let method_ =
+            match get_type evaled_input with
             | LocalArrayT(_,t) | SharedArrayT(_,t) -> 
-                let arg = IndexArray(arg,[LitInt 0])
+                let arg = IndexArray(input,[LitInt 0])
                 tev d (VV [arg;arg])
-            | x -> tev d (VV [arg; arg])
-
-        let la = apply_method_only match_vv_method la ra
+            | x -> tev d (VV [input; input])
+            |> apply_method_only match_vv_method (apply_first method_)
 
         let num_valid = Option.map (tev d) num_valid
-        TyCubBlockReduce(evaled_arg,la,num_valid,get_type la)
+        TyCubBlockReduce(evaled_input,method_,num_valid,get_type method_)
             
 
 // Unions the free variables from top to bottom of the call chain.
@@ -687,13 +685,16 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
                     impl_args
                 | _ -> failwith "impossible"
         Set.union method_implicit_args (c ar)
-    | TyCubBlockReduce(m,inp,num_valid,t) ->
-        if (c m).IsEmpty then
+    | TyCubBlockReduce(inp,(TyMethodCall(key,_,_) as m),num_valid,t) ->
+        ignore <| c m // This is so it gets added to the env.
+
+        match imemo.[key] with
+        | _,_,impl_args when impl_args.IsEmpty ->
             match num_valid with
             | Some num_valid -> Set.union (c num_valid) (c inp)
             | None -> c inp
-        else
-            failwith "The method passed to Cub should have no implicit arguments."
+        | _ -> 
+            failwithf "The method passed to Cub should have no implicit arguments.\nm=%A" m
             
     // Array cases
     | TyIndexArray(a,b,t) -> 

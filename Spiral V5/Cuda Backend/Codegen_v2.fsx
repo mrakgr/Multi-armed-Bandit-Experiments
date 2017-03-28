@@ -274,7 +274,7 @@ let cref x = l (V "ref") (CreateLocalArray([LitInt 1],x)) (MSet(dref (V "ref"),x
 let for' init cond body =
     l (V "init") (cref init)
         (while_ (ap cond (dref <| V "init"))
-            (MSet(dref (V "init"), ap body (dref <| V "init"),LitUnit)) (V "init"))
+            (MSet(dref (V "init"), ap body (dref <| V "init"),LitUnit)) (dref <| V "init"))
 
 let for_ init cond body =
     l (V "") (for' init cond body)
@@ -298,7 +298,7 @@ let map_redo_map_module =
         l (VV [V "n"]) (V "n")
         l (VV [V ""; V "value"])
             (for' (VV [V "i";ap (V "map_load_op") (V "i")])
-                (inl (VV [V "i"; V ""]) (V "x" .< V "n"))
+                (inl (VV [V "i"; V ""]) (V "i" .< V "n"))
                 (inl (VV [V "i"; V "value"]) 
                     (VV [V "i" + V "stride"; ap (V "reduce_op") (VV [V "value";ap (V "map_load_op") (V "i")])])))
         l (V "result") (CubBlockReduce(V "value",V "reduce_op",None))
@@ -312,14 +312,36 @@ let map_1_1 =
     let out_ = get_tag(),GlobalArrayT([n],Float32T)
 
     let args = ["n",[n];"ins",[in_];"outs",[out_]]
-    let f = 
+    let map_op = 
         inl (V "i")
             (s [l (VV [V "in1"]) (V "ins")
                 l (VV [V "out1"]) (V "outs")
                 mset (VV [IndexArray(V "out1",[V "i"])]) (VV [IndexArray(V "in1",[V "i"])])
                 ] LitUnit)
-    eval map_module args ["map_op",f]
+
+    eval map_module args ["map_op",map_op]
+
+let map_redo_map_1_1 = 
+    let n = get_tag(),Int32T
+    let in_ = get_tag(),GlobalArrayT([n],Float32T)
+    let out_ = get_tag(),GlobalArrayT([n],Float32T)
+
+    let args = ["n",[n];"ins",[in_];"outs",[out_]]
+    let map_load_op =
+        inl (V "i")
+            (l (VV [V "in1"]) (V "ins")
+                (IndexArray(V "in1",[V "i"])))
+    let reduce_op = 
+        meth (VV [V "a"; V "b"])
+            (V "a" + V "b")
+    let map_store_op =
+        inl (V "value")
+            (s [l (VV [V "out1"]) (V "outs")
+                l (V "") (AtomicAdd(dref (V "out1"),V "value"))
+                ] LitUnit)
+
+    eval map_redo_map_module args ["map_load_op",map_load_op;"reduce_op",reduce_op;"map_store_op",map_store_op]
 
 printfn "%A" map_1_1
-
+printfn "%A" map_redo_map_1_1
 
