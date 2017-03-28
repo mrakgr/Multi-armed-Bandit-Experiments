@@ -48,7 +48,22 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
     let print_tuple v = sprintf "tuple_%i" v
 
-    let rec print_type = function
+    let print_array_type = function
+        | UnitT -> failwith "Void types should not be inside local arrays."
+        | UInt32T -> "unsigned int"
+        | UInt64T -> "unsigned long long int"
+        | Int32T -> "int"
+        | Int64T -> "long long int"
+        | Float32T -> "float"
+        | Float64T -> "double"
+        | BoolT -> "int"
+        | VVT t -> tuple_def_proc t print_tuple
+        | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> 
+            // The only reason is really because C syntax is such a pain in the ass.
+            failwith "Arrays should not be inside other arrays."
+        | TagT _ -> failwith "Can't print tagged types."
+
+    let rec print_simple_type = function
         | UnitT -> "void"
         | UInt32T -> "const unsigned int"
         | UInt64T -> "const unsigned long long int"
@@ -57,18 +72,27 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | Float32T -> "const float"
         | Float64T -> "const double"
         | BoolT -> "const int"
-        | VVT t -> tuple_def_proc t print_tuple
-        | NominalT x -> x
-        | LocalArrayT (_,t) | GlobalArrayT (_,t) -> sprintf "%s *" (print_type t)
-        | SharedArrayT (_,t) -> sprintf "__shared__ %s *" (print_type t)
-        | TagT _ -> failwith "Tags can't be printed."
+        | VVT t -> sprintf "const %s" (tuple_def_proc t print_tuple)
+        | GlobalArrayT (_,t) -> sprintf "%s *" (print_array_type t)
+        | TagT _ -> failwith "Can't print tagged types."
+        | x -> failwithf "The type %A can't be printed here." x
 
-    let print_tyv (tag,_,_) = sprintf "var_%i" tag
-    let print_tyv_with_type (tag,_,ty) =
-        sprintf "%s var_%i" (print_type ty) tag
+    let print_tyv (tag,_) = sprintf "var_%i" tag
+    let print_tyv_with_type (_,ty as v) = sprintf "%s %s" (print_simple_type ty) (print_tyv v)
     let print_method tag = sprintf "method_%i" tag
 
-    let rec print_methodcall x = filter_simple_vars_template (snd >> codegen) x
+    let rec print_array is_shared typ v ar_sizes =   
+        let typ = print_array_type typ
+        let nam = print_tyv v
+        let dim =
+            List.map (codegen >> sprintf "[%s]") ar_sizes
+            |> String.concat ""
+        
+        match is_shared with
+        | true -> sprintf "__shared__ %s %s%s;" typ nam dim |> state
+        | false -> sprintf "%s %s%s;" typ nam dim |> state
+
+    and print_methodcall x = filter_simple_vars_template (snd >> codegen) x
     and codegen = function
         | TySeq(seq,rest,_) ->
             List.map codegen seq
@@ -84,11 +108,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet(tyv,(TyCreateSharedArray(ar_sizes,_) | TyCreateLocalArray(ar_sizes,_))) ->
-            let dims =
-                List.map (codegen >> sprintf "[%s]") ar_sizes
-                |> String.concat ""
-            sprintf "%s%s;" (print_tyv_with_type tyv) dims |> state
+        | TyLet((_,LocalArrayT(_,typ) as v),TyCreateLocalArray(ar_sizes,_)) ->
+            print_array false typ v ar_sizes
+            ""
+        | TyLet((_,SharedArrayT(_,typ) as v),TyCreateSharedArray(ar_sizes,_)) ->
+            print_array true typ v ar_sizes
             ""
         | TyLet(_,(TyUnit | Inlineable' _ | Method' _)) -> ""
         | Inlineable' _ | Method' _ -> failwith "Inlineable' and Method' should never appear in isolation."
@@ -191,18 +215,18 @@ let print_method_dictionary (imemo: MethodImplDict) =
             match num_valid with
             | Some num_valid -> 
                 sprintf "cub::BlockReduce<%s,blockDim.x>(%s,%s,%s)" 
-                    (print_type t) (codegen ins) (print_method tag) (codegen num_valid)
-            | None -> sprintf "cub::BlockReduce<%s,blockDim.x>(%s,%s)" (print_type t) (codegen ins) (print_method tag)
+                    (print_simple_type t) (codegen ins) (print_method tag) (codegen num_valid)
+            | None -> sprintf "cub::BlockReduce<%s,blockDim.x>(%s,%s)" (print_simple_type t) (codegen ins) (print_method tag)
         | TyCubBlockReduce(_,_,_,_) -> failwith "impossible"
 
     let print_tuple_defintion tys tag =
         sprintf "struct %s {" (print_tuple tag) |> state
-        enter <| fun _ -> List.iteri (fun i x -> sprintf "%s tup%i;" (print_type x) i |> state) tys; ""
+        enter <| fun _ -> List.iteri (fun i x -> sprintf "%s tup%i;" (print_simple_type x) i |> state) tys; ""
         "}" |> state
 
     let print_method prefix (tag,_) (explicit_args,body,implicit_args) = 
         let check_valid_arg tag args =
-            if List.exists (fun (_,_,t) -> t = UnitT) args then
+            if List.exists (fun (_,t) -> t = UnitT) args then
                 failwithf "UnitT arguments are not allowed in method calls. Tag=%i, Args: %A" tag args
             else
                 args
@@ -213,7 +237,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
             |> check_valid_arg tag
             |> List.map print_tyv_with_type
             |> String.concat ", "
-        sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state
+        sprintf "%s %s %s(%s) {" prefix (print_simple_type (get_type body)) method_name args |> state
 
         enter' <| fun _ ->
             match codegen body with
@@ -247,25 +271,29 @@ let cref x = l (V "ref") (CreateLocalArray([LitInt 1],x)) (MSet(dref (V "ref"),x
 let for_ init cond body =
     l (V "") 
         (l (V "init") (cref init)
-            (while_ (cond (V "init"))
-                (MSet(dref (V "init"), body (V "init"),LitUnit)) LitUnit))
+            (while_ (cond (dref <| V "init"))
+                (MSet(dref (V "init"), body (dref <| V "init"),LitUnit)) LitUnit))
         LitUnit
 
 let map_module =
-    for_ (BlockIdxX * BlockDimX + ThreadIdxX) 
-        (fun x -> x .< V "n")
-        (fun x -> Apply(V "f", VV [x; V "ins"; V "outs"]))
+    l (VV [V "n"]) (V "n")
+        (for_ (BlockIdxX * BlockDimX + ThreadIdxX) 
+            (fun x -> x .< V "n")
+            (fun x -> Apply(V "f", VV [x; V "ins"; V "outs"])))
 
 printfn "%A" (eval0 meth2)
 
 let map_1_1 = 
-    let n = get_tag(),"n",Int32T
-    let in_ = get_tag(),"in",GlobalArrayT([n],Float32T)
-    let out_ = get_tag(),"out",GlobalArrayT([n],Float32T)
-    eval map_env_adder map_body_conv map_arg_conv 
-        (n,[in_],[out_])
-        (map_module (fun (VV [in_]) (VV [out_]) i -> MSet(VV [IndexArray(in_,[i])],VV [IndexArray(out_,[i])],i + GridDimX * BlockDimX)))
-        
+    let n = get_tag(),Int32T
+    let in_ = get_tag(),GlobalArrayT([n],Float32T)
+    let out_ = get_tag(),GlobalArrayT([n],Float32T)
+
+    let args = ["n",[n];"ins",[in_];"outs",[out_]]
+    let f = 
+        inl (VV [V "i";VV [V "in1"];VV [V "out1"]])
+            (MSet(VV [IndexArray(V "out1",[V "i"])],VV [IndexArray(V "in1",[V "i"])],V "i" + GridDimX * BlockDimX))
+    eval map_module args ["f",f]
+
 printfn "%A" map_1_1
 
 

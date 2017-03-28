@@ -10,12 +10,11 @@ type Ty =
     | Float64T
     | BoolT
     | VVT of Ty list
-    | NominalT of string // for classes and such
     | GlobalArrayT of TyV list * Ty
     | SharedArrayT of TyV list * Ty
     | LocalArrayT of TyV list * Ty
     | TagT of int64
-and TyV = int64 * string * Ty
+and TyV = int64 * Ty
 
 // No return type polymorphism like in Haskell for now. Local type inference only.
 and TyMethodKey = int64 * Ty // The key does not need to know the free variables.
@@ -177,7 +176,7 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 let rec get_type = function
     | Inlineable'(_,_,_,t) | Method'(_,_,_,_,t) -> t
 
-    | TyV(_,_,t) | TyIf(_,_,_,t) | TyLet((_,_,t),_) -> t
+    | TyV(_,t) | TyIf(_,_,_,t) | TyLet((_,t),_) -> t
     | TyLitInt _ -> Int32T
     | TyLitFloat _ -> Float32T
     | TyLitBool _ -> BoolT
@@ -220,7 +219,7 @@ let rec get_type = function
 
 let rec is_simple' = function
     | UnitT | UInt32T | UInt64T | Int32T | Int64T | Float32T 
-    | Float64T | BoolT -> true
+    | Float64T | BoolT | GlobalArrayT _ -> true
     | VVT x -> List.forall is_simple' x
     | _ -> false
 let is_simple a = is_simple' (get_type a)
@@ -286,7 +285,7 @@ let get_body_from (stack: Stack<unit -> TypedExpr>) = stack.Peek()()
 
 let filter_simple_vars_template f evaled_cur_args =
     let rec loop = function
-        | TyLet((_,_,t as v),x) when is_simple' t -> [f (v, x)]
+        | TyLet((_,t as v),x) when is_simple' t -> [f (v, x)]
         | TyLet(_,_) -> []
         | TyVV(x,_) -> List.collect loop x
         | x -> failwithf "Expected: TyVV or TyLet.\nGot: %A" x
@@ -310,7 +309,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | true -> f()
         | false -> failwithf "%s is a duplicate name in pattern matching." arg_name
 
-    let make_tyv arg_name ty_exp = get_tag(), arg_name, get_type ty_exp
+    let make_tyv arg_name ty_exp = get_tag(), get_type ty_exp
     let make_tyv_and_push arg_name ty_exp =
         let v = make_tyv arg_name ty_exp
         d.sequences.Push(TyLet(v,ty_exp))
