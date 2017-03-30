@@ -37,6 +37,7 @@ and Expr =
     // Tuple cases
     | IndexVV of Expr * Expr
     | VV of Expr list // tuple
+    | MapVV of Expr * Expr
 
     // Array cases
     | IndexArray of Expr * Expr list
@@ -303,15 +304,17 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let make_tyv ty_exp = 
         let v = get_tag(), get_type ty_exp
         v
-    let make_tyv_and_push ty_exp =
+    let make_tyv_and_push' ty_exp =
         let v = make_tyv ty_exp
         d.sequences.Push(TyLet(v,ty_exp))
         v
+    let make_tyv_and_push ty_exp = 
+        make_tyv_and_push' ty_exp |> TyV
 
     let rec process_typedexpr = function
         | (Inlineable' _ | Method' _ | TyV _ as v) -> v
         | TyVV(l,t) -> process_tyvv l t
-        | e -> TyV <| make_tyv_and_push e
+        | e -> make_tyv_and_push e
 
     and process_tyvv x t = 
         List.map process_typedexpr x
@@ -327,20 +330,32 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let traverse_inl t = List.fold2
     let traverse_method t f s a b = map_fold_2_Er f s a b |> fun (l,s) -> TyVV(l,t), s
 
-    let destructure traverse r =
+    let rec destructure_process tuple_types r = 
+        match r with
+        | TyV _ -> r
+        | _ -> make_tyv_and_push r
+        |> fun r -> 
+            let indexed_tuple_args = List.mapi (fun i typ -> 
+                destructure_check <| TyIndexVV(r,TyLitInt i,typ)) tuple_types
+            TyVV(indexed_tuple_args, VVT tuple_types)
+
+    and destructure_check r =
         match get_type r with
-        | VVT x as t -> 
-            let r = List.mapi (fun i t -> TyIndexVV(r,TyLitInt i,t)) x
-            traverse t r
+        | VVT x -> destructure_process x r
+        | _ -> r
+
+    let destructure r =
+        match get_type r with
+        | VVT x -> destructure_process x r
         | x -> failwithf "Unexpected arguments in destructuring.\nGot: %A\nExp: %A" x exp
 
     let rec match_vv traverse bind acc l r =
-        let rec_ = match_vv traverse bind
+        let recurse acc l r = match_vv traverse bind acc l r
         match l,r with
         | B, r -> bind acc "" r
         | V x, r -> bind acc x r
-        | VV l, TyVV(r,t) -> traverse t rec_ acc l r
-        | VV l, r -> destructure (fun t r -> traverse t rec_ acc l r) r
+        | VV l, TyVV(r,t) -> traverse t recurse acc l r
+        | VV _ as l, r -> recurse acc l (destructure r)
         | l, r -> failwithf "Expected V or VV on the left side.\nGot: %A" l
 
     let rec match_vv_inl' dup_name_checker = match_vv traverse_inl (bind_inl dup_name_checker)
@@ -354,12 +369,18 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let rec mset l r =
         match l,r with
         | VV l, TyVV(r,_) -> List.iter2 mset l r
-        | VV _ as l, r -> destructure (fun t r -> mset l (TyVV(r,t))) r
+        | VV _ as l, r -> mset l (destructure r)
         | l, r ->
             match tev d l with
             | (TyIndexArray(_,_,lt) as v) when lt = get_type r -> d.sequences.Push(TyMSet(v,r))
             | x -> failwithf "Expected `(TyIndexArray(_,_,lt) as v) when lt = get_type r`.\nGot: %A" x
 
+    let rec map_tyvv f = function
+        | TyVV(r,_) -> VV (List.map (map_tyvv f) r)
+        | x -> match get_type x with
+               | VVT _ -> map_tyvv f (destructure x)
+               | _ -> Apply(f,T x)
+        
     // Primitive functions
     let append_typeof_fst k a b =
         k (a, b, (get_type a))
@@ -425,9 +446,9 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             |> List.map (fun ty_exp -> 
                 match ty_exp with
                 | TyV v' as v -> v, v'
-                | x -> let v = make_tyv_and_push x in TyV v, v)
+                | x -> let v = make_tyv_and_push' x in TyV v, v)
             |> List.unzip
-        make_tyv_and_push (con args args' t) |> TyV
+        make_tyv_and_push (con args args' t)
 
     let add_tagged f =
         let t = get_tag()
@@ -539,11 +560,12 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then TyIf(cond,tr,fl,type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
-
+    | MapVV(a,b) ->
+        let a,b = tev d a, tev d b
+        tev d (map_tyvv (T a) b)
     | VV vars ->
         let vv = List.map (tev d) vars
         TyVV(vv,make_vvt vv)
-
     | IndexVV(v,i) ->
         match tev d v, tev d i with
         | v, (TyLitInt i as i') ->
@@ -612,7 +634,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | MSet(a,b,rest) -> mset a (tev d b); tev d rest
     | AtomicAdd(a,b) -> prim_atomic_add_op a b TyAtomicAdd
     | While(cond,body,e) ->
-        let cond, body = tev d cond, with_empty_seq d body
+        let cond, body = tev d (Apply(Method("",VV [],cond),VV [])), with_empty_seq d body
         match get_type cond, get_type body with
         | BoolT, UnitT -> d.sequences.Push(TyWhile(cond,body)); tev d e
         | BoolT, _ -> failwith "Expected UnitT as the type of While's body."
@@ -634,8 +656,11 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 // Unions the free variables from top to bottom of the call chain.
 let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
     let rec closure_conv (bound_vars: Set<TyV> ref) (exp: TypedExpr) =
+        let add_var v = bound_vars := (!bound_vars).Add v 
         let c x = closure_conv bound_vars x
-        let c' x = closure_conv (ref !bound_vars) x
+        let c_meth sol_arg x = 
+            List.iter add_var sol_arg
+            closure_conv (ref !bound_vars) x
         match exp with
         | Method' _ | Inlineable' _ -> Set.empty
         | TyV v -> Set.singleton v
@@ -643,7 +668,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
             let cond, tr, fl = c cond, c tr, c fl
             Set.unionMany [|cond; tr; fl|]
         | TyLet(v,body) -> 
-            bound_vars := (!bound_vars).Add v 
+            add_var v
             c body
         | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
         | TyVV(vars,t) -> Set.unionMany (List.map c vars)
@@ -656,7 +681,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
                     match memo.[m] with
                     | MethodDone(sol_arg, body) ->
                         // union the free vars from top to bottom
-                        let impl_args = Set.intersect !bound_vars (c' body) - Set(sol_arg)
+                        let impl_args = Set.intersect (c_meth sol_arg body) !bound_vars - Set(sol_arg)
                         imemo.Add(m,(sol_arg,body,impl_args))
                         impl_args
                     | _ -> failwith "impossible"
@@ -678,7 +703,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
             let a = 
                 match get_type a with
                 | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
-                    Set.union (c a) (Set(x))
+                    Set.union (c a) (Set(List.tail x))
                 | _ -> failwith "impossible"
             Set.union a (Set.unionMany (List.map c b))
         | TyCreateLocalArray(b,_) | TyCreateSharedArray(b,_) -> Set.unionMany (List.map c b)

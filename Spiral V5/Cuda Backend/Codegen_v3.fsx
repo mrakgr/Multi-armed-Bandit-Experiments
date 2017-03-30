@@ -60,6 +60,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | VVT t -> tuple_def_proc t print_tuple
         | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> 
             // The only reason is really because C syntax is such a pain in the ass.
+            // I do not want to deal with casting void pointers here.
             failwith "Arrays should not be inside other arrays."
         | TagT _ -> failwith "Can't print tagged types."
 
@@ -73,15 +74,14 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | Float64T -> "const double"
         | BoolT -> "const int"
         | VVT t -> sprintf "const %s" (tuple_def_proc t print_tuple)
-        | GlobalArrayT (_,t) -> sprintf "%s *" (print_array_type t)
+        | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> sprintf "%s *" (print_array_type t)
         | TagT _ -> failwith "Can't print tagged types."
-        | x -> failwithf "The type %A can't be printed here." x
 
     let print_tyv (tag,_) = sprintf "var_%i" tag
     let print_tyv_with_type (_,ty as v) = sprintf "%s %s" (print_simple_type ty) (print_tyv v)
     let print_method tag = sprintf "method_%i" tag
 
-    let rec print_array is_shared typ v ar_sizes =   
+    let rec print_array_declaration is_shared typ v ar_sizes =   
         let typ = print_array_type typ
         let nam = print_tyv v
         let dim =
@@ -109,10 +109,10 @@ let print_method_dictionary (imemo: MethodImplDict) =
             "}" |> state
             ""
         | TyLet((_,LocalArrayT(_,typ) as v),TyCreateLocalArray(ar_sizes,_)) ->
-            print_array false typ v ar_sizes
+            print_array_declaration false typ v ar_sizes
             ""
         | TyLet((_,SharedArrayT(_,typ) as v),TyCreateSharedArray(ar_sizes,_)) ->
-            print_array true typ v ar_sizes
+            print_array_declaration true typ v ar_sizes
             ""
         | TyLet(_,(TyUnit | Inlineable' _ | Method' _)) -> ""
         | Inlineable' _ | Method' _ -> failwith "Inlineable' and Method' should never appear in isolation."
@@ -135,7 +135,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
             sprintf "%s(%s)" method_name args
 
         // Value tuple cases
-        | TyIndexVV(v,i,_) -> sprintf "(%s.tup%s)" (codegen v) (codegen i)
+        | TyIndexVV(v,i,_) -> sprintf "%s.tup%s" (codegen v) (codegen i)
         | TyVV(l,(VVT t)) -> 
             tuple_def_proc t (fun _ -> ())
             List.mapi (fun i x -> sprintf ".tup%i = %s" i (codegen x)) l
