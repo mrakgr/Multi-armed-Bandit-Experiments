@@ -85,8 +85,10 @@ let print_method_dictionary (imemo: MethodImplDict) =
         let typ = print_array_type typ
         let nam = print_tyv v
         let dim =
-            List.map (codegen >> sprintf "[%s]") ar_sizes
-            |> String.concat ""
+            if List.isEmpty ar_sizes then "[1]"
+            else
+                List.map (codegen >> sprintf "[%s]") ar_sizes
+                |> String.concat ""
         
         match is_shared with
         | true -> sprintf "__shared__ %s %s%s;" typ nam dim |> state
@@ -161,7 +163,10 @@ let print_method_dictionary (imemo: MethodImplDict) =
                     | Some p, [], [i] ->
                         sprintf "%s + (%s)" p (codegen i)
                     | _ -> failwith "invalid state"
-                loop (None,List.tail ar_sizes,i)
+                if i.IsEmpty = false then
+                    loop (None,List.tail ar_sizes,i)
+                else 
+                    "0"
             sprintf "%s.[%s]" (codegen ar) index
 
         | TyCreateSharedArray _ | TyCreateLocalArray _ -> failwith "This expression should never appear in isolation."
@@ -268,8 +273,8 @@ let eval0 body = eval body (VV [])
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let dref x = IndexArray(x,[LitInt 0])
-let cref x = l (V "ref") (CreateLocalArray([LitInt 1],x)) (MSet(dref (V "ref"),x,V "ref"))
+let dref x = IndexArray(x,[])
+let cref x = l (V "ref") (CreateLocalArray([],x)) (MSet(dref (V "ref"),x,V "ref"))
     
 let for' init cond body =
     l (V "init") (cref init)
@@ -304,6 +309,22 @@ let map_redo_map_module =
             l (V "result") (CubBlockReduce(V "value",V "reduce_op",None))
             l B (If(ThreadIdxX .= LitInt 0, ap (V "map_store_op") (VV [V "result"; V "outs"]), B))
             ] B)
+
+let map_redocol_map_module =
+    meth (VV [V "map_load_op";V "reduce_op";V "map_store_op"; VV [V "num_cols"; V "num_rows"];V "ins";V "outs"])
+        (for_ BlockIdxX
+            (inl (V "col") (V "col" .< V "num_cols"))
+            (inl (V "col") 
+                (s [l (VV [B; V "value"]) 
+                        (for' (VV [ThreadIdxX; ap (V "map_load_op") (VV [VV [V "col"; ThreadIdxX]; V "ins"])])
+                            (inl (VV [V "row";B]) (V "row" .< V "num_rows"))
+                            (inl (VV [V "row";V "value"])
+                                (VV [V "row" + BlockDimX; 
+                                        ap (V "reduce_op") (VV [V "value"; ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"])])])))
+                    l (V "result") (CubBlockReduce(V "value",V "reduce_op",None))
+                    l B (If(ThreadIdxX .= LitInt 0, ap (V "map_store_op") (VV [V "result"; V "col"; V "outs"]), B))
+                    ] (V "col" + GridDimX)))
+            B)
     
 
 let map_1_1 = 
@@ -317,9 +338,9 @@ let map_1_1 =
     eval map_module (VV [map_op; V' n;V' in_;V' out_])
 
 let map_redo_map_1_1 = 
-    let n = get_tag(),Int32T
+    let n = get_tag(), Int32T
     let in_ = get_tag(),GlobalArrayT([n],Float32T)
-    let out_ = get_tag(),GlobalArrayT([n],Float32T)
+    let out_ = get_tag(),GlobalArrayT([],Float32T)
 
     let map_load_op =
         inl (VV [V "i";V "in1"]) (IndexArray(V "in1",[V "i"]))
@@ -331,7 +352,23 @@ let map_redo_map_1_1 =
 
     eval map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;V' n;V' in_;V' out_])
 
+let map_redocol_map_1_1 = 
+    let num_cols = get_tag(),Int32T
+    let num_rows = get_tag(),Int32T
+    let in_ = get_tag(),GlobalArrayT([num_cols;num_rows],Float32T)
+    let out_ = get_tag(),GlobalArrayT([num_cols],Float32T)
+
+    let map_load_op =
+        inl (VV [VV [V "col"; V "row"];V "in1"]) (IndexArray(V "in1",[V "col";V "row"]))
+    let reduce_op = 
+        meth (VV [V "a"; V "b"]) (V "a" + V "b")
+    let map_store_op =
+        inl (VV [V "result";V "col"; V "out1"])
+            (l B (AtomicAdd(IndexArray(V "out1",[V "col"]),V "result")) B)
+
+    eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [V' num_cols; V' num_rows];V' in_;V' out_])
+
 printfn "%A" map_1_1
 printfn "%A" map_redo_map_1_1
-
+printfn "%A" map_redocol_map_1_1
 

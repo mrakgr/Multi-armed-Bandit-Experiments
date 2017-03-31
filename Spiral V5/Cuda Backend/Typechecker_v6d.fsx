@@ -437,8 +437,8 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         let check a = true
         prim_un_op_template er check (fun t a -> t (a, get_type a))
 
-    let create_array con args t =
-        let t = get_type (tev d t)
+    let create_array con args typ =
+        let typ = get_type (tev d typ)
         let args, args' = 
             List.map (tev d) args
             |> fun args -> 
@@ -449,7 +449,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
                 | TyV v' as v -> v, v'
                 | x -> let v = make_tyv_and_push' x in TyV v, v)
             |> List.unzip
-        make_tyv_and_push (con args args' t)
+        make_tyv_and_push (con args args' typ)
 
     let add_tagged f =
         let t = get_tag()
@@ -702,7 +702,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
             let a = 
                 match get_type a with
                 | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
-                    Set.union (c a) (Set(List.tail x))
+                    Set.union (c a) (Set(if x.IsEmpty then [] else List.tail x))
                 | _ -> failwith "impossible"
             Set.union a (Set.unionMany (List.map c b))
         | TyCreateLocalArray(b,_) | TyCreateSharedArray(b,_) -> Set.unionMany (List.map c b)
