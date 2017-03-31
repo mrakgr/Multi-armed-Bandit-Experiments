@@ -285,6 +285,9 @@ let filter_simple_vars evaled_cur_args =
         | _ -> []
     loop evaled_cur_args
 
+let h0() = HashSet(HashIdentity.Structural)
+let d0() = Dictionary(HashIdentity.Structural)
+
 let rec with_empty_seq (d: Data) expr =
     let d = {d with sequences = Stack()}
     let expr = exp_and_seq d expr
@@ -360,8 +363,6 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     let rec match_vv_inl' dup_name_checker = match_vv traverse_inl (bind_inl dup_name_checker)
     let rec match_vv_method' dup_name_checker = match_vv traverse_method (bind_method dup_name_checker)
-
-    let h0 () = HashSet(HashIdentity.Structural)
 
     let match_vv_inl = match_vv_inl' (h0())
     let match_vv_method = match_vv_method' (h0())
@@ -655,12 +656,9 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
 // Unions the free variables from top to bottom of the call chain.
 let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
-    let rec closure_conv (bound_vars: Set<TyV> ref) (exp: TypedExpr) =
-        let add_var v = bound_vars := (!bound_vars).Add v 
+    let rec closure_conv (bound_vars: HashSet<TyV>) (exp: TypedExpr) =
+        let add_var v = bound_vars.Add v |> ignore
         let c x = closure_conv bound_vars x
-        let c_meth sol_arg x = 
-            List.iter add_var sol_arg
-            closure_conv (ref !bound_vars) x
         match exp with
         | Method' _ | Inlineable' _ -> Set.empty
         | TyV v -> Set.singleton v
@@ -679,9 +677,11 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
                 | true, (_,_,impl_args) -> impl_args
                 | false, _ ->
                     match memo.[m] with
-                    | MethodDone(sol_arg, body) ->
-                        // union the free vars from top to bottom
-                        let impl_args = Set.intersect (c_meth sol_arg body) !bound_vars - Set(sol_arg)
+                    | MethodDone(sol_arg, body) -> // union the free vars from top to bottom
+                        // Without this line the main function would not propagate implicit arguments correctly.
+                        for x in sol_arg do bound_vars.Add x |> ignore
+                        // Copies the HashSet as it goes into a new scope.
+                        let impl_args = Set.intersect (closure_conv (HashSet(bound_vars)) body) (Set(bound_vars)) - Set(sol_arg)
                         imemo.Add(m,(sol_arg,body,impl_args))
                         impl_args
                     | _ -> failwith "impossible"
@@ -697,7 +697,6 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
             | _ -> 
                 failwithf "The method passed to Cub should have no implicit arguments.\nm=%A" m
         | TyCubBlockReduce _ -> failwith "impossible"
-            
         // Array cases
         | TyIndexArray(a,b,t) -> 
             let a = 
@@ -721,11 +720,10 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
         | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
         | TyAtomicAdd(a,b,_) | TyWhile(a,b) | TyMSet(a,b) -> Set.union (c a) (c b)
         | TySeq(a,b,_) -> Set.union (Set.unionMany (List.map c a)) (c b)
-    closure_conv (ref Set.empty) exp
+    closure_conv (h0()) exp
 
 let l v b e = Apply(Inlineable(v,e),b)
 
-let d0() = Dictionary(HashIdentity.Structural)
 let data_empty() = 
     {memoized_methods=d0();tagged_vars=d0()
      env=Map.empty;sequences=Stack();current_stack=Stack()}
