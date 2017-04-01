@@ -53,23 +53,15 @@ type Df =
     static member inline create P =
         {P=P;A=ref 0.0f}
 
-type Scalar = Scalar
-type TotalSizeToken = TotalSizeToken with
-    static member TotalSize(_: TotalSizeToken, (a,b,c,d,e)): int = a*b*c*d*e
-    static member TotalSize(_: TotalSizeToken, (a,b,c,d)): int = a*b*c*d
-    static member TotalSize(_: TotalSizeToken, (a,b,c)): int = a*b*c
-    static member TotalSize(_: TotalSizeToken, (a,b)): int = a*b
-    static member TotalSize(_: TotalSizeToken, x: int): int = x
-    static member TotalSize(_: TotalSizeToken, x: Scalar): int = 1
+type SpiralType =
+| SFloat32
+| SInt32
 
-let inline size_to_total_size x = 
-    let call (t:^T) = ((^s or ^T) : (static member TotalSize: TotalSizeToken * ^s -> int) t, x)
-    call TotalSizeToken
+let sizeof = function
+    | SFloat32 -> 4
+    | SInt32 -> 4
 
-type DM<'s,'t when 't: struct 
-               and 't: (new: unit -> 't) and 't:> System.ValueType
-               and 's: equality>
-        (size: 's, data: ResizeArray<CudaDeviceVariable<'t>>) =
+type DM(size: int [], typ: SpiralType, data: ResizeArray<CudaDeviceVariable<byte>>) =
     member t.Size = size
     member t.Data = data
 
@@ -78,25 +70,28 @@ type DM<'s,'t when 't: struct
     interface IDisposable with
         member t.Dispose() = for var in t.Data do var.Dispose()
 
+let size_to_total_size x = Array.fold ((*)) 1 x
+let total_size (x : DM) = size_to_total_size x.Size
+
 /// Zeroes out the fields on the first allocation.
-let new_var (total_size: int) =
-    let x = new CudaDeviceVariable<_>(SizeT total_size)
+let new_var (total_size: int) typ =
+    let x = new CudaDeviceVariable<byte>(SizeT(total_size * sizeof typ))
     x.Memset(0u)
     x
 
-let inline create_dm (size: 's) (num_vars: int) =
+let inline create_dm (size: int []) typ (num_vars: int) =
     let total_size = size_to_total_size size
-    new DM<'s,_>(size, Array.init num_vars (fun _ -> new_var total_size) |> ResizeArray)
+    new DM(size, typ, Array.init num_vars (fun _ -> new_var total_size typ) |> ResizeArray)
 
 let copyToDevice (host_ar: 'a[]) (device_var: CudaDeviceVariable<'a>) =
     if int device_var.Size <> host_ar.Length then failwithf "int device_var.Size(%i) <> host_ar.Length(%i)" (int device_var.Size) (host_ar.Length)
     device_var.CopyToDevice(host_ar)
 
-let primal (x: DM<_,_>) = let i=0 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have a primal."
-let adjoint (x: DM<_,_>) = let i=1 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an adjoint."
-let has_adjoint (x: DM<_,_>) = let i=1 in i < x.NumVars
-let aux1 (x: DM<_,_>) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
-let aux2 (x: DM<_,_>) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
+let primal (x: DM) = let i=0 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have a primal."
+let adjoint (x: DM) = let i=1 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an adjoint."
+let has_adjoint (x: DM) = let i=1 in i < x.NumVars
+let aux1 (x: DM) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
+let aux2 (x: DM) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
 
 let total_size_2d (c,r) = c*r
 let add_dims_2d (c,r) = c+r
@@ -116,7 +111,7 @@ type DM with
 //        List.init num_auxes (fun i -> x.Data.[2+i])
 
     static member inline create (c,r) num_vars (x: float32[]) =
-        let d = create_dm (c,r) num_vars
+        let d = create_dm [|c;r|] num_vars
         copyToDevice x d.P
         d
 

@@ -372,6 +372,8 @@ let map_redocol_map_1_1 =
 
     eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [V' num_cols; V' num_rows];V' in_;V' out_])
 
+
+
 //printfn "%A" map_1_1
 //printfn "%A" map_redo_map_1_1
 //printfn "%A" map_redocol_map_1_1
