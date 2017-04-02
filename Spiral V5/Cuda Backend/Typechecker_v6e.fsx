@@ -15,6 +15,11 @@ type Ty =
     | SharedArrayT of TyV list * Ty
     | LocalArrayT of TyV list * Ty
     | TagT of int64
+    // The alternative tuple in which arrays are tracked relativistically.
+    | VGT of Ty list * Ty list
+    | GlobalArrayVT of int list * Ty
+    | SharedArrayVT of int list * Ty
+    | LocalArrayVT of int list * Ty
 and TyV = int64 * Ty
 
 // No return type polymorphism like in Haskell for now. Local type inference only.
@@ -110,6 +115,7 @@ and TypedExpr =
     // Tuple cases
     | TyIndexVV of TypedExpr * TypedExpr * Ty
     | TyVV of TypedExpr list * Ty
+    | TyVG of TyV list * TypedExpr list * Ty
 
     // Seq
     | TySeq of TypedExpr list * TypedExpr * Ty
@@ -193,7 +199,7 @@ let rec get_type = function
     | TyGridDimX | TyGridDimY | TyGridDimZ -> Int32T
 
     // Tuple cases
-    | TyVV(_,t) | TyIndexVV(_,_,t) -> t
+    | TyVV(_,t) | TyVG(_,_,t) | TyIndexVV(_,_,t) -> t
 
     // Seq
     | TySeq(_,_,t) -> t
@@ -222,7 +228,7 @@ let rec get_type = function
 
 let rec is_simple' = function
     | UnitT | UInt32T | UInt64T | Int32T | Int64T | Float32T 
-    | Float64T | BoolT | GlobalArrayT _ -> true
+    | Float64T | BoolT | GlobalArrayT _ | GlobalArrayVT _ -> true
     | VVT x -> List.forall is_simple' x
     | _ -> false
 let is_simple a = is_simple' (get_type a)
@@ -323,6 +329,18 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         List.map process_typedexpr x
         |> fun x -> TyVV(x,t)
 
+//    let rec loop (vars: HashSet<TyV>) = function
+//        | (TyVV(x,_)) :: xs -> loop vars x :: loop vars xs
+
+    let to_vg get_vars map_vg x = function
+        | TyVV(x,_) -> 
+            let v: TyV list = get_vars x
+            let v_typ = List.map (fun (_,x) -> x) v
+            let g = map_vg x
+            let g_typ = List.map get_type g
+            TyVG(v,g,VGT(v_typ,g_typ))
+        | x -> x
+
     let bind map_add name_checker acc arg_name ty_exp =
         dup_name_check name_checker arg_name <| fun _ ->
             map_add arg_name (process_typedexpr ty_exp) acc
@@ -354,11 +372,13 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     let rec match_vv traverse bind acc l r =
         let recurse acc l r = match_vv traverse bind acc l r
-        match l,r with
+        match l,destructure_check r with
         | B, r -> bind acc "" r
         | V x, r -> bind acc x r
-        | VV l, TyVV(r,t) -> traverse t recurse acc l r
-        | VV _ as l, r -> recurse acc l (destructure r)
+        | VV _ as l, r ->
+            match destructure_shallow r with
+            | TyVV(r,t) -> traverse t recurse acc l r
+            | TyVG(a,b,t) -> ...
         | l, r -> failwithf "Expected V or VV on the left side.\nGot: %A" l
 
     let rec match_vv_inl' dup_name_checker = match_vv traverse_inl (bind_inl dup_name_checker)
@@ -473,7 +493,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     let apply_method match_vv (name,la,body,initial_env,t as orig) ra =
         let t = match t with TagT t -> t | _ -> failwith "impossible"
-        let bound_args, env = match_vv initial_env la ra
+        let bound_args, env = match_vv initial_env la (destructure_deep ra)
         let method_key = t, get_type bound_args
 
         let make_method_call body_type = TyMethodCall(method_key, bound_args, body_type)
