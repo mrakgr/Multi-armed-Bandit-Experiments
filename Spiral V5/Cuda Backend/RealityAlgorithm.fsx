@@ -13,6 +13,10 @@
 
 // This algorithm that I just invented is called Recurrent Local Type Inference. RLTI (Reality) Algorithm for short.
 
+// 4/3/2017:
+
+// There was a bug where a submethod calls a supermethod which has been fixed right now.
+
 open System.Collections.Generic
 
 type Expr = 
@@ -31,6 +35,8 @@ type Ty =
     | Int32T
     | Float32T
     | BoolT
+    | TypeErrorT
+
 and TyV = string * Ty
 and TypedExpr =
     | TyV of TyV
@@ -42,6 +48,7 @@ and TypedExpr =
     | TyLitInt of int
     | TyLitFloat of float
     | TyLitBool of bool
+    | TyTypeError of string
 
 let get_type = function
     | TyV(_,t) -> t
@@ -53,6 +60,7 @@ let get_type = function
     | TyLitInt _ -> Int32T
     | TyLitFloat _ -> Float32T
     | TyLitBool _ -> BoolT
+    | TyTypeError _ -> TypeErrorT
 
 // I am not going to go to any lengths to prevent name clashes for methods. 
 // This particular version of the typechecker is just an experiment.
@@ -106,14 +114,24 @@ let rec tev (d: Data) exp =
         if List.length args <> List.length arg_names then
             failwith "Arg sizes do not match."
         else
-            match d.method_dict'.TryGetValue n with
+            let n' = d.method_dict'.TryGetValue n
+            match n' with
             | false, _ ->
                 let s = Stack()
                 s.Push <| fun _ -> failwith "The method is divergent."
                 d.method_dict'.Add(n,(None,s))
                 let method_typed_body = 
                     let v_dict = List.fold2 (fun m x y -> Map.add x y m) d.v_dict arg_names args'
-                    tev {d with current_stack=s;v_dict=v_dict} method_
+
+                    // Just in case the submethod calls this one.
+                    // Without pushing the recursive call onto the stack, it would
+                    // trigger the divergent method error.
+                    let f _ = 
+                        tev {d with current_stack=s;v_dict=v_dict} method_
+                    s.Push f
+                    let x = f ()
+                    s.Pop() |> ignore
+                    x
                 s.Clear()
                 s.Push <| fun _ -> method_typed_body
                 TyMethodCall(x,args, get_type method_typed_body)
@@ -130,7 +148,7 @@ let rec tev (d: Data) exp =
                 else
                     failwith "Unification failed."
                 
-    | Method(n,args,body,rest) -> 
+    | Method(n,args,body,rest) as met -> 
         tev {d with method_dict=d.method_dict.Add(n,(args,body))} rest
     | Let(v,b,e) ->
         let b = tev d b
@@ -146,21 +164,23 @@ let rec tev (d: Data) exp =
 let term1 = 
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],If(V "cond",LitInt 1,rec_call),rec_call)
-let t1 = tev (d0()) term1
 
 let term2 = 
     let rec_call = Apply("meth",[LitBool true])
     let if_ x = If(V "cond",x,rec_call)
     Method("meth",["cond"],if_ (if_ (if_ <| LitFloat 3.3)),rec_call)
-let t2 = tev (d0()) term2
 
 let term3 = 
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],
         Let("x",If(V "cond",LitInt 1,rec_call),
             If(V "cond",LitFloat 1.5,rec_call)),rec_call)
-let t3 = 
-    try
-        tev (d0()) term3
-    with e -> TyLitBool false
 
+let term4 =
+    Method("q",["x"],
+        Method("w",["y"],If (LitBool true, Apply("q",[V "y"]),LitFloat 5.5),Apply("w",[V "x"])),
+        Apply("q",[LitFloat 3.3]))
+
+try
+    tev (d0()) term4
+with e -> TyTypeError e.Message

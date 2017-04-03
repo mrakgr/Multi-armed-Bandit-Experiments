@@ -353,6 +353,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | x -> failwithf "Unexpected arguments in destructuring.\nGot: %A\nExp: %A" x exp
 
     let rec match_vv traverse bind acc l r =
+        let traverse = traverse_inl
         let recurse acc l r = match_vv traverse bind acc l r
         match l,r with
         | B, r -> bind acc "" r

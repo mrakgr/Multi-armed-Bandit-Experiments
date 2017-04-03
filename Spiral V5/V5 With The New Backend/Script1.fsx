@@ -24,18 +24,19 @@ let process_statements (statements: ResizeArray<CudaProgram>) =
     |> fun (code,ind) -> code.ToString()
 
 let print_method_dictionary (imemo: MethodImplDict) =
-    let program = ResizeArray()
+    let program_code = ResizeArray()
+    let program_tuple_defs = ResizeArray()
 
-    let state x = program.Add <| Statement x
-    let enter' f = 
+    let state (program: ResizeArray<_>) x = program.Add <| Statement x
+    let enter' (program: ResizeArray<_>) f = 
         program.Add Indent
         f()
         program.Add Dedent
-    let enter f = 
-        enter' (fun _ -> 
+    let enter (program: ResizeArray<_>) f = 
+        enter' program <| fun _ -> 
             match f() with
             | "" -> ()
-            | s -> state s)
+            | s -> state program s
 
     let tuple_definitions = Dictionary(HashIdentity.Structural)
     let tuple_def_proc t f = 
@@ -48,8 +49,8 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
     let print_tuple v = sprintf "tuple_%i" v
 
-    let print_array_type = function
-        | UnitT -> failwith "Void types should not be inside local arrays."
+    let rec print_type is_array = function
+        | UnitT -> "void"
         | UInt32T -> "unsigned int"
         | UInt64T -> "unsigned long long int"
         | Int32T -> "int"
@@ -59,29 +60,25 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | BoolT -> "int"
         | VVT t -> tuple_def_proc t print_tuple
         | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> 
-            // The only reason is really because C syntax is such a pain in the ass.
-            // I do not want to deal with casting void pointers here.
-            failwith "Arrays should not be inside other arrays."
+            if is_array then
+                sprintf "%s *" (print_type true t)
+            else
+                // The only reason is really because C syntax is such a pain in the ass.
+                // I do not want to deal with casting void pointers here.
+                failwith "Arrays should not be inside other arrays."
         | TagT _ -> failwith "Can't print tagged types."
 
-    let rec print_simple_type = function
-        | UnitT -> "void"
-        | UInt32T -> "const unsigned int"
-        | UInt64T -> "const unsigned long long int"
-        | Int32T -> "const int"
-        | Int64T -> "const long long int"
-        | Float32T -> "const float"
-        | Float64T -> "const double"
-        | BoolT -> "const int"
-        | VVT t -> sprintf "const %s" (tuple_def_proc t print_tuple)
-        | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> sprintf "%s *" (print_array_type t)
-        | TagT _ -> failwith "Can't print tagged types."
+    let print_simple_type = print_type false
+    let print_array_type = print_type true
 
     let print_tyv (tag,_) = sprintf "var_%i" tag
     let print_tyv_with_type (_,ty as v) = sprintf "%s %s" (print_simple_type ty) (print_tyv v)
     let print_method tag = sprintf "method_%i" tag
 
-    let rec print_array_declaration is_shared typ v ar_sizes =   
+    let rec print_array_declaration (program: ResizeArray<_>) is_shared typ v ar_sizes =   
+        let state = state program
+        let codegen = codegen program
+
         let typ = print_array_type typ
         let nam = print_tyv v
         let dim =
@@ -94,8 +91,16 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | true -> sprintf "__shared__ %s %s%s;" typ nam dim |> state
         | false -> sprintf "%s %s%s;" typ nam dim |> state
 
-    and print_methodcall x = List.map (TyV >> codegen) (filter_simple_vars x)
-    and codegen = function
+    and print_methodcall (program: ResizeArray<_>) x = List.map (TyV >> codegen program) (filter_simple_vars x)
+    and codegen (program: ResizeArray<_>) exp = 
+        let enter' = enter' program
+        let enter = enter program
+        let state = state program
+        let codegen = codegen program
+        let print_array_declaration = print_array_declaration program
+        let print_methodcall = print_methodcall program
+
+        match exp with
         | TySeq(seq,rest,_) ->
             List.map codegen seq
             |> List.forall ((=) "")
@@ -167,7 +172,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
                     loop (None,List.tail ar_sizes,i)
                 else 
                     "0"
-            sprintf "%s.[%s]" (codegen ar) index
+            sprintf "%s[%s]" (codegen ar) index
 
         | TyCreateArray _ -> failwith "This expression should never appear in isolation."
 
@@ -227,12 +232,18 @@ let print_method_dictionary (imemo: MethodImplDict) =
             | None -> sprintf "cub::BlockReduce<%s,blockDim.x>(%s,%s)" (print_simple_type t) (codegen ins) (print_method tag)
         | TyCubBlockReduce(_,_,_,_) -> failwith "impossible"
 
-    let print_tuple_defintion tys tag =
+    let print_tuple_defintion program tys tag =
+        let state = state program
+        let enter = enter program
         sprintf "struct %s {" (print_tuple tag) |> state
         enter <| fun _ -> List.iteri (fun i x -> sprintf "%s tup%i;" (print_simple_type x) i |> state) tys; ""
-        "}" |> state
+        "};" |> state
 
-    let print_method prefix (tag,_) (explicit_args,body,implicit_args) = 
+    let print_method program prefix (tag,_) (explicit_args,body,implicit_args) = 
+        let state = state program
+        let enter' = enter' program
+        let codegen = codegen program
+
         let check_valid_arg tag args =
             if List.exists (fun (_,t) -> t = UnitT) args then
                 failwithf "UnitT arguments are not allowed in method calls. Tag=%i, Args: %A" tag args
@@ -251,14 +262,19 @@ let print_method_dictionary (imemo: MethodImplDict) =
             match codegen body with
             | "" -> ()
             | s -> sprintf "return %s;" s |> state
-
         "}" |> state
 
     try
-        let min = imemo |> Seq.fold (fun s kv -> min (fst kv.Key) s) System.Int64.MaxValue
-        for x in imemo do 
-            let prefix = if fst x.Key = min then "__global__" else "__device__"
-            print_method prefix x.Key x.Value
+        """#include "cub/cub.cuh" """ |> state
+
+        """extern "C" {""" |> state
+        enter' <| fun _ ->
+            let min = imemo |> Seq.fold (fun s kv -> min (fst kv.Key) s) System.Int64.MaxValue
+            for x in imemo do 
+                let prefix = if fst x.Key = min then "__global__" else "__device__"
+                print_method prefix x.Key x.Value
+        "}" |> state
+
         for x in tuple_definitions do print_tuple_defintion x.Key x.Value
         process_statements program |> Succ
     with e -> Fail (e.Message, e.StackTrace)
@@ -368,7 +384,4 @@ let map_redocol_map_1_1 =
 
     eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_])
 
-printfn "%A" map_1_1
-printfn "%A" map_redo_map_1_1
-printfn "%A" map_redocol_map_1_1
 

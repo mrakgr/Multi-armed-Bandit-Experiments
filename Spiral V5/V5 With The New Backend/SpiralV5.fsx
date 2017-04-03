@@ -150,3 +150,11 @@ let memoize f =
             let res = f x
             cache.[x] <- res
             res
+
+#load "Codegen_v3a.fsx"
+open Typechecker_v6e
+open Codegen_v3a
+
+let get = function Succ x -> x | _ -> failwith "Error"
+printfn "%A" map_redocol_map_1_1
+let x = compile_kernel_using_nvcc_bat_router "method_126" (get map_redocol_map_1_1)

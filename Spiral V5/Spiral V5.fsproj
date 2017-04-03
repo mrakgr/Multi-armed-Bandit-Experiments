@@ -61,11 +61,12 @@
     <None Include="V5 With The New Backend\probability.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Prims.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DM.fsx" />
-    <None Include="V5 With The New Backend\SpiralV5.fsx" />
     <None Include="V5 With The New Backend\load-references-release.fsx" />
     <None Include="V5 With The New Backend\load-project-release.fsx" />
-    <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v6d.fsx" />
-    <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3.fsx" />
+    <None Include="V5 With The New Backend\Typechecker_v6e.fsx" />
+    <None Include="V5 With The New Backend\Codegen_v3a.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5.fsx" />
+    <None Include="V5 With The New Backend\Script1.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Scripts\load-references-release.fsx" />
     <None Include="Scripts\load-project-release.fsx" />
@@ -124,6 +125,7 @@
     <None Include="Cuda Backend\Typechecker_v6d.fsx" />
     <None Include="Cuda Backend\Codegen_v3.fsx" />
     <None Include="Cuda Backend\Typechecker_v6e.fsx" />
+    <None Include="Cuda Backend\alternative_destructure_v6e.fsx" />
     <None Include="Cuda Backend\Codegen_v3a.fsx" />
   </ItemGroup>
   <ItemGroup>

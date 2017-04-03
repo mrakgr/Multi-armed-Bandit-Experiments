@@ -1,11 +1,7 @@
-﻿#load "SpiralV5CudaTypechecker_v6d.fsx"
-open SpiralV5CudaTypechecker_v6d
+﻿#load "Typechecker_v6e.fsx"
+open Typechecker_v6e
 open System.Collections.Generic
 open System.Text
-
-let map_launcher_block_size = 256
-let map_redocol_map_launcher_block_size = 128
-let map_redo_map_launcher_block_size = 256
 
 type CudaProgram =
 | Statement of string
@@ -27,19 +23,42 @@ let process_statements (statements: ResizeArray<CudaProgram>) =
     process_statements (StringBuilder(),0) statements
     |> fun (code,ind) -> code.ToString()
 
-let print_method_dictionary (imemo: MethodImplDict) =
-    let program = ResizeArray()
+type CodegenChannels =
+| Main = 0
+| Code = 1
+| TupleDefinitions = 2
 
-    let state x = program.Add <| Statement x
+let print_method_dictionary (imemo: MethodImplDict) =
+    let program = Array.init 3 <| fun _ -> ResizeArray()
+    let mutable channel = CodegenChannels.Main
+
+    let cur_program () = program.[int channel]
+    let with_channel i f =
+        let x = channel
+        channel <- i
+        let t = f()
+        channel <- x
+        t
+
+    /// Clears the channel a afterwards.
+    let add_channels_a_to_b a b = // Yeah, I know this is not best programming practice, but tuples do need to come first.
+        let a = program.[a] 
+        let b = program.[b]
+        b.AddRange a
+        a.Clear()
+
+    let add_channels_a_to_main x = add_channels_a_to_b (int x) (int CodegenChannels.Main)
+
+    let state x = program.[int channel].Add <| Statement x
     let enter' f = 
-        program.Add Indent
+        program.[int channel].Add Indent
         f()
-        program.Add Dedent
+        program.[int channel].Add Dedent
     let enter f = 
-        enter' (fun _ -> 
+        enter' <| fun _ -> 
             match f() with
             | "" -> ()
-            | s -> state s)
+            | s -> state s
 
     let tuple_definitions = Dictionary(HashIdentity.Structural)
     let tuple_def_proc t f = 
@@ -52,8 +71,8 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
     let print_tuple v = sprintf "tuple_%i" v
 
-    let print_array_type = function
-        | UnitT -> failwith "Void types should not be inside local arrays."
+    let rec print_type is_array = function
+        | UnitT -> "void"
         | UInt32T -> "unsigned int"
         | UInt64T -> "unsigned long long int"
         | Int32T -> "int"
@@ -63,23 +82,16 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | BoolT -> "int"
         | VVT t -> tuple_def_proc t print_tuple
         | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> 
-            // The only reason is really because C syntax is such a pain in the ass.
-            // I do not want to deal with casting void pointers here.
-            failwith "Arrays should not be inside other arrays."
+            if is_array = false then
+                sprintf "%s *" (print_type true t)
+            else
+                // The only reason is really because C syntax is such a pain in the ass.
+                // I do not want to deal with casting void pointers here.
+                failwith "Arrays should not be inside other arrays."
         | TagT _ -> failwith "Can't print tagged types."
 
-    let rec print_simple_type = function
-        | UnitT -> "void"
-        | UInt32T -> "const unsigned int"
-        | UInt64T -> "const unsigned long long int"
-        | Int32T -> "const int"
-        | Int64T -> "const long long int"
-        | Float32T -> "const float"
-        | Float64T -> "const double"
-        | BoolT -> "const int"
-        | VVT t -> sprintf "const %s" (tuple_def_proc t print_tuple)
-        | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> sprintf "%s *" (print_array_type t)
-        | TagT _ -> failwith "Can't print tagged types."
+    let print_simple_type = print_type false
+    let print_array_type = print_type true
 
     let print_tyv (tag,_) = sprintf "var_%i" tag
     let print_tyv_with_type (_,ty as v) = sprintf "%s %s" (print_simple_type ty) (print_tyv v)
@@ -114,11 +126,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet((_,LocalArrayT(_,typ) as v),TyCreateLocalArray(ar_sizes,_)) ->
-            print_array_declaration false typ v ar_sizes
-            ""
-        | TyLet((_,SharedArrayT(_,typ) as v),TyCreateSharedArray(ar_sizes,_)) ->
-            print_array_declaration true typ v ar_sizes
+        | TyLet((_,t) as v,TyCreateArray _) ->
+            match t with
+            | LocalArrayT(ar_sizes,typ) -> print_array_declaration false typ v ar_sizes
+            | SharedArrayT(ar_sizes,typ) -> print_array_declaration true typ v ar_sizes
+            | _ -> failwith "impossible"
             ""
         | TyLet(_,(TyUnit | Inlineable' _ | Method' _)) -> ""
         | Inlineable' _ | Method' _ -> failwith "Inlineable' and Method' should never appear in isolation."
@@ -159,11 +171,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
                 let rec loop x =
                     match x with
                     | None, s :: sx, i :: ix ->
-                        loop (Some(sprintf "(%s) * %s" (codegen i) (print_tyv s)),sx,ix)
+                        loop (Some(sprintf "(%s) * %s" (codegen i) (codegen s)),sx,ix)
                     | None, [], [i] ->
                         codegen i
                     | Some p, s :: sx, i :: ix ->
-                        loop (Some(sprintf "(%s + (%s)) * %s" p (codegen i) (print_tyv s)),sx,ix)
+                        loop (Some(sprintf "(%s + (%s)) * %s" p (codegen i) (codegen s)),sx,ix)
                     | Some p, [], [i] ->
                         sprintf "%s + (%s)" p (codegen i)
                     | _ -> failwith "invalid state"
@@ -171,9 +183,9 @@ let print_method_dictionary (imemo: MethodImplDict) =
                     loop (None,List.tail ar_sizes,i)
                 else 
                     "0"
-            sprintf "%s.[%s]" (codegen ar) index
+            sprintf "%s[%s]" (codegen ar) index
 
-        | TyCreateSharedArray _ | TyCreateLocalArray _ -> failwith "This expression should never appear in isolation."
+        | TyCreateArray _ -> failwith "This expression should never appear in isolation."
 
         // Cuda kernel constants
         | TyThreadIdxX -> "threadIdx.x"
@@ -226,15 +238,15 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyCubBlockReduce(ins, TyMethodCall((tag,_),_,_),num_valid,t) ->
             match num_valid with
             | Some num_valid -> 
-                sprintf "cub::BlockReduce<%s,blockDim.x>(%s,%s,%s)" 
+                sprintf "cub::BlockReduce<%s,128>().Reduce(%s,%s,%s)"  // TODO: Do not forget to change the template parameter.
                     (print_simple_type t) (codegen ins) (print_method tag) (codegen num_valid)
-            | None -> sprintf "cub::BlockReduce<%s,blockDim.x>(%s,%s)" (print_simple_type t) (codegen ins) (print_method tag)
+            | None -> sprintf "cub::BlockReduce<%s,128>().Reduce(%s,%s)" (print_simple_type t) (codegen ins) (print_method tag)
         | TyCubBlockReduce(_,_,_,_) -> failwith "impossible"
 
     let print_tuple_defintion tys tag =
         sprintf "struct %s {" (print_tuple tag) |> state
         enter <| fun _ -> List.iteri (fun i x -> sprintf "%s tup%i;" (print_simple_type x) i |> state) tys; ""
-        "}" |> state
+        "};" |> state
 
     let print_method prefix (tag,_) (explicit_args,body,implicit_args) = 
         let check_valid_arg tag args =
@@ -255,16 +267,29 @@ let print_method_dictionary (imemo: MethodImplDict) =
             match codegen body with
             | "" -> ()
             | s -> sprintf "return %s;" s |> state
-
         "}" |> state
 
     try
-        let min = imemo |> Seq.fold (fun s kv -> min (fst kv.Key) s) System.Int64.MaxValue
-        for x in imemo do 
-            let prefix = if fst x.Key = min then "__global__" else "__device__"
-            print_method prefix x.Key x.Value
-        for x in tuple_definitions do print_tuple_defintion x.Key x.Value
-        process_statements program |> Succ
+        """#include "cub/cub.cuh" """ |> state
+        """extern "C" {""" |> state
+
+        
+        enter' <| fun _ ->
+            with_channel CodegenChannels.Code <| fun _ ->
+                let min = imemo |> Seq.fold (fun s kv -> min (fst kv.Key) s) System.Int64.MaxValue
+                for x in imemo do 
+                    let prefix = if fst x.Key = min then "__global__" else "__device__"
+                    print_method prefix x.Key x.Value
+
+            with_channel CodegenChannels.TupleDefinitions <| fun _ ->
+                for x in tuple_definitions do print_tuple_defintion x.Key x.Value
+
+            add_channels_a_to_main CodegenChannels.TupleDefinitions
+            add_channels_a_to_main CodegenChannels.Code
+        
+        "}" |> state
+        
+        cur_program () |> process_statements |> Succ
     with e -> Fail (e.Message, e.StackTrace)
 
 let eval body inputs = 
@@ -332,17 +357,17 @@ let map_redocol_map_module =
     
 
 let map_1_1 = 
-    let n = get_tag(),Int32T
+    let n = TyV (get_tag(),Int32T)
     let in_ = get_tag(),GlobalArrayT([n],Float32T)
     let out_ = get_tag(),GlobalArrayT([n],Float32T)
 
     let map_op = 
         inl (VV [V "i";V "in1";V "out1"])
             (mset (VV [IndexArray(V "out1",[V "i"])]) (VV [IndexArray(V "in1",[V "i"])]) B)
-    eval map_module (VV [map_op; V' n;V' in_;V' out_])
+    eval map_module (VV [map_op; T n;V' in_;V' out_])
 
 let map_redo_map_1_1 = 
-    let n = get_tag(), Int32T
+    let n = TyV (get_tag(), Int32T)
     let in_ = get_tag(),GlobalArrayT([n],Float32T)
     let out_ = get_tag(),GlobalArrayT([],Float32T)
 
@@ -354,11 +379,11 @@ let map_redo_map_1_1 =
         inl (VV [V "result";V "out1"])
             (l B (AtomicAdd(dref (V "out1"),V "result")) B)
 
-    eval map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;V' n;V' in_;V' out_])
+    eval map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_])
 
 let map_redocol_map_1_1 = 
-    let num_cols = get_tag(),Int32T
-    let num_rows = get_tag(),Int32T
+    let num_cols = TyV (get_tag(),Int32T)
+    let num_rows = TyV (get_tag(),Int32T)
     let in_ = get_tag(),GlobalArrayT([num_cols;num_rows],Float32T)
     let out_ = get_tag(),GlobalArrayT([num_cols],Float32T)
 
@@ -370,11 +395,5 @@ let map_redocol_map_1_1 =
         inl (VV [V "result";V "col"; V "out1"])
             (l B (AtomicAdd(IndexArray(V "out1",[V "col"]),V "result")) B)
 
-    eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [V' num_cols; V' num_rows];V' in_;V' out_])
-
-
-
-//printfn "%A" map_1_1
-//printfn "%A" map_redo_map_1_1
-//printfn "%A" map_redocol_map_1_1
+    eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_])
 
