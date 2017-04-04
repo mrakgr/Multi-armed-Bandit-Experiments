@@ -61,13 +61,13 @@ let print_method_dictionary (imemo: MethodImplDict) =
             | s -> state s
 
     let tuple_definitions = Dictionary(HashIdentity.Structural)
-    let tuple_def_proc t f = 
+    let tuple_def_proc t = 
         match tuple_definitions.TryGetValue t with
-        | true, v -> f v
+        | true, v -> v
         | false, _ ->
             let v = get_tag()
             tuple_definitions.Add(t,v)
-            f v
+            v
 
     let print_tuple v = sprintf "tuple_%i" v
 
@@ -80,7 +80,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | Float32T -> "float"
         | Float64T -> "double"
         | BoolT -> "int"
-        | VVT t -> tuple_def_proc t print_tuple
+        | VVT t -> tuple_def_proc t |> print_tuple
         | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> 
             if is_array = false then
                 sprintf "%s *" (print_type true t)
@@ -101,14 +101,14 @@ let print_method_dictionary (imemo: MethodImplDict) =
         let typ = print_array_type typ
         let nam = print_tyv v
         let dim =
-            if List.isEmpty ar_sizes then "[1]"
+            if List.isEmpty ar_sizes then "1"
             else
-                List.map (codegen >> sprintf "[%s]") ar_sizes
-                |> String.concat ""
+                List.map (codegen >> sprintf "%s") ar_sizes
+                |> String.concat " * "
         
         match is_shared with
-        | true -> sprintf "__shared__ %s %s%s;" typ nam dim |> state
-        | false -> sprintf "%s %s%s;" typ nam dim |> state
+        | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
+        | false -> sprintf "%s %s[%s];" typ nam dim |> state
 
     and print_methodcall x = List.map (TyV >> codegen) (filter_simple_vars x)
     and codegen = function
@@ -155,10 +155,9 @@ let print_method_dictionary (imemo: MethodImplDict) =
         // Value tuple cases
         | TyIndexVV(v,i,_) -> sprintf "%s.tup%s" (codegen v) (codegen i)
         | TyVV(l,(VVT t)) -> 
-            tuple_def_proc t (fun _ -> ())
-            List.mapi (fun i x -> sprintf ".tup%i = %s" i (codegen x)) l
+            List.map (fun x -> codegen x) l
             |> String.concat ", "
-            |> sprintf "{ %s }"
+            |> sprintf "make_tuple_%i(%s)" (tuple_def_proc t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
 
         // Array cases
@@ -244,9 +243,21 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyCubBlockReduce(_,_,_,_) -> failwith "impossible"
 
     let print_tuple_defintion tys tag =
-        sprintf "struct %s {" (print_tuple tag) |> state
-        enter <| fun _ -> List.iteri (fun i x -> sprintf "%s tup%i;" (print_simple_type x) i |> state) tys; ""
+        let tuple_name = print_tuple tag
+        sprintf "struct %s {" tuple_name |> state
+        enter <| fun _ -> List.iteri (fun i ty -> sprintf "%s tup%i;" (print_simple_type ty) i |> state) tys; ""
         "};" |> state
+        sprintf "__device__ __forceinline__ %s make_tuple_%i(%s){" 
+            tuple_name
+            tag
+            (List.mapi (fun i ty -> sprintf "%s tup_arg%i" (print_simple_type ty) i) tys
+             |> String.concat ", ")
+            |> state
+        enter' <| fun _ ->
+            sprintf "%s tmp;" tuple_name |> state
+            List.iteri (fun i _ -> sprintf "tmp.tup%i = tup_arg%i;" i i |> state) tys
+            "return tmp;" |> state
+        "}" |> state
 
     let print_method prefix (tag,_) (explicit_args,body,implicit_args) = 
         let check_valid_arg tag args =
@@ -284,6 +295,9 @@ let print_method_dictionary (imemo: MethodImplDict) =
             with_channel CodegenChannels.TupleDefinitions <| fun _ ->
                 for x in tuple_definitions do print_tuple_defintion x.Key x.Value
 
+            // I am just swapping the positions so the tuple definitions come first.
+            // Unfortunately, getting the definitions requires a pass through the AST first
+            // so I can't just print them first.
             add_channels_a_to_main CodegenChannels.TupleDefinitions
             add_channels_a_to_main CodegenChannels.Code
         

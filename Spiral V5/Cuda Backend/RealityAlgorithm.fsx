@@ -17,6 +17,18 @@
 
 // There was a bug where a submethod calls a supermethod which has been fixed right now.
 
+// 4/4/2017:
+
+// The fix was incorrect unfortunately. The simple case of a method recursively calling itself now crashes the typechecker.
+// An idea I had last night is to instead of having each function hold its own stack, to use only a single global stack.
+// This will both simplify the algorithm markedly and make it more roboust.
+
+// I am not sure if this is sound, but it might be. I am decently sure that something along these lines should work.
+
+// Edit: All the tests pass and the typechecker has been radically simplified as a result.
+// Good enough for now.
+
+
 open System.Collections.Generic
 
 type Expr = 
@@ -68,17 +80,21 @@ type Data =
     {
     v_dict: Map<string,Ty>
     method_dict: Map<string,string list * Expr>
-    method_dict': Dictionary<string * Ty list,Ty option * Stack<unit -> TypedExpr>>
-    current_stack: Stack<unit -> TypedExpr>
+    method_dict': Dictionary<string * Ty list,Ty option>
+    stack: Stack<unit -> TypedExpr>
     }
 
-let d0() = {v_dict=Map.empty;method_dict=Map.empty;method_dict'=Dictionary();current_stack=Stack()}
+let d0() = {v_dict=Map.empty;method_dict=Map.empty;method_dict'=Dictionary();stack=Stack()}
+
+let peek_stack (stack: Stack<unit -> TypedExpr>) =
+    if stack.Count > 0 then stack.Peek()()
+    else failwith "The program is divergent."
 
 let rec tev (d: Data) exp = 
     let tev_with_cur_stack e f =
-        d.current_stack.Push f
+        d.stack.Push f
         let x = tev d e
-        d.current_stack.Pop |> ignore
+        d.stack.Pop |> ignore
         x
     match exp with
     | V x -> TyV(x,d.v_dict.[x])
@@ -88,7 +104,7 @@ let rec tev (d: Data) exp =
         let mutable fl_result = None
         let tr = 
             tev_with_cur_stack tr <| fun _ -> 
-                let fl = tev_with_cur_stack fl <| fun _ -> failwith "Method is divergent."
+                let fl = tev d fl
                 fl_result <- Some fl
                 fl
 
@@ -100,7 +116,7 @@ let rec tev (d: Data) exp =
         let tr_type = get_type tr
         let fl_type = get_type fl
         if get_type cond <> BoolT || tr_type <> fl_type then
-            failwith "get_type cond <> BoolT || tr_type <> fl_type"
+            failwithf "get_type cond(%A) <> BoolT || tr_type(%A) <> fl_type(%A)" (get_type cond) tr_type fl_type
         else
             TyIf(cond,tr,fl,tr_type)
 
@@ -117,36 +133,20 @@ let rec tev (d: Data) exp =
             let n' = d.method_dict'.TryGetValue n
             match n' with
             | false, _ ->
-                let s = Stack()
-                s.Push <| fun _ -> failwith "The method is divergent."
-                d.method_dict'.Add(n,(None,s))
+                d.method_dict'.Add(n,None)
                 let method_typed_body = 
                     let v_dict = List.fold2 (fun m x y -> Map.add x y m) d.v_dict arg_names args'
-
-                    // Just in case the submethod calls this one.
-                    // Without pushing the recursive call onto the stack, it would
-                    // trigger the divergent method error.
-                    let f _ = 
-                        tev {d with current_stack=s;v_dict=v_dict} method_
-                    s.Push f
-                    let x = f ()
-                    s.Pop() |> ignore
-                    x
-                s.Clear()
-                s.Push <| fun _ -> method_typed_body
+                    tev {d with v_dict=v_dict} method_
+                    
+                d.method_dict'.[n] <- get_type method_typed_body |> Some
                 TyMethodCall(x,args, get_type method_typed_body)
 
-            // It turns out I was too hasty in saying that no unification is necessary.
-            | true, (None, s) ->
-                let t = get_type (s.Peek()())
-                d.method_dict'.[n] <- (Some t,s)
+            | true, None ->
+                let t = get_type (peek_stack d.stack)
+                d.method_dict'.[n] <- (Some t)
                 TyMethodCall(x, args, t)
-            | true, (Some t', s) ->
-                let t = get_type (s.Peek()())
-                if t' = t then
-                    TyMethodCall(x, args, t)
-                else
-                    failwith "Unification failed."
+            | true, (Some t') -> 
+                TyMethodCall(x, args, t')
                 
     | Method(n,args,body,rest) as met -> 
         tev {d with method_dict=d.method_dict.Add(n,(args,body))} rest
@@ -165,22 +165,41 @@ let term1 =
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],If(V "cond",LitInt 1,rec_call),rec_call)
 
+let term1' = 
+    let rec_call = Apply("meth",[LitBool true])
+    Method("meth",["cond"],If(V "cond",rec_call,LitInt 1),rec_call)
+
 let term2 = 
     let rec_call = Apply("meth",[LitBool true])
     let if_ x = If(V "cond",x,rec_call)
     Method("meth",["cond"],if_ (if_ (if_ <| LitFloat 3.3)),rec_call)
 
-let term3 = 
+let term3 = // Error
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],
         Let("x",If(V "cond",LitInt 1,rec_call),
             If(V "cond",LitFloat 1.5,rec_call)),rec_call)
 
-let term4 =
+let term3' = // Correct
+    let rec_call = Apply("meth",[LitBool true])
+    Method("meth",["cond"],
+        Let("x",If(V "cond",LitInt 1,rec_call),
+            If(V "cond",LitFloat 1.5,rec_call)),rec_call)
+
+let term4 = // Correct
     Method("q",["x"],
         Method("w",["y"],If (LitBool true, Apply("q",[V "y"]),LitFloat 5.5),Apply("w",[V "x"])),
         Apply("q",[LitFloat 3.3]))
 
+let term4' = // Correct
+    Method("q",["x"],
+        Method("w",["y"],If (LitBool true, Apply("q",[V "y"]),LitInt 3),Apply("w",[V "x"])),
+        Apply("q",[LitFloat 3.3]))
+
+let term5 = // Error
+    let rec_call = Apply("meth",[LitBool true])
+    Method("meth",["cond"],rec_call,rec_call)
+
 try
-    tev (d0()) term4
+    tev (d0()) term1
 with e -> TyTypeError e.Message
