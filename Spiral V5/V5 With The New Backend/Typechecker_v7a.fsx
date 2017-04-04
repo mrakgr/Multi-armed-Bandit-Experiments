@@ -17,7 +17,7 @@ type Ty =
 and TyV = int64 * Ty
 
 // No return type polymorphism like in Haskell for now. Local type inference only.
-and TyMethodKey = int64 * Ty // The key does not need to know the free variables.
+and TyMethodKey = int64 * TypedExpr // The key does not need to know the free variables.
 
 and Expr = 
     | V of string // standard variable
@@ -103,7 +103,7 @@ and TypedExpr =
     | TyLitInt of int
     | TyLitFloat of float
     | TyLitBool of bool
-    | TyMethodCall of TyMethodKey * TypedExpr * Ty
+    | TyMethodCall of TyMethodKey * implicit_args: (TyV list) option ref * Ty
     
     // Tuple cases
     | TyIndexVV of TypedExpr * TypedExpr * Ty
@@ -155,11 +155,11 @@ and Env = Map<string, TypedExpr>
 // method key * method body * bound variables
 and MethodCases =
     | MethodInEvaluation of Ty option
-    | MethodDone of TyV list * TypedExpr
-and MethodDict = Dictionary<TyMethodKey, MethodCases>
+    | MethodDone of TypedExpr
+and MethodDict = ResizeArray<TyMethodKey * MethodCases>
 and TaggedDict = Dictionary<int64,TypedExpr>
 // method key * method body * implicit arguments
-and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV>>
+and MethodImplDict = ResizeArray<TyMethodKey * (TyV list * TypedExpr)>
 and Data =
     {
     // Immutable
@@ -286,6 +286,56 @@ let filter_simple_vars evaled_cur_args =
 
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
+
+type DualRenameMap = HashSet<int64> * HashSet<int64> * HashSet<int64 * int64>
+let dual_eq_helper ((a,b,ab): DualRenameMap) a' b' = 
+    (a.Contains a' && b.Contains b' && ab.Contains(a',b'))
+    || (a.Add a' = false && b.Add b' = false && ab.Add(a',b') = false)
+
+let rec dual_eq_typedexpr (map: DualRenameMap) a b =
+    match a,b with
+    | TyV(a1,t1), TyV(a2,t2) -> 
+        let a, b = get_type a, get_type b
+        dual_eq_type map a b 
+        && dual_eq_helper map a1 a2
+    | TyV _, _ | _, TyV _ -> false
+    | TyVV (a,_), TyVV (b,_) -> List.forall2 (dual_eq_typedexpr map) a b
+    | TyLitInt a, TyLitInt b -> a = b
+    | TyLitFloat a, TyLitFloat b -> a = b
+    | TyLitBool a, TyLitBool b -> a = b
+    | a,b -> dual_eq_type map (get_type a) (get_type b)
+
+and dual_eq_type (map: DualRenameMap) a b =
+    match a,b with
+    | GlobalArrayT (a1,t1), GlobalArrayT (a2,t2) 
+    | SharedArrayT (a1,t1), SharedArrayT (a2,t2) 
+    | LocalArrayT (a1,t1), LocalArrayT (a2,t2) ->
+        List.forall2 (dual_eq_typedexpr map) a1 a2
+        && dual_eq_type map t1 t2
+    | a,b -> a = b
+
+let dual_eq_make_map a b =
+    let m = h0(), h0(), h0()
+    if dual_eq_typedexpr m a b then
+        Some m
+    else
+        None
+
+let dual_eq_a_to_b ((_,_,map_ab): DualRenameMap) a = 
+    let map_ab = dict map_ab
+    List.map (function
+        | (tag,t) as x ->
+            match map_ab.TryGetValue tag with
+            | true, v -> (v,t)
+            | false, _ -> x) a
+
+let find_key_template find (key,args) =
+    find (fun ((key',args'),_) -> key = key' && Option.isSome (dual_eq_make_map args args'))
+
+let set_key_template find (ar: ResizeArray<_>) k v =
+    match find k with
+    | None -> ar.Add (k,v)
+    | Some i -> ar.[i] <- (k, v)
 
 let rec with_empty_seq (d: Data) expr =
     let d = {d with sequences = Stack()}
@@ -451,33 +501,36 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let apply_inlineable (la,body,env,_) ra =
         tev {d with env = match_vv_inl env la (destructure_deep ra)} body
 
+    let find_key = find_key_template (fun f -> Seq.tryFind f d.memoized_methods) >> Option.map snd
+    let find_key_index = find_key_template (fun f -> Seq.tryFindIndex f d.memoized_methods)
+    let set_key = set_key_template find_key_index d.memoized_methods
+
     let apply_method match_vv (name,la,body,initial_env,t as orig) ra =
         let t = match t with TagT t -> t | _ -> failwith "impossible"
         let bound_args, env = match_vv initial_env la (destructure_deep ra)
-        let method_key = t, get_type bound_args
+        let method_key = t, bound_args
 
-        let make_method_call body_type = TyMethodCall(method_key, bound_args, body_type)
+        let make_method_call body_type = TyMethodCall(method_key, ref None, body_type)
 
-        match d.memoized_methods.TryGetValue method_key with
-        | false, _ ->
-            d.memoized_methods.[method_key] <- MethodInEvaluation(None)
+        match find_key method_key with
+        | None ->
+            set_key method_key (MethodInEvaluation(None))
 
             let d = {d with env = if name <> "" then Map.add name (Method' orig) env else env}
             let body = with_empty_seq d body
-            let sole_arguments = filter_simple_vars bound_args
                         
-            d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body)
+            set_key method_key (MethodDone body)
 
             if is_simple body then make_method_call (get_type body)
             else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
-        | true, MethodInEvaluation None ->
+        | Some (MethodInEvaluation None) ->
             let body = get_body_from d.recursive_methods_stack
             let t = get_type body
-            d.memoized_methods.[method_key] <- MethodInEvaluation (Some t)
+            set_key method_key (MethodInEvaluation (Some t))
             make_method_call t
-        | true, MethodInEvaluation (Some t) ->
+        | Some (MethodInEvaluation (Some t)) ->
             make_method_call t
-        | true, MethodDone(_,body) ->
+        | Some (MethodDone body) ->
             make_method_call (get_type body)
 
     let apply_second apply_inl apply_method la ra =
@@ -622,6 +675,10 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             
 // Unions the free variables from top to bottom of the call chain.
 let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
+    let find_key ar = find_key_template (fun f -> Seq.tryFind f ar)
+    let find_key_index ar = find_key_template (fun f -> Seq.tryFindIndex f ar)
+    let set_key ar = set_key_template (find_key_index ar) ar
+
     let rec closure_conv (bound_vars: HashSet<TyV>) (exp: TypedExpr) =
         let add_var v = bound_vars.Add v |> ignore
         let c x = closure_conv bound_vars x
@@ -637,33 +694,43 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
         | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
         | TyVV(vars,t) -> Set.unionMany (List.map c vars)
         | TyIndexVV(t,i,_) -> Set.union (c t) (c i)
-        | TyMethodCall(m,ar,_) ->
+        | TyMethodCall((_,expl_args' as key'),impl_ref,_) ->
             let method_implicit_args =
-                match imemo.TryGetValue m with
-                | true, (_,_,impl_args) -> impl_args
-                | false, _ ->
-                    match memo.[m] with
-                    | MethodDone(sol_arg, body) -> // union the free vars from top to bottom
+                let make_iml_args' expl_args expl_args' impl_args =
+                    match dual_eq_make_map expl_args expl_args' with
+                    | Some map -> dual_eq_a_to_b map impl_args
+                    | None -> failwith "Compiler error in closure conversion. Mapping creation for implicit arguments failed."
+                let fill_ref_and_conv_to_set expl_args expl_args' impl_args =
+                    let impl_args' = make_iml_args' expl_args expl_args' impl_args
+                    impl_ref := Some impl_args'
+                    Set impl_args'
+                match find_key imemo key' with
+                | Some ((_,expl_args),(impl_args, _)) -> 
+                    fill_ref_and_conv_to_set expl_args expl_args' impl_args
+                | None ->
+                    match find_key memo key' with
+                    | Some ((tag,expl_args as key),MethodDone body) -> // union the free vars from top to bottom
+                        let sol_args = filter_simple_vars expl_args
                         // Without this line the main function would not propagate implicit arguments correctly.
-                        for x in sol_arg do bound_vars.Add x |> ignore
+                        for x in sol_args do bound_vars.Add x |> ignore
                         // Copies the HashSet as it goes into a new scope.
-                        let impl_args = Set.intersect (closure_conv (HashSet(bound_vars)) body) (Set(bound_vars)) - Set(sol_arg)
-                        imemo.Add(m,(sol_arg,body,impl_args))
-                        impl_args
+                        let impl_args_set = Set.intersect (closure_conv (HashSet(bound_vars)) body) (Set(bound_vars)) - Set(sol_args)
+                        let impl_args = impl_args_set |> Set.toList
+                        set_key imemo key (impl_args,body)
+                        fill_ref_and_conv_to_set expl_args expl_args' impl_args
                     | _ -> failwith "impossible"
-            Set.union method_implicit_args (c ar)
-        | TyCubBlockReduce(inp,(TyMethodCall(key,_,_) as m),num_valid,t) ->
+            Set.union method_implicit_args (c expl_args')
+        | TyCubBlockReduce(inp,(TyMethodCall(key',impl_ref,_) as m),num_valid,t) ->
             ignore <| c m // This is so it gets added to the env.
-
-            match imemo.[key] with
-            | _,_,impl_args when impl_args.IsEmpty ->
+            match impl_ref.Value.Value with
+            | [] ->
                 match num_valid with
                 | Some num_valid -> Set.union (c num_valid) (c inp)
                 | None -> c inp
-            | _ -> 
+            | _ ->
                 failwithf "The method passed to Cub should have no implicit arguments.\nm=%A" m
         | TyCubBlockReduce _ -> failwith "impossible"
-        // Array cases
+        // Array caseshat 
         | TyIndexArray(a,b,t) -> 
             let a = 
                 match get_type a with
@@ -698,7 +765,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
 let l v b e = Apply(Inlineable(v,e),b)
 
 let data_empty() = 
-    {memoized_methods=d0();tagged_vars=d0()
+    {memoized_methods=ResizeArray();tagged_vars=d0()
      env=Map.empty;sequences=Stack();recursive_methods_stack=Stack()}
 
 let typecheck body inputs = 
@@ -706,7 +773,7 @@ let typecheck body inputs =
         let main_method, memo = 
             let d = data_empty()
             exp_and_seq d (Apply(body,inputs)), d.memoized_methods
-        let imemo = Dictionary(HashIdentity.Structural)
+        let imemo = ResizeArray()
         closure_conv imemo memo main_method |> ignore
         Succ imemo
     with e -> Fail (e.Message, e.StackTrace)
@@ -805,3 +872,4 @@ let meth4 = // vv test 2
             (ap (V "m") (VV [LitInt 2; LitFloat 3.3; LitBool true])))
 let m4 = typecheck0 meth4
 
+printfn "%A" m4
