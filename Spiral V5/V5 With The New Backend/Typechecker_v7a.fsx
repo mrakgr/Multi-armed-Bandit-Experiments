@@ -287,16 +287,18 @@ let filter_simple_vars evaled_cur_args =
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
+// ---
+// Method memoization functions
+
 type DualRenameMap = HashSet<int64> * HashSet<int64> * HashSet<int64 * int64>
 let dual_eq_helper ((a,b,ab): DualRenameMap) a' b' = 
     (a.Contains a' && b.Contains b' && ab.Contains(a',b'))
-    || (a.Add a' = false && b.Add b' = false && ab.Add(a',b') = false)
+    || (a.Add a' && b.Add b' && ab.Add(a',b'))
 
 let rec dual_eq_typedexpr (map: DualRenameMap) a b =
     match a,b with
     | TyV(a1,t1), TyV(a2,t2) -> 
-        let a, b = get_type a, get_type b
-        dual_eq_type map a b 
+        dual_eq_type map t1 t2
         && dual_eq_helper map a1 a2
     | TyV _, _ | _, TyV _ -> false
     | TyVV (a,_), TyVV (b,_) -> List.forall2 (dual_eq_typedexpr map) a b
@@ -336,6 +338,12 @@ let set_key_template find (ar: ResizeArray<_>) k v =
     match find k with
     | None -> ar.Add (k,v)
     | Some i -> ar.[i] <- (k, v)
+
+let find_key ar = find_key_template (fun f -> Seq.tryFind f ar)
+let find_key_index ar = find_key_template (fun f -> Seq.tryFindIndex f ar)
+let set_key ar = set_key_template (find_key_index ar) ar
+
+// ---
 
 let rec with_empty_seq (d: Data) expr =
     let d = {d with sequences = Stack()}
@@ -501,10 +509,6 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let apply_inlineable (la,body,env,_) ra =
         tev {d with env = match_vv_inl env la (destructure_deep ra)} body
 
-    let find_key = find_key_template (fun f -> Seq.tryFind f d.memoized_methods) >> Option.map snd
-    let find_key_index = find_key_template (fun f -> Seq.tryFindIndex f d.memoized_methods)
-    let set_key = set_key_template find_key_index d.memoized_methods
-
     let apply_method match_vv (name,la,body,initial_env,t as orig) ra =
         let t = match t with TagT t -> t | _ -> failwith "impossible"
         let bound_args, env = match_vv initial_env la (destructure_deep ra)
@@ -512,25 +516,25 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
         let make_method_call body_type = TyMethodCall(method_key, ref None, body_type)
 
-        match find_key method_key with
+        match find_key d.memoized_methods method_key with
         | None ->
-            set_key method_key (MethodInEvaluation(None))
+            set_key d.memoized_methods method_key (MethodInEvaluation(None))
 
             let d = {d with env = if name <> "" then Map.add name (Method' orig) env else env}
             let body = with_empty_seq d body
                         
-            set_key method_key (MethodDone body)
+            set_key d.memoized_methods method_key (MethodDone body)
 
             if is_simple body then make_method_call (get_type body)
             else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
-        | Some (MethodInEvaluation None) ->
+        | Some (_,MethodInEvaluation None) ->
             let body = get_body_from d.recursive_methods_stack
             let t = get_type body
-            set_key method_key (MethodInEvaluation (Some t))
+            set_key d.memoized_methods method_key (MethodInEvaluation (Some t))
             make_method_call t
-        | Some (MethodInEvaluation (Some t)) ->
+        | Some (_,MethodInEvaluation (Some t)) ->
             make_method_call t
-        | Some (MethodDone body) ->
+        | Some (_,MethodDone body) ->
             make_method_call (get_type body)
 
     let apply_second apply_inl apply_method la ra =
@@ -558,7 +562,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | Inlineable(args, body) -> add_tagged (fun t -> Inlineable'(args, body, d.env, TagT t))
     | Method(name, args, body) -> add_tagged (fun t -> Method'(name, args, body, d.env, TagT t))
     | Apply(expr,args) -> apply expr args
-    | If(cond,tr,fl) -> //tev d (Apply(Method("",VV [],HoistedIf(cond,tr,fl)),VV []))
+    | If(cond,tr,fl) -> 
         let cond = tev d cond
         if get_type cond <> BoolT then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
@@ -675,10 +679,6 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             
 // Unions the free variables from top to bottom of the call chain.
 let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
-    let find_key ar = find_key_template (fun f -> Seq.tryFind f ar)
-    let find_key_index ar = find_key_template (fun f -> Seq.tryFindIndex f ar)
-    let set_key ar = set_key_template (find_key_index ar) ar
-
     let rec closure_conv (bound_vars: HashSet<TyV>) (exp: TypedExpr) =
         let add_var v = bound_vars.Add v |> ignore
         let c x = closure_conv bound_vars x
@@ -834,7 +834,6 @@ let term4 = // If test
                 (l (V "tr") (LitFloat 3.33)
                     (l (V "fl") (LitFloat 4.44)
                         (ap (V "if") (VV [V "cond";V "tr";V "fl"]))))))
-
 let t4 = typecheck0 term4
 
 let meth1 = 
@@ -863,7 +862,6 @@ let meth3 = // vv test
     meth (VV [])
         (l (V "m") (meth (VV [V "a"; V "b"; V "c"]) (V "c"))
             (ap (V "m") (VV [LitInt 2; LitFloat 3.3; LitBool true])))
-
 let m3 = typecheck0 meth3
 
 let meth4 = // vv test 2
@@ -871,5 +869,3 @@ let meth4 = // vv test 2
         (l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
             (ap (V "m") (VV [LitInt 2; LitFloat 3.3; LitBool true])))
 let m4 = typecheck0 meth4
-
-printfn "%A" m4
