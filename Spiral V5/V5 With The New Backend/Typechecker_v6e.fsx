@@ -1,4 +1,7 @@
-﻿open System.Collections.Generic
+﻿#load "load-project-release.fsx"
+
+open ManagedCuda.VectorTypes
+open System.Collections.Generic
 
 type Ty =
     | UnitT
@@ -149,7 +152,7 @@ and TypedExpr =
     | TyAtomicAdd of TypedExpr * TypedExpr * Ty
     | TyWhile of TypedExpr * TypedExpr // statement
     // Cub operations
-    | TyCubBlockReduce of input: TypedExpr * method_: TypedExpr * num_valid: TypedExpr option * Ty
+    | TyCubBlockReduce of dim: TypedExpr * input: TypedExpr * method_: TypedExpr * num_valid: TypedExpr option * Ty
 
 and Env = Map<string, TypedExpr>
 // method key * method body * bound variables
@@ -169,6 +172,8 @@ and Data =
     memoized_methods : MethodDict // For hoisted out global methods.
     sequences : Stack<TypedExpr> // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedExpr> // For typechecking recursive calls.
+    blockDim : dim3 // since Cub needs hard constants, I need to have them during typechecking.
+    gridDim : dim3
     }
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
@@ -215,7 +220,7 @@ let rec get_type = function
     // Loops
     | TyWhile(_,_) -> UnitT
     // Cub operations
-    | TyCubBlockReduce(_,_,_,t) -> t
+    | TyCubBlockReduce(_,_,_,_,t) -> t
 
 let rec is_simple' = function
     | UnitT | UInt32T | UInt64T | Int32T | Int64T | Float32T 
@@ -323,8 +328,16 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let traverse_inl t = List.fold2
     let traverse_method t f s a b = map_fold_2_Er f s a b |> fun (l,s) -> TyVV(l,t), s
 
+    let filter_duplicate_vars x =
+        let h = h0()
+        let rec loop = function
+            | TyV(tag,t) as var -> if h.Add tag then Some var else None
+            | TyVV(l,t) -> TyVV(List.choose loop l, t) |> Some
+            | x -> Some x
+        (loop x).Value
+
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`. 
-    // It can be straightforwardly derived from this using the Y combinator.
+    // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
     let rec destructure_deep r = 
         match r with
         | TyLitBool _ | TyLitFloat _ | TyLitBool _ | TyUnit
@@ -451,9 +464,11 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let apply_inlineable (la,body,env,_) ra =
         tev {d with env = match_vv_inl env la (destructure_deep ra)} body
 
-    let apply_method match_vv (name,la,body,initial_env,t as orig) ra =
+    let apply_method (name,la,body,initial_env,t as orig) ra =
         let t = match t with TagT t -> t | _ -> failwith "impossible"
-        let bound_args, env = match_vv initial_env la (destructure_deep ra)
+        let bound_args, env = 
+            match_vv_method initial_env la (destructure_deep ra)
+            |> fun (bound_args, env) -> filter_duplicate_vars bound_args, env
         let method_key = t, get_type bound_args
 
         let make_method_call body_type = TyMethodCall(method_key, bound_args, body_type)
@@ -486,8 +501,8 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | Method'(a,b,c,d,e) -> apply_method (a,b,c,d,e) ra
         | _ -> failwith "impossible"
 
-    let apply_both = apply_second apply_inlineable (apply_method match_vv_method)
-    let apply_method_only match_vv = apply_second (fun _ -> failwith "Inlineable not supported.") (apply_method match_vv)
+    let apply_both = apply_second apply_inlineable apply_method
+    let apply_method_only = apply_second (fun _ -> failwith "Inlineable not supported.") apply_method
 
     let apply expr args = apply_both (apply_first expr) (tev d args)
 
@@ -564,12 +579,12 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | BlockIdxX -> TyBlockIdxX 
     | BlockIdxY -> TyBlockIdxY 
     | BlockIdxZ -> TyBlockIdxZ
-    | BlockDimX -> TyBlockDimX 
-    | BlockDimY -> TyBlockDimY 
-    | BlockDimZ -> TyBlockDimZ
-    | GridDimX -> TyGridDimX 
-    | GridDimY -> TyGridDimY 
-    | GridDimZ -> TyGridDimZ
+    | BlockDimX -> TyLitInt (int d.blockDim.x) 
+    | BlockDimY -> TyLitInt (int d.blockDim.y) 
+    | BlockDimZ -> TyLitInt (int d.blockDim.z)
+    | GridDimX -> TyLitInt (int d.gridDim.x)
+    | GridDimY -> TyLitInt (int d.gridDim.y) 
+    | GridDimZ -> TyLitInt (int d.gridDim.z)
 
     // Primitive operations on expressions.
     | Add(a,b) -> prim_arith_op a b TyAdd
@@ -608,6 +623,10 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | BoolT, _ -> failwith "Expected UnitT as the type of While's body."
         | _ -> failwith "Expected BoolT as the type of While's conditional."
     | CubBlockReduce(input, method_, num_valid) ->
+        let dim = 
+            if int d.blockDim.y <> 1 || int d.blockDim.z <> 1 then // TODO: Remove this restriction.
+                failwith "int d.blockDim.y <> 1 || int d.blockDim.z <> 1.\nTODO: Remove this restriction."
+            tev d BlockDimX
         let evaled_input = tev d input
         let method_ =
             match get_type evaled_input with
@@ -615,10 +634,10 @@ and exp_and_seq (d: Data) exp: TypedExpr =
                 let arg = IndexArray(T evaled_input,[LitInt 0])
                 tev d (VV [arg;arg])
             | x -> tev d (VV [T evaled_input; T evaled_input])
-            |> apply_method_only match_vv_method (apply_first method_)
+            |> apply_method_only (apply_first method_)
 
         let num_valid = Option.map (tev d) num_valid
-        TyCubBlockReduce(evaled_input,method_,num_valid,get_type method_)
+        TyCubBlockReduce(dim, evaled_input,method_,num_valid,get_type method_)
             
 // Unions the free variables from top to bottom of the call chain.
 let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
@@ -652,7 +671,7 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
                         impl_args
                     | _ -> failwith "impossible"
             Set.union method_implicit_args (c ar)
-        | TyCubBlockReduce(inp,(TyMethodCall(key,_,_) as m),num_valid,t) ->
+        | TyCubBlockReduce(_,inp,(TyMethodCall(key,_,_) as m),num_valid,t) ->
             ignore <| c m // This is so it gets added to the env.
 
             match imemo.[key] with
@@ -697,21 +716,24 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
 
 let l v b e = Apply(Inlineable(v,e),b)
 
-let data_empty() = 
-    {memoized_methods=d0();tagged_vars=d0()
+let data_empty (blockDim, gridDim) = 
+    {memoized_methods=d0();tagged_vars=d0();blockDim=blockDim;gridDim=gridDim
      env=Map.empty;sequences=Stack();recursive_methods_stack=Stack()}
 
-let typecheck body inputs = 
+let typecheck dims body inputs = 
     try
         let main_method, memo = 
-            let d = data_empty()
+            let d = data_empty dims
             exp_and_seq d (Apply(body,inputs)), d.memoized_methods
         let imemo = Dictionary(HashIdentity.Structural)
         closure_conv imemo memo main_method |> ignore
         Succ imemo
     with e -> Fail (e.Message, e.StackTrace)
 
-let typecheck0 program = typecheck program (VV [])
+/// Reasonable default for the dims.
+let default_dims = dim3(256), dim3(20)
+
+let typecheck0 program = typecheck default_dims program (VV [])
 
 let inl x y = Inlineable(x,y)
 let ap x y = Apply(x,y)

@@ -1,7 +1,9 @@
 ﻿//[<AutoOpen>]
 //module SpiralV5.Main
 
-#load "load-project-release.fsx"
+#load "Codegen_v3a.fsx"
+open Typechecker_v6e
+open Codegen_v3a
 
 // Open up the namespaces.
 open ManagedCuda
@@ -60,9 +62,9 @@ Unlike with VS and Cuda SDK, this will have to be done manually."""
 let kernels_dir = IO.Path.Combine(__SOURCE_DIRECTORY__,"Cuda Kernels")
 IO.Directory.CreateDirectory(kernels_dir) |> ignore // Creates the Cuda Kernels directory if it does not exist. WriteAllBytes would otherwise throw an exception.
 
-let compile_kernel_nvrtc kernel_name kernel_code = 
-    let kernel_path = IO.Path.Combine(kernels_dir,kernel_name)
-    let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,kernel_name)
+let compile_kernel_nvrtc file_name kernel_code = 
+    let kernel_path = IO.Path.Combine(kernels_dir,file_name)
+    let k = new ManagedCuda.NVRTC.CudaRuntimeCompiler(kernel_code,file_name)
     try k.Compile(
             [|
             "-arch=compute_30"
@@ -75,12 +77,12 @@ let compile_kernel_nvrtc kernel_name kernel_code =
         reraise()
     let ptx = k.GetPTX()
     IO.File.WriteAllBytes(kernel_path,ptx)
-    cuda_context.LoadKernelPTX(ptx,kernel_name)
+    cuda_context.LoadKernelPTX(ptx,"MainKernel")
 
 /// Puts quotes around the string.
 let quote x = sprintf "\"%s\"" x
 
-let inline compile_kernel_using_nvcc_bat_router kernel_name kernel_code =
+let inline compile_kernel_using_nvcc_bat_router file_name kernel_code =
     let nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
     use p = 
         let procStartInfo = 
@@ -103,7 +105,7 @@ let inline compile_kernel_using_nvcc_bat_router kernel_name kernel_code =
     let quoted_cuda_toolkit_path_to_include = Path.Combine(cuda_toolkit_path,"include") |> quote
     let quoted_cub_path_to_include = cub_path |> quote
     let quoted_kernels_dir = kernels_dir |> quote
-    let target_path = Path.Combine(kernels_dir,kernel_name+".ptx")
+    let target_path = Path.Combine(kernels_dir,file_name+".ptx")
     let quoted_target_path = target_path |> quote
     let input_path = Path.Combine(kernels_dir,"_temp.cu")
     let quoted_input_path = input_path |> quote
@@ -129,17 +131,17 @@ let inline compile_kernel_using_nvcc_bat_router kernel_name kernel_code =
 
     if p.ExitCode <> 0 then failwithf "NVCC failed compilation with code %i" p.ExitCode
 
-    cuda_context.LoadKernelPTX(target_path,kernel_name)
+    cuda_context.LoadKernelPTX(target_path,"MainKernel")
 
-let load_kernel compile_kernel kernel_name kernel_code = 
-    let kernel_path = IO.Path.Combine(kernels_dir,kernel_name+".ptx")
+let load_kernel compile_kernel file_name kernel_code = 
+    let kernel_path = IO.Path.Combine(kernels_dir,file_name+".ptx")
         
     if IO.File.Exists(kernel_path) 
-    then cuda_context.LoadKernelPTX(kernels_dir,kernel_name+".ptx") // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
-    else compile_kernel kernel_name kernel_code
+    then cuda_context.LoadKernelPTX(kernels_dir,file_name+".ptx") // For all the modules, it takes roughly 0.35s to compile them. Loading them from drive takes less than a millisecond.
+    else compile_kernel file_name kernel_code
 
-let inline load_kernel_nvrtc kernel_name kernel_code = load_kernel compile_kernel_nvrtc kernel_name kernel_code
-let inline load_kernel_nvcc kernel_name kernel_code = load_kernel compile_kernel_using_nvcc_bat_router kernel_name kernel_code
+let inline load_kernel_nvrtc file_name kernel_code = load_kernel compile_kernel_nvrtc file_name kernel_code
+let inline load_kernel_nvcc file_name kernel_code = load_kernel compile_kernel_using_nvcc_bat_router file_name kernel_code
 
 let memoize f =
     let cache = Dictionary(HashIdentity.Structural)
@@ -151,10 +153,9 @@ let memoize f =
             cache.[x] <- res
             res
 
-#load "Codegen_v3a.fsx"
-open Typechecker_v6e
-open Codegen_v3a
-
 let get = function Succ x -> x | _ -> failwith "Error"
-printfn "%A" map_redocol_map_1_1
-let x = compile_kernel_using_nvcc_bat_router "method_126" (get map_redocol_map_1_1)
+let x = 
+    let k = get map_redocol_map_1_1
+    printfn "%s" k
+    compile_kernel_using_nvcc_bat_router (k |> hash |> string) k
+

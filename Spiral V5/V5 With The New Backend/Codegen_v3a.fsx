@@ -234,13 +234,15 @@ let print_method_dictionary (imemo: MethodImplDict) =
             enter <| fun _ -> codegen body
             "}" |> state
             ""
-        | TyCubBlockReduce(ins, TyMethodCall((tag,_),_,_),num_valid,t) ->
+        | TyCubBlockReduce(dim, ins, TyMethodCall((tag,_),_,_),num_valid,t) ->
             match num_valid with
             | Some num_valid -> 
-                sprintf "cub::BlockReduce<%s,128>().Reduce(%s,%s,%s)"  // TODO: Do not forget to change the template parameter.
-                    (print_simple_type t) (codegen ins) (print_method tag) (codegen num_valid)
-            | None -> sprintf "cub::BlockReduce<%s,128>().Reduce(%s,%s)" (print_simple_type t) (codegen ins) (print_method tag)
-        | TyCubBlockReduce(_,_,_,_) -> failwith "impossible"
+                sprintf "cub::BlockReduce<%s,%s>().Reduce(%s,%s,%s)"  // TODO: Do not forget to change the template parameter.
+                    (print_simple_type t) (codegen dim) (codegen ins) (print_method tag) (codegen num_valid)
+            | None -> 
+                sprintf "cub::BlockReduce<%s,%s>().Reduce(%s,%s)" 
+                    (print_simple_type t) (codegen dim) (codegen ins) (print_method tag)
+        | TyCubBlockReduce _ -> failwith "impossible"
 
     let print_tuple_defintion tys tag =
         let tuple_name = print_tuple tag
@@ -259,17 +261,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
             "return tmp;" |> state
         "}" |> state
 
-    let print_method prefix (tag,_) (explicit_args,body,implicit_args) = 
-        let check_valid_arg tag args =
-            if List.exists (fun (_,t) -> t = UnitT) args then
-                failwithf "UnitT arguments are not allowed in method calls. Tag=%i, Args: %A" tag args
-            else
-                args
-
-        let method_name = print_method tag
+    let print_method is_main (tag,_) (explicit_args,body,implicit_args) = 
+        let prefix = if is_main then "__global__" else "__device__"
+        let method_name = if is_main then "MainKernel" else print_method tag
         let args = 
             Set.toList implicit_args @ explicit_args
-            |> check_valid_arg tag
             |> List.map print_tyv_with_type
             |> String.concat ", "
         sprintf "%s %s %s(%s) {" prefix (print_simple_type (get_type body)) method_name args |> state
@@ -289,8 +285,8 @@ let print_method_dictionary (imemo: MethodImplDict) =
             with_channel CodegenChannels.Code <| fun _ ->
                 let min = imemo |> Seq.fold (fun s kv -> min (fst kv.Key) s) System.Int64.MaxValue
                 for x in imemo do 
-                    let prefix = if fst x.Key = min then "__global__" else "__device__"
-                    print_method prefix x.Key x.Value
+                    let is_main = fst x.Key = min
+                    print_method is_main x.Key x.Value
 
             with_channel CodegenChannels.TupleDefinitions <| fun _ ->
                 for x in tuple_definitions do print_tuple_defintion x.Key x.Value
@@ -306,12 +302,12 @@ let print_method_dictionary (imemo: MethodImplDict) =
         cur_program () |> process_statements |> Succ
     with e -> Fail (e.Message, e.StackTrace)
 
-let eval body inputs = 
-    match typecheck body inputs with
+let eval dims body inputs = 
+    match typecheck dims body inputs with
     | Succ imemo -> print_method_dictionary imemo
     | Fail er -> Fail er
 
-let eval0 body = eval body (VV [])
+let eval0 body = eval default_dims body (VV [])
 
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
@@ -378,7 +374,7 @@ let map_1_1 =
     let map_op = 
         inl (VV [V "i";V "in1";V "out1"])
             (mset (VV [IndexArray(V "out1",[V "i"])]) (VV [IndexArray(V "in1",[V "i"])]) B)
-    eval map_module (VV [map_op; T n;V' in_;V' out_])
+    eval default_dims map_module (VV [map_op; T n;V' in_;V' out_])
 
 let map_redo_map_1_1 = 
     let n = TyV (get_tag(), Int32T)
@@ -393,7 +389,7 @@ let map_redo_map_1_1 =
         inl (VV [V "result";V "out1"])
             (l B (AtomicAdd(dref (V "out1"),V "result")) B)
 
-    eval map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_])
+    eval default_dims map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_])
 
 let map_redocol_map_1_1 = 
     let num_cols = TyV (get_tag(),Int32T)
@@ -409,5 +405,4 @@ let map_redocol_map_1_1 =
         inl (VV [V "result";V "col"; V "out1"])
             (l B (AtomicAdd(IndexArray(V "out1",[V "col"]),V "result")) B)
 
-    eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_])
-
+    eval default_dims map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_])
