@@ -1,4 +1,26 @@
-﻿open System.Collections.Generic
+﻿// 4/5/2017:
+
+// I spent quite some time writing the dual_eq memoization functions yesterday, but it is not sustainable.
+// It occurred to me that if I smudged variables on the way back I would lose information and possibly lead to errors.
+//
+// Also, despite the functions being only like 80 LOC, they feel much heavier than that as their logic 
+// incredibly intricate and interwoven with the rest of the codebase. If I change the logic in destructuring 
+// for example, the typechecker will not help me refactor the dual_eq functions.
+
+// I thought I had a solution to the memoization problem, but it turns out this is just a tradeoff.
+
+// It is one thing to make them the first time, but they feel dangerous and a nest of reaches to come; it is best the I 
+// burn then out before they get the chance to take root.
+
+// At the very least, I felt obligated to try writing this because I've been thinking so long on how to do this and 
+// now I think I understand much better why totality is so important in concert with dependent types. 
+// This stuff is no joke at all.
+
+// I will leave this code here for posterity.
+
+// I still have not fixed the duplicate name bug in function arguments.
+
+open System.Collections.Generic
 
 type Ty =
     | UnitT
@@ -323,13 +345,35 @@ let dual_eq_make_map a b =
     else
         None
 
+type DualRenameDict = IDictionary<int64,int64>
+let rec dual_eq_a_to_b_type (map_ab: DualRenameDict) (map_ab': DualRenameDict) = function
+    | GlobalArrayT (a1,t1) -> GlobalArrayT(List.map (dual_eq_a_to_b_typedexpr map_ab map_ab') a1, dual_eq_a_to_b_type map_ab map_ab' t1)
+    | SharedArrayT (a1,t1) -> SharedArrayT(List.map (dual_eq_a_to_b_typedexpr map_ab map_ab') a1, dual_eq_a_to_b_type map_ab map_ab' t1)
+    | LocalArrayT (a1,t1) -> LocalArrayT(List.map (dual_eq_a_to_b_typedexpr map_ab map_ab') a1, dual_eq_a_to_b_type map_ab map_ab' t1)
+    | x -> x
+        
+and dual_eq_a_to_b_typedexpr (map_ab: DualRenameDict) (map_ab': DualRenameDict) = function
+    | TyV(tag,t) as x ->
+        let t = dual_eq_a_to_b_type map_ab map_ab' t
+        match map_ab.TryGetValue tag with
+        | true, v -> TyV(v, t)
+        | false, _ -> 
+            match map_ab'.TryGetValue tag with
+            | true, v -> TyV(tag, t)
+            | false, _ ->
+                let v = get_tag()
+                map_ab.Add(tag,v) |> ignore
+                TyV(v,t)
+    | TyVV(a1,t1) -> TyVV(List.map (dual_eq_a_to_b_typedexpr map_ab map_ab') a1, dual_eq_a_to_b_type map_ab map_ab' t1)
+    | x -> x
+
 let dual_eq_a_to_b ((_,_,map_ab): DualRenameMap) a = 
     let map_ab = dict map_ab
-    List.map (function
-        | (tag,t) as x ->
-            match map_ab.TryGetValue tag with
-            | true, v -> (v,t)
-            | false, _ -> x) a
+    let map_ab' = d0()
+    List.map (
+        TyV
+        >> dual_eq_a_to_b_typedexpr map_ab map_ab' 
+        >> (function TyV(a,b) -> a,b | _ -> failwith "impossible")) a
 
 let find_key_template find (key,args) =
     find (fun ((key',args'),_) -> key = key' && Option.isSome (dual_eq_make_map args args'))
