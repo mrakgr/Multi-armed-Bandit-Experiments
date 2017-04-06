@@ -66,6 +66,7 @@
     <None Include="V5 With The New Backend\Typechecker_v6e.fsx" />
     <None Include="V5 With The New Backend\Codegen_v3a.fsx" />
     <None Include="V5 With The New Backend\SpiralV5.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DM.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Prims.fsx" />
     <None Include="y-comb.fsx" />

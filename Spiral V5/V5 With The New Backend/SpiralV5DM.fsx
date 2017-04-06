@@ -23,7 +23,7 @@ open System.Runtime.InteropServices
 //    - During the optimization phase, the optimizers are responsible for setting the adjoints of the weight nodes to zero.
 
 // Helper functions
-let inline dispose (v: #IDisposable) = v.Dispose()
+
 
 /// Copies a host array to device.
 let inline to_dev (host_ar: 't []) =
@@ -53,13 +53,7 @@ type Df =
     static member inline create P =
         {P=P;A=ref 0.0f}
 
-type SpiralType =
-| SFloat32
-| SInt32
 
-let sizeof = function
-    | SFloat32 -> 4
-    | SInt32 -> 4
 
 type DM(size: int [], typ: SpiralType, data: ResizeArray<CudaDeviceVariable<byte>>) =
     member t.Size = size
