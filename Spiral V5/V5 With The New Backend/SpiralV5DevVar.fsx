@@ -132,15 +132,31 @@ type SpiralDeviceUpwardResizablePtr =
     interface IDisposable with
         member t.Dispose() = dispose t.Ptr
 
-//[<Struct>]
-//type SpiralDeviceVarStruct =
-//    val PtrView: SpiralDevicePtrView
-//    val Type: SpiralDeviceVarType
-//
-//    new (size,typ) =
-//        let ptr = new SpiralDevicePtr(sizeof typ * size)
-//        {Ptr=ptr;Type=typ}
-//
-//    interface IDisposable with
-//        member t.Dispose() = (t.Ptr :> IDisposable).Dispose()
+type DM = 
+    {
+    Size: int []
+    Type: SpiralDeviceVarType
+    Data: ResizeArray<SpiralDeviceUpwardResizablePtr>
+    }
+    
+    member t.NumVars = t.Data.Count
 
+    interface IDisposable with
+        member t.Dispose() = for var in t.Data do dispose var
+
+let size_to_total_size x = Array.fold ((*)) 1 x
+let total_size (x: DM) = size_to_total_size x.Size
+
+let primal (x: DM) = let i=0 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have a primal."
+let adjoint (x: DM) = let i=1 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an adjoint."
+let has_adjoint (x: DM) = let i=1 in i < x.NumVars
+let aux1 (x: DM) = let i=2 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux1."
+let aux2 (x: DM) = let i=3 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an aux2."
+
+type DM with 
+    member x.P = primal x
+    member x.A = adjoint x
+    member x.P' = x.Size, primal x
+    member x.A' = x.Size, adjoint x
+    member x.HasAdjoint = has_adjoint x
+    member x.NumAuxes = max (x.NumVars - 2) 0
