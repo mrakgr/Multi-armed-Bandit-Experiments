@@ -639,7 +639,8 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         let num_valid = Option.map (tev d) num_valid
         TyCubBlockReduce(dim, evaled_input,method_,num_valid,get_type method_)
             
-// Unions the free variables from top to bottom of the call chain.
+// bound_prev intersected with used above.
+// Currently it does only that hence it is only half complete as a function.
 let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
     let rec closure_conv (bound_vars: HashSet<TyV>) (exp: TypedExpr) =
         let add_var v = bound_vars.Add v |> ignore
@@ -663,10 +664,14 @@ let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
                 | false, _ ->
                     match memo.[m] with
                     | MethodDone(sol_arg, body) -> // union the free vars from top to bottom
-                        // Without this line the main function would not propagate implicit arguments correctly.
+                        // Without this line the main function would not propagate implicit arguments correctly
+                        // In the entry to main function.
                         for x in sol_arg do bound_vars.Add x |> ignore
-                        // Copies the HashSet as it goes into a new scope.
-                        let impl_args = Set.intersect (closure_conv (HashSet(bound_vars)) body) (Set(bound_vars)) - Set(sol_arg)
+                        
+                        let impl_args = 
+                            let bound_prev = Set(bound_vars)
+                            let used_above = closure_conv (HashSet(bound_vars)) body // Copies the HashSet as it goes into a new scope.
+                            Set.intersect bound_prev used_above - Set(sol_arg) 
                         imemo.Add(m,(sol_arg,body,impl_args))
                         impl_args
                     | _ -> failwith "impossible"
