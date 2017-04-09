@@ -154,6 +154,7 @@ let memoize f =
             res
 
 let get = function Succ x -> x | _ -> failwith "Error"
+
 let x = 
     let k = get map_redo_map_1_1
     printfn "%s" k
