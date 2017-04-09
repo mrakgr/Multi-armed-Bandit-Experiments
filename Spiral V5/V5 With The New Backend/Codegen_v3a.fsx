@@ -71,7 +71,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
     let print_tuple v = sprintf "tuple_%i" v
 
-    let rec print_type is_array = function
+    let case_array_in_array _ = 
+        // The only reason is really because C syntax is such a pain in the ass.
+        // I do not want to deal with casting void pointers here.
+        failwith "Arrays should not be inside other arrays."
+    let rec print_type array_case = function
         | UnitT -> "void"
         | UInt32T -> "unsigned int"
         | UInt64T -> "unsigned long long int"
@@ -81,17 +85,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | Float64T -> "double"
         | BoolT -> "int"
         | VVT t -> tuple_def_proc t |> print_tuple
-        | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> 
-            if is_array = false then
-                sprintf "%s *" (print_type true t)
-            else
-                // The only reason is really because C syntax is such a pain in the ass.
-                // I do not want to deal with casting void pointers here.
-                failwith "Arrays should not be inside other arrays."
+        | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> array_case t
         | TagT _ -> failwith "Can't print tagged types."
 
-    let print_simple_type = print_type false
-    let print_array_type = print_type true
+    let print_simple_type = print_type (fun t -> sprintf "%s *" (print_type case_array_in_array t))
+    let print_array_type = print_type case_array_in_array
 
     let print_tyv (tag,_) = sprintf "var_%i" tag
     let print_tyv_with_type (_,ty as v) = sprintf "%s %s" (print_simple_type ty) (print_tyv v)
@@ -110,13 +108,8 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
         | false -> sprintf "%s %s[%s];" typ nam dim |> state
 
-    and print_methodcall x = List.map (TyV >> codegen) (filter_simple_vars x)
+    and print_methodcall x = List.map codegen (filter_simple_vars x)
     and codegen = function
-        | TySeq(seq,rest,_) ->
-            List.map codegen seq
-            |> List.forall ((=) "")
-            |> fun r -> if r then () else failwith "In TySeq the sequences should all be statements."
-            codegen rest
         | TyV x -> print_tyv x
         | TyIf(cond,tr,fl,_) -> // If statements will aways be hoisted into methods in this language.
             sprintf "if (%s) {" (codegen cond) |> state
@@ -126,20 +119,20 @@ let print_method_dictionary (imemo: MethodImplDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet((_,t) as v,TyCreateArray _) ->
+        | TyLet((_,t) as v,TyCreateArray _, rest,_) ->
             match t with
             | LocalArrayT(ar_sizes,typ) -> print_array_declaration false typ v ar_sizes
             | SharedArrayT(ar_sizes,typ) -> print_array_declaration true typ v ar_sizes
             | _ -> failwith "impossible"
-            ""
-        | TyLet(_,(TyUnit | Inlineable' _ | Method' _)) -> ""
+            codegen rest
+        | TyLet(_,(TyUnit | Inlineable' _ | Method' _),rest,_) -> codegen rest
         | Inlineable' _ | Method' _ -> failwith "Inlineable' and Method' should never appear in isolation."
-        | TyLet((_,t),b) when t = UnitT ->
+        | TyLet((_,t),b,rest,_) when t = UnitT ->
             sprintf "%s;" (codegen b) |> state
-            ""
-        | TyLet(tyv,b) ->
+            codegen rest
+        | TyLet(tyv,b,rest,_) ->
             sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
-            ""
+            codegen rest
         | TyUnit -> ""
         | TyLitInt x -> string x
         | TyLitFloat x -> string x
@@ -223,17 +216,17 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyTanh (x,_) -> sprintf "tanh(%s)" (codegen x)
         | TyNeg (x,_) -> sprintf "(-%s)" (codegen x)
         // Mutable operations.
-        | TyMSet (a,b) ->
+        | TyMSet (a,b,rest,_) ->
             sprintf "%s = %s;" (codegen a) (codegen b) |> state
-            ""
+            codegen rest
         | TyAtomicAdd (a,b,_) ->
             sprintf "atomicAdd(&(%s),%s)" (codegen a) (codegen b)
         // Loops
-        | TyWhile (cond,body) -> 
+        | TyWhile (cond,body,rest,_) -> 
             sprintf "while (%s) {" (codegen cond) |> state
             enter <| fun _ -> codegen body
             "}" |> state
-            ""
+            codegen rest
         | TyCubBlockReduce(dim, ins, TyMethodCall((tag,_),_,_),num_valid,t) ->
             match num_valid with
             | Some num_valid -> 
@@ -365,3 +358,43 @@ let map_redocol_map_module =
                     ] (V "col" + GridDimX)))
             B)
     
+//let map_1_1 = 
+//    let n = TyV (get_tag(),Int32T)
+//    let in_ = get_tag(),GlobalArrayT([n],Float32T)
+//    let out_ = get_tag(),GlobalArrayT([n],Float32T)
+//
+//    let map_op = 
+//        inl (VV [V "i";V "in1";V "out1"])
+//            (mset (VV [IndexArray(V "out1",[V "i"])]) (VV [IndexArray(V "in1",[V "i"])]) B)
+//    eval default_dims map_module (VV [map_op; T n;V' in_;V' out_])
+//
+//let map_redocol_map_1_1 = 
+//    let num_cols = TyV (get_tag(),Int32T)
+//    let num_rows = TyV (get_tag(),Int32T)
+//    let in_ = get_tag(),GlobalArrayT([num_cols;num_rows],Float32T)
+//    let out_ = get_tag(),GlobalArrayT([num_cols],Float32T)
+//
+//    let map_load_op =
+//        inl (VV [VV [V "col"; V "row"];V "in1"]) (IndexArray(V "in1",[V "col";V "row"]))
+//    let reduce_op = 
+//        meth (VV [V "a"; V "b"]) (V "a" + V "b")
+//    let map_store_op =
+//        inl (VV [V "result";V "col"; V "out1"])
+//            (l B (AtomicAdd(IndexArray(V "out1",[V "col"]),V "result")) B)
+//
+//    eval default_dims map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_])
+
+let map_redo_map_1_1 = 
+    let n = TyV (get_tag(), Int32T)
+    let in_ = get_tag(),GlobalArrayT([n],Float32T)
+    let out_ = get_tag(),GlobalArrayT([],Float32T)
+
+    let map_load_op =
+        inl (VV [V "i";V "in1"]) (IndexArray(V "in1",[V "i"]))
+    let reduce_op = 
+        meth (VV [V "a"; V "b"]) (V "a" + V "b")
+    let map_store_op =
+        inl (VV [V "result";V "out1"])
+            (l B (AtomicAdd(dref (V "out1"),V "result")) B)
+
+    eval default_dims map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_])

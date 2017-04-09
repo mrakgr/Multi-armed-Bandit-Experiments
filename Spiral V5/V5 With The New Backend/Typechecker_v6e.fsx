@@ -101,7 +101,7 @@ and TypedExpr =
     
     | TyV of TyV
     | TyIf of TypedExpr * TypedExpr * TypedExpr * Ty
-    | TyLet of TyV * TypedExpr // expression (in tuples) / statement (in seqs)
+    | TyLet of TyV * TypedExpr * TypedExpr * Ty
     | TyUnit
     | TyLitInt of int
     | TyLitFloat of float
@@ -112,9 +112,6 @@ and TypedExpr =
     | TyIndexVV of TypedExpr * TypedExpr * Ty
     | TyVV of TypedExpr list * Ty
 
-    // Seq
-    | TySeq of TypedExpr list * TypedExpr * Ty
-        
     // Array cases
     | TyIndexArray of TypedExpr * TypedExpr list * Ty
     | TyCreateArray of Ty
@@ -148,9 +145,9 @@ and TypedExpr =
     | TyTanh of TypedExpr * Ty
     | TyNeg of TypedExpr * Ty
     // Mutable operations.
-    | TyMSet of TypedExpr * TypedExpr // statement
+    | TyMSet of TypedExpr * TypedExpr * TypedExpr * Ty
     | TyAtomicAdd of TypedExpr * TypedExpr * Ty
-    | TyWhile of TypedExpr * TypedExpr // statement
+    | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
     // Cub operations
     | TyCubBlockReduce of dim: TypedExpr * input: TypedExpr * method_: TypedExpr * num_valid: TypedExpr option * Ty
 
@@ -170,7 +167,7 @@ and Data =
     // Mutable
     tagged_vars : TaggedDict // For looking up the the unapplied Inlineables and Methods
     memoized_methods : MethodDict // For hoisted out global methods.
-    sequences : Stack<TypedExpr> // For sequencing statements.
+    sequences : (TypedExpr -> TypedExpr) option ref // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedExpr> // For typechecking recursive calls.
     blockDim : dim3 // since Cub needs hard constants, I need to have them during typechecking.
     gridDim : dim3
@@ -185,7 +182,6 @@ let rec get_type = function
     | TyLitInt _ -> Int32T
     | TyLitFloat _ -> Float32T
     | TyLitBool _ -> BoolT
-    | TyLet((_,_),_) | TyUnit -> UnitT
     | TyMethodCall(_,_,t) -> t
 
     // Cuda kernel constants
@@ -196,9 +192,6 @@ let rec get_type = function
 
     // Tuple cases
     | TyVV(_,t) | TyIndexVV(_,_,t) -> t
-
-    // Seq
-    | TySeq(_,_,t) -> t
 
     // Array cases
     | TyIndexArray(_,_,t) | TyCreateArray(t) -> t
@@ -216,9 +209,10 @@ let rec get_type = function
     | TyNeg(_,t) -> t
     // Mutable operations.
     | TyAtomicAdd(_,_,t) -> t
-    | TyMSet(_,_) -> UnitT
-    // Loops
-    | TyWhile(_,_) -> UnitT
+    
+    // Statements
+    | TyUnit -> UnitT
+    | TyMSet(_,_,_,t) | TyWhile(_,_,_,t) | TyLet((_,_),_,_,t)  -> t
     // Cub operations
     | TyCubBlockReduce(_,_,_,_,t) -> t
 
@@ -282,21 +276,33 @@ let get_body_from (stack: Stack<unit -> TypedExpr>) =
     if stack.Count > 0 then stack.Peek()()
     else failwith "The program is divergent."
 
-let filter_simple_vars evaled_cur_args =
+let filter_tyvs evaled_cur_args =
     let rec loop = function
         | TyV(_,t as v) when is_simple' t -> [v]
         | TyVV(x,_) -> List.collect loop x
         | _ -> []
     loop evaled_cur_args
 
+let filter_simple_vars evaled_cur_args =
+    let rec loop = function
+        | TyVV(x,_) -> List.collect loop x
+        | x when is_simple x -> [x]
+        | _ -> []
+    loop evaled_cur_args
+
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
+let apply_sequences sequences x =
+    match sequences with
+    | Some sequences -> sequences x
+    | None -> x
+
 let rec with_empty_seq (d: Data) expr =
-    let d = {d with sequences = Stack()}
+    let d = {d with sequences = ref None}
     let expr = exp_and_seq d expr
-    let seq = Seq.toList d.sequences |> List.rev
-    TySeq(seq,expr,get_type expr)
+    apply_sequences !d.sequences expr
+
 
 // Does macro expansion and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
@@ -308,13 +314,17 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | true -> f()
         | false -> failwithf "%s is a duplicate name in pattern matching." arg_name
 
-    let make_tyv ty_exp = 
-        let v = get_tag(), get_type ty_exp
-        v
+    let inline push_sequence x = 
+        let f current_sequence rest = apply_sequences current_sequence (x rest)
+        d.sequences := Some (f !d.sequences)
+
+    let make_tyv ty_exp = get_tag(), get_type ty_exp
+
     let make_tyv_and_push' ty_exp =
         let v = make_tyv ty_exp
-        d.sequences.Push(TyLet(v,ty_exp))
+        push_sequence (fun rest -> TyLet(v,ty_exp,rest,get_type rest))
         v
+
     let make_tyv_and_push ty_exp = 
         make_tyv_and_push' ty_exp |> TyV
 
@@ -338,11 +348,12 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`. 
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let rec destructure_deep r = 
+    let rec destructure_deep_template nonseq_push r = 
+        let destructure_deep r = destructure_deep_template nonseq_push r
         match r with
-        | TyLitBool _ | TyLitFloat _ | TyLitBool _ | TyUnit
-        | Inlineable' _ | Method' _ | TyV _ -> r
+        | TyUnit | Inlineable' _ | Method' _ | TyV _ -> r
         | TyVV(l,t) -> List.map destructure_deep l |> fun x -> TyVV(x,t)
+        | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyIndexVV _ -> nonseq_push r
         | _ -> 
             match get_type r with
             | VVT tuple_types -> 
@@ -350,6 +361,9 @@ and exp_and_seq (d: Data) exp: TypedExpr =
                     destructure_deep <| TyIndexVV(r,TyLitInt i,typ)) tuple_types
                 TyVV(indexed_tuple_args, VVT tuple_types)
             | _ -> make_tyv_and_push r
+
+    let destructure_deep r = destructure_deep_template id r
+    let destructure_deep_method r = destructure_deep_template (make_tyv >> TyV) r
 
     let rec match_vv traverse bind acc l r =
         let recurse acc l r = match_vv traverse bind acc l r
@@ -363,8 +377,8 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let rec match_vv_inl' dup_name_checker = match_vv traverse_inl (bind_inl dup_name_checker)
     let rec match_vv_method' dup_name_checker = match_vv traverse_method (bind_method dup_name_checker)
 
-    let match_vv_inl = match_vv_inl' (h0())
-    let match_vv_method = match_vv_method' (h0())
+    let match_vv_inl x = match_vv_inl' (h0()) x
+    let match_vv_method x = match_vv_method' (h0()) x
 
     let rec mset l r =
         match l, r with // destructure_deep is called in the MSet case.
@@ -372,7 +386,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         | VV l, r -> failwithf "Cannot destructure %A." r
         | l, r ->
             match tev d l with
-            | (TyIndexArray(_,_,lt) as v) when lt = get_type r -> d.sequences.Push(TyMSet(v,r))
+            | (TyIndexArray(_,_,lt) as v) when lt = get_type r -> push_sequence (fun rest -> TyMSet(v,r,rest,get_type rest))
             | x -> failwithf "Expected `(TyIndexArray(_,_,lt) as v) when lt = get_type r`.\nGot: %A" x
 
     let rec map_tyvv f = function
@@ -466,12 +480,15 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
     let apply_method (name,la,body,initial_env,t as orig) ra =
         let t = match t with TagT t -> t | _ -> failwith "impossible"
-        let bound_args, env = 
-            match_vv_method initial_env la (destructure_deep ra)
-            |> fun (bound_args, env) -> filter_duplicate_vars bound_args, env
-        let method_key = t, get_type bound_args
+        
+        let bound_outside_args, bound_inside_args, env = 
+            let bound_outside_args = destructure_deep ra
+            let bound_inside_args, env = match_vv_method initial_env la (destructure_deep_method bound_outside_args)
+            filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env
 
-        let make_method_call body_type = TyMethodCall(method_key, bound_args, body_type)
+        let method_key = t, get_type bound_inside_args
+
+        let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
 
         match d.memoized_methods.TryGetValue method_key with
         | false, _ ->
@@ -479,7 +496,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
 
             let d = {d with env = if name <> "" then Map.add name (Method' orig) env else env}
             let body = with_empty_seq d body
-            let sole_arguments = filter_simple_vars bound_args
+            let sole_arguments = filter_tyvs bound_inside_args
                         
             d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body)
 
@@ -619,7 +636,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | While(cond,body,e) ->
         let cond, body = tev d (Apply(Method("",VV [],cond),VV [])), with_empty_seq d body
         match get_type cond, get_type body with
-        | BoolT, UnitT -> d.sequences.Push(TyWhile(cond,body)); tev d e
+        | BoolT, UnitT -> push_sequence (fun rest -> TyWhile(cond,body,rest,get_type rest)); tev d e
         | BoolT, _ -> failwith "Expected UnitT as the type of While's body."
         | _ -> failwith "Expected BoolT as the type of While's conditional."
     | CubBlockReduce(input, method_, num_valid) ->
@@ -639,91 +656,81 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         let num_valid = Option.map (tev d) num_valid
         TyCubBlockReduce(dim, evaled_input,method_,num_valid,get_type method_)
             
-// bound_prev intersected with used above.
-// Currently it does only that hence it is only half complete as a function.
-let closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
-    let rec closure_conv (bound_vars: HashSet<TyV>) (exp: TypedExpr) =
-        let add_var v = bound_vars.Add v |> ignore
-        let c x = closure_conv bound_vars x
-        match exp with
-        | Method' _ | Inlineable' _ -> Set.empty
-        | TyV v -> Set.singleton v
-        | TyIf(cond,tr,fl,t) ->
-            let cond, tr, fl = c cond, c tr, c fl
-            Set.unionMany [|cond; tr; fl|]
-        | TyLet(v,body) -> 
-            add_var v
-            c body
-        | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
-        | TyVV(vars,t) -> Set.unionMany (List.map c vars)
-        | TyIndexVV(t,i,_) -> Set.union (c t) (c i)
-        | TyMethodCall(m,ar,_) ->
-            let method_implicit_args =
-                match imemo.TryGetValue m with
-                | true, (_,_,impl_args) -> impl_args
-                | false, _ ->
-                    match memo.[m] with
-                    | MethodDone(sol_arg, body) -> // union the free vars from top to bottom
-                        // Without this line the main function would not propagate implicit arguments correctly
-                        // In the entry to main function.
-                        for x in sol_arg do bound_vars.Add x |> ignore
-                        
-                        let impl_args = 
-                            let bound_prev = Set(bound_vars)
-                            let used_above = closure_conv (HashSet(bound_vars)) body // Copies the HashSet as it goes into a new scope.
-                            Set.intersect bound_prev used_above - Set(sol_arg) 
-                        imemo.Add(m,(sol_arg,body,impl_args))
-                        impl_args
-                    | _ -> failwith "impossible"
-            Set.union method_implicit_args (c ar)
-        | TyCubBlockReduce(_,inp,(TyMethodCall(key,_,_) as m),num_valid,t) ->
-            ignore <| c m // This is so it gets added to the env.
-
-            match imemo.[key] with
-            | _,_,impl_args when impl_args.IsEmpty ->
-                match num_valid with
-                | Some num_valid -> Set.union (c num_valid) (c inp)
-                | None -> c inp
-            | _ -> 
-                failwithf "The method passed to Cub should have no implicit arguments.\nm=%A" m
-        | TyCubBlockReduce _ -> failwith "impossible"
-        // Array cases
-        | TyIndexArray(a,b,t) -> 
-            let a = 
-                match get_type a with
-                | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
-                    let b = 
-                        if x.IsEmpty then [] 
-                        else List.choose (function TyV v -> Some v | _ -> None) (List.tail x)
-                    Set.union (c a) (Set(b))
+/// Propagates the free variables downwards.
+/// The closures are stack allocated hence not allowed to return from functions.
+let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
+    let c x = closure_conv imemo memo x
+    match exp with
+    | Method' _ | Inlineable' _ -> Set.empty
+    | TyV v -> Set.singleton v
+    | TyIf(cond,tr,fl,t) -> c cond + c tr + c fl
+    | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
+    | TyVV(vars,t) -> Set.unionMany (List.map c vars)
+    | TyIndexVV(t,i,_) -> Set.union (c t) (c i)
+    | TyMethodCall(m,ar,_) ->
+        let method_implicit_args =
+            match imemo.TryGetValue m with
+            | true, (_,_,impl_args) -> impl_args
+            | false, _ ->
+                match memo.[m] with
+                | MethodDone(sol_arg, body) -> 
+                    let impl_args = c body - Set(sol_arg)
+                    imemo.Add(m,(sol_arg,body,impl_args))
+                    impl_args
                 | _ -> failwith "impossible"
-            Set.union a (Set.unionMany (List.map c b))
-        | TyCreateArray t -> 
-            match t with
+        Set.union method_implicit_args (c ar)
+    | TyCubBlockReduce(_,inp,(TyMethodCall(key,_,_) as m),num_valid,t) ->
+        ignore <| c m // This is so it gets added to the env.
+
+        match imemo.[key] with
+        | _,_,impl_args when impl_args.IsEmpty ->
+            match num_valid with
+            | Some num_valid -> Set.union (c num_valid) (c inp)
+            | None -> c inp
+        | impl_args -> 
+            failwithf "The method passed to Cub should have no implicit arguments.\nm=%A\nimpl_args=%A" m impl_args
+    | TyCubBlockReduce _ -> failwith "impossible"
+    // Array cases
+    | TyIndexArray(a,b,t) -> 
+        let a = 
+            match get_type a with
             | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
-                Set.unionMany (List.map c x)
+                let b = 
+                    match x with
+                    | [] -> []
+                    | x -> List.choose (function TyV v -> Some v | _ -> None) (List.tail x)
+                Set.union (c a) (Set(b))
             | _ -> failwith "impossible"
-        // Cuda kernel constants
-        | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
-        | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
-        | TyBlockDimX | TyBlockDimY | TyBlockDimZ
-        | TyGridDimX | TyGridDimY | TyGridDimZ -> Set.empty
-        // Primitive operations on expressions.
-        | TySyncthreads -> Set.empty
-        | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
-        | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
-        | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
-        | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
-        | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
-        | TyAtomicAdd(a,b,_) | TyWhile(a,b) | TyMSet(a,b) -> Set.union (c a) (c b)
-        | TySeq(a,b,_) -> Set.union (Set.unionMany (List.map c a)) (c b)
-    closure_conv (h0()) exp
+        Set.union a (Set.unionMany (List.map c b))
+    | TyCreateArray t -> 
+        match t with
+        | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
+            Set.unionMany (List.map c x)
+        | _ -> failwith "impossible"
+    // Cuda kernel constants
+    | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
+    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
+    | TyGridDimX | TyGridDimY | TyGridDimZ -> Set.empty
+    // Primitive operations on expressions.
+    | TySyncthreads -> Set.empty
+    | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
+    | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
+    | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
+    | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
+    | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
+    | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
+    | TyMSet(a, b, rest, _) | TyWhile(a, b, rest, _) -> c a + c b + c rest
+    | TyLet(v, body, rest, _) -> c body + c rest |> Set.remove v
+//    | TySeq(a,b,_) -> 
+//        List.foldBack (fun x s -> ) (c b) a
+        //Set.union (Set.unionMany (List.map c a)) (c b)
 
 let l v b e = Apply(Inlineable(v,e),b)
 
 let data_empty (blockDim, gridDim) = 
     {memoized_methods=d0();tagged_vars=d0();blockDim=blockDim;gridDim=gridDim
-     env=Map.empty;sequences=Stack();recursive_methods_stack=Stack()}
+     env=Map.empty;sequences=ref None;recursive_methods_stack=Stack()}
 
 let typecheck dims body inputs = 
     try
@@ -744,91 +751,96 @@ let inl x y = Inlineable(x,y)
 let ap x y = Apply(x,y)
 let meth x y = Method("",x,y)
 
-let term0 =
-    let snd = inl (VV [V "a";V "b"]) (V "b")
-    meth (VV [])
-        (ap (inl (VV [V "x";V "y";V "z";V "r"]) (ap (V "r") (VV [V "y";V "z"]))) (VV [B;LitBool true;LitInt 5;snd]))
+//let term0 =
+//    let snd = inl (VV [V "a";V "b"]) (V "b")
+//    meth (VV [])
+//        (ap (inl (VV [V "x";V "y";V "z";V "r"]) (ap (V "r") (VV [V "y";V "z"]))) (VV [B;LitBool true;LitInt 5;snd]))
+//
+//let t0 = typecheck0 term0
+//
+//let term1 =
+//    let fst = inl (VV [V "a";V "b"]) (V "a")
+//    let snd = inl (VV [V "a";V "b"]) (V "b")
+//    meth (VV [])
+//        (l (VV [V "x";V "y";V "z"]) (VV [B;LitBool true;LitInt 5])
+//            (l (V "q") (fst) (ap (V "q") (VV [V "y";V "z"]))))
+//
+//let t1 = typecheck0 term1
+//    
+//// This particular test evolved during the course of the development.
+//// Previously it would inline the terms completely, now I've simplified it
+//// and it just gives an error.
+//let term2 = 
+//    let fst = inl (VV [V "a";V "b"]) (V "a")
+//    let snd = inl (VV [V "a";V "b"]) (V "b")
+//    meth (VV [])
+//        (l (VV [V "a";V "b"]) (VV [LitInt 2;LitFloat 3.3]) (ap (If(LitBool true,snd,snd)) (VV [V "a";V "b"])))
+//
+//let t2 = typecheck0 term2
+//
+//let term3 = // Error in the first line.
+//    meth (VV [])
+//        (l (V "inlineable") (VV [inl (VV [V "a";V "b"]) (V "b")])
+//            (l (V "fun")
+//                (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
+//                (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2]))))
+//let t3 = typecheck0 term3
+//
+//let term3' =
+//    meth (VV [])
+//        (l (V "inlineable") (inl (VV [V "a";V "b"]) (V "b"))
+//            (l (V "fun")
+//                (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
+//                (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2]))))
+//let t3' = typecheck0 term3'
+//
+//let term4 = // If test
+//    meth (VV [])
+//        (l (V "if") (inl (VV [V "cond";V "tr";V "fl"]) (If(V "cond",V "tr",V "fl")))
+//            (l (V "cond") (LitBool true)
+//                (l (V "tr") (LitFloat 3.33)
+//                    (l (V "fl") (LitFloat 4.44)
+//                        (ap (V "if") (VV [V "cond";V "tr";V "fl"]))))))
+//
+//let t4 = typecheck0 term4
+//
+//let meth1 = 
+//    meth (VV [])
+//        (l (VV [V "fun";V "id"])
+//            (VV [meth (VV [V "x";V "y";V "z";V "f"])
+//                    (l (V "t") (LitInt 3)
+//                        (l (V "u") (LitBool false) (ap (V "f") (V "z"))))
+//                 meth (V "x") (V "x")])
+//            (ap (V "fun") (VV [LitBool true; LitInt 2; LitFloat 4.4;V "id"])))
+//let m1 = typecheck0 meth1
+//
+//let meth2 = // closure conversion test
+//    meth (VV [])
+//        (l (V "m")
+//            (meth (VV [V "a";V "n";V "qwe"]) 
+//                (l (V "loop") 
+//                    (meth (VV [V "acc";V "q"]) 
+//                        (l (V "loop_method") (meth (VV [V "a";V "n"]) (If(LitBool true,V "a",V "n")))
+//                            (ap (V "loop_method") (VV [V "a"; V "n"]))))
+//                    (ap (V "loop") (VV [LitInt 1; V "n"]))))
+//            (ap (V "m") (VV [LitInt 3;LitInt 2;LitFloat 3.5])))
+//let m2 = typecheck0 meth2
+//
+//let meth3 = // vv test
+//    meth (VV [])
+//        (l (V "m") (meth (VV [V "a"; V "b"; V "c"]) (V "c"))
+//            (ap (V "m") (VV [LitInt 2; LitFloat 3.3; LitBool true])))
+//
+//let m3 = typecheck0 meth3
+//
+//let meth4 = // vv test 2
+//    meth (VV [])
+//        (l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
+//            (ap (V "m") (VV [LitInt 2; LitFloat 3.3; LitBool true])))
+//let m4 = typecheck0 meth4
 
-let t0 = typecheck0 term0
-
-let term1 =
-    let fst = inl (VV [V "a";V "b"]) (V "a")
-    let snd = inl (VV [V "a";V "b"]) (V "b")
-    meth (VV [])
-        (l (VV [V "x";V "y";V "z"]) (VV [B;LitBool true;LitInt 5])
-            (l (V "q") (fst) (ap (V "q") (VV [V "y";V "z"]))))
-
-let t1 = typecheck0 term1
-    
-// This particular test evolved during the course of the development.
-// Previously it would inline the terms completely, now I've simplified it
-// and it just gives an error.
-let term2 = 
-    let fst = inl (VV [V "a";V "b"]) (V "a")
-    let snd = inl (VV [V "a";V "b"]) (V "b")
-    meth (VV [])
-        (l (VV [V "a";V "b"]) (VV [LitInt 2;LitFloat 3.3]) (ap (If(LitBool true,snd,snd)) (VV [V "a";V "b"])))
-
-let t2 = typecheck0 term2
-
-let term3 = // Error in the first line.
-    meth (VV [])
-        (l (V "inlineable") (VV [inl (VV [V "a";V "b"]) (V "b")])
-            (l (V "fun")
-                (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
-                (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2]))))
-let t3 = typecheck0 term3
-
-let term3' =
-    meth (VV [])
-        (l (V "inlineable") (inl (VV [V "a";V "b"]) (V "b"))
-            (l (V "fun")
-                (inl (VV [V "inl";V "a";V "b";V "c";V "d"]) (ap (V "inl") (VV [V "b";V "c"])))
-                (ap (V "fun") (VV [V "inlineable"; LitBool true; LitInt 2; LitFloat 1.5; LitInt 2]))))
-let t3' = typecheck0 term3'
-
-let term4 = // If test
-    meth (VV [])
-        (l (V "if") (inl (VV [V "cond";V "tr";V "fl"]) (If(V "cond",V "tr",V "fl")))
-            (l (V "cond") (LitBool true)
-                (l (V "tr") (LitFloat 3.33)
-                    (l (V "fl") (LitFloat 4.44)
-                        (ap (V "if") (VV [V "cond";V "tr";V "fl"]))))))
-
-let t4 = typecheck0 term4
-
-let meth1 = 
-    meth (VV [])
-        (l (VV [V "fun";V "id"])
-            (VV [meth (VV [V "x";V "y";V "z";V "f"])
-                    (l (V "t") (LitInt 3)
-                        (l (V "u") (LitBool false) (ap (V "f") (V "z"))))
-                 meth (V "x") (V "x")])
-            (ap (V "fun") (VV [LitBool true; LitInt 2; LitFloat 4.4;V "id"])))
-let m1 = typecheck0 meth1
-
-let meth2 = // closure conversion test
-    meth (VV [])
-        (l (V "m")
-            (meth (VV [V "a";V "n";V "qwe"]) 
-                (l (V "loop") 
-                    (meth (VV [V "acc";V "q"]) 
-                        (l (V "loop_method") (meth (VV [V "a";V "n"]) (If(LitBool true,V "a",V "n")))
-                            (ap (V "loop_method") (VV [V "a"; V "n"]))))
-                    (ap (V "loop") (VV [LitInt 1; V "n"]))))
-            (ap (V "m") (VV [LitInt 3;LitInt 2;LitFloat 3.5])))
-let m2 = typecheck0 meth2
-
-let meth3 = // vv test
-    meth (VV [])
-        (l (V "m") (meth (VV [V "a"; V "b"; V "c"]) (V "c"))
-            (ap (V "m") (VV [LitInt 2; LitFloat 3.3; LitBool true])))
-
-let m3 = typecheck0 meth3
-
-let meth4 = // vv test 2
-    meth (VV [])
-        (l (V "m") (meth (V "vars") (l (VV [V "a"; V "b"; V "c"]) (V "vars") (V "c"))) 
-            (ap (V "m") (VV [LitInt 2; LitFloat 3.3; LitBool true])))
-let m4 = typecheck0 meth4
-
+//let term5 = // For debugging the sequencing infinite loop bug.
+//    meth (VV [])
+//        (l (V "x") (LitInt 2) (V "x"))
+//
+//let t5 = typecheck0 term5

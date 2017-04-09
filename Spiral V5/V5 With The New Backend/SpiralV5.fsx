@@ -153,3 +153,8 @@ let memoize f =
             cache.[x] <- res
             res
 
+let get = function Succ x -> x | _ -> failwith "Error"
+let x = 
+    let k = get map_redo_map_1_1
+    printfn "%s" k
+    compile_kernel_using_nvcc_bat_router (k |> hash |> string) k
