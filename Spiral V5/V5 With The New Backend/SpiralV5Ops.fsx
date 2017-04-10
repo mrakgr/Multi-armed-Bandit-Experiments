@@ -2,6 +2,7 @@
 open System
 open System.Diagnostics
 open SpiralV5
+open SpiralV5DevVar
 
 open ManagedCuda
 open ManagedCuda.BasicTypes
@@ -11,32 +12,29 @@ open ManagedCuda.CudaBlas
 let T = Operation.Transpose
 let nT = Operation.NonTranspose
 
-let guardSizes (x: seq<'a>) =
-    let h = Seq.head x
-    let t = Seq.tail x
-    Seq.iter (fun e -> if h <> e then failwithf "%A <> %A" h e) t
+let inline guard_sizes x y =
+    if x <> y then failwithf "%A <> %A" x y
+    y
 
 let guard_cublas _status = if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
 
 // y <- alpha * x + y
-let inline saxpy_template saxpy
-        (str: CudaStream) 
-        alpha (sx: int, x) (sy, y) =
+let inline axpy_template axpy (str: CudaStream) alpha (sx: int, x) (sy, y) =
     if sx <> sy then failwithf "%A <> %A" sx sy
     cublas.Stream <- str.Stream
 
     // The previous version of the library had a bug here because the size was not passed in explicitly.
-    saxpy (cublas.CublasHandle, sx, ref alpha, x, 1, y, 1) |> guard_cublas
+    axpy (cublas.CublasHandle, sx, ref alpha, x, 1, y, 1) |> guard_cublas
 
-let saxpy_f32 str alpha x y = saxpy_template CudaBlasNativeMethods.cublasSaxpy_v2 str alpha x y
-let saxpy_f64 str alpha x y = saxpy_template CudaBlasNativeMethods.cublasDaxpy_v2 str alpha x y
+let axpy_f32 str alpha x y = axpy_template CudaBlasNativeMethods.cublasSaxpy_v2 str alpha x y
+let axpy_f64 str alpha x y = axpy_template CudaBlasNativeMethods.cublasDaxpy_v2 str alpha x y
 
 /// General matrix-matrix addition. Inplace version.
 let inline geam_template geam
         (str: CudaStream) transa transb 
         alpha ((cols_A: int,rows_A: int), A) 
         beta  ((cols_B: int,rows_B: int), B) 
-                            ((cols_C: int,rows_C: int), C) =
+        ((cols_C: int,rows_C: int), C) =
     let a_row = if transa = nT then rows_A else cols_A
     let a_col = if transa = nT then cols_A else rows_A
     let b_row = if transb = nT then rows_B else cols_B
@@ -138,3 +136,30 @@ let gemm_f64 str transa transb alpha a b beta c =
     gemm_template 0.0 1.0 geam_f64 CudaBlasNativeMethods.cublasDger_v2 CudaBlasNativeMethods.cublasDgemv_v2 CudaBlasNativeMethods.cublasDgemm_v2
         str transa transb alpha a b beta c
 
+type GenericPrim = GenericPrim with
+    static member Gemm(_: GenericPrim,str,transa,transb,alpha,a,b,beta,c) = gemm_f32 str transa transb alpha a b beta c
+    static member Gemm(_: GenericPrim,str,transa,transb,alpha,a,b,beta,c) = gemm_f64 str transa transb alpha a b beta c
+    static member Geam(_: GenericPrim,str,transa,transb,alpha,a,beta,b,c) = geam_f32 str transa transb alpha a beta b c
+    static member Geam(_: GenericPrim,str,transa,transb,alpha,a,beta,b,c) = geam_f64 str transa transb alpha a beta b c
+    static member Axpy(_: GenericPrim,str,alpha,x,y) = axpy_f32 str alpha x y
+    static member Axpy(_: GenericPrim,str,alpha,x,y) = axpy_f64 str alpha x y
+
+let inline gemm str transa transb alpha a b beta c = 
+    ((^a or ^f or ^v): (static member Gemm: ^a * CudaStream * Operation * Operation * ^f * ^v * ^v * ^f * ^v -> unit) 
+        GenericPrim,str,transa,transb,alpha,a,b,beta,c)
+
+let inline geam str transa transb alpha a beta b c = 
+    ((^a or ^f or ^v): (static member Geam: ^a * CudaStream * Operation * Operation * ^f * ^v * ^f * ^v * ^v -> unit) 
+        GenericPrim,str,transa,transb,alpha,a,beta,b,c)
+
+let inline axpy str alpha x y = 
+    ((^a or ^f or ^v): (static member Axpy: ^a * CudaStream * ^f * ^v * ^v -> unit) 
+        GenericPrim,str,alpha,x,y)
+
+let inline add proj_2d proj_1d alpha (a: DM) beta (b: DM) (c: DM) (env: SpiralEnv<_>) = // TODO: Figure out how to do projections.
+    guard_sizes a.Size b.Size |> guard_sizes c.Size |> ignore
+    geam env.Str nT nT alpha (a.P' proj_2d) beta (b.P' proj_2d) (c.P' proj_2d)
+
+    c, fun _ ->
+        if a.HasAdjoint then axpy env.Str alpha (c.A' proj_1d) (a.A' proj_1d)
+        if b.HasAdjoint then axpy env.Str beta (c.A' proj_1d) (b.A' proj_1d)

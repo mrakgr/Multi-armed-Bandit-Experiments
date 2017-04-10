@@ -178,8 +178,8 @@ let dm_create size typ (num_vars: int) =
 type DM with 
     member x.P = primal x
     member x.A = adjoint x
-    member x.P' = x.Size, primal x
-    member x.A' = x.Size, adjoint x
+    member x.P' f = f x.Size, primal x
+    member x.A' f = f x.Size, adjoint x
     member x.HasAdjoint = has_adjoint x
     member x.NumAuxes = max (x.NumVars - 2) 0
 
