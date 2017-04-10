@@ -24,7 +24,6 @@ open System.Runtime.InteropServices
 
 // Helper functions
 
-
 /// Copies a host array to device.
 let inline to_dev (host_ar: 't []) =
     let d_a = new CudaDeviceVariable<'t>(SizeT host_ar.Length)    
