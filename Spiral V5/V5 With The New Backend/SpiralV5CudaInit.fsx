@@ -178,7 +178,7 @@ let memoize f =
 //            (l B (AtomicAdd(IndexArray(V "out1",[V "col"]),V "result")) B)
 //
 //    eval default_dims map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_])
-//
+
 //let map_redo_map_1_1 = 
 //    let n = TyV (get_tag(), Int32T)
 //    let in_ = get_tag(),GlobalArrayT([n],Float32T)

@@ -3,7 +3,7 @@
 open ManagedCuda.VectorTypes
 open System.Collections.Generic
 
-type Ty =
+type CudaTy =
     | UnitT
     | UInt32T
     | UInt64T
@@ -12,73 +12,73 @@ type Ty =
     | Float32T
     | Float64T
     | BoolT
-    | VVT of Ty list
-    | GlobalArrayT of TypedExpr list * Ty
-    | SharedArrayT of TypedExpr list * Ty
-    | LocalArrayT of TypedExpr list * Ty
+    | VVT of CudaTy list
+    | GlobalArrayT of TypedCudaExpr list * CudaTy
+    | SharedArrayT of TypedCudaExpr list * CudaTy
+    | LocalArrayT of TypedCudaExpr list * CudaTy
     | TagT of int64
-and TyV = int64 * Ty
+and TyV = int64 * CudaTy
 
 // No return type polymorphism like in Haskell for now. Local type inference only.
-and TyMethodKey = int64 * Ty // The key does not need to know the free variables.
+and TyMethodKey = int64 * CudaTy // The key does not need to know the free variables.
 
-and Expr = 
+and CudaExpr = 
     | V of string // standard variable
     | V' of TyV // given variable
-    | T of TypedExpr
+    | T of TypedCudaExpr
     | B // blank
-    | If of Expr * Expr * Expr
-    | Inlineable of Expr * Expr
+    | If of CudaExpr * CudaExpr * CudaExpr
+    | Inlineable of CudaExpr * CudaExpr
     | LitInt of int
     | LitFloat of float
     | LitBool of bool
-    | Apply of Expr * args: Expr
-    | Method of name: string * args: Expr * body: Expr
+    | Apply of CudaExpr * args: CudaExpr
+    | Method of name: string * args: CudaExpr * body: CudaExpr
 
     // Tuple cases
-    | IndexVV of Expr * Expr
-    | VV of Expr list // tuple
-    | MapVV of Expr * Expr
+    | IndexVV of CudaExpr * CudaExpr
+    | VV of CudaExpr list // tuple
+    | MapVV of CudaExpr * CudaExpr
 
     // Array cases
-    | IndexArray of Expr * Expr list
-    | CreateSharedArray of Expr list * typeof: Expr
-    | CreateLocalArray of Expr list * typeof: Expr
+    | IndexArray of CudaExpr * CudaExpr list
+    | CreateSharedArray of CudaExpr list * typeof: CudaExpr
+    | CreateLocalArray of CudaExpr list * typeof: CudaExpr
 
     // Primitive operations on expressions.
-    | Add of Expr * Expr
-    | Sub of Expr * Expr
-    | Mult of Expr * Expr
-    | Div of Expr * Expr
-    | Mod of Expr * Expr
-    | LT of Expr * Expr
-    | LTE of Expr * Expr
-    | EQ of Expr * Expr
-    | GT of Expr * Expr
-    | GTE of Expr * Expr
-    | LeftShift of Expr * Expr
-    | RightShift of Expr * Expr
+    | Add of CudaExpr * CudaExpr
+    | Sub of CudaExpr * CudaExpr
+    | Mult of CudaExpr * CudaExpr
+    | Div of CudaExpr * CudaExpr
+    | Mod of CudaExpr * CudaExpr
+    | LT of CudaExpr * CudaExpr
+    | LTE of CudaExpr * CudaExpr
+    | EQ of CudaExpr * CudaExpr
+    | GT of CudaExpr * CudaExpr
+    | GTE of CudaExpr * CudaExpr
+    | LeftShift of CudaExpr * CudaExpr
+    | RightShift of CudaExpr * CudaExpr
     | Syncthreads
-    | ShuffleXor of Expr * Expr
-    | ShuffleUp of Expr * Expr
-    | ShuffleDown of Expr * Expr
-    | ShuffleIndex of Expr * Expr
-    | Log of Expr
-    | Exp of Expr
-    | Tanh of Expr
-    | Neg of Expr
+    | ShuffleXor of CudaExpr * CudaExpr
+    | ShuffleUp of CudaExpr * CudaExpr
+    | ShuffleDown of CudaExpr * CudaExpr
+    | ShuffleIndex of CudaExpr * CudaExpr
+    | Log of CudaExpr
+    | Exp of CudaExpr
+    | Tanh of CudaExpr
+    | Neg of CudaExpr
     // Cuda kernel constants
     | ThreadIdxX | ThreadIdxY | ThreadIdxZ
     | BlockIdxX | BlockIdxY | BlockIdxZ
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
     // Mutable operations.
-    | MSet of Expr * Expr * Expr
-    | AtomicAdd of out: Expr * in_: Expr
+    | MSet of CudaExpr * CudaExpr * CudaExpr
+    | AtomicAdd of out: CudaExpr * in_: CudaExpr
     // Loops
-    | While of Expr * Expr * Expr
+    | While of CudaExpr * CudaExpr * CudaExpr
     // Cub operations
-    | CubBlockReduce of Expr * Expr * Expr option
+    | CubBlockReduce of CudaExpr * CudaExpr * CudaExpr option
 
     static member (+)(a,b) = Add(a,b)
     static member (-)(a,b) = Sub(a,b)
@@ -93,28 +93,28 @@ and Expr =
     static member (.>=)(a,b) = GTE(a,b)
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
-and TypedExpr =
+and TypedCudaExpr =
     // These two will not get code gen'd.
     // The difference from the past version of the typechecker is that now the TagT type exists.
-    | Inlineable' of Expr * Expr * Env * Ty
-    | Method' of name: string * args: Expr * body: Expr * Env * Ty
+    | Inlineable' of CudaExpr * CudaExpr * Env * CudaTy
+    | Method' of name: string * args: CudaExpr * body: CudaExpr * Env * CudaTy
     
     | TyV of TyV
-    | TyIf of TypedExpr * TypedExpr * TypedExpr * Ty
-    | TyLet of TyV * TypedExpr * TypedExpr * Ty
+    | TyIf of TypedCudaExpr * TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyLet of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyUnit
     | TyLitInt of int
     | TyLitFloat of float
     | TyLitBool of bool
-    | TyMethodCall of TyMethodKey * TypedExpr * Ty
+    | TyMethodCall of TyMethodKey * TypedCudaExpr * CudaTy
     
     // Tuple cases
-    | TyIndexVV of TypedExpr * TypedExpr * Ty
-    | TyVV of TypedExpr list * Ty
+    | TyIndexVV of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyVV of TypedCudaExpr list * CudaTy
 
     // Array cases
-    | TyIndexArray of TypedExpr * TypedExpr list * Ty
-    | TyCreateArray of Ty
+    | TyIndexArray of TypedCudaExpr * TypedCudaExpr list * CudaTy
+    | TyCreateArray of CudaTy
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -123,52 +123,52 @@ and TypedExpr =
     | TyGridDimX | TyGridDimY | TyGridDimZ
    
     // Primitive operations on expressions.
-    | TyAdd of TypedExpr * TypedExpr * Ty
-    | TySub of TypedExpr * TypedExpr * Ty
-    | TyMult of TypedExpr * TypedExpr * Ty
-    | TyDiv of TypedExpr * TypedExpr * Ty
-    | TyMod of TypedExpr * TypedExpr * Ty
-    | TyLT of TypedExpr * TypedExpr
-    | TyLTE of TypedExpr * TypedExpr
-    | TyEQ of TypedExpr * TypedExpr
-    | TyGT of TypedExpr * TypedExpr
-    | TyGTE of TypedExpr * TypedExpr
-    | TyLeftShift of TypedExpr * TypedExpr * Ty
-    | TyRightShift of TypedExpr * TypedExpr * Ty
+    | TyAdd of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TySub of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyMult of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyDiv of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyMod of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyLT of TypedCudaExpr * TypedCudaExpr
+    | TyLTE of TypedCudaExpr * TypedCudaExpr
+    | TyEQ of TypedCudaExpr * TypedCudaExpr
+    | TyGT of TypedCudaExpr * TypedCudaExpr
+    | TyGTE of TypedCudaExpr * TypedCudaExpr
+    | TyLeftShift of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyRightShift of TypedCudaExpr * TypedCudaExpr * CudaTy
     | TySyncthreads
-    | TyShuffleXor of TypedExpr * TypedExpr * Ty
-    | TyShuffleUp of TypedExpr * TypedExpr * Ty
-    | TyShuffleDown of TypedExpr * TypedExpr * Ty
-    | TyShuffleIndex of TypedExpr * TypedExpr * Ty
-    | TyLog of TypedExpr * Ty
-    | TyExp of TypedExpr * Ty
-    | TyTanh of TypedExpr * Ty
-    | TyNeg of TypedExpr * Ty
+    | TyShuffleXor of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyShuffleUp of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyShuffleDown of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyShuffleIndex of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyLog of TypedCudaExpr * CudaTy
+    | TyExp of TypedCudaExpr * CudaTy
+    | TyTanh of TypedCudaExpr * CudaTy
+    | TyNeg of TypedCudaExpr * CudaTy
     // Mutable operations.
-    | TyMSet of TypedExpr * TypedExpr * TypedExpr * Ty
-    | TyAtomicAdd of TypedExpr * TypedExpr * Ty
-    | TyWhile of TypedExpr * TypedExpr * TypedExpr * Ty
+    | TyMSet of TypedCudaExpr * TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyAtomicAdd of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyWhile of TypedCudaExpr * TypedCudaExpr * TypedCudaExpr * CudaTy
     // Cub operations
-    | TyCubBlockReduce of dim: TypedExpr * input: TypedExpr * method_: TypedExpr * num_valid: TypedExpr option * Ty
+    | TyCubBlockReduce of dim: TypedCudaExpr * input: TypedCudaExpr * method_: TypedCudaExpr * num_valid: TypedCudaExpr option * CudaTy
 
-and Env = Map<string, TypedExpr>
+and Env = Map<string, TypedCudaExpr>
 // method key * method body * bound variables
 and MethodCases =
-    | MethodInEvaluation of Ty option
-    | MethodDone of TyV list * TypedExpr
+    | MethodInEvaluation of CudaTy option
+    | MethodDone of TyV list * TypedCudaExpr
 and MethodDict = Dictionary<TyMethodKey, MethodCases>
-and TaggedDict = Dictionary<int64,TypedExpr>
+and TaggedDict = Dictionary<int64,TypedCudaExpr>
 // method key * method body * implicit arguments
-and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedExpr * Set<TyV>>
-and Data =
+and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedCudaExpr * Set<TyV>>
+and CudaTypecheckerEnv =
     {
     // Immutable
     env : Env
     // Mutable
     tagged_vars : TaggedDict // For looking up the the unapplied Inlineables and Methods
     memoized_methods : MethodDict // For hoisted out global methods.
-    sequences : (TypedExpr -> TypedExpr) option ref // For sequencing statements.
-    recursive_methods_stack : Stack<unit -> TypedExpr> // For typechecking recursive calls.
+    sequences : (TypedCudaExpr -> TypedCudaExpr) option ref // For sequencing statements.
+    recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
     blockDim : dim3 // since Cub needs hard constants, I need to have them during typechecking.
     gridDim : dim3
     }
@@ -272,7 +272,7 @@ let map_fold_2_Er f state x y =
         | x -> failwith "Argument size mismatch in map_fold_2_Er."
     loop f state (x,y)
 
-let get_body_from (stack: Stack<unit -> TypedExpr>) = 
+let get_body_from (stack: Stack<unit -> TypedCudaExpr>) = 
     if stack.Count > 0 then stack.Peek()()
     else failwith "The program is divergent."
 
@@ -298,7 +298,7 @@ let apply_sequences sequences x =
     | Some sequences -> sequences x
     | None -> x
 
-let rec with_empty_seq (d: Data) expr =
+let rec with_empty_seq (d: CudaTypecheckerEnv) expr =
     let d = {d with sequences = ref None}
     let expr = exp_and_seq d expr
     apply_sequences !d.sequences expr
@@ -306,7 +306,7 @@ let rec with_empty_seq (d: Data) expr =
 
 // Does macro expansion and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
-and exp_and_seq (d: Data) exp: TypedExpr =
+and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let tev d exp = exp_and_seq d exp
 
     let dup_name_check (name_checker: HashSet<string>) arg_name f =
@@ -478,9 +478,6 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             let bound_inside_args, env = match_vv_method initial_env la (destructure_deep_method bound_outside_args)
             bound_outside_args, bound_inside_args, env
 
-        printfn "bound_outside_args=%A" bound_outside_args
-        printfn "bound_inside_args=%A" bound_inside_args
-
         let method_key = t, get_type bound_inside_args
 
         let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
@@ -532,7 +529,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     | Inlineable(args, body) -> add_tagged (fun t -> Inlineable'(args, body, d.env, TagT t))
     | Method(name, args, body) -> add_tagged (fun t -> Method'(name, args, body, d.env, TagT t))
     | Apply(expr,args) -> apply expr args
-    | If(cond,tr,fl) -> //tev d (Apply(Method("",VV [],HoistedIf(cond,tr,fl)),VV []))
+    | If(cond,tr,fl) ->
         let cond = tev d cond
         if get_type cond <> BoolT then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
@@ -653,7 +650,7 @@ and exp_and_seq (d: Data) exp: TypedExpr =
             
 /// Propagates the free variables downwards.
 /// The closures are stack allocated hence not allowed to return from functions.
-let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr) =
+let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaExpr) =
     let c x = closure_conv imemo memo x
     match exp with
     | Method' _ | Inlineable' _ -> Set.empty
