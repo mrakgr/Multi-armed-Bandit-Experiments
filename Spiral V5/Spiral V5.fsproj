@@ -65,11 +65,12 @@
     <None Include="V5 With The New Backend\probability.fsx" />
     <None Include="V5 With The New Backend\load-references-release.fsx" />
     <None Include="V5 With The New Backend\load-project-release.fsx" />
-    <None Include="V5 With The New Backend\Typechecker_v6e.fsx" />
-    <None Include="V5 With The New Backend\Codegen_v3a.fsx" />
-    <None Include="V5 With The New Backend\SpiralV5.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v6e.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3a.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5CudaInit.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5Language.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Scripts\load-references-release.fsx" />
     <None Include="Scripts\load-project-release.fsx" />

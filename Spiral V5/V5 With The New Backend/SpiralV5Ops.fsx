@@ -1,7 +1,7 @@
 ﻿#load "SpiralV5DevVar.fsx"
 open System
 open System.Diagnostics
-open SpiralV5
+open SpiralV5CudaInit
 open SpiralV5DevVar
 
 open ManagedCuda

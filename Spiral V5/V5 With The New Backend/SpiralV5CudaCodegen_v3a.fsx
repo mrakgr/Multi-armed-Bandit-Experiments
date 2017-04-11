@@ -1,5 +1,5 @@
-﻿#load "Typechecker_v6e.fsx"
-open Typechecker_v6e
+﻿#load "SpiralV5CudaTypechecker_v6e.fsx"
+open SpiralV5CudaTypechecker_v6e
 open System.Collections.Generic
 open System.Text
 

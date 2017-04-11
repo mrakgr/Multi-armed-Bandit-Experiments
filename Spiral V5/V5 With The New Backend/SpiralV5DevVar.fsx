@@ -1,5 +1,5 @@
-﻿#load "SpiralV5.fsx"
-open SpiralV5
+﻿#load "SpiralV5CudaInit.fsx"
+open SpiralV5CudaInit
 
 open System
 
