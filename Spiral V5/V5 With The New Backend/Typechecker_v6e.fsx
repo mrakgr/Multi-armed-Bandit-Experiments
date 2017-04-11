@@ -338,22 +338,14 @@ and exp_and_seq (d: Data) exp: TypedExpr =
     let traverse_inl t = List.fold2
     let traverse_method t f s a b = map_fold_2_Er f s a b |> fun (l,s) -> TyVV(l,t), s
 
-    let filter_duplicate_vars x =
-        let h = h0()
-        let rec loop = function
-            | TyV(tag,t) as var -> if h.Add tag then Some var else None
-            | TyVV(l,t) -> TyVV(List.choose loop l, t) |> Some
-            | x -> Some x
-        (loop x).Value
-
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`. 
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
     let rec destructure_deep_template nonseq_push r = 
         let destructure_deep r = destructure_deep_template nonseq_push r
         match r with
-        | TyUnit | Inlineable' _ | Method' _ | TyV _ -> r
+        | TyUnit | Inlineable' _ | Method' _ -> r
         | TyVV(l,t) -> List.map destructure_deep l |> fun x -> TyVV(x,t)
-        | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyIndexVV _ -> nonseq_push r
+        | TyV _ | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyIndexVV _ -> nonseq_push r
         | _ -> 
             match get_type r with
             | VVT tuple_types -> 
@@ -484,7 +476,10 @@ and exp_and_seq (d: Data) exp: TypedExpr =
         let bound_outside_args, bound_inside_args, env = 
             let bound_outside_args = destructure_deep ra
             let bound_inside_args, env = match_vv_method initial_env la (destructure_deep_method bound_outside_args)
-            filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env
+            bound_outside_args, bound_inside_args, env
+
+        printfn "bound_outside_args=%A" bound_outside_args
+        printfn "bound_inside_args=%A" bound_inside_args
 
         let method_key = t, get_type bound_inside_args
 
@@ -722,9 +717,6 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedExpr)
     | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
     | TyMSet(a, b, rest, _) | TyWhile(a, b, rest, _) -> c a + c b + c rest
     | TyLet(v, body, rest, _) -> c body + c rest |> Set.remove v
-//    | TySeq(a,b,_) -> 
-//        List.foldBack (fun x s -> ) (c b) a
-        //Set.union (Set.unionMany (List.map c a)) (c b)
 
 let l v b e = Apply(Inlineable(v,e),b)
 

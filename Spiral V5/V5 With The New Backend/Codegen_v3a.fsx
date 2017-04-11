@@ -139,7 +139,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyLitBool x -> if x then "1" else "0"
         | TyMethodCall((tag,_ as mkey),call,t) ->
             let (_,_,implicit_args) = imemo.[mkey]
-            let implicit_args = Set.map print_tyv implicit_args |> Set.toList
+            let implicit_args = Set.toList implicit_args |> List.map print_tyv
             let explicit_args = print_methodcall call
             let args = implicit_args @ explicit_args |> String.concat ", "
             let method_name = print_method tag

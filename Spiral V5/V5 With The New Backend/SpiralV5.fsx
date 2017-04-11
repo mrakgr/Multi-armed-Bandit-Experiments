@@ -179,24 +179,24 @@ let memoize f =
 //
 //    eval default_dims map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_])
 //
-//let map_redo_map_1_1 = 
-//    let n = TyV (get_tag(), Int32T)
-//    let in_ = get_tag(),GlobalArrayT([n],Float32T)
-//    let out_ = get_tag(),GlobalArrayT([],Float32T)
-//
-//    let map_load_op =
-//        inl (VV [V "i";V "in1"]) (IndexArray(V "in1",[V "i"]))
-//    let reduce_op = 
-//        meth (VV [V "a"; V "b"]) (V "a" + V "b")
-//    let map_store_op =
-//        inl (VV [V "result";V "out1"])
-//            (l B (AtomicAdd(dref (V "out1"),V "result")) B)
-//
-//    eval default_dims map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_])
-//
-//let get = function Succ x -> x | _ -> failwith "Error"
-//
-//let x = 
-//    let k = get map_redo_map_1_1
-//    printfn "%s" k
-//    compile_kernel_using_nvcc_bat_router (k |> hash |> string) k
+let map_redo_map_1_1 = 
+    let n = TyV (get_tag(), Int32T)
+    let in_ = get_tag(),GlobalArrayT([n],Float32T)
+    let out_ = get_tag(),GlobalArrayT([],Float32T)
+
+    let map_load_op =
+        inl (VV [V "i";V "in1"]) (IndexArray(V "in1",[V "i"]))
+    let reduce_op = 
+        meth (VV [V "a"; V "b"]) (V "a" + V "b")
+    let map_store_op =
+        inl (VV [V "result";V "out1"])
+            (l B (AtomicAdd(dref (V "out1"),V "result")) B)
+
+    eval default_dims map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_])
+
+let get = function Succ x -> x | _ -> failwith "Error"
+
+let x = 
+    let k = get map_redo_map_1_1
+    printfn "%s" k
+    compile_kernel_using_nvcc_bat_router (k |> hash |> string) k
