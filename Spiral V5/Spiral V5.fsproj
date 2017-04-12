@@ -70,6 +70,7 @@
     <None Include="V5 With The New Backend\SpiralV5CudaInit.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5Language%27.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Language.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Scripts\load-references-release.fsx" />
