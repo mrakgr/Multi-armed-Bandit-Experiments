@@ -295,12 +295,12 @@ let print_method_dictionary (imemo: MethodImplDict) =
         cur_program () |> process_statements |> Succ
     with e -> Fail (e.Message, e.StackTrace)
 
-let eval dims body inputs = 
+let eval body (inputs, dims) = 
     match typecheck dims body inputs with
     | Succ imemo -> print_method_dictionary imemo
     | Fail er -> Fail er
 
-let eval0 body = eval default_dims body (VV [])
+let eval0 body = eval body (VV [], default_dims)
 
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin

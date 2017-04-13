@@ -352,3 +352,11 @@ and ObjectPool() =
             dis poolingDescriptorPool.Values
             dis activationDescriptorPool.Values
             dis BNDescriptorPool.Values
+
+type D = 
+    | DFloat32 of float32
+
+    static member (+)(a,b) =
+        match a,b with
+        | DFloat32 a, DFloat32 b -> DFloat32 (a+b)
+

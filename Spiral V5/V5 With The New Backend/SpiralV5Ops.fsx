@@ -163,3 +163,20 @@ let inline add proj_2d proj_1d alpha (a: DM) beta (b: DM) (c: DM) (env: SpiralEn
     c, fun _ ->
         if a.HasAdjoint then axpy env.Str alpha (c.A' proj_1d) (a.A' proj_1d)
         if b.HasAdjoint then axpy env.Str beta (c.A' proj_1d) (b.A' proj_1d)
+
+open System.Collections.Generic
+open SpiralV5CudaTypechecker_v6e
+open SpiralV5CudaCodegen_v3a
+
+let compile kernel inputs = 
+    let get = function Succ x -> x | _ -> failwith "Error"
+    match eval kernel inputs with
+    | Succ k -> 
+        let h = k |> hash |> string
+        compile_kernel_using_nvcc_bat_router h k
+    | Fail _ -> failwith "Kernel failed to compile"
+
+let call_map = compile map_module |> memoize
+let call_map_redo_map = compile map_redo_map_module |> memoize
+let call_map_redocol_map = compile map_redocol_map_module |> memoize
+
