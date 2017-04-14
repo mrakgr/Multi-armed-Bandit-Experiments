@@ -38,23 +38,23 @@ let inline array_byte_length' x = array_byte_length x |> SizeT
 /// The basic Spiral pointer type made to be simpler than ManagedCuda's CudaDeviceVariable.
 type SpiralDeviceVar =
     val SizeInBytes: uint64
-    val mutable DevicePtr: CUdeviceptr
+    val DevicePtr: CUdeviceptr ref
 
     /// Allocates memory of the following size. The memory is uninitialized.
     new (size_in_bytes: uint64) =
-        let data = new CUdeviceptr()
-        DriverAPINativeMethods.MemoryManagement.cuMemAlloc_v2(ref data, SizeT size_in_bytes) |> guard
+        let data = new CUdeviceptr() |> ref
+        DriverAPINativeMethods.MemoryManagement.cuMemAlloc_v2(data, SizeT size_in_bytes) |> guard
         {SizeInBytes=size_in_bytes;DevicePtr=data}
 
-    member inline t.IsDisposed = is_null_ptr t.DevicePtr
+    member inline t.IsDisposed = is_null_ptr t.DevicePtr.Value
 
     interface IDisposable with
         member t.Dispose() =
             if t.IsDisposed = false then
                 // Ignore if failing.
-                DriverAPINativeMethods.MemoryManagement.cuMemFree_v2(t.DevicePtr) |> ignore
+                DriverAPINativeMethods.MemoryManagement.cuMemFree_v2(!t.DevicePtr) |> ignore
                 // Set the pointer to null.
-                t.DevicePtr <- CUdeviceptr()
+                t.DevicePtr := CUdeviceptr()
 
 let inline prim_copy_template f (device_ptr: CUdeviceptr) (x: 'a[]) = 
     let handle = GCHandle.Alloc(x, GCHandleType.Pinned)
@@ -97,18 +97,18 @@ type SpiralDeviceUpwardResizableVar =
     /// Synchronous memcopy from host to device. Adjust the pointer and allocates space if necessary.
     member t.CopyFromHost (source: 'a[]) =
         source.LongLength |> uint64 |> t.ResizeIf
-        prim_copy_from_host t.Ptr.DevicePtr source
+        prim_copy_from_host t.Ptr.DevicePtr.Value source
 
     member t.CopyToHost (dest: 'a[]) =
         if t.ViewSizeInBytes = array_byte_length dest then
-            prim_copy_to_host dest t.GetDevicePtr
+            prim_copy_to_host dest t.GetDevicePtr.Value
         else
             failwith "The sizes do not match."
 
     member inline private t.Memset(f, x: 'a) =
         let s = sizeof<'a>
         if t.ViewSizeInBytes % uint64 s = 0UL then
-            f (t.GetDevicePtr, x, SizeT t.ViewSizeInBytes / s) |> guard
+            f (t.GetDevicePtr.Value, x, SizeT t.ViewSizeInBytes / s) |> guard
         else
             failwithf "The array size is not divisible by %i." s
 
@@ -119,7 +119,7 @@ type SpiralDeviceUpwardResizableVar =
     member inline private t.MemsetAsync(f, x: 'a, str: CudaStream) =
         let s = sizeof<'a>
         if t.ViewSizeInBytes % uint64 s = 0UL then
-            f (t.GetDevicePtr, x, SizeT t.ViewSizeInBytes / s, str.Stream) |> guard
+            f (t.GetDevicePtr.Value, x, SizeT t.ViewSizeInBytes / s, str.Stream) |> guard
         else
             failwithf "The array size is not divisible by %i." s
 
@@ -151,6 +151,7 @@ type DM =
 let size_to_total_size x = Array.fold ((*)) 1UL x
 let total_size (x: DM) = size_to_total_size x.Size
 
+let size (x: DM) = x.Size
 let primal (x: DM) = let i=0 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have a primal."
 let adjoint (x: DM) = let i=1 in if i < x.NumVars then x.Data.[i] else failwith "DM does not have an adjoint."
 let has_adjoint (x: DM) = let i=1 in i < x.NumVars

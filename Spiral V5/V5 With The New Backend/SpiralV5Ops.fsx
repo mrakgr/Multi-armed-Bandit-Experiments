@@ -13,7 +13,7 @@ let T = Operation.Transpose
 let nT = Operation.NonTranspose
 
 let inline guard_sizes x y =
-    if x <> y then failwithf "%A <> %A" x y
+    if x <> y then failwithf "guard_sizes failed.\n%A <> %A" x y
     y
 
 let guard_cublas _status = if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
@@ -172,6 +172,7 @@ let compile kernel inputs =
     let get = function Succ x -> x | _ -> failwith "Error"
     match eval kernel inputs with
     | Succ k -> 
+        printfn "%s" k
         let h = k |> hash |> string
         compile_kernel_using_nvcc_bat_router h k
     | Fail _ -> failwith "Kernel failed to compile"
@@ -191,11 +192,10 @@ let map =
         let dims = dim3(int block_size), dim3(int grid_size)
 
         match args with
-        | x :: xs -> List.fold guard_sizes x xs |> ignore
+        | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
         | [] -> ()
-            
         let to_typechecking_form inputs =
-            let conv (x : DM) = V' (get_tag(),GlobalArrayT([n],PrimT x.Type))
+            let conv (x : DM) = V' (-1L,GlobalArrayT([n],PrimT x.Type))
             match inputs with
             | [x] -> conv x
             | x :: xs -> VV (List.map conv inputs)
@@ -214,4 +214,12 @@ let map =
 
         let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr) x |> List.toArray
         let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
-        kernel.RunAsync(str.Stream,args)
+        //kernel.RunAsync(str.Stream,args)
+        ()
+
+let f _ = dm_create [|10UL|] Float32T 2
+let in1, out1 = f(), f()
+
+let _ =
+    use s = new CudaStream()
+    map s (inl (V "x") (V "x" * V "x")) [in1] [out1]

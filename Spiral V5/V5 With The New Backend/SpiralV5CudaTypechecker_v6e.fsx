@@ -53,9 +53,10 @@ and CudaExpr =
     | MapVV of CudaExpr * CudaExpr
 
     // Array cases
-    | IndexArray of CudaExpr * CudaExpr list
-    | CreateSharedArray of CudaExpr list * typeof: CudaExpr
-    | CreateLocalArray of CudaExpr list * typeof: CudaExpr
+    | ArrayIndex of CudaExpr * CudaExpr list
+    | ArraySize of CudaExpr * CudaExpr
+    | ArrayCreateShared of CudaExpr list * typeof: CudaExpr
+    | ArrayCreateLocal of CudaExpr list * typeof: CudaExpr
 
     // Primitive operations on expressions.
     | Add of CudaExpr * CudaExpr
@@ -129,8 +130,9 @@ and TypedCudaExpr =
     | TyVV of TypedCudaExpr list * CudaTy
 
     // Array cases
-    | TyIndexArray of TypedCudaExpr * TypedCudaExpr list * CudaTy
-    | TyCreateArray of CudaTy
+    | TyArrayIndex of TypedCudaExpr * TypedCudaExpr list * CudaTy
+    | TyArrayCreate of CudaTy
+    | TyArraySize of TypedCudaExpr * TypedCudaExpr * CudaTy
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -210,7 +212,7 @@ let rec get_type = function
     | TyVV(_,t) | TyIndexVV(_,_,t) -> t
 
     // Array cases
-    | TyIndexArray(_,_,t) | TyCreateArray(t) -> t
+    | TyArrayIndex(_,_,t) | TyArraySize(_,_,t) | TyArrayCreate(t) -> t
 
     // Primitive operations on expressions.
     | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
@@ -418,7 +420,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | VV l, r -> failwithf "Cannot destructure %A." r
         | l, r ->
             match tev d l with
-            | (TyIndexArray(_,_,lt) as v) when lt = get_type r -> push_sequence (fun rest -> TyMSet(v,r,rest,get_type rest))
+            | (TyArrayIndex(_,_,lt) as v) when lt = get_type r -> push_sequence (fun rest -> TyMSet(v,r,rest,get_type rest))
             | x -> failwithf "Expected `(TyIndexArray(_,_,lt) as v) when lt = get_type r`.\nGot: %A" x
 
     let rec map_tyvv f = function
@@ -616,15 +618,19 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             failwithf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
 
     // Array cases
-    | IndexArray(exp,args) ->
+    | ArrayIndex(exp,args) ->
         let exp,args = tev d exp, List.map (tev d) args
         match get_type exp with
         | LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t) when List.forall is_int args && List.length vs = List.length args ->
-            TyIndexArray(exp,args,t)
+            TyArrayIndex(exp,args,t)
         | _ -> failwithf "Something is wrong in IndexArray.\nexp=%A, args=%A" exp args
+    | ArraySize(ar,ind) ->
+        let ar, ind = tev d ar, tev d ind
+        match get_type ar, ind with
+        | (LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t)), LitInt32
 
-    | CreateLocalArray(args,t) -> let args,t = process_create_array args t in TyCreateArray(LocalArrayT(args,t))
-    | CreateSharedArray(args,t) -> let args,t = process_create_array args t in TyCreateArray(SharedArrayT(args,t))
+    | ArrayCreateLocal(args,t) -> let args,t = process_create_array args t in TyArrayCreate(LocalArrayT(args,t))
+    | ArrayCreateShared(args,t) -> let args,t = process_create_array args t in TyArrayCreate(SharedArrayT(args,t))
 
     | ThreadIdxX -> TyThreadIdxX 
     | ThreadIdxY -> TyThreadIdxY 
