@@ -77,13 +77,19 @@ let print_method_dictionary (imemo: MethodImplDict) =
         failwith "Arrays should not be inside other arrays."
     let rec print_type array_case = function
         | UnitT -> "void"
-        | UInt32T -> "unsigned int"
-        | UInt64T -> "unsigned long long int"
-        | Int32T -> "int"
-        | Int64T -> "long long int"
-        | Float32T -> "float"
-        | Float64T -> "double"
-        | BoolT -> "int"
+        | PrimT x -> 
+            match x with
+            | UInt8T -> "unsigned char"
+            | UInt16T -> "unsigned short"
+            | UInt32T -> "unsigned int"
+            | UInt64T -> "unsigned long long int"
+            | Int8T -> "char"
+            | Int16T -> "short"
+            | Int32T -> "int"
+            | Int64T -> "long long int"
+            | Float32T -> "float"
+            | Float64T -> "double"
+            | BoolT -> "int"
         | VVT t -> tuple_def_proc t |> print_tuple
         | LocalArrayT (_,t) | SharedArrayT (_,t) | GlobalArrayT (_,t) -> array_case t
         | TagT _ -> failwith "Can't print tagged types."
@@ -134,8 +140,12 @@ let print_method_dictionary (imemo: MethodImplDict) =
             sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
             codegen rest
         | TyUnit -> ""
-        | TyLitInt x -> string x
-        | TyLitFloat x -> string x
+        | TyLitUInt32 x -> string x 
+        | TyLitUInt64 x -> string x 
+        | TyLitInt32 x -> string x
+        | TyLitInt64 x -> string x
+        | TyLitFloat32 x -> string x
+        | TyLitFloat64 x -> string x
         | TyLitBool x -> if x then "1" else "0"
         | TyMethodCall((tag,_ as mkey),call,t) ->
             let (_,_,implicit_args) = imemo.[mkey]
@@ -186,12 +196,6 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyBlockIdxX -> "blockIdx.x"
         | TyBlockIdxY -> "blockIdx.y"
         | TyBlockIdxZ -> "blockIdx.z"
-        | TyBlockDimX -> "blockDim.x"
-        | TyBlockDimY -> "blockDim.y"
-        | TyBlockDimZ -> "blockDim.z"
-        | TyGridDimX -> "gridDim.x"
-        | TyGridDimY -> "gridDim.y"
-        | TyGridDimZ -> "gridDim.z"
    
         // Primitive operations on expressions.
         | TyAdd (x,y,_) -> sprintf "(%s + %s)" (codegen x) (codegen y)
@@ -308,13 +312,13 @@ let s l fin = List.foldBack (fun x rest -> x rest) l fin
 let dref x = IndexArray(x,[])
 let cref x = l (V "ref") (CreateLocalArray([],x)) (MSet(dref (V "ref"),x,V "ref"))
     
-let for' init cond body =
+let for_template end_ init cond body =
     l (V "init") (cref init)
         (while_ (ap cond (dref <| V "init"))
-            (MSet(dref (V "init"), ap body (dref <| V "init"),B)) (dref <| V "init"))
+            (MSet(dref (V "init"), ap body (dref <| V "init"),B)) end_)
 
-let for_ init cond body =
-    l B (for' init cond body)
+let for' init cond body = for_template (dref <| V "init") init cond body
+let for_ init cond body = l B (for_template B init cond body)
 
 let mset out in_ rest = MSet(out,in_,rest)
 
@@ -339,7 +343,7 @@ let map_redo_map_module =
                     (inl (VV [V "i"; V "value"]) 
                         (VV [V "i" + V "stride"; ap (V "reduce_op") (VV [V "value";ap (V "map_load_op") (VV [V "i";V "ins"])])])))
             l (V "result") (CubBlockReduce(V "value",V "reduce_op",None))
-            l B (If(ThreadIdxX .= LitInt 0, ap (V "map_store_op") (VV [V "result"; V "outs"]), B))
+            l B (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "result"; V "outs"]), B))
             ] B)
 
 let map_redocol_map_module =
@@ -354,6 +358,6 @@ let map_redocol_map_module =
                                 (VV [V "row" + BlockDimX; 
                                         ap (V "reduce_op") (VV [V "value"; ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"])])])))
                     l (V "result") (CubBlockReduce(V "value",V "reduce_op",None))
-                    l B (If(ThreadIdxX .= LitInt 0, ap (V "map_store_op") (VV [V "result"; V "col"; V "outs"]), B))
+                    l B (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "result"; V "col"; V "outs"]), B))
                     ] (V "col" + GridDimX)))
             B)

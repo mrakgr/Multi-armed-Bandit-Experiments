@@ -379,11 +379,13 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let rec destructure_deep_template nonseq_push r = 
         let destructure_deep r = destructure_deep_template nonseq_push r
         match r with
-        | TyUnit | Inlineable' _ | Method' _ -> r
+        | TyUnit | Inlineable' _ | Method' _ -> r // Won't be passed into method as arguments.
         | TyVV(l,t) -> List.map destructure_deep l |> fun x -> TyVV(x,t)
         | TyV _ | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _
         | TyLitInt64 _ | TyLitFloat32 _ | TyLitFloat64 _    
-        | TyLitBool _ | TyIndexVV _ -> nonseq_push r
+        | TyLitBool _ | TyIndexVV _
+        | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+        | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> nonseq_push r // Will not be evaluated except at method calls.
         | _ -> 
             match get_type r with
             | VVT tuple_types -> 
@@ -573,7 +575,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | Apply(expr,args) -> apply expr args
     | If(cond,tr,fl) ->
         let cond = tev d cond
-        if is_bool cond then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+        if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
             let tev' e f =
                 d.recursive_methods_stack.Push f
