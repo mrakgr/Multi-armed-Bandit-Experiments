@@ -180,3 +180,38 @@ let call_map = compile map_module |> memoize
 let call_map_redo_map = compile map_redo_map_module |> memoize
 let call_map_redocol_map = compile map_redocol_map_module |> memoize
 
+let map =
+    let n = TyV (get_tag(), PrimT UInt64T)
+    fun (str: CudaStream) map_op (inputs: DM list) (outputs: DM list) ->
+        let args = inputs @ outputs
+        let total_size = total_size args.Head
+        let block_size = 256UL
+        let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup total_size block_size)
+
+        let dims = dim3(int block_size), dim3(int grid_size)
+
+        match args with
+        | x :: xs -> List.fold guard_sizes x xs |> ignore
+        | [] -> ()
+            
+        let to_typechecking_form inputs =
+            let conv (x : DM) = V' (get_tag(),GlobalArrayT([n],PrimT x.Type))
+            match inputs with
+            | [x] -> conv x
+            | x :: xs -> VV (List.map conv inputs)
+            | [] -> B
+        let ins = to_typechecking_form inputs
+        let outs = to_typechecking_form outputs
+
+        let map_op = 
+            inl (VV [V "i";V "ins";V "outs"])
+                (s [l (V "indexer") (inl (V "x") (IndexArray(V "x",[V "i"])))
+                    l (V "ins") (MapVV(V "indexer",V "ins"))
+                    mset (MapVV(V "indexer",V "outs")) (ap map_op (V "ins"))
+                    ] B)
+
+        let kernel = call_map (VV [map_op; T n; ins; outs], dims)
+
+        let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr) x |> List.toArray
+        let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
+        kernel.RunAsync(str.Stream,args)

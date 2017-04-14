@@ -25,15 +25,15 @@ let default_num_vars = 2
 // Initialize the context. Analogous to a CPU process. Cuda tries to offload as much as possible during context creation so there aren't
 // any unexpected delays later.
 let cuda_context = new CudaContext(false)
-let numSm = cuda_context.GetDeviceInfo().MultiProcessorCount // The number of streaming multiprocessors on the device.
+let numSm = cuda_context.GetDeviceInfo().MultiProcessorCount |> uint64 // The number of streaming multiprocessors on the device.
 
 // Set the Cuda libraries handles to the above stream.
 let cublas = CudaBlas(PointerMode.Host,AtomicsMode.Allowed) // Better performance for some solver functions with atomics allowed. The Spiral library does not use them though.
 let cudnn = new CudaDNNContext()
 let cudaRandom = new CudaRand.CudaRandDevice(GeneratorType.PseudoDefault)
 
-/// Integer division with rounding up. (a+b-1)/b is another variant on this.
-let inline divup a b = (a-1)/b+1 
+/// Integer division with rounding up. (a-1)/b+1 is another variant on this.
+let inline divup a b = (a+b-1UL)/b
 
 let visual_studio_path = //"C:/Program Files (x86)/Microsoft Visual Studio 14.0" usually.
     let x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")

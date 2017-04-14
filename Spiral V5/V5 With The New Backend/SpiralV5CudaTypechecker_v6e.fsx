@@ -3,15 +3,23 @@
 open ManagedCuda.VectorTypes
 open System.Collections.Generic
 
+/// The dynamic device variable type.
+type SpiralDeviceVarType =
+| UInt8T
+| UInt16T
+| UInt32T
+| UInt64T
+| Int8T
+| Int16T
+| Int32T
+| Int64T
+| Float32T
+| Float64T
+| BoolT
+
 type CudaTy =
     | UnitT
-    | UInt32T
-    | UInt64T
-    | Int32T
-    | Int64T
-    | Float32T
-    | Float64T
-    | BoolT
+    | PrimT of SpiralDeviceVarType
     | VVT of CudaTy list
     | GlobalArrayT of TypedCudaExpr list * CudaTy
     | SharedArrayT of TypedCudaExpr list * CudaTy
@@ -29,8 +37,12 @@ and CudaExpr =
     | B // blank
     | If of CudaExpr * CudaExpr * CudaExpr
     | Inlineable of CudaExpr * CudaExpr
-    | LitInt of int
-    | LitFloat of float
+    | LitUInt32 of uint32
+    | LitUInt64 of uint64
+    | LitInt32 of int
+    | LitInt64 of int64
+    | LitFloat32 of float32
+    | LitFloat64 of float
     | LitBool of bool
     | Apply of CudaExpr * args: CudaExpr
     | Method of name: string * args: CudaExpr * body: CudaExpr
@@ -103,8 +115,12 @@ and TypedCudaExpr =
     | TyIf of TypedCudaExpr * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyLet of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyUnit
-    | TyLitInt of int
-    | TyLitFloat of float
+    | TyLitUInt32 of uint32
+    | TyLitUInt64 of uint64
+    | TyLitInt32 of int
+    | TyLitInt64 of int64
+    | TyLitFloat32 of float32
+    | TyLitFloat64 of float
     | TyLitBool of bool
     | TyMethodCall of TyMethodKey * TypedCudaExpr * CudaTy
     
@@ -119,8 +135,6 @@ and TypedCudaExpr =
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
     | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
-    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
-    | TyGridDimX | TyGridDimY | TyGridDimZ
    
     // Primitive operations on expressions.
     | TyAdd of TypedCudaExpr * TypedCudaExpr * CudaTy
@@ -179,16 +193,18 @@ let rec get_type = function
     | Inlineable'(_,_,_,t) | Method'(_,_,_,_,t) -> t
 
     | TyV(_,t) | TyIf(_,_,_,t) -> t
-    | TyLitInt _ -> Int32T
-    | TyLitFloat _ -> Float32T
-    | TyLitBool _ -> BoolT
+    | TyLitUInt32 _ -> PrimT UInt32T
+    | TyLitUInt64 _ -> PrimT UInt64T
+    | TyLitInt32 _ -> PrimT Int32T
+    | TyLitInt64 _ -> PrimT Int64T
+    | TyLitFloat32 _ -> PrimT Float64T
+    | TyLitFloat64 _ -> PrimT Float32T   
+    | TyLitBool _ -> PrimT BoolT
     | TyMethodCall(_,_,t) -> t
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
-    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
-    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
-    | TyGridDimX | TyGridDimY | TyGridDimZ -> Int32T
+    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> PrimT UInt64T
 
     // Tuple cases
     | TyVV(_,t) | TyIndexVV(_,_,t) -> t
@@ -200,7 +216,7 @@ let rec get_type = function
     | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
     | TyDiv(_,_,t) | TyMod(_,_,t) -> t
     | TyLT _ | TyLTE _ | TyEQ _ | TyGT _
-    | TyGTE _ -> BoolT
+    | TyGTE _ -> PrimT BoolT
     | TyLeftShift(_,_,t) | TyRightShift(_,_,t) -> t
     | TySyncthreads -> UnitT
     | TyShuffleXor(_,_,t) | TyShuffleUp(_,_,t)
@@ -217,36 +233,56 @@ let rec get_type = function
     | TyCubBlockReduce(_,_,_,_,t) -> t
 
 let rec is_simple' = function
-    | UnitT | UInt32T | UInt64T | Int32T | Int64T | Float32T 
-    | Float64T | BoolT | GlobalArrayT _ -> true
+    | PrimT x -> 
+        match x with
+        | UInt8T | UInt16T | UInt32T | UInt64T 
+        | Int8T | Int16T | Int32T | Int64T 
+        | Float32T | Float64T | BoolT -> true
+    | UnitT | GlobalArrayT _ -> true
     | VVT x -> List.forall is_simple' x
     | _ -> false
 let is_simple a = is_simple' (get_type a)
 
 let rec is_numeric' = function
-    | UInt32T | UInt64T | Int32T | Int64T 
-    | Float32T | Float64T -> true
+    | PrimT x -> 
+        match x with
+        | UInt8T | UInt16T | UInt32T | UInt64T 
+        | Int8T | Int16T | Int32T | Int64T 
+        | Float32T | Float64T -> true
+        | BoolT -> false
     | _ -> false
 let is_numeric a = is_numeric' (get_type a)
 
 let is_atomic_add_supported' = function
-    | UInt32T | UInt64T | Int32T
-    | Float32T | Float64T -> true
+    | PrimT x -> 
+        match x with
+        | UInt32T | UInt64T | Int32T
+        | Float32T | Float64T -> true
+        | _ -> false
     | _ -> false
 let is_atomic_add_supported a = is_atomic_add_supported' (get_type a)
 
 let rec is_float' = function
-    | Float32T | Float64T -> true
+    | PrimT x -> 
+        match x with
+        | Float32T | Float64T -> true
+        | _ -> false
     | _ -> false
 let is_float a = is_float' (get_type a)
 
 let rec is_bool' = function
-    | BoolT -> true
+    | PrimT x -> 
+        match x with
+        | BoolT -> true
+        | _ -> false
     | _ -> false
 let is_bool a = is_bool' (get_type a)
 
 let rec is_int' = function
-    | UInt32T | UInt64T | Int32T | Int64T -> true
+    | PrimT x -> 
+        match x with
+        | UInt32T | UInt64T | Int32T | Int64T -> true
+        | _ -> false
     | _ -> false
 let is_int a = is_int' (get_type a)
 
@@ -345,12 +381,14 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match r with
         | TyUnit | Inlineable' _ | Method' _ -> r
         | TyVV(l,t) -> List.map destructure_deep l |> fun x -> TyVV(x,t)
-        | TyV _ | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyIndexVV _ -> nonseq_push r
+        | TyV _ | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _
+        | TyLitInt64 _ | TyLitFloat32 _ | TyLitFloat64 _    
+        | TyLitBool _ | TyIndexVV _ -> nonseq_push r
         | _ -> 
             match get_type r with
             | VVT tuple_types -> 
                 let indexed_tuple_args = List.mapi (fun i typ -> 
-                    destructure_deep <| TyIndexVV(r,TyLitInt i,typ)) tuple_types
+                    destructure_deep <| TyIndexVV(r,TyLitInt32 i,typ)) tuple_types
                 TyVV(indexed_tuple_args, VVT tuple_types)
             | _ -> make_tyv_and_push r
 
@@ -518,8 +556,12 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     match exp with
     | T x -> x // To assist in CubBlockReduce so evaled cases do not have to be evaluated twice.
     | V' x -> TyV x // To assist in interfacing with the outside.
-    | LitInt x -> TyLitInt x
-    | LitFloat x -> TyLitFloat x
+    | LitInt32 x -> TyLitInt32 x
+    | LitInt64 x -> TyLitInt64 x
+    | LitUInt32 x -> TyLitUInt32 x
+    | LitUInt64 x -> TyLitUInt64 x
+    | LitFloat32 x -> TyLitFloat32 x
+    | LitFloat64 x -> TyLitFloat64 x
     | LitBool x -> TyLitBool x
     | B -> TyUnit
     | V x -> 
@@ -531,7 +573,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | Apply(expr,args) -> apply expr args
     | If(cond,tr,fl) ->
         let cond = tev d cond
-        if get_type cond <> BoolT then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+        if is_bool cond then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
             let tev' e f =
                 d.recursive_methods_stack.Push f
@@ -562,7 +604,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         TyVV(vv,make_vvt vv)
     | IndexVV(v,i) ->
         match tev d v, tev d i with
-        | v, (TyLitInt i as i') ->
+        | v, (TyLitInt32 i as i') ->
             match get_type v with
             | VVT ts -> 
                 if i >= 0 || i < List.length ts then TyIndexVV(v,i',ts.[i])
@@ -588,12 +630,12 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | BlockIdxX -> TyBlockIdxX 
     | BlockIdxY -> TyBlockIdxY 
     | BlockIdxZ -> TyBlockIdxZ
-    | BlockDimX -> TyLitInt (int d.blockDim.x) 
-    | BlockDimY -> TyLitInt (int d.blockDim.y) 
-    | BlockDimZ -> TyLitInt (int d.blockDim.z)
-    | GridDimX -> TyLitInt (int d.gridDim.x)
-    | GridDimY -> TyLitInt (int d.gridDim.y) 
-    | GridDimZ -> TyLitInt (int d.gridDim.z)
+    | BlockDimX -> TyLitUInt64 (uint64 d.blockDim.x) 
+    | BlockDimY -> TyLitUInt64 (uint64 d.blockDim.y) 
+    | BlockDimZ -> TyLitUInt64 (uint64 d.blockDim.z)
+    | GridDimX -> TyLitUInt64 (uint64 d.gridDim.x)
+    | GridDimY -> TyLitUInt64 (uint64 d.gridDim.y) 
+    | GridDimZ -> TyLitUInt64 (uint64 d.gridDim.z)
 
     // Primitive operations on expressions.
     | Add(a,b) -> prim_arith_op a b TyAdd
@@ -628,8 +670,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | While(cond,body,e) ->
         let cond, body = tev d (Apply(Method("",VV [],cond),VV [])), with_empty_seq d body
         match get_type cond, get_type body with
-        | BoolT, UnitT -> push_sequence (fun rest -> TyWhile(cond,body,rest,get_type rest)); tev d e
-        | BoolT, _ -> failwith "Expected UnitT as the type of While's body."
+        | PrimT BoolT, UnitT -> push_sequence (fun rest -> TyWhile(cond,body,rest,get_type rest)); tev d e
+        | PrimT BoolT, _ -> failwith "Expected UnitT as the type of While's body."
         | _ -> failwith "Expected BoolT as the type of While's conditional."
     | CubBlockReduce(input, method_, num_valid) ->
         let dim = 
@@ -640,7 +682,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let method_ =
             match get_type evaled_input with
             | LocalArrayT(_,t) | SharedArrayT(_,t) -> 
-                let arg = IndexArray(T evaled_input,[LitInt 0])
+                let arg = IndexArray(T evaled_input,[LitInt32 0])
                 tev d (VV [arg;arg])
             | x -> tev d (VV [T evaled_input; T evaled_input])
             |> apply_method_only (apply_first method_)
@@ -656,7 +698,8 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | Method' _ | Inlineable' _ -> Set.empty
     | TyV v -> Set.singleton v
     | TyIf(cond,tr,fl,t) -> c cond + c tr + c fl
-    | TyLitInt _ | TyLitFloat _ | TyLitBool _ | TyUnit -> Set.empty
+    | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
+    | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ | TyUnit -> Set.empty
     | TyVV(vars,t) -> Set.unionMany (List.map c vars)
     | TyIndexVV(t,i,_) -> Set.union (c t) (c i)
     | TyMethodCall(m,ar,_) ->
@@ -701,9 +744,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
         | _ -> failwith "impossible"
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
-    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ
-    | TyBlockDimX | TyBlockDimY | TyBlockDimZ
-    | TyGridDimX | TyGridDimY | TyGridDimZ -> Set.empty
+    | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> Set.empty
     // Primitive operations on expressions.
     | TySyncthreads -> Set.empty
     | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a

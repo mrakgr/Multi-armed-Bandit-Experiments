@@ -1,5 +1,6 @@
 ﻿#load "SpiralV5CudaInit.fsx"
 open SpiralV5CudaInit
+open SpiralV5CudaTypechecker_v6e
 
 open System
 
@@ -14,20 +15,6 @@ open ManagedCuda.CudaDNN
 open System.Runtime.InteropServices
 
 let inline dispose (v: #IDisposable) = v.Dispose()
-
-/// The dynamic device variable type.
-type SpiralDeviceVarType =
-| UInt8T
-| UInt16T
-| UInt32T
-| UInt64T
-| Int8T
-| Int16T
-| Int32T
-| Int64T
-| Float32T
-| Float64T
-| BoolT
 
 let spiral_sizeof = function
     | UInt8T -> 1UL
