@@ -417,12 +417,9 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     let rec mset l r =
         match l, r with // destructure_deep is called in the MSet case.
-        | VV l, TyVV(r,_) -> List.iter2 mset l r
-        | VV l, r -> failwithf "Cannot destructure %A." r
-        | l, r ->
-            match tev d l with
-            | (TyArrayIndex(_,_,lt) as v) when lt = get_type r -> push_sequence (fun rest -> TyMSet(v,r,rest,get_type rest))
-            | x -> failwithf "Expected `(TyIndexArray(_,_,lt) as v) when lt = get_type r`.\nGot: %A" x
+        | (TyArrayIndex(_,_,lt) as v), r when lt = get_type r -> push_sequence (fun rest -> TyMSet(v,r,rest,get_type rest))
+        | TyVV(l,_), TyVV(r,_) -> List.iter2 mset l r
+        | _ -> failwithf "Error in mset. Expected: (TyArrayIndex(_,_,lt) as v), r when lt = get_type r or TyVV(l,_), TyVV(r,_).\nGot: %A and %A" l r
 
     let rec map_tyvv f = function
         | TyVV(r,_) -> VV (List.map (map_tyvv f) r)
@@ -686,7 +683,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | Tanh a -> prim_un_floating a TyTanh
     | Neg a -> prim_un_numeric a TyNeg
     // Mutable operations.
-    | MSet(a,b,rest) -> mset a (destructure_deep (tev d b)); tev d rest
+    | MSet(a,b,rest) -> mset (tev d a) (destructure_deep (tev d b)); tev d rest
     | AtomicAdd(a,b) -> prim_atomic_add_op a b TyAtomicAdd
     | While(cond,body,e) ->
         let cond, body = tev d (Apply(Method("",VV [],cond),VV [])), with_empty_seq d body

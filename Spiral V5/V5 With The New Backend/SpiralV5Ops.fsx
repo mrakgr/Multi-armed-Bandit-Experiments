@@ -181,8 +181,16 @@ let call_map = compile map_module |> memoize
 let call_map_redo_map = compile map_redo_map_module |> memoize
 let call_map_redocol_map = compile map_redocol_map_module |> memoize
 
+let reserve_tags n =
+    let tags = ResizeArray()
+    for i=1 to n do
+        tags.Add(get_tag())
+    tags
+
+let reserved_tags = reserve_tags 100
+
 let map =
-    let n = TyV (0L, PrimT UInt64T)
+    let n = TyV (reserved_tags.[0], PrimT UInt64T)
     fun (str: CudaStream) map_op (inputs: DM list) (outputs: DM list) ->
         let args = inputs @ outputs
         let total_size = total_size args.Head
@@ -196,9 +204,9 @@ let map =
         | [] -> ()
 
         let to_typechecking_form =
-            let mutable i = 0L
-            let inc() = i <- i+1L; i
-            let conv (x : DM) = V' (inc(),GlobalArrayT([n],PrimT x.Type))
+            let mutable i = 0
+            let inc() = i <- i+1; i
+            let conv (x : DM) = V' (reserved_tags.[inc()],GlobalArrayT([n],PrimT x.Type))
             fun inputs ->
                 match inputs with
                 | [x] -> conv x
@@ -214,15 +222,8 @@ let map =
                     mset (VVMap(V "indexer",V "outs")) (ap map_op (V "ins"))
                     ] B)
 
-        let kernel = call_map (VV [map_op; T n; ins; outs], dims)
+        let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
 
         let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
         let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
         kernel.RunAsync(str.Stream,args)
-
-let f _ = dm_create [|10UL|] Float32T 2
-let in1, out1 = f(), f()
-
-let _ =
-    use s = new CudaStream()
-    map s (inl (V "x") (V "x" * V "x")) [in1] [out1]
