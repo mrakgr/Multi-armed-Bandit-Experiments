@@ -48,9 +48,9 @@ and CudaExpr =
     | Method of name: string * args: CudaExpr * body: CudaExpr
 
     // Tuple cases
-    | IndexVV of CudaExpr * CudaExpr
+    | VVIndex of CudaExpr * CudaExpr
     | VV of CudaExpr list // tuple
-    | MapVV of CudaExpr * CudaExpr
+    | VVMap of CudaExpr * CudaExpr
 
     // Array cases
     | ArrayIndex of CudaExpr * CudaExpr list
@@ -132,7 +132,6 @@ and TypedCudaExpr =
     // Array cases
     | TyArrayIndex of TypedCudaExpr * TypedCudaExpr list * CudaTy
     | TyArrayCreate of CudaTy
-    | TyArraySize of TypedCudaExpr * TypedCudaExpr * CudaTy
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -212,7 +211,7 @@ let rec get_type = function
     | TyVV(_,t) | TyIndexVV(_,_,t) -> t
 
     // Array cases
-    | TyArrayIndex(_,_,t) | TyArraySize(_,_,t) | TyArrayCreate(t) -> t
+    | TyArrayIndex(_,_,t) | TyArrayCreate(t) -> t
 
     // Primitive operations on expressions.
     | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
@@ -311,7 +310,7 @@ let map_fold_2_Er f state x y =
     loop f state (x,y)
 
 let get_body_from (stack: Stack<unit -> TypedCudaExpr>) = 
-    if stack.Count > 0 then stack.Peek()()
+    if stack.Count > 0 then stack.Pop()()
     else failwith "The program is divergent."
 
 let filter_tyvs evaled_cur_args =
@@ -381,11 +380,10 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let rec destructure_deep_template nonseq_push r = 
         let destructure_deep r = destructure_deep_template nonseq_push r
         match r with
-        | TyUnit | Inlineable' _ | Method' _ -> r // Won't be passed into method as arguments.
+        | TyV _ | TyUnit | Inlineable' _ | Method' _ -> r // Won't be passed into method as arguments apart from TyV.
         | TyVV(l,t) -> List.map destructure_deep l |> fun x -> TyVV(x,t)
-        | TyV _ | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _
-        | TyLitInt64 _ | TyLitFloat32 _ | TyLitFloat64 _    
-        | TyLitBool _ | TyIndexVV _
+        | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
+        | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
         | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
         | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> nonseq_push r // Will not be evaluated except at method calls.
         | _ -> 
@@ -394,7 +392,10 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 let indexed_tuple_args = List.mapi (fun i typ -> 
                     destructure_deep <| TyIndexVV(r,TyLitInt32 i,typ)) tuple_types
                 TyVV(indexed_tuple_args, VVT tuple_types)
-            | _ -> make_tyv_and_push r
+            | _ -> 
+                match r with
+                | TyIndexVV _ -> nonseq_push r
+                | _ -> make_tyv_and_push r
 
     let destructure_deep r = destructure_deep_template id r
     let destructure_deep_method r = destructure_deep_template (make_tyv >> TyV) r
@@ -512,11 +513,19 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let apply_inlineable (la,body,env,_) ra =
         tev {d with env = match_vv_inl env la (destructure_deep ra)} body
 
+    let filter_duplicate_vars x =
+        let h = h0()
+        let rec loop = function
+            | TyV(tag,t) as var -> if h.Add tag then Some var else None
+            | TyVV(l,t) -> TyVV(List.choose loop l, t) |> Some
+            | x -> Some x
+        (loop x).Value
+
     let apply_method (name,la,body,initial_env,t as orig) ra =
         let t = match t with TagT t -> t | _ -> failwith "impossible"
         
         let bound_outside_args, bound_inside_args, env = 
-            let bound_outside_args = destructure_deep ra
+            let bound_outside_args = destructure_deep ra |> filter_duplicate_vars
             let bound_inside_args, env = match_vv_method initial_env la (destructure_deep_method bound_outside_args)
             bound_outside_args, bound_inside_args, env
 
@@ -580,9 +589,10 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
             let tev' e f =
-                d.recursive_methods_stack.Push f
+                let mutable is_popped = false
+                d.recursive_methods_stack.Push (fun _ -> is_popped <- true; f())
                 let x = with_empty_seq d e
-                d.recursive_methods_stack.Pop |> ignore
+                if is_popped = false then d.recursive_methods_stack.Pop() |> ignore
                 x
 
             let mutable fl_result = None
@@ -600,13 +610,13 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then tev d (Apply(Method("",VV [],T (TyIf(cond,tr,fl,type_tr))),VV []))
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
-    | MapVV(a,b) ->
+    | VVMap(a,b) ->
         let a,b = tev d a, tev d b
         tev d (map_tyvv (T a) (destructure_deep b))
     | VV vars ->
         let vv = List.map (tev d) vars
         TyVV(vv,make_vvt vv)
-    | IndexVV(v,i) ->
+    | VVIndex(v,i) ->
         match tev d v, tev d i with
         | v, (TyLitInt32 i as i') ->
             match get_type v with
@@ -623,11 +633,14 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match get_type exp with
         | LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t) when List.forall is_int args && List.length vs = List.length args ->
             TyArrayIndex(exp,args,t)
-        | _ -> failwithf "Something is wrong in IndexArray.\nexp=%A, args=%A" exp args
+        | _ -> failwithf "Something is wrong in ArrayIndex.\nexp=%A, args=%A" exp args
     | ArraySize(ar,ind) ->
         let ar, ind = tev d ar, tev d ind
         match get_type ar, ind with
-        | (LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t)), LitInt32
+        | (LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t)), TyLitInt32 i ->
+            if i < vs.Length then vs.[i]
+            else failwith "Array size not available."
+        | _ -> failwithf "Something is wrong in ArraySize.\nar=%A, ind=%A" ar ind
 
     | ArrayCreateLocal(args,t) -> let args,t = process_create_array args t in TyArrayCreate(LocalArrayT(args,t))
     | ArrayCreateShared(args,t) -> let args,t = process_create_array args t in TyArrayCreate(SharedArrayT(args,t))
@@ -690,9 +703,11 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let method_ =
             match get_type evaled_input with
             | LocalArrayT(_,t) | SharedArrayT(_,t) -> 
-                let arg = IndexArray(T evaled_input,[LitInt32 0])
+                let arg = ArrayIndex(T evaled_input,[LitInt32 0])
                 tev d (VV [arg;arg])
-            | x -> tev d (VV [T evaled_input; T evaled_input])
+            | x -> 
+                let arg() = evaled_input |> make_tyv |> TyV
+                tev d (VV [T (arg()); T (arg())])
             |> apply_method_only (apply_first method_)
 
         let num_valid = Option.map (tev d) num_valid
@@ -734,7 +749,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
             failwithf "The method passed to Cub should have no implicit arguments.\nm=%A\nimpl_args=%A" m impl_args
     | TyCubBlockReduce _ -> failwith "impossible"
     // Array cases
-    | TyIndexArray(a,b,t) -> 
+    | TyArrayIndex(a,b,t) -> 
         let a = 
             match get_type a with
             | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
@@ -745,7 +760,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
                 Set.union (c a) (Set(b))
             | _ -> failwith "impossible"
         Set.union a (Set.unionMany (List.map c b))
-    | TyCreateArray t -> 
+    | TyArrayCreate t -> 
         match t with
         | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
             Set.unionMany (List.map c x)

@@ -28,6 +28,20 @@
 // Edit: All the tests pass and the typechecker has been radically simplified as a result.
 // Good enough for now.
 
+// 4/15/2017:
+
+// It turns out that the recursive case inside an If statement enters an infinite loop.
+// It can be easily fixed by adding a channel inside tev_with_cur_stack and rather than peeking
+// having the recursive methods stack be popped.
+
+// It is too bad this idea did not occured to me 1.5 weeks ago, but now I am virtually certain that
+// the algorithm is sound. Mutable channels are wonderful things.
+
+// Edit: I can't believe I used `Pop |> ignore` instead of `Pop() |> ignore` and it still worked.
+// I had this same bug in the previous versions. Ok, now it should be certain.
+
+// Revisiting old code is a good habit. The only reason why I looked at this again was because I forgot
+// how the thing worked and had to explain it to myself again.
 
 open System.Collections.Generic
 
@@ -86,15 +100,16 @@ type Data =
 
 let d0() = {v_dict=Map.empty;method_dict=Map.empty;method_dict'=Dictionary();stack=Stack()}
 
-let peek_stack (stack: Stack<unit -> TypedExpr>) =
-    if stack.Count > 0 then stack.Peek()()
+let get_stack (stack: Stack<unit -> TypedExpr>) =
+    if stack.Count > 0 then stack.Pop()()
     else failwith "The program is divergent."
 
 let rec tev (d: Data) exp = 
     let tev_with_cur_stack e f =
-        d.stack.Push f
+        let mutable is_popped = false
+        d.stack.Push (fun _ -> is_popped <- true; f())
         let x = tev d e
-        d.stack.Pop |> ignore
+        if is_popped = false then d.stack.Pop() |> ignore
         x
     match exp with
     | V x -> TyV(x,d.v_dict.[x])
@@ -142,7 +157,7 @@ let rec tev (d: Data) exp =
                 TyMethodCall(x,args, get_type method_typed_body)
 
             | true, None ->
-                let t = get_type (peek_stack d.stack)
+                let t = get_type (get_stack d.stack)
                 d.method_dict'.[n] <- (Some t)
                 TyMethodCall(x, args, t)
             | true, (Some t') -> 
@@ -169,6 +184,10 @@ let term1' =
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],If(V "cond",rec_call,LitInt 1),rec_call)
 
+let term1'' = // Error
+    let rec_call = Apply("meth",[LitBool true])
+    Method("meth",["cond"],If(V "cond",rec_call,rec_call),rec_call)
+
 let term2 = 
     let rec_call = Apply("meth",[LitBool true])
     let if_ x = If(V "cond",x,rec_call)
@@ -183,7 +202,7 @@ let term3 = // Error
 let term3' = // Correct
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],
-        Let("x",If(V "cond",LitInt 1,rec_call),
+        Let("x",If(V "cond",LitFloat 2.5,rec_call),
             If(V "cond",LitFloat 1.5,rec_call)),rec_call)
 
 let term4 = // Correct

@@ -153,7 +153,7 @@ let memoize f =
             cache.[x] <- res
             res
 
-//let private make_tyv () = TyV (get_tag(),PrimT UInt64T)
+//let make_tyv () = TyV (get_tag(),PrimT UInt64T)
 //
 //let map_1_1 = 
 //    let n = make_tyv()
@@ -162,7 +162,7 @@ let memoize f =
 //
 //    let map_op = 
 //        inl (VV [V "i";V "in1";V "out1"])
-//            (mset (VV [IndexArray(V "out1",[V "i"])]) (VV [IndexArray(V "in1",[V "i"])]) B)
+//            (mset (VV [ArrayIndex(V "out1",[V "i"])]) (VV [ArrayIndex(V "in1",[V "i"])]) B)
 //    eval map_module (VV [map_op; T n;V' in_;V' out_], default_dims)
 //
 //let map_redocol_map_1_1 = 
@@ -172,12 +172,12 @@ let memoize f =
 //    let out_ = get_tag(),GlobalArrayT([num_cols],PrimT Float32T)
 //
 //    let map_load_op =
-//        inl (VV [VV [V "col"; V "row"];V "in1"]) (IndexArray(V "in1",[V "col";V "row"]))
+//        inl (VV [VV [V "col"; V "row"];V "in1"]) (ArrayIndex(V "in1",[V "col";V "row"]))
 //    let reduce_op = 
 //        meth (VV [V "a"; V "b"]) (V "a" + V "b")
 //    let map_store_op =
 //        inl (VV [V "result";V "col"; V "out1"])
-//            (l B (AtomicAdd(IndexArray(V "out1",[V "col"]),V "result")) B)
+//            (l B (AtomicAdd(ArrayIndex(V "out1",[V "col"]),V "result")) B)
 //
 //    eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_], default_dims)
 //
@@ -187,7 +187,7 @@ let memoize f =
 //    let out_ = get_tag(),GlobalArrayT([],PrimT Float32T)
 //
 //    let map_load_op =
-//        inl (VV [V "i";V "in1"]) (IndexArray(V "in1",[V "i"]))
+//        inl (VV [V "i";V "in1"]) (ArrayIndex(V "in1",[V "i"]))
 //    let reduce_op = 
 //        meth (VV [V "a"; V "b"]) (V "a" + V "b")
 //    let map_store_op =
@@ -195,6 +195,8 @@ let memoize f =
 //            (l B (AtomicAdd(dref (V "out1"),V "result")) B)
 //
 //    eval map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_], default_dims)
+//
+//printfn "%A" map_redo_map_1_1
 //
 //let x = 
 //    let get = function Succ x -> x | _ -> failwith "Error"

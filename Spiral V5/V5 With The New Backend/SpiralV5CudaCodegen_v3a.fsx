@@ -125,7 +125,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet((_,t) as v,TyCreateArray _, rest,_) ->
+        | TyLet((_,t) as v,TyArrayCreate _, rest,_) ->
             match t with
             | LocalArrayT(ar_sizes,typ) -> print_array_declaration false typ v ar_sizes
             | SharedArrayT(ar_sizes,typ) -> print_array_declaration true typ v ar_sizes
@@ -164,7 +164,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
 
         // Array cases
-        | TyIndexArray(ar,i,_) as ar' ->
+        | TyArrayIndex(ar,i,_) as ar' ->
             let index = 
                 let ar_sizes =
                     match get_type ar with
@@ -187,7 +187,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
                     "0"
             sprintf "%s[%s]" (codegen ar) index
 
-        | TyCreateArray _ -> failwith "This expression should never appear in isolation."
+        | TyArrayCreate _ -> failwith "This expression should never appear in isolation."
 
         // Cuda kernel constants
         | TyThreadIdxX -> "threadIdx.x"
@@ -290,7 +290,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
 
             // I am just swapping the positions so the tuple definitions come first.
             // Unfortunately, getting the definitions requires a pass through the AST first
-            // so I can't just print them first.
+            // so I can't just print them at the start.
             add_channels_a_to_main CodegenChannels.TupleDefinitions
             add_channels_a_to_main CodegenChannels.Code
         
@@ -309,8 +309,8 @@ let eval0 body = eval body (VV [], default_dims)
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let dref x = IndexArray(x,[])
-let cref x = l (V "ref") (CreateLocalArray([],x)) (MSet(dref (V "ref"),x,V "ref"))
+let dref x = ArrayIndex(x,[])
+let cref x = l (V "ref") (ArrayCreateLocal([],x)) (MSet(dref (V "ref"),x,V "ref"))
     
 let for_template end_ init cond body =
     l (V "init") (cref init)
@@ -323,7 +323,7 @@ let for_ init cond body = l B (for_template B init cond body)
 let mset out in_ rest = MSet(out,in_,rest)
 
 let map_module =
-    meth (VV [V "map_op"; V "n";V "ins";V "outs"])
+    meth (VV [V "map_op"; V "n"; V "ins"; V "outs"])
         (s [l (V "stride") (GridDimX*BlockDimX)
             l (V "i") (BlockIdxX * BlockDimX + ThreadIdxX)
             for_ (V "i") 
