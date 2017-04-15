@@ -175,14 +175,14 @@ let compile kernel inputs =
         printfn "%s" k
         let h = k |> hash |> string
         compile_kernel_using_nvcc_bat_router h k
-    | Fail _ -> failwith "Kernel failed to compile"
+    | Fail x -> failwithf "Kernel failed to compile.\n%A" x
 
 let call_map = compile map_module |> memoize
 let call_map_redo_map = compile map_redo_map_module |> memoize
 let call_map_redocol_map = compile map_redocol_map_module |> memoize
 
 let map =
-    let n = TyV (get_tag(), PrimT UInt64T)
+    let n = TyV (0L, PrimT UInt64T)
     fun (str: CudaStream) map_op (inputs: DM list) (outputs: DM list) ->
         let args = inputs @ outputs
         let total_size = total_size args.Head
@@ -194,28 +194,31 @@ let map =
         match args with
         | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
         | [] -> ()
-        let to_typechecking_form inputs =
-            let conv (x : DM) = V' (-1L,GlobalArrayT([n],PrimT x.Type))
-            match inputs with
-            | [x] -> conv x
-            | x :: xs -> VV (List.map conv inputs)
-            | [] -> B
+
+        let to_typechecking_form =
+            let mutable i = 0L
+            let inc() = i <- i+1L; i
+            let conv (x : DM) = V' (inc(),GlobalArrayT([n],PrimT x.Type))
+            fun inputs ->
+                match inputs with
+                | [x] -> conv x
+                | x :: xs -> VV (List.map conv inputs)
+                | [] -> B
         let ins = to_typechecking_form inputs
         let outs = to_typechecking_form outputs
 
         let map_op = 
             inl (VV [V "i";V "ins";V "outs"])
-                (s [l (V "indexer") (inl (V "x") (IndexArray(V "x",[V "i"])))
-                    l (V "ins") (MapVV(V "indexer",V "ins"))
-                    mset (MapVV(V "indexer",V "outs")) (ap map_op (V "ins"))
+                (s [l (V "indexer") (inl (V "x") (ArrayIndex(V "x",[V "i"])))
+                    l (V "ins") (VVMap(V "indexer",V "ins"))
+                    mset (VVMap(V "indexer",V "outs")) (ap map_op (V "ins"))
                     ] B)
 
         let kernel = call_map (VV [map_op; T n; ins; outs], dims)
 
-        let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr) x |> List.toArray
+        let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
         let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
-        //kernel.RunAsync(str.Stream,args)
-        ()
+        kernel.RunAsync(str.Stream,args)
 
 let f _ = dm_create [|10UL|] Float32T 2
 let in1, out1 = f(), f()
