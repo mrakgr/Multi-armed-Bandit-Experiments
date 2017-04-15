@@ -227,3 +227,50 @@ let map =
         let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
         let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
         kernel.RunAsync(str.Stream,args)
+
+let map_redo_map =
+    let n = TyV (reserved_tags.[0], PrimT UInt64T)
+    fun (str: CudaStream) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) ->
+        let block_size = 128UL
+        let input_size = total_size inputs.Head
+        let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size)
+
+        let dims = dim3(int block_size), dim3(int grid_size)
+
+        match inputs with
+        | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
+        | [] -> ()
+
+        outputs |> List.iter (fun x -> if total_size x <> 1UL then failwith "Outputs to map_redo_map must all be of size 1.")
+
+        let to_typechecking_form typ =
+            let mutable i = 0
+            let inc() = i <- i+1; i
+            let conv (x : DM) = V' (reserved_tags.[inc()],typ x.Type)
+            fun inputs ->
+                match inputs with
+                | [x] -> conv x
+                | x :: xs -> VV (List.map conv inputs)
+                | [] -> B
+
+        let ins = to_typechecking_form (fun x -> GlobalArrayT([n],PrimT x)) inputs
+        let outs = to_typechecking_form (fun x -> GlobalArrayT([],PrimT x)) outputs
+
+        let map_load_op = 
+            inl (VV [V "i";V "ins"])
+                (s [l (V "indexer") (inl (V "i") (inl (V "x") (ArrayIndex(V "x",[V "i"]))))
+                    l (V "ins") (VVMap(ap (V "indexer") (V "i"),V "ins"))
+                    ] (ap map_load_op (V "ins")))
+        let map_store_op =
+            inl (VV [V "i";V "ins";V "outs"])
+                (s [l (V "indexer") (inl (V "i") (inl (V "x") (ArrayIndex(V "x",[V "i"]))))
+                    l (V "ins") (VVMap(ap (V "indexer") (V "i"),V "ins"))
+                    mset (VVMap(ap (V "indexer") (LitUInt64 0UL), V "outs")) (ap map_load_op (V "ins"))
+                    ] B)
+
+        let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
+
+        let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
+        let args = [|[|box input_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
+        kernel.RunAsync(str.Stream,args)
+
