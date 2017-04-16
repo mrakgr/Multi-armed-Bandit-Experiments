@@ -1,9 +1,9 @@
 ﻿//[<AutoOpen>]
 //module SpiralV5.Main
 
-#load "SpiralV5CudaCodegen_v3a.fsx"
-open SpiralV5CudaTypechecker_v6e
-open SpiralV5CudaCodegen_v3a
+#load "SpiralV5CudaCodegen_v3b.fsx"
+open SpiralV5CudaTypechecker_v7b
+open SpiralV5CudaCodegen_v3b
 
 // Open up the namespaces.
 open ManagedCuda

@@ -176,49 +176,61 @@ let rec tev (d: Data) exp =
     | LitFloat x -> TyLitFloat x
     | LitBool x -> TyLitBool x
 
-let term1 = 
+let term1 = // Correct
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],If(V "cond",LitInt 1,rec_call),rec_call)
 
-let term1' = 
+let term2 = // Correct
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],If(V "cond",rec_call,LitInt 1),rec_call)
 
-let term1'' = // Error
+let term3 = // Error
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],If(V "cond",rec_call,rec_call),rec_call)
 
-let term2 = 
+let term4 = 
     let rec_call = Apply("meth",[LitBool true])
     let if_ x = If(V "cond",x,rec_call)
     Method("meth",["cond"],if_ (if_ (if_ <| LitFloat 3.3)),rec_call)
 
-let term3 = // Error
+let term5 = // Error
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],
         Let("x",If(V "cond",LitInt 1,rec_call),
             If(V "cond",LitFloat 1.5,rec_call)),rec_call)
 
-let term3' = // Correct
+let term6 = // Correct
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],
         Let("x",If(V "cond",LitFloat 2.5,rec_call),
             If(V "cond",LitFloat 1.5,rec_call)),rec_call)
 
-let term4 = // Correct
+let term7 = // Correct
     Method("q",["x"],
         Method("w",["y"],If (LitBool true, Apply("q",[V "y"]),LitFloat 5.5),Apply("w",[V "x"])),
         Apply("q",[LitFloat 3.3]))
 
-let term4' = // Correct
+let term8 = // Correct
     Method("q",["x"],
         Method("w",["y"],If (LitBool true, Apply("q",[V "y"]),LitInt 3),Apply("w",[V "x"])),
         Apply("q",[LitFloat 3.3]))
 
-let term5 = // Error
+let term9 = // Error
     let rec_call = Apply("meth",[LitBool true])
     Method("meth",["cond"],rec_call,rec_call)
 
+let term10 = // Correct
+    let rec_call = Apply("meth",[LitBool true])
+    let if_ x y = If(V "cond",x,y)
+    Method("meth",["cond"],if_ (if_ (if_ rec_call rec_call) rec_call) (LitInt 3),rec_call)
+
+let term11 = // Correct
+    let rec_call = Apply("meth",[LitBool true])
+    let rec_call2 = Apply("meth",[LitBool true])
+    let if_ x y = If(V "cond",x,y)
+    Method("meth2",["cond"], if_ (if_ rec_call2 rec_call2) rec_call2,
+        Method("meth",["cond"],if_ (if_ (if_ rec_call rec_call) rec_call) (LitInt 3),rec_call))
+
 try
-    tev (d0()) term1
+    tev (d0()) term11
 with e -> TyTypeError e.Message
