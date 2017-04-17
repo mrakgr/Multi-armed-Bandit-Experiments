@@ -317,7 +317,7 @@ let map_fold_2_er f state x y =
                 | Fail _ as er -> er
             | Fail er -> Fail er
         | [], [] -> Succ ([], state)
-        | x -> Fail "Argument size mismatch in map_fold_2_Er."
+        | x -> Fail "Argument size mismatch in map_fold_2_er."
     loop f state (x,y)
 
 let fold_2_er f state x y =
@@ -330,7 +330,7 @@ let fold_2_er f state x y =
                 | Fail _ as er -> er
             | Fail er -> Fail er
         | [], [] -> Succ state
-        | x -> Fail "Argument size mismatch in map_2_Er."
+        | x -> Fail "Argument size mismatch in fold_2_er."
     loop f state (x,y)
 
 let get_body_from (stack: Stack<unit -> TypedCudaExpr>) = 
