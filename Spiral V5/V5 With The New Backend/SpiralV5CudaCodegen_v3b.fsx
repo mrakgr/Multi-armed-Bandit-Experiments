@@ -114,7 +114,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
         | false -> sprintf "%s %s[%s];" typ nam dim |> state
 
-    and print_methodcall x = List.map codegen (filter_simple_vars x)
+    and print_methodcall x = List.map codegen (filter_vars is_arg x)
     and codegen = function
         | TyV x -> print_tyv x
         | TyIf(cond,tr,fl,_) -> // If statements will aways be hoisted into methods in this language.
@@ -283,7 +283,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
             with_channel CodegenChannels.Code <| fun _ ->
                 let get_tag (_,_,tag,_) = tag
                 let min = imemo |> Seq.fold (fun s kv -> 
-                    min (get_tag kv.Value) s) System.Int64.MaxValue
+                    max (get_tag kv.Value) s) System.Int64.MinValue
                 for x in imemo do 
                     let is_main = get_tag x.Value = min
                     print_method is_main x.Value
@@ -326,7 +326,7 @@ let for_ init cond body = l E (for_template B init cond body)
 let mset out in_ rest = MSet(out,in_,rest)
 
 let map_module =
-    meth (R [S "map_op"; S "n"; S "ins"; RS "outs"])
+    meth (ss [S "map_op"; S "n"; S "ins"; S "outs"])
         (s [l (S "stride") (GridDimX*BlockDimX)
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
             for_ (V "i") 
@@ -337,27 +337,27 @@ let map_module =
             ] B)
 
 let map_redo_map_module =
-    meth (R [S "map_load_op";S "reduce_op";S "map_store_op"; S "n";S "ins"; RS "outs"])
+    meth (ss [S "map_load_op";S "reduce_op";S "map_store_op"; S "n";S "ins"; S "outs"])
         (s [l (S "stride") (GridDimX*BlockDimX)
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
-            l (R [E; RS "value"])
+            l (ss [E; S "value"])
                 (for' (VV [V "i";ap (V "map_load_op") (VV [V "i";V "ins"])])
-                    (inl (R [S "i"; RS ""]) (V "i" .< V "n"))
-                    (inl (R [S "i"; RS "value"]) 
+                    (inl (ss [S "i"; E]) (V "i" .< V "n"))
+                    (inl (ss [S "i"; S "value"]) 
                         (VV [V "i" + V "stride"; ap (V "reduce_op") (VV [V "value";ap (V "map_load_op") (VV [V "i";V "ins"])])])))
             l (S "result") (CubBlockReduce(V "value",V "reduce_op",None))
             l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "result"; V "outs"]), B))
             ] B)
 
 let map_redocol_map_module =
-    meth (R [S "map_load_op";S "reduce_op";S "map_store_op"; R [S "num_cols"; RS "num_rows"];S "ins";RS "outs"])
+    meth (ss [S "map_load_op";S "reduce_op";S "map_store_op"; ss [S "num_cols"; S "num_rows"];S "ins";S "outs"])
         (for_ BlockIdxX
             (inl (S "col") (V "col" .< V "num_cols"))
             (inl (S "col") 
-                (s [l (R [E; RS "value"]) 
+                (s [l (ss [E; S "value"]) 
                         (for' (VV [ThreadIdxX; ap (V "map_load_op") (VV [VV [V "col"; ThreadIdxX]; V "ins"])])
-                            (inl (R [S "row"; RS ""]) (V "row" .< V "num_rows"))
-                            (inl (R [S "row"; RS "value"])
+                            (inl (ss [S "row"; S ""]) (V "row" .< V "num_rows"))
+                            (inl (ss [S "row"; S "value"])
                                 (VV [V "row" + BlockDimX; 
                                         ap (V "reduce_op") (VV [V "value"; ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"])])])))
                     l (S "result") (CubBlockReduce(V "value",V "reduce_op",None))
