@@ -1,4 +1,6 @@
-﻿// At first glance, how to zip a tuple seems trivial, but it is fact a multidimensional transpose
+﻿// 4/17/2017:
+
+// At first glance, how to zip a tuple seems trivial, but it is fact a multidimensional transpose
 // that will take me time to figure out how to do properly.
 
 type T =

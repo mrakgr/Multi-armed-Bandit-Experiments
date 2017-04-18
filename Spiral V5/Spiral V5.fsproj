@@ -74,6 +74,7 @@
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
     <None Include="V5 With The New Backend\tuple_zip.fsx" />
+    <None Include="V5 With The New Backend\tuple_zip_v2.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />
