@@ -307,32 +307,6 @@ let get_tag =
         x <- x + 1L
         x'
 
-let map_fold_2_er f state x y =
-    let rec loop f state = function
-        | x :: xs, y :: ys -> 
-            match f state x y with
-            | Succ (r, state) ->
-                match loop f state (xs,ys) with
-                | Succ (rs, state) -> Succ (r :: rs, state)
-                | Fail _ as er -> er
-            | Fail er -> Fail er
-        | [], [] -> Succ ([], state)
-        | x -> Fail "Argument size mismatch in map_fold_2_er."
-    loop f state (x,y)
-
-let fold_2_er f state x y =
-    let rec loop f state = function
-        | x :: xs, y :: ys -> 
-            match f state x y with
-            | Succ state ->
-                match loop f state (xs,ys) with
-                | Succ state -> Succ state
-                | Fail _ as er -> er
-            | Fail er -> Fail er
-        | [], [] -> Succ state
-        | x -> Fail "Argument size mismatch in fold_2_er."
-    loop f state (x,y)
-
 let get_body_from (stack: Stack<unit -> TypedCudaExpr>) = 
     if stack.Count > 0 then stack.Pop()()
     else failwith "The program is divergent."
@@ -415,48 +389,39 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | true -> f()
         | false -> failwithf "%s is a duplicate name in pattern matching." arg_name
 
-    let case_bind_template map_add name_checker acc arg_name ty_exp =
-        Succ(dup_name_check name_checker arg_name <| fun _ ->
-            map_add arg_name ty_exp acc)
+    let case_bind_template map_add name_checker acc arg_name ty_exp ret =
+        dup_name_check name_checker arg_name <| fun _ ->
+            map_add arg_name ty_exp acc
+        |> ret
 
     let case_bind_inl = case_bind_template (fun arg_name x acc -> 
         match arg_name with
         | "" | "_" -> acc
         | _ -> Map.add arg_name x acc)
-
+        
     let case_bind_method = case_bind_template (fun arg_name x acc -> 
         match arg_name with
         | "" | "_" -> x, acc
         | _ -> x, Map.add arg_name x acc)
     
-    let case_ss_inl t = fold_2_er
-    let case_ss_method t f s a b = 
-        match map_fold_2_er f s a b with
-        | Succ(l,s) -> Succ (TyVV(l,t), s)
-        | Fail er -> Fail er
+    let case_r_inl recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
+        recurse acc l r <| fun x_acc ->
+            recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts)) ret
 
-    let case_r_inl recurse acc (l,ls,ls') (r,rs) (t,ts) =
-        match recurse acc l r with
-        | Succ x_acc -> recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts))
-        | Fail _ as er -> er
+    let case_r_method recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
+        recurse acc l r <| fun (x, x_acc) ->
+            recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts)) <| function
+                | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
+                | _ -> failwith "impossible"
 
-    let case_r_method recurse acc (l,ls,ls') (r,rs) (t,ts) =
-        match recurse acc l r with
-        | Succ (x, x_acc) ->
-            match recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts)) with
-            | Succ (TyVV(xs,VVT ts), xs_acc) -> Succ(TyVV(x :: xs, VVT <| t :: ts), xs_acc)
-            | Fail _ as er -> er
-            | Succ _ -> failwith "impossible"
-        | Fail _ as er -> er
-
-    let rec match_single case_r case_bind (acc: Env) l r =
-        let recurse acc l r = match_single case_r case_bind acc l r
+    let rec match_single case_r case_bind (acc: Env) l r on_fail ret =
+        let recurse acc l r ret = match_single case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | E, r -> case_bind acc "" r
-        | S x, r -> case_bind acc x r
-        | R([],ls), TyVV _ -> recurse acc ls r
-        | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts)
-        | R _, r -> Fail <| sprintf "Cannot destructure %A." r
+        | E, r -> case_bind acc "" r ret
+        | S x, r -> case_bind acc x r ret
+        | R([],ls), TyVV _ -> recurse acc ls r ret
+        | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
+        | R _, r -> on_fail <| sprintf "Cannot destructure %A." r
 
     let match_single_inl' dup_name_checker = match_single case_r_inl (case_bind_inl dup_name_checker)
     let match_single_method' dup_name_checker = match_single case_r_method (case_bind_method dup_name_checker)
@@ -544,9 +509,9 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let match_all match_single env l args =
         let rec loop = function
             | (pattern, body) :: xs ->
-                match match_single env pattern args with
-                | Succ x -> x, body
-                | Fail _ as er -> loop xs
+                match_single env pattern args
+                    (fun _ -> loop xs)
+                    (fun x -> x, body)
             | [] -> failwith "All patterns in matcher failed to match."
         loop l
 
