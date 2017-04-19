@@ -17,23 +17,23 @@ type SpiralDeviceVarType =
 | Float64T
 | BoolT
 
-type InlineableAlias = (CudaPattern * CudaExpr) list
-and MethodAlias = string * (CudaPattern * CudaExpr) list 
-
-and CudaTy =
+type CudaTy =
     | UnitT
     | PrimT of SpiralDeviceVarType
     | VVT of CudaTy list
     | GlobalArrayT of TypedCudaExpr list * CudaTy
     | SharedArrayT of TypedCudaExpr list * CudaTy
     | LocalArrayT of TypedCudaExpr list * CudaTy
-    | InlineableT of InlineableAlias * Env
-    | MethodT of MethodAlias * Env
+    | InlineableT of TyInlineableKey
+    | MethodT of TyMethodKey
 
 and TyV = int64 * CudaTy
-
-// No return type polymorphism like in Haskell for now. Local type inference only.
-and TyMethodKey = Env * CudaExpr * CudaTy // The key does not need to know the free variables.
+and Env = Map<string, TypedCudaExpr>
+and TyEnv = Map<string,CudaTy>
+and InlineableAlias = (CudaPattern * CudaExpr) list
+and MethodAlias = string * (CudaPattern * CudaExpr) list 
+and TyMethodKey = MethodAlias * TyEnv
+and TyInlineableKey = InlineableAlias * TyEnv
 
 and CudaPattern =
     | E // empty case
@@ -177,12 +177,13 @@ and TypedCudaExpr =
     // Cub operations
     | TyCubBlockReduce of dim: TypedCudaExpr * input: TypedCudaExpr * method_: TypedCudaExpr * num_valid: TypedCudaExpr option * CudaTy
 
-and Env = Map<string, TypedCudaExpr>
 // method key * method body * bound variables
 and MethodCases =
     | MethodInEvaluation of CudaTy option
     | MethodDone of TyV list * TypedCudaExpr * int64
 and MethodDict = Dictionary<TyMethodKey, MethodCases>
+and MethodDictEnvs = Dictionary<TyMethodKey, Env>
+and InlineableDictEnvs = Dictionary<TyInlineableKey, Env>
 // method key * method body * implicit arguments
 and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedCudaExpr * int64 * Set<TyV>>
 and CudaTypecheckerEnv =
@@ -190,7 +191,9 @@ and CudaTypecheckerEnv =
     // Immutable
     env : Env
     // Mutable
-    memoized_methods : MethodDict // For hoisted out global methods.
+    memoized_methods : MethodDict // For typechecking methods.
+    memoized_method_envs : MethodDictEnvs // For storing their environments.
+    memoized_inlineable_envs : InlineableDictEnvs // Ditto for Inlineables.
     sequences : (TypedCudaExpr -> TypedCudaExpr) option ref // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
     blockDim : dim3 // since Cub needs hard constants, I need to have them during typechecking.
@@ -515,7 +518,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | [] -> failwith "All patterns in matcher failed to match."
         loop l
 
-    let apply_inlineable (l,env) args =
+    let apply_inlineable (l,_ as key) args =
+        let env = d.memoized_inlineable_envs.[key]
         let args = destructure_deep args
         let env, body = match_all match_single_inl env l args
         tev {d with env = env} body
@@ -528,23 +532,23 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | x -> Some x
         (loop x).Value
 
-    let apply_method ((name,l),initial_env as orig) args =
+    let apply_method ((name,l), _ as method_key) args =
+        let initial_env = d.memoized_method_envs.[method_key]
         let bound_outside_args, bound_inside_args, env, body = 
             let bound_outside_args = destructure_deep args
             let (bound_inside_args, env), body = match_all match_single_method initial_env l (destructure_deep_method bound_outside_args)
             filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
 
-        let method_key = initial_env, body, get_type bound_inside_args
         let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
 
         match d.memoized_methods.TryGetValue method_key with
-        | false, _ ->
+        | false, _ ->                         
             d.memoized_methods.[method_key] <- MethodInEvaluation(None)
 
-            let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT orig) env else env}
+            let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
             let body = with_empty_seq d body
             let sole_arguments = filter_tyvs bound_inside_args
-                        
+
             d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, get_tag())
 
             if is_returnable body then make_method_call (get_type body)
@@ -585,8 +589,14 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match Map.tryFind x d.env with
         | Some v -> v
         | None -> failwithf "Variable %A not bound." x
-    | Inlineable l -> InlineableT(l, d.env) |> TyType
-    | Method(name, l) -> MethodT((name, l), d.env) |> TyType
+    | Inlineable l -> 
+        let k = l, Map.map (fun _ -> get_type) d.env
+        d.memoized_inlineable_envs.[k] <- d.env
+        InlineableT k |> TyType
+    | Method(name, l) -> 
+        let k = (name, l), Map.map (fun _ -> get_type) d.env
+        d.memoized_method_envs.[k] <- d.env
+        MethodT k |> TyType
     | Apply(expr,args) -> apply expr args
     | If(cond,tr,fl) ->
         let cond = tev d cond
@@ -786,7 +796,8 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
 let l v b e = Apply(Inlineable([v,e]),b)
 
 let data_empty (blockDim, gridDim) = 
-    {memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
+    {memoized_method_envs=d0(); memoized_inlineable_envs=d0()
+     memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
      env=Map.empty;sequences=ref None;recursive_methods_stack=Stack()}
 
 let typecheck dims body inputs = 

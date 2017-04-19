@@ -196,6 +196,8 @@ let map_redo_map_1_1 =
 
     eval map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_], default_dims)
 
+printfn "%A" map_redo_map_1_1
+
 let x = 
     let get = function Succ x -> x | _ -> failwith "Error"
     let k = get map_redocol_map_1_1
