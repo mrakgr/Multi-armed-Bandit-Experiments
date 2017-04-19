@@ -318,10 +318,7 @@ let eval0 body = eval body (VV [], default_dims)
 
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
-
-let dref x = ArrayIndex(x,[])
-let cref x = l (S "ref") (ArrayCreateLocal([],x)) (l E (MSet(dref (V "ref"),x)) (V "ref"))
-    
+   
 let for_template end_ init cond body =
     l (S "init") (cref init)
         (while_ (ap cond (dref <| V "init"))

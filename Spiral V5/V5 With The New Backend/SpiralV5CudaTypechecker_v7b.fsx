@@ -36,8 +36,8 @@ and TyMethodKey = MethodAlias * TyEnv
 and TyInlineableKey = InlineableAlias * TyEnv
 
 and CudaPattern =
-    | E // empty case
     | S of string
+    | S' of string // match if not tuple
     | R of CudaPattern list * CudaPattern option // Tuple
 
 and CudaExpr = 
@@ -60,7 +60,7 @@ and CudaExpr =
     // Tuple cases
     | VVIndex of CudaExpr * CudaExpr
     | VV of CudaExpr list // tuple
-    | VVMap of CudaExpr * CudaExpr
+    | VVCons of CudaExpr * CudaExpr
     | VVZip of CudaExpr
 
     // Array cases
@@ -344,10 +344,53 @@ let inlr name x y = Inlineable(name,[x,y])
 let ap x y = Apply(x,y)
 let meth x y = Method("",[x,y])
 
-let ss x = R (x, None)
+let E = S ""
+/// Matches tuples without a tail.
+let SS x = R (x, None) 
+/// Opposite of S', matches only a tuple.
+let SS' x = R ([], Some (S x)) 
+/// Matches tuples with a tail.
+let SSS a b = R(a, Some (S b)) 
+
+let cons a b = VVCons(a,b)
+
 let l v b e = Apply(inl v e,b)
 
-let mset a b rest = l E (VVMap(inl (ss [S "a"; S "b"]) (MSet(V "a", V "b")), VVZip(VV [a;b]))) rest
+let dref x = ArrayIndex(x,[])
+let cref x = l (S "ref") (ArrayCreateLocal([],x)) (l E (MSet(dref (V "ref"),x)) (V "ref"))
+
+let rec ap' f = function
+    | x :: xs -> ap' (ap f x) xs
+    | [] -> f
+
+let match_ x pat = ap (Inlineable("",pat)) x
+
+let rec inl' args body = 
+    match args with
+    | x :: xs -> inl x (inl' xs body)
+    | [] -> body
+
+let rec inlr' name args body = 
+    match args with
+    | x :: xs -> inlr name x (inl' xs body)
+    | [] -> body
+
+/// The tuple map function. Pass it a pattern matching function that takes in on_fail and q as arguments.
+let map_tup =
+    let recurse x = ap' (V "rec") [(V "f"); (V x)]
+    inlr' "rec" [S "f"; S "q"]
+        (l (S "on_fail")
+            (inl (SS []) 
+                (match_ (V "q")
+                        [
+                        SSS [SS' "v1"] "rest", cons (recurse "v1") (recurse "rest")
+                        SS [], VV []
+                        ])) 
+        (ap' (V "f") [V "on_fail"; V "q"]))
+
+/// Maps over a tuple with a specific pattern.
+/// Takes two arguments. If a pattern matching case fails, call the first arguments to it with an empty tuple.
+let zip_map = inl' [S "f"; S "l"] (ap' map_tup [V "f"; VVZip(V "l")])
 
 let rec with_empty_seq (d: CudaTypecheckerEnv) expr =
     let d = {d with sequences = ref None}
@@ -430,9 +473,9 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let rec match_single case_r case_bind (acc: Env) l r on_fail ret =
         let recurse acc l r ret = match_single case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | R([],None), TyVV([], _)
-        | E, _ -> case_bind acc "" r ret
-        | S x, _ -> case_bind acc x r ret
+        | R([],None), TyVV([], _) -> case_bind acc "" r ret
+        | S' x, TyVV _ -> on_fail <| "S' matched a tuple."
+        | S' x, _ | S x, _ -> case_bind acc x r ret
         | R([],Some ls), TyVV _ -> recurse acc ls r ret
         | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
         | R([],None), TyVV(_, _) -> on_fail <| sprintf "More arguments than can be matched in R."
@@ -444,10 +487,6 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let match_single_inl x = match_single_inl' (h0()) x
     let match_single_method x = match_single_method' (h0()) x
 
-    let rec map_tyvv f = function
-        | TyVV(r,_) -> VV (List.map (map_tyvv f) r)
-        | x -> Apply(f,T x)
-        
     // Primitive functions
     let append_typeof_fst k a b =
         k (a, b, (get_type a))
@@ -679,9 +718,6 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match tev d a |> destructure_deep |> zip_remap with
         | VV x -> zip_all x id |> tev d
         | x -> x |> tev d
-    | VVMap(a,b) ->
-        let a,b = tev d a, tev d b
-        tev d (map_tyvv (T a) (destructure_deep b))
     | VV vars ->
         let vv = List.map (tev d) vars
         TyVV(vv,make_vvt vv)
@@ -695,7 +731,12 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | x -> failwithf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
         | v, i ->
             failwithf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
-
+    | VVCons(a,b) ->
+        let a = tev d a
+        let b = tev d b |> destructure_deep
+        match b with
+        | TyVV(b, VVT bt) -> TyVV(a::b, VVT (get_type a :: bt))
+        | _ -> failwith "Expected a tuple on the right is in VVCons."
     // Array cases
     | ArrayIndex(exp,args) ->
         let exp,args = tev d exp, List.map (tev d) args

@@ -68,6 +68,7 @@
     <None Include="V5 With The New Backend\tuple_zip.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v2.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v3.fsx" />
+    <None Include="V5 With The New Backend\map_tup.fsx" />
     <None Include="V5 With The New Backend\load-references-release.fsx" />
     <None Include="V5 With The New Backend\load-project-release.fsx" />
     <None Include="V5 With The New Backend\Speed test.fsx" />
