@@ -30,7 +30,7 @@ type CudaTy =
 and TyV = int64 * CudaTy
 and Env = Map<string, TypedCudaExpr>
 and TyEnv = Map<string,CudaTy>
-and InlineableAlias = (CudaPattern * CudaExpr) list
+and InlineableAlias = string * (CudaPattern * CudaExpr) list
 and MethodAlias = string * (CudaPattern * CudaExpr) list 
 and TyMethodKey = MethodAlias * TyEnv
 and TyInlineableKey = InlineableAlias * TyEnv
@@ -38,7 +38,7 @@ and TyInlineableKey = InlineableAlias * TyEnv
 and CudaPattern =
     | E // empty case
     | S of string
-    | R of CudaPattern list * CudaPattern // Tuple
+    | R of CudaPattern list * CudaPattern option // Tuple
 
 and CudaExpr = 
     | V of string // standard variable
@@ -61,6 +61,7 @@ and CudaExpr =
     | VVIndex of CudaExpr * CudaExpr
     | VV of CudaExpr list // tuple
     | VVMap of CudaExpr * CudaExpr
+    | VVZip of CudaExpr
 
     // Array cases
     | ArrayIndex of CudaExpr * CudaExpr list
@@ -96,7 +97,7 @@ and CudaExpr =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
     // Mutable operations.
-    | MSet of CudaExpr * CudaExpr * CudaExpr
+    | MSet of CudaExpr * CudaExpr
     | AtomicAdd of out: CudaExpr * in_: CudaExpr
     // Loops
     | While of CudaExpr * CudaExpr * CudaExpr
@@ -338,11 +339,20 @@ let apply_sequences sequences x =
     | Some sequences -> sequences x
     | None -> x
 
+let inl x y = Inlineable("",[x,y])
+let inlr name x y = Inlineable(name,[x,y])
+let ap x y = Apply(x,y)
+let meth x y = Method("",[x,y])
+
+let ss x = R (x, None)
+let l v b e = Apply(inl v e,b)
+
+let mset a b rest = l E (VVMap(inl (ss [S "a"; S "b"]) (MSet(V "a", V "b")), VVZip(VV [a;b]))) rest
+
 let rec with_empty_seq (d: CudaTypecheckerEnv) expr =
     let d = {d with sequences = ref None}
     let expr = exp_and_seq d expr
     apply_sequences !d.sequences expr
-
 
 // Does macro expansion and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
@@ -420,23 +430,19 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let rec match_single case_r case_bind (acc: Env) l r on_fail ret =
         let recurse acc l r ret = match_single case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | E, r -> case_bind acc "" r ret
-        | S x, r -> case_bind acc x r ret
-        | R([],ls), TyVV _ -> recurse acc ls r ret
+        | R([],None), TyVV([], _)
+        | E, _ -> case_bind acc "" r ret
+        | S x, _ -> case_bind acc x r ret
+        | R([],Some ls), TyVV _ -> recurse acc ls r ret
         | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
-        | R _, r -> on_fail <| sprintf "Cannot destructure %A." r
+        | R([],None), TyVV(_, _) -> on_fail <| sprintf "More arguments than can be matched in R."
+        | R _, _ -> on_fail <| sprintf "Cannot destructure %A." r
 
     let match_single_inl' dup_name_checker = match_single case_r_inl (case_bind_inl dup_name_checker)
     let match_single_method' dup_name_checker = match_single case_r_method (case_bind_method dup_name_checker)
 
     let match_single_inl x = match_single_inl' (h0()) x
     let match_single_method x = match_single_method' (h0()) x
-
-    let rec mset l r =
-        match l, r with // destructure_deep is called in the MSet case.
-        | (TyArrayIndex(_,_,lt) as v), r when lt = get_type r -> push_sequence (fun rest -> TyMSet(v,r,rest,get_type rest))
-        | TyVV(l,_), TyVV(r,_) -> List.iter2 mset l r
-        | _ -> failwithf "Error in mset. Expected: (TyArrayIndex(_,_,lt) as v), r when lt = get_type r or TyVV(l,_), TyVV(r,_).\nGot: %A and %A" l r
 
     let rec map_tyvv f = function
         | TyVV(r,_) -> VV (List.map (map_tyvv f) r)
@@ -518,12 +524,6 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | [] -> failwith "All patterns in matcher failed to match."
         loop l
 
-    let apply_inlineable (l,_ as key) args =
-        let env = d.memoized_inlineable_envs.[key]
-        let args = destructure_deep args
-        let env, body = match_all match_single_inl env l args
-        tev {d with env = env} body
-
     let filter_duplicate_vars x =
         let h = h0()
         let rec loop = function
@@ -531,6 +531,13 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | TyVV(l,t) -> TyVV(List.choose loop l, t) |> Some
             | x -> Some x
         (loop x).Value
+
+    let apply_inlineable ((name,l),_ as inlineable_key) args =
+        let env = d.memoized_inlineable_envs.[inlineable_key]
+        let args = destructure_deep args
+        let env, body = match_all match_single_inl env l args
+        let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
+        tev d body
 
     let apply_method ((name,l), _ as method_key) args =
         let initial_env = d.memoized_method_envs.[method_key]
@@ -624,6 +631,54 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+    | VVZip(a) ->
+        let case_s l on_fatalfail on_fail ret =
+            let rec loop (acc: CudaExpr list) = function
+                | VV _ :: _ when acc.IsEmpty = false -> on_fatalfail()
+                | VV _ :: _ -> on_fail ()
+                | x :: xs -> loop (x :: acc) xs
+                | [] -> ret (List.rev acc)
+            loop [] l
+
+        let case_r l on_fatalfail on_fail ret =
+            let rec loop (acc_head: CudaExpr list) (acc_tail: CudaExpr list) = function
+                | (VV (h :: t)) :: xs -> loop (h :: acc_head) (VV t :: acc_tail) xs
+                | _ :: _ when acc_head.IsEmpty = false -> on_fatalfail()
+                | _ :: _ -> on_fail ()
+                | [] -> ret (List.rev acc_head, List.rev acc_tail)
+            loop [] [] l
+
+        let case_r_empty l on_fail ret =
+            let rec loop = function
+                | VV [] :: xs -> loop xs
+                | [] -> ret()
+                | _ -> on_fail ()
+            loop l
+
+        let rec zip_all l ret =
+            let fatalfail acc _ = List.rev acc @ l |> VV |> ret
+            case_s l 
+                (fatalfail [])
+                (fun _ ->
+                    let rec loop acc l =
+                        case_r l 
+                            (fatalfail acc)
+                            (fun _ -> 
+                                case_r_empty l 
+                                    (fatalfail acc)
+                                    (fun _ -> List.rev acc |> VV |> ret))
+                            (fun (head, tail) ->
+                                zip_all head <| fun r -> loop (r :: acc) tail)
+                    loop [] l)
+                (VV >> ret)
+
+        let rec zip_remap = function
+            | TyVV(a,_) -> VV (List.map zip_remap a)
+            | a -> T a
+
+        match tev d a |> destructure_deep |> zip_remap with
+        | VV x -> zip_all x id |> tev d
+        | x -> x |> tev d
     | VVMap(a,b) ->
         let a,b = tev d a, tev d b
         tev d (map_tyvv (T a) (destructure_deep b))
@@ -700,7 +755,12 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | Tanh a -> prim_un_floating a TyTanh
     | Neg a -> prim_un_numeric a TyNeg
     // Mutable operations.
-    | MSet(a,b,rest) -> mset (tev d a) (destructure_deep (tev d b)); tev d rest
+    | MSet(a,b) -> 
+        let l = tev d a
+        let r = destructure_deep (tev d b)
+        match l, r with 
+        | TyArrayIndex(_,_,lt), r when lt = get_type r -> push_sequence (fun rest -> TyMSet(l,r,rest,get_type rest)); TyUnit
+        | _ -> failwithf "Error in mset. Expected: (TyArrayIndex(_,_,lt) as v), r when lt = get_type r or TyVV(l,_), TyVV(r,_).\nGot: %A and %A" l r
     | AtomicAdd(a,b) -> prim_atomic_add_op a b TyAtomicAdd
     | While(cond,body,e) ->
         let cond, body = tev d (Apply(Method("",[E,cond]),B)), with_empty_seq d body
@@ -793,8 +853,6 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TyMSet(a, b, rest, _) | TyWhile(a, b, rest, _) -> c a + c b + c rest
     | TyLet(v, body, rest, _) -> c body + c rest |> Set.remove v
 
-let l v b e = Apply(Inlineable([v,e]),b)
-
 let data_empty (blockDim, gridDim) = 
     {memoized_method_envs=d0(); memoized_inlineable_envs=d0()
      memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
@@ -815,8 +873,3 @@ let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
 
-let inl x y = Inlineable([x,y])
-let ap x y = Apply(x,y)
-let meth x y = Method("",[x,y])
-
-let ss x = R (x, E)

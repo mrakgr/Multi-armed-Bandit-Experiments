@@ -158,7 +158,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
         // Value tuple cases
         | TyIndexVV(v,i,_) -> sprintf "%s.tup%s" (codegen v) (codegen i)
         | TyVV(l,(VVT t)) -> 
-            List.map (fun x -> codegen x) l
+            List.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
             |> String.concat ", "
             |> sprintf "make_tuple_%i(%s)" (tuple_def_proc t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
@@ -245,14 +245,21 @@ let print_method_dictionary (imemo: MethodImplDict) =
     let print_tuple_defintion tys tag =
         let tuple_name = print_tuple tag
         sprintf "struct %s {" tuple_name |> state
-        enter <| fun _ -> List.iteri (fun i ty -> sprintf "%s tup%i;" (print_simple_type ty) i |> state) tys; ""
+        enter <| fun _ -> List.iteri (fun i ty -> 
+            match ty with
+            | UnitT -> ()
+            | _ -> sprintf "%s tup%i;" (print_simple_type ty) i |> state) tys; ""
         "};" |> state
         sprintf "__device__ __forceinline__ %s make_tuple_%i(%s){" 
             tuple_name
             tag
-            (List.mapi (fun i ty -> sprintf "%s tup_arg%i" (print_simple_type ty) i) tys
+            (List.mapi (fun i ty -> 
+                match ty with
+                | UnitT -> ""
+                | _ -> sprintf "%s tup_arg%i" (print_simple_type ty) i) tys
+             |> List.filter ((<>) "") 
              |> String.concat ", ")
-            |> state
+        |> state
         enter' <| fun _ ->
             sprintf "%s tmp;" tuple_name |> state
             List.iteri (fun i _ -> sprintf "tmp.tup%i = tup_arg%i;" i i |> state) tys
@@ -313,17 +320,17 @@ let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
 let dref x = ArrayIndex(x,[])
-let cref x = l (S "ref") (ArrayCreateLocal([],x)) (MSet(dref (V "ref"),x,V "ref"))
+let cref x = l (S "ref") (ArrayCreateLocal([],x)) (l E (MSet(dref (V "ref"),x)) (V "ref"))
     
 let for_template end_ init cond body =
     l (S "init") (cref init)
         (while_ (ap cond (dref <| V "init"))
-            (MSet(dref (V "init"), ap body (dref <| V "init"),B)) end_)
+            (MSet(dref (V "init"), ap body (dref <| V "init"))) end_)
 
 let for' init cond body = for_template (dref <| V "init") init cond body
 let for_ init cond body = l E (for_template B init cond body)
 
-let mset out in_ rest = MSet(out,in_,rest)
+//let mset out in_ rest = MSet(out,in_,rest)
 
 let map_module =
     meth (ss [S "map_op"; S "n"; S "ins"; S "outs"])
