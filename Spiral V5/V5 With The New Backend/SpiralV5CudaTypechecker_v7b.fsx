@@ -39,7 +39,6 @@ and CudaPattern =
     | S of string
     | S' of string // match if not tuple
     | R of CudaPattern list * CudaPattern option // Tuple
-    | F of CudaExpr // Functiona application with retracing.
 
 and CudaExpr = 
     | V of string // standard variable
@@ -419,23 +418,6 @@ let cuda_map1 =
         (l (S "f") (ap cuda_op1 (V "f"))
         (ap' cuda_map [V "f"; V "a"]))
 
-let data_empty (blockDim, gridDim) = 
-    {memoized_method_envs=d0(); memoized_inlineable_envs=d0()
-     memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
-     env=Map.empty;sequences=ref None;recursive_methods_stack=Stack()}
-
-let copy_typechecker_env (d: CudaTypecheckerEnv) =
-    {
-    memoized_method_envs = d.memoized_method_envs |> Dictionary
-    memoized_inlineable_envs = d.memoized_inlineable_envs |> Dictionary
-    memoized_methods = d.memoized_methods |> Dictionary
-    blockDim = d.blockDim
-    gridDim = d.gridDim
-    env = d.env
-    sequences = ref !d.sequences
-    recursive_methods_stack = d.recursive_methods_stack |> Stack
-    }
-
 let rec with_empty_seq (d: CudaTypecheckerEnv) expr =
     let d = {d with sequences = ref None}
     let expr = exp_and_seq d expr
@@ -514,10 +496,9 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
                 | _ -> failwith "impossible"
 
-    let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
-        let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
+    let rec match_single case_r case_bind (acc: Env) l r on_fail ret =
+        let recurse acc l r ret = match_single case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | F args, body -> case_f body args on_fail ret
         | R([],None), TyVV([], _) -> case_bind acc "" r ret
         | S' x, TyVV _ -> on_fail <| "S' matched a tuple."
         | S' x, _ | S x, _ -> case_bind acc x r ret
@@ -599,13 +580,13 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     let make_vvt x = List.map get_type x |> VVT
 
-    let match_all match_single env l args on_fail ret =
+    let match_all match_single env l args =
         let rec loop = function
             | (pattern, body) :: xs ->
                 match_single env pattern args
                     (fun _ -> loop xs)
-                    (fun x -> ret (x, body))
-            | [] -> on_fail "All patterns in matcher failed to match."
+                    (fun x -> x, body)
+            | [] -> failwith "All patterns in matcher failed to match."
         loop l
 
     let filter_duplicate_vars x =
@@ -616,47 +597,43 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | x -> Some x
         (loop x).Value
 
-    let apply_inlineable on_fail ((name,l),_ as inlineable_key) args =
+    let apply_inlineable ((name,l),_ as inlineable_key) args =
         let env = d.memoized_inlineable_envs.[inlineable_key]
         let args = destructure_deep args
-        match_all match_single_inl env l args
-            on_fail
-            (fun (env, body) -> 
-                let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
-                tev d body)
+        let env, body = match_all match_single_inl env l args
+        let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
+        tev d body
 
-    let apply_method on_fail ((name,l), _ as method_key) args =
+    let apply_method ((name,l), _ as method_key) args =
         let initial_env = d.memoized_method_envs.[method_key]
-        let bound_outside_args = destructure_deep args
-        match_all match_single_method initial_env l (destructure_deep_method bound_outside_args) 
-            on_fail
-            (fun ((bound_inside_args, env), body) ->
-                let bound_outside_args, bound_inside_args, env, body = 
-                    filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
+        let bound_outside_args, bound_inside_args, env, body = 
+            let bound_outside_args = destructure_deep args
+            let (bound_inside_args, env), body = match_all match_single_method initial_env l (destructure_deep_method bound_outside_args)
+            filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
 
-                let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
+        let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
 
-                match d.memoized_methods.TryGetValue method_key with
-                | false, _ ->                         
-                    d.memoized_methods.[method_key] <- MethodInEvaluation(None)
+        match d.memoized_methods.TryGetValue method_key with
+        | false, _ ->                         
+            d.memoized_methods.[method_key] <- MethodInEvaluation(None)
 
-                    let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
-                    let body = with_empty_seq d body
-                    let sole_arguments = filter_tyvs bound_inside_args
+            let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
+            let body = with_empty_seq d body
+            let sole_arguments = filter_tyvs bound_inside_args
 
-                    d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, get_tag())
+            d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, get_tag())
 
-                    if is_returnable body then make_method_call (get_type body)
-                    else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
-                | true, MethodInEvaluation None ->
-                    let body = get_body_from d.recursive_methods_stack
-                    let t = get_type body
-                    d.memoized_methods.[method_key] <- MethodInEvaluation (Some t)
-                    make_method_call t
-                | true, MethodInEvaluation (Some t) ->
-                    make_method_call t
-                | true, MethodDone(_,body,_) ->
-                    make_method_call (get_type body))
+            if is_returnable body then make_method_call (get_type body)
+            else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
+        | true, MethodInEvaluation None ->
+            let body = get_body_from d.recursive_methods_stack
+            let t = get_type body
+            d.memoized_methods.[method_key] <- MethodInEvaluation (Some t)
+            make_method_call t
+        | true, MethodInEvaluation (Some t) ->
+            make_method_call t
+        | true, MethodDone(_,body,_) ->
+            make_method_call (get_type body)
 
     let apply_template apply_inl apply_method la ra =
         match get_type (tev d la) with
@@ -664,11 +641,10 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | MethodT(x,env) -> apply_method (x,env) ra
         | _ -> failwith "impossible"
 
-    let apply_both on_fail la ra = apply_template (apply_inlineable on_fail) (apply_method on_fail) la ra
-    let apply_method_only on_fail la ra = apply_template (fun _ -> failwith "Inlineable not supported.") (apply_method on_fail) la ra
+    let apply_both la ra = apply_template apply_inlineable apply_method la ra
+    let apply_method_only la ra = apply_template (fun _ -> failwith "Inlineable not supported.") apply_method la ra
 
-    let apply_standard expr args = apply_both failwith expr (tev d args)
-    let apply_match on_fail expr args = apply_both on_fail expr (tev d args)
+    let apply expr args = apply_both expr (tev d args)
 
     match exp with
     | T x -> x // To assist in CubBlockReduce so evaled cases do not have to be evaluated twice.
@@ -693,7 +669,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let k = (name, l), Map.map (fun _ -> get_type) d.env
         d.memoized_method_envs.[k] <- d.env
         MethodT k |> TyType
-    | Apply(expr,args) -> apply_standard expr args
+    | Apply(expr,args) -> apply expr args
     | If(cond,tr,fl) ->
         let cond = tev d cond
         if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
@@ -873,7 +849,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | x -> 
                 let arg() = evaled_input |> make_tyv |> TyV
                 tev d (VV [T (arg()); T (arg())])
-            |> apply_method_only failwith method_
+            |> apply_method_only method_
 
         let num_valid = Option.map (tev d) num_valid
         TyCubBlockReduce(dim, evaled_input,method_,num_valid,get_type method_)
@@ -943,6 +919,11 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
     | TyMSet(a, b, rest, _) | TyWhile(a, b, rest, _) -> c a + c b + c rest
     | TyLet(v, body, rest, _) -> c body + c rest |> Set.remove v
+
+let data_empty (blockDim, gridDim) = 
+    {memoized_method_envs=d0(); memoized_inlineable_envs=d0()
+     memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
+     env=Map.empty;sequences=ref None;recursive_methods_stack=Stack()}
 
 let typecheck dims body inputs = 
     try
