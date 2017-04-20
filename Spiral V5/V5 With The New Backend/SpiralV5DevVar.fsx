@@ -1,6 +1,6 @@
 ﻿#load "SpiralV5CudaInit.fsx"
 open SpiralV5CudaInit
-open SpiralV5CudaTypechecker_v6e
+open SpiralV5CudaTypechecker_v7b
 
 open System
 

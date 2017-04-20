@@ -327,10 +327,8 @@ let for_template end_ init cond body =
 let for' init cond body = for_template (dref <| V "init") init cond body
 let for_ init cond body = l E (for_template B init cond body)
 
-//let mset out in_ rest = MSet(out,in_,rest)
-
-let map_module =
-    meth (ss [S "map_op"; S "n"; S "ins"; S "outs"])
+let cuda_module_map =
+    meth (SS [S "map_op"; S "n"; S "ins"; S "outs"])
         (s [l (S "stride") (GridDimX*BlockDimX)
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
             for_ (V "i") 
@@ -340,28 +338,28 @@ let map_module =
                         (V "i" + V "stride")))
             ] B)
 
-let map_redo_map_module =
-    meth (ss [S "map_load_op";S "reduce_op";S "map_store_op"; S "n";S "ins"; S "outs"])
+let cuda_module_map_redo_map =
+    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; S "n";S "ins"; S "outs"])
         (s [l (S "stride") (GridDimX*BlockDimX)
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
-            l (ss [E; S "value"])
+            l (SS [E; S "value"])
                 (for' (VV [V "i";ap (V "map_load_op") (VV [V "i";V "ins"])])
-                    (inl (ss [S "i"; E]) (V "i" .< V "n"))
-                    (inl (ss [S "i"; S "value"]) 
+                    (inl (SS [S "i"; E]) (V "i" .< V "n"))
+                    (inl (SS [S "i"; S "value"]) 
                         (VV [V "i" + V "stride"; ap (V "reduce_op") (VV [V "value";ap (V "map_load_op") (VV [V "i";V "ins"])])])))
             l (S "result") (CubBlockReduce(V "value",V "reduce_op",None))
             l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "result"; V "outs"]), B))
             ] B)
 
-let map_redocol_map_module =
-    meth (ss [S "map_load_op";S "reduce_op";S "map_store_op"; ss [S "num_cols"; S "num_rows"];S "ins";S "outs"])
+let cuda_module_map_redocol_map =
+    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; SS [S "num_cols"; S "num_rows"];S "ins";S "outs"])
         (for_ BlockIdxX
             (inl (S "col") (V "col" .< V "num_cols"))
             (inl (S "col") 
-                (s [l (ss [E; S "value"]) 
+                (s [l (SS [E; S "value"]) 
                         (for' (VV [ThreadIdxX; ap (V "map_load_op") (VV [VV [V "col"; ThreadIdxX]; V "ins"])])
-                            (inl (ss [S "row"; S ""]) (V "row" .< V "num_rows"))
-                            (inl (ss [S "row"; S "value"])
+                            (inl (SS [S "row"; S ""]) (V "row" .< V "num_rows"))
+                            (inl (SS [S "row"; S "value"])
                                 (VV [V "row" + BlockDimX; 
                                         ap (V "reduce_op") (VV [V "value"; ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"])])])))
                     l (S "result") (CubBlockReduce(V "value",V "reduce_op",None))

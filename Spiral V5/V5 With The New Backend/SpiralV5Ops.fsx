@@ -165,8 +165,8 @@ let inline add proj_2d proj_1d alpha (a: DM) beta (b: DM) (c: DM) (env: SpiralEn
         if b.HasAdjoint then axpy env.Str beta (c.A' proj_1d) (b.A' proj_1d)
 
 open System.Collections.Generic
-open SpiralV5CudaTypechecker_v6e
-open SpiralV5CudaCodegen_v3a
+open SpiralV5CudaTypechecker_v7b
+open SpiralV5CudaCodegen_v3b
 
 let compile kernel inputs = 
     let get = function Succ x -> x | _ -> failwith "Error"
@@ -177,9 +177,9 @@ let compile kernel inputs =
         compile_kernel_using_nvcc_bat_router h k
     | Fail x -> failwithf "Kernel failed to compile.\n%A" x
 
-let call_map = compile map_module |> memoize
-let call_map_redo_map = compile map_redo_map_module |> memoize
-let call_map_redocol_map = compile map_redocol_map_module |> memoize
+let call_map = compile cuda_module_map_redo_map |> memoize
+let call_map_redo_map = compile cuda_module_map_redo_map |> memoize
+let call_map_redocol_map = compile cuda_module_map_redocol_map |> memoize
 
 let reserve_tags n =
     let tags = ResizeArray()
@@ -189,7 +189,7 @@ let reserve_tags n =
 
 let reserved_tags = reserve_tags 100
 
-let map =
+let launcher_map =
     let n = TyV (reserved_tags.[0], PrimT UInt64T)
     fun (str: CudaStream) map_op (inputs: DM list) (outputs: DM list) ->
         let args = inputs @ outputs
@@ -216,11 +216,11 @@ let map =
         let outs = to_typechecking_form outputs
 
         let map_op = 
-            inl (VV [V "i";V "ins";V "outs"])
-                (s [l (V "indexer") (inl (V "x") (ArrayIndex(V "x",[V "i"])))
-                    l (V "ins") (VVMap(V "indexer",V "ins"))
-                    mset (VVMap(V "indexer",V "outs")) (ap map_op (V "ins"))
-                    ] B)
+            let ind x = ArrayIndex(V x,[V "i"])
+            inl (SS [S "i";S "ins";S "outs"])
+                (l (V "ins") (ap map_op (ind ) (
+                (l (S "f") (ap cuda_op2 (inl (SS [S "in"; S "out"]) (MSet(ind "out",ind "in"))))
+                (ap' (V "zip_map") [V "f";VV [V "ins"; V "outs"]]))))
 
         let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
 
@@ -228,7 +228,7 @@ let map =
         let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
         kernel.RunAsync(str.Stream,args)
 
-let map_redo_map =
+let launcher_map_redo_map =
     let n = TyV (reserved_tags.[0], PrimT UInt64T)
     fun (str: CudaStream) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) ->
         let block_size = 128UL
@@ -257,7 +257,7 @@ let map_redo_map =
         let outs = to_typechecking_form (fun x -> GlobalArrayT([],PrimT x)) outputs
 
         let map_load_op = 
-            inl (VV [V "i";V "ins"])
+            inl (SS [S "i";S "ins"])
                 (s [l (V "indexer") (inl (V "i") (inl (V "x") (ArrayIndex(V "x",[V "i"]))))
                     l (V "ins") (VVMap(ap (V "indexer") (V "i"),V "ins"))
                     ] (ap map_load_op (V "ins")))

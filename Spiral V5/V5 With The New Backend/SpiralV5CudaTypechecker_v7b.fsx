@@ -376,7 +376,7 @@ let rec inlr' name args body =
     | [] -> body
 
 /// The tuple map function. Pass it a pattern matching function that takes in on_fail and q as arguments.
-let map_tup =
+let cuda_map =
     let recurse x = ap' (V "rec") [(V "f"); (V x)]
     inlr' "rec" [S "f"; S "q"]
         (l (S "on_fail")
@@ -388,9 +388,35 @@ let map_tup =
                         ])) 
         (ap' (V "f") [V "on_fail"; V "q"]))
 
-/// Maps over a tuple with a specific pattern.
-/// Takes two arguments. If a pattern matching case fails, call the first arguments to it with an empty tuple.
-let zip_map = inl' [S "f"; S "l"] (ap' map_tup [V "f"; VVZip(V "l")])
+/// Template for two member zip_map operations. Apply the first argument to curry the necessary operation (such as MSet or AtomicAdd)
+/// and then pass it to cuda_zip_map.
+let cuda_op2 = 
+    inl' ([S "f"; S "on_fail"; S "l"]) 
+        (match_ (V "l")
+            [
+            SS [S' "in"; S' "out"], ap (V "f") (VV [V "in"; V "out"])
+            E, ap (V "on_fail") (VV [])
+            ])
+
+let cuda_op1 = 
+    inl' ([S "f"; S "on_fail"; S "l"]) 
+        (match_ (V "l")
+            [
+            S' "in", ap (V "f") (V "in")
+            E, ap (V "on_fail") (VV [])
+            ])
+
+/// Maps over a tuple of 2-pairs tuples.
+let cuda_map2 =
+    inl' [S "f"; S "a"; S "b"] 
+        (l (S "f") (ap cuda_op2 (V "f"))
+        (ap' cuda_map [V "f"; VVZip <| VV [V "a"; V "b"]]))
+
+// Maps over a tuple of singleton values.
+let cuda_map1 =
+    inl' [S "f"; S "a"] 
+        (l (S "f") (ap cuda_op1 (V "f"))
+        (ap' cuda_map [V "f"; V "a"]))
 
 let rec with_empty_seq (d: CudaTypecheckerEnv) expr =
     let d = {d with sequences = ref None}
