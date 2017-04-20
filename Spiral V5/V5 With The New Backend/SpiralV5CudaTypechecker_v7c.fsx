@@ -39,7 +39,7 @@ and CudaPattern =
     | S of string
     | S' of string // match if not tuple
     | R of CudaPattern list * CudaPattern option // Tuple
-    | F of CudaExpr // Functiona application with retracing.
+    | F of string * CudaExpr // Functiona application with retracing.
 
 and CudaExpr = 
     | V of string // standard variable
@@ -443,29 +443,29 @@ let rec with_empty_seq (d: CudaTypecheckerEnv) expr =
 
 // Does macro expansion and takes note of the bound and 
 // used variables in the method dictionary for the following passes.
-and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
+and exp_and_seq (_: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let tev d exp = exp_and_seq d exp
 
-    let inline push_sequence x = 
+    let inline push_sequence d x = 
         let f current_sequence rest = apply_sequences current_sequence (x rest)
         d.sequences := Some (f !d.sequences)
 
     let make_tyv ty_exp = get_tag(), get_type ty_exp
 
-    let make_tyv_and_push' ty_exp =
+    let make_tyv_and_push' d ty_exp =
         let v = make_tyv ty_exp
-        push_sequence (fun rest -> TyLet(v,ty_exp,rest,get_type rest))
+        push_sequence d (fun rest -> TyLet(v,ty_exp,rest,get_type rest))
         v
 
-    let make_tyv_and_push ty_exp = make_tyv_and_push' ty_exp |> TyV
+    let make_tyv_and_push d ty_exp = make_tyv_and_push' d ty_exp |> TyV
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`. 
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let rec destructure_deep_template nonseq_push r = 
-        let destructure_deep r = destructure_deep_template nonseq_push r
+    let rec destructure_deep_template d nonseq_push r = 
+        let destructure_deep d r = destructure_deep_template d nonseq_push r
         match r with
         | TyV _ | TyUnit | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
-        | TyVV(l,t) -> List.map destructure_deep l |> fun x -> TyVV(x,t)
+        | TyVV(l,t) -> List.map (destructure_deep d) l |> fun x -> TyVV(x,t)
         | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
         | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
         | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -474,15 +474,15 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             match get_type r with
             | VVT tuple_types -> 
                 let indexed_tuple_args = List.mapi (fun i typ -> 
-                    destructure_deep <| TyIndexVV(r,TyLitInt32 i,typ)) tuple_types
+                    destructure_deep d <| TyIndexVV(r,TyLitInt32 i,typ)) tuple_types
                 TyVV(indexed_tuple_args, VVT tuple_types)
             | _ -> 
                 match r with
                 | TyIndexVV _ -> nonseq_push r
-                | _ -> make_tyv_and_push r
+                | _ -> make_tyv_and_push d r
 
-    let destructure_deep r = destructure_deep_template id r
-    let destructure_deep_method r = destructure_deep_template (make_tyv >> TyV) r
+    let destructure_deep d r = destructure_deep_template d id r
+    let destructure_deep_method d r = destructure_deep_template d (make_tyv >> TyV) r
 
     let dup_name_check (name_checker: HashSet<string>) arg_name f =
         match name_checker.Add arg_name || arg_name = "" || arg_name = "_" with
@@ -514,10 +514,14 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
                 | _ -> failwith "impossible"
 
+    let case_f apply d on_fail body args ret =
+        let d' = copy_typechecker_env d
+        apply d body args (on_fail d') (make_tyv_and_push d >> ret)
+
     let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
         let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | F args, body -> case_f body args on_fail ret
+        | F (name,args) , body -> case_f body args (fun r -> case_bind acc name r ret)
         | R([],None), TyVV([], _) -> case_bind acc "" r ret
         | S' x, TyVV _ -> on_fail <| "S' matched a tuple."
         | S' x, _ | S x, _ -> case_bind acc x r ret
@@ -525,18 +529,18 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
         | R([],None), TyVV(_, _) -> on_fail <| sprintf "More arguments than can be matched in R."
         | R _, _ -> on_fail <| sprintf "Cannot destructure %A." r
+    
+    let match_single_inl' case_f dup_name_checker = match_single case_f case_r_inl (case_bind_inl dup_name_checker)
+    let match_single_method' case_f dup_name_checker = match_single case_f case_r_method (case_bind_method dup_name_checker)
 
-    let match_single_inl' dup_name_checker = match_single case_r_inl (case_bind_inl dup_name_checker)
-    let match_single_method' dup_name_checker = match_single case_r_method (case_bind_method dup_name_checker)
-
-    let match_single_inl x = match_single_inl' (h0()) x
-    let match_single_method x = match_single_method' (h0()) x
+    let match_single_inl case_f = match_single_inl' case_f (h0())
+    let match_single_method case_f = match_single_method' case_f (h0())
 
     // Primitive functions
     let append_typeof_fst k a b =
         k (a, b, (get_type a))
 
-    let prim_bin_op_template check_error is_check k a b t =
+    let prim_bin_op_template d check_error is_check k a b t =
         let constraint_both_eq_numeric f k =
             let a,b = tev d a, tev d b
             if is_check a b then k a b
@@ -544,32 +548,32 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
         constraint_both_eq_numeric failwith (k t)
 
-    let prim_arith_op = 
+    let prim_arith_op d = 
         let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_numeric a && get_type a = get_type b
-        prim_bin_op_template er check append_typeof_fst
+        prim_bin_op_template d er check append_typeof_fst
 
-    let prim_atomic_add_op = 
+    let prim_atomic_add_op d = 
         let er = sprintf "`is_atomic_add_supported a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_atomic_add_supported a && get_type a = get_type b
-        prim_bin_op_template er check append_typeof_fst
+        prim_bin_op_template d er check append_typeof_fst
 
-    let prim_bool_op = 
+    let prim_bool_op d = 
         let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
-        prim_bin_op_template er check (fun t a b -> t (a,b))
+        prim_bin_op_template d er check (fun t a b -> t (a,b))
 
-    let prim_shift_op =
+    let prim_shift_op d =
         let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
         let check a b = is_int a && is_int b
-        prim_bin_op_template er check append_typeof_fst
+        prim_bin_op_template d er check append_typeof_fst
 
-    let prim_shuffle_op =
+    let prim_shuffle_op d =
         let er = sprintf "`is_int b` is false.\na=%A, b=%A"
         let check a b = is_int b
-        prim_bin_op_template er check append_typeof_fst
+        prim_bin_op_template d er check append_typeof_fst
 
-    let prim_un_op_template check_error is_check k a t =
+    let prim_un_op_template d check_error is_check k a t =
         let constraint_numeric f k =
             let a = tev d a
             if is_check a then k a
@@ -577,24 +581,24 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
         constraint_numeric failwith (k t)
 
-    let prim_un_floating = 
+    let prim_un_floating d = 
         let er = sprintf "`is_float a` is false.\na=%A"
         let check a = is_float a
-        prim_un_op_template er check (fun t a -> t (a, get_type a))
+        prim_un_op_template d er check (fun t a -> t (a, get_type a))
 
-    let prim_un_numeric = 
+    let prim_un_numeric d = 
         let er = sprintf "`true` is false.\na=%A"
         let check a = true
-        prim_un_op_template er check (fun t a -> t (a, get_type a))
+        prim_un_op_template d er check (fun t a -> t (a, get_type a))
 
-    let process_create_array args typeof_expr =
+    let process_create_array d args typeof_expr =
         let typ = get_type (tev d typeof_expr)
         let args = 
             List.map (tev d) args
             |> fun args -> 
                 if List.forall is_int args then args 
                 else failwithf "An arg in CreateArray is not of Type int.\nGot: %A" args
-            |> List.map destructure_deep
+            |> List.map (destructure_deep d)
         args, typ
 
     let make_vvt x = List.map get_type x |> VVT
@@ -616,19 +620,19 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | x -> Some x
         (loop x).Value
 
-    let apply_inlineable on_fail ((name,l),_ as inlineable_key) args =
+    let apply_inlineable d case_f on_fail ((name,l),_ as inlineable_key) args =
         let env = d.memoized_inlineable_envs.[inlineable_key]
-        let args = destructure_deep args
-        match_all match_single_inl env l args
+        let args = destructure_deep d args
+        match_all (match_single_inl case_f) env l args
             on_fail
             (fun (env, body) -> 
                 let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
                 tev d body)
 
-    let apply_method on_fail ((name,l), _ as method_key) args =
+    let apply_method d case_f on_fail ((name,l), _ as method_key) args =
         let initial_env = d.memoized_method_envs.[method_key]
-        let bound_outside_args = destructure_deep args
-        match_all match_single_method initial_env l (destructure_deep_method bound_outside_args) 
+        let bound_outside_args = destructure_deep d args
+        match_all (match_single_method case_f) initial_env l (destructure_deep_method d bound_outside_args) 
             on_fail
             (fun ((bound_inside_args, env), body) ->
                 let bound_outside_args, bound_inside_args, env, body = 
@@ -658,7 +662,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 | true, MethodDone(_,body,_) ->
                     make_method_call (get_type body))
 
-    let apply_template apply_inl apply_method la ra =
+    let apply_template d apply_inl apply_method la ra =
         match get_type (tev d la) with
         | InlineableT(x,env) -> apply_inl (x,env) ra
         | MethodT(x,env) -> apply_method (x,env) ra

@@ -64,6 +64,7 @@
     <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3a.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DM.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Prims.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v7b.fsx" />
     <None Include="V5 With The New Backend\probability.fsx" />
     <None Include="V5 With The New Backend\tuple_zip.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v2.fsx" />
@@ -72,7 +73,7 @@
     <None Include="V5 With The New Backend\load-references-release.fsx" />
     <None Include="V5 With The New Backend\load-project-release.fsx" />
     <None Include="V5 With The New Backend\Speed test.fsx" />
-    <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v7b.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v7c.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaInit.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
