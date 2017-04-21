@@ -2,7 +2,7 @@
 //module SpiralV5.Main
 
 #load "SpiralV5CudaCodegen_v3b.fsx"
-open SpiralV5CudaTypechecker_v7b
+open SpiralV5CudaTypechecker_v7c'
 open SpiralV5CudaCodegen_v3b
 
 // Open up the namespaces.

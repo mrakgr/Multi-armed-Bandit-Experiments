@@ -596,18 +596,18 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
                 | _ -> failwith "impossible"
 
-    let case_f d apply on_fail acc body args ret =
+    let case_f d apply acc body args on_fail ret =
         let d' = typechecker_env_copy d
         let d = {d with env = acc}
-        apply d (fun _ -> 
+        let on_fail _ =
             typechecker_env_set d d'
             on_fail() // <| "Function application in pattern matcher failed to match a pattern."
-            ) (T body) (tev d args) (make_tyv_and_push d >> ret)
+        apply d (T body) (tev d args) on_fail (make_tyv_and_push d >> ret)
 
     let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
         let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | F (name,args) , body -> case_f on_fail acc body args (fun r -> case_bind acc name r ret)
+        | F (name,args) , body -> case_f acc body args on_fail (fun r -> case_bind acc name r ret)
         | R([],None), TyVV([], _) -> case_bind acc "" r ret
         | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
         | S' x, _ | S x, _ -> case_bind acc x r ret
@@ -631,7 +631,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | [] -> on_fail () //"All patterns in the matcher failed to match."
         loop l
 
-    let apply_inlineable d case_f on_fail ((name,l),_ as inlineable_key) args ret =
+    let apply_inlineable d case_f ((name,l),_ as inlineable_key) args on_fail ret =
         let env = d.memoized_inlineable_envs.[inlineable_key]
         let args = destructure_deep d args
         match_all (match_single_inl case_f) env l args
@@ -640,7 +640,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
                 tev d body |> ret)
 
-    let apply_method d case_f on_fail ((name,l), _ as method_key) args ret =
+    let apply_method d case_f ((name,l), _ as method_key) args on_fail ret =
         let initial_env = d.memoized_method_envs.[method_key]
         let bound_outside_args = destructure_deep d args
         match_all (match_single_method case_f) initial_env l (destructure_deep_method d bound_outside_args) 
@@ -674,16 +674,16 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                     make_method_call (get_type body)
                 |> ret)
 
-    let rec apply_template d on_fail apply_inlineable apply_method la ra =
+    let rec apply_template d apply_inlineable apply_method la ra =
         match get_type (tev d la) with
-        | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) on_fail (x,env) ra
-        | MethodT(x,env) -> apply_method d (case_f d apply_both) on_fail (x,env) ra
+        | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) (x,env) ra
+        | MethodT(x,env) -> apply_method d (case_f d apply_both) (x,env) ra 
         | _ -> failwith "impossible"
 
-    and apply_both d on_fail = apply_template d on_fail apply_inlineable apply_method
-    and apply_method_only d on_fail = apply_template d on_fail (fun _ -> failwith "Inlineable not supported.") apply_method
+    and apply_both d = apply_template d apply_inlineable apply_method
+    and apply_method_only d = apply_template d (fun _ -> failwith "Inlineable not supported.") apply_method
 
-    let apply d expr args = apply_both d (fun _ -> failwith "Pattern matching cases failed to match") expr (tev d args)
+    let apply d expr args = apply_both d expr (tev d args) (fun _ -> failwith "Pattern matching cases failed to match")
 
     match exp with
     | T x -> x // To assist in CubBlockReduce so evaled cases do not have to be evaluated twice.
@@ -889,8 +889,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | x -> 
                 let arg() = evaled_input |> make_tyv |> TyV
                 tev d (VV [T (arg()); T (arg())])
-            |> apply_method_only d (fun _ -> failwith "Failed to pattern match the method in CubBlockReduce.") method_
-            <| id
+            |> fun x -> apply_method_only d method_ x (fun _ -> failwith "Failed to pattern match the method in CubBlockReduce.") id
 
         let num_valid = Option.map (tev d) num_valid
         TyCubBlockReduce(dim, evaled_input,method_,num_valid,get_type method_)
