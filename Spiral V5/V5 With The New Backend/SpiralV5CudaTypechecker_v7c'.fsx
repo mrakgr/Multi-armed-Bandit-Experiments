@@ -602,7 +602,7 @@ and exp_and_seq (_: CudaTypecheckerEnv) exp: TypedCudaExpr =
         apply d (fun _ -> 
             typechecker_env_set d d'
             on_fail() // <| "Function application in pattern matcher failed to match a pattern."
-            ) body args (make_tyv_and_push d >> ret)
+            ) (T body) (tev d args) (make_tyv_and_push d >> ret)
 
     let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
         let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
@@ -674,32 +674,18 @@ and exp_and_seq (_: CudaTypecheckerEnv) exp: TypedCudaExpr =
                     make_method_call (get_type body)
                 |> ret)
 
-    let rec apply_template d on_fail apply_inlineable apply_method la (ra: TypedCudaExpr) =
+    //let case_f _ = failwith "x"
+
+    let rec apply_template d on_fail apply_inlineable apply_method la ra =
         match get_type (tev d la) with
         | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) on_fail (x,env) ra
         | MethodT(x,env) -> apply_method d (case_f d apply_both) on_fail (x,env) ra
         | _ -> failwith "impossible"
 
-    and apply_both d on_fail la (ra : TypedCudaExpr ) ret = //apply_template d on_fail apply_inlineable apply_method
-        match get_type (tev d la) with
-        | InlineableT(x,env) -> //apply_inlineable d (case_f d apply_both) on_fail (x,env) ra
-            let case_f = case_f d apply_both
-            let (name,l),_ as inlineable_key = x, env
-            let args = ra 
-            let env = d.memoized_inlineable_envs.[inlineable_key]
-            let args = destructure_deep d args
-            match_all (match_single_inl case_f) env l args
-                on_fail
-                (fun (env, body) -> 
-                    let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
-                    tev d body |> ret)
-//        | MethodT(x,env) -> apply_method d (case_f d apply_both) on_fail (x,env) ra
-//        | _ -> failwith "impossible"
-    //and apply_method_only d on_fail = apply_template d on_fail (fun _ -> failwith "Inlineable not supported.") apply_method
+    and apply_both d on_fail = apply_template d on_fail apply_inlineable apply_method
+    and apply_method_only d on_fail = apply_template d on_fail (fun _ -> failwith "Inlineable not supported.") apply_method
 
-    failwith "x"
-
-//    let apply_standard d expr args = apply_both d failwith expr (tev d args)
+//    let apply_standard d expr args = apply_both d (fun _ -> failwith "Pattern matching cases failed to match") expr (tev d args)
 //    let apply_match d on_fail expr args = apply_both d on_fail expr (tev d args)
 //
 //    match exp with

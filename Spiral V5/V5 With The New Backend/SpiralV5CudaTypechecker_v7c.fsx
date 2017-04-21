@@ -571,10 +571,9 @@ and exp_and_seq (_: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | true -> f()
         | false -> failwithf "%s is a duplicate name in pattern matching." arg_name
 
-    let case_bind_template map_add name_checker acc arg_name ty_exp ret =
+    let case_bind_template map_add name_checker acc arg_name ty_exp =
         dup_name_check name_checker arg_name <| fun _ ->
             map_add arg_name ty_exp acc
-        |> ret
 
     let case_bind_inl = case_bind_template (fun arg_name x acc -> 
         match arg_name with
@@ -586,35 +585,41 @@ and exp_and_seq (_: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | "" | "_" -> x, acc
         | _ -> x, Map.add arg_name x acc)
     
-    let case_r_inl recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
-        recurse acc l r <| fun x_acc ->
-            recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts)) ret
+    let case_r_inl recurse acc (l,ls,ls') (r,rs) (t,ts) =
+        match recurse acc l r with
+        | Succ x_acc -> recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts))
+        | er -> er
 
-    let case_r_method recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
-        recurse acc l r <| fun (x, x_acc) ->
-            recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts)) <| function
-                | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
-                | _ -> failwith "impossible"
+    let case_r_method recurse acc (l,ls,ls') (r,rs) (t,ts) =
+        match recurse acc l r with
+        | Succ (x, x_acc) ->
+            match recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts)) with
+            | Succ (TyVV(xs,VVT ts), xs_acc) -> Succ (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
+            | Fail _ as er -> er
+            | _ -> failwith "impossible"
+        | er -> er
 
-    let case_f d apply on_fail acc body args ret =
+    let case_f d apply acc body args =
         let d' = typechecker_env_copy d
         let d = {d with env = acc}
-        apply d body args (fun _ -> 
-            typechecker_env_set d d'
-            on_fail() // <| "Function application in pattern matcher failed to match a pattern."
-            ) (make_tyv_and_push d >> ret)
+        match apply d (T body) (tev d args) with
+        | Succ x -> make_tyv_and_push d x |> Succ
+        | er -> typechecker_env_set d d'; er // <| "Function application in pattern matcher failed to match a pattern."
 
-    let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
-        let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
+    let rec match_single case_f case_r case_bind (acc: Env) l r =
+        let recurse acc l r = match_single case_f case_r case_bind acc l r
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | F (name,args) , body -> case_f on_fail acc body args (fun r -> case_bind acc name r ret)
-        | R([],None), TyVV([], _) -> case_bind acc "" r ret
-        | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
-        | S' x, _ | S x, _ -> case_bind acc x r ret
-        | R([],Some ls), TyVV _ -> recurse acc ls r ret
-        | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
-        | R([],None), TyVV(_, _) -> on_fail () // <| sprintf "More arguments than can be matched in R."
-        | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
+        | F (name,args) , body -> 
+            match case_f acc body args with
+            | Succ r -> case_bind acc name r |> Succ
+            | Fail er -> Fail er
+        | R([],None), TyVV([], _) -> case_bind acc "" r |> Succ
+        | S' x, TyVV _ -> Fail () //<| "S' matched a tuple."
+        | S' x, _ | S x, _ -> case_bind acc x r |> Succ
+        | R([],Some ls), TyVV _ -> recurse acc ls r
+        | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts)
+        | R([],None), TyVV(_, _) -> Fail () // <| sprintf "More arguments than can be matched in R."
+        | R _, _ -> Fail () //<| sprintf "Cannot destructure %A." r
     
     let match_single_inl' case_f dup_name_checker = match_single case_f case_r_inl (case_bind_inl dup_name_checker)
     let match_single_method' case_f dup_name_checker = match_single case_f case_r_method (case_bind_method dup_name_checker)
@@ -622,68 +627,66 @@ and exp_and_seq (_: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let match_single_inl case_f = match_single_inl' case_f (h0())
     let match_single_method case_f = match_single_method' case_f (h0())
 
-    let match_all match_single env l args on_fail ret =
+    let match_all match_single env l args =
         let rec loop = function
             | (pattern, body) :: xs ->
-                match_single env pattern args
-                    (fun _ -> loop xs)
-                    (fun x -> ret (x, body))
-            | [] -> on_fail () //"All patterns in matcher failed to match."
+                 match match_single env pattern args with
+                 | Fail er -> loop xs
+                 | Succ x -> Succ (x, body)
+            | [] -> Fail () //"All patterns in matcher failed to match."
         loop l
 
-    let apply_inlineable d case_f on_fail ((name,l),_ as inlineable_key) args ret =
+    let apply_inlineable d case_f ((name,l),_ as inlineable_key) args =
         let env = d.memoized_inlineable_envs.[inlineable_key]
         let args = destructure_deep d args
-        match_all (match_single_inl case_f) env l args
-            on_fail
-            (fun (env, body) -> 
-                let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
-                tev d body |> ret)
+        match match_all (match_single_inl case_f) env l args with
+        | Fail er -> Fail er
+        | Succ (env, body) -> 
+            let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
+            tev d body |> Succ
 
-    let apply_method d case_f on_fail ((name,l), _ as method_key) args ret =
+    let apply_method d case_f ((name,l), _ as method_key) args =
         let initial_env = d.memoized_method_envs.[method_key]
         let bound_outside_args = destructure_deep d args
-        match_all (match_single_method case_f) initial_env l (destructure_deep_method d bound_outside_args) 
-            on_fail
-            (fun ((bound_inside_args, env), body) ->
-                let bound_outside_args, bound_inside_args, env, body = 
-                    filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
+        match match_all (match_single_method case_f) initial_env l (destructure_deep_method d bound_outside_args) with
+        | Fail er -> Fail er
+        | Succ ((bound_inside_args, env), body) ->
+            let bound_outside_args, bound_inside_args, env, body = 
+                filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
 
-                let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
+            let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
 
-                match d.memoized_methods.TryGetValue method_key with
-                | false, _ ->                         
-                    d.memoized_methods.[method_key] <- MethodInEvaluation(None)
+            match d.memoized_methods.TryGetValue method_key with
+            | false, _ ->                         
+                d.memoized_methods.[method_key] <- MethodInEvaluation(None)
 
-                    let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
-                    let body = with_empty_seq d body
-                    let sole_arguments = filter_tyvs bound_inside_args
+                let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
+                let body = with_empty_seq d body
+                let sole_arguments = filter_tyvs bound_inside_args
 
-                    d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, get_tag())
+                d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, get_tag())
 
-                    if is_returnable body then make_method_call (get_type body)
-                    else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
-                | true, MethodInEvaluation None ->
-                    let body = get_body_from d.recursive_methods_stack
-                    let t = get_type body
-                    d.memoized_methods.[method_key] <- MethodInEvaluation (Some t)
-                    make_method_call t
-                | true, MethodInEvaluation (Some t) ->
-                    make_method_call t
-                | true, MethodDone(_,body,_) ->
-                    make_method_call (get_type body)
-                |> ret)
-
-    //let case_f _ = failwith "x"
-
-    let rec apply_template d on_fail apply_inlineable apply_method la ra =
+                if is_returnable body then make_method_call (get_type body)
+                else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
+            | true, MethodInEvaluation None ->
+                let body = get_body_from d.recursive_methods_stack
+                let t = get_type body
+                d.memoized_methods.[method_key] <- MethodInEvaluation (Some t)
+                make_method_call t
+            | true, MethodInEvaluation (Some t) ->
+                make_method_call t
+            | true, MethodDone(_,body,_) ->
+                make_method_call (get_type body)
+            |> Succ
+            
+    let rec apply_template d apply_inlineable apply_method la ra =
         match get_type (tev d la) with
-        | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) on_fail (x,env) ra
-        | MethodT(x,env) -> apply_method d (case_f d apply_both) on_fail (x,env) ra
+        | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) (x,env) ra
+        | MethodT(x,env) -> apply_method d (case_f d apply_both) (x,env) ra
         | _ -> failwith "impossible"
 
-    and apply_both d on_fail = apply_template d on_fail apply_inlineable apply_method
-    //and apply_method_only d on_fail = apply_template d on_fail (fun _ -> failwith "Inlineable not supported.") apply_method
+    and apply_both d = apply_template d apply_inlineable apply_method
+    and apply_method_only d = apply_template d (fun _ -> failwith "Inlineable not supported.") apply_method
 
     failwith "x"
 
