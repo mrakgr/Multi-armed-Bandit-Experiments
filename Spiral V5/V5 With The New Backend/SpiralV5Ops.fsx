@@ -165,7 +165,7 @@ let inline add proj_2d proj_1d alpha (a: DM) beta (b: DM) (c: DM) (env: SpiralEn
         if b.HasAdjoint then axpy env.Str beta (c.A' proj_1d) (b.A' proj_1d)
 
 open System.Collections.Generic
-open SpiralV5CudaTypechecker_v7b
+open SpiralV5CudaTypechecker_v7c'
 open SpiralV5CudaCodegen_v3b
 
 let compile kernel inputs = 
@@ -218,9 +218,11 @@ let launcher_map =
         let map_op = 
             let ind x = ArrayIndex(V x,[V "i"])
             inl (SS [S "i";S "ins";S "outs"])
-                (l (V "ins") (ap map_op (ind ) (
-                (l (S "f") (ap cuda_op2 (inl (SS [S "in"; S "out"]) (MSet(ind "out",ind "in"))))
-                (ap' (V "zip_map") [V "f";VV [V "ins"; V "outs"]]))))
+                (s [l (S "ins") (ap cuda_map (VV [inl (S' "x") (ind "x"); V "ins"]))
+                    l (S "results") (ap map_op (ind "ins"))
+                    l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
+                    l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ind "out",V "result")))
+                    ] (ap cuda_map (VV [V "f"; V "results_outs"])))
 
         let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
 
@@ -256,17 +258,19 @@ let launcher_map_redo_map =
         let ins = to_typechecking_form (fun x -> GlobalArrayT([n],PrimT x)) inputs
         let outs = to_typechecking_form (fun x -> GlobalArrayT([],PrimT x)) outputs
 
+        let ind x = ArrayIndex(V x,[V "i"])
         let map_load_op = 
-            inl (SS [S "i";S "ins"])
-                (s [l (V "indexer") (inl (V "i") (inl (V "x") (ArrayIndex(V "x",[V "i"]))))
-                    l (V "ins") (VVMap(ap (V "indexer") (V "i"),V "ins"))
-                    ] (ap map_load_op (V "ins")))
+            inl (SS [S' "i";S "ins"])
+                (l (S "ins") 
+                    (ap cuda_map (VV [inl (S' "x") (ind "x"); V "ins"]))
+                    (ap map_load_op (V "ins")))
         let map_store_op =
-            inl (VV [V "i";V "ins";V "outs"])
-                (s [l (V "indexer") (inl (V "i") (inl (V "x") (ArrayIndex(V "x",[V "i"]))))
-                    l (V "ins") (VVMap(ap (V "indexer") (V "i"),V "ins"))
-                    mset (VVMap(ap (V "indexer") (LitUInt64 0UL), V "outs")) (ap map_load_op (V "ins"))
-                    ] B)
+            inl (SS [S' "i";S "results";S "outs"])
+                (s [l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
+                    l (S "f") 
+                        (inl (SS [S' "result"; S' "out"]) 
+                            (l E (AtomicAdd(V "out",V "result")) B))
+                    ] (ap cuda_map (VV [V "f"; V "results_outs"])))
 
         let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
 

@@ -39,7 +39,7 @@ and CudaPattern =
     | S of string
     | S' of string // match if not tuple
     | R of CudaPattern list * CudaPattern option // Tuple
-    | F of string * CudaExpr // Functiona application with retracing.
+    | F of CudaPattern * CudaExpr // Functiona application with retracing.
 
 and CudaExpr = 
     | V of string // standard variable
@@ -119,10 +119,6 @@ and CudaExpr =
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedCudaExpr =
-    // These two will not get code gen'd.
-    // The difference from the past version of the typechecker is that now the TagT type exists.
-//    | Inlineable' of CudaExpr * CudaExpr * Env * CudaTy
-//    | Method' of name: string * args: CudaExpr * body: CudaExpr * Env * CudaTy
     | TyType of CudaTy
     
     | TyV of TyV
@@ -360,11 +356,22 @@ let l v b e = Apply(inl v e,b)
 let dref x = ArrayIndex(x,[])
 let cref x = l (S "ref") (ArrayCreateLocal([],x)) (l E (MSet(dref (V "ref"),x)) (V "ref"))
 
+let while_ cond body rest = While(cond,body,rest)
+let s l fin = List.foldBack (fun x rest -> x rest) l fin
+   
+let for_template end_ init cond body =
+    l (S "init") (cref init)
+        (while_ (ap cond (dref <| V "init"))
+            (MSet(dref (V "init"), ap body (dref <| V "init"))) end_)
+
+let for' init cond body = for_template (dref <| V "init") init cond body
+let for_ init cond body = l E (for_template B init cond body)
+
 let rec ap' f = function
     | x :: xs -> ap' (ap f x) xs
     | [] -> f
 
-let match_ x pat = ap (Inlineable("",pat)) x
+let match_ x pat = ap (Inlineable("pattern_matcher",pat)) x
 
 let rec inl' args body = 
     match args with
@@ -376,48 +383,16 @@ let rec inlr' name args body =
     | x :: xs -> inlr name x (inl' xs body)
     | [] -> body
 
-/// The tuple map function. Pass it a pattern matching function that takes in on_fail and q as arguments.
+/// The tuple map function. Goes over the tuple scanning for a pattern and triggers only if it finds it.
 let cuda_map =
-    let recurse x = ap' (V "rec") [(V "f"); (V x)]
-    inlr' "rec" [S "f"; S "q"]
-        (l (S "on_fail")
-            (inl (SS []) 
-                (match_ (V "q")
-                        [
-                        SSS [SS' "v1"] "rest", cons (recurse "v1") (recurse "rest")
-                        SS [], VV []
-                        ])) 
-        (ap' (V "f") [V "on_fail"; V "q"]))
-
-/// Template for two member zip_map operations. Apply the first argument to curry the necessary operation (such as MSet or AtomicAdd)
-/// and then pass it to cuda_zip_map.
-let cuda_op2 = 
-    inl' ([S "f"; S "on_fail"; S "l"]) 
-        (match_ (V "l")
+    let recurse x = ap (V "rec") (VV [V "f"; V x])
+    inlr "rec" (SS [S "f"; S "q"])
+        (match_ (V "q")
             [
-            SS [S' "in"; S' "out"], ap (V "f") (VV [V "in"; V "out"])
-            E, ap (V "on_fail") (VV [])
-            ])
-
-let cuda_op1 = 
-    inl' ([S "f"; S "on_fail"; S "l"]) 
-        (match_ (V "l")
-            [
-            S' "in", ap (V "f") (V "in")
-            E, ap (V "on_fail") (VV [])
-            ])
-
-/// Maps over a tuple of 2-pairs tuples.
-let cuda_map2 =
-    inl' [S "f"; S "a"; S "b"] 
-        (l (S "f") (ap cuda_op2 (V "f"))
-        (ap' cuda_map [V "f"; VVZip <| VV [V "a"; V "b"]]))
-
-// Maps over a tuple of singleton values.
-let cuda_map1 =
-    inl' [S "f"; S "a"] 
-        (l (S "f") (ap cuda_op1 (V "f"))
-        (ap' cuda_map [V "f"; V "a"]))
+            F(S "x",V "f"), V "x"
+            SSS [SS' "v1"] "rest", cons (recurse "v1") (recurse "rest")
+            SS [], VV []
+            ]) 
 
 let data_empty (blockDim, gridDim) = 
     {memoized_method_envs=d0(); memoized_inlineable_envs=d0()
@@ -596,18 +571,24 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
                 | _ -> failwith "impossible"
 
-    let case_f d apply acc body args on_fail ret =
+    let case_f d apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
         let d' = typechecker_env_copy d
         let d = {d with env = acc}
-        let on_fail _ =
-            typechecker_env_set d d'
-            on_fail() // <| "Function application in pattern matcher failed to match a pattern."
-        apply d (T body) (tev d args) on_fail (make_tyv_and_push d >> ret)
+        printfn "I am in case_f.\n(tev d meth)=%A\nargs=%A" (tev d meth) args
+        apply d meth args
+            (fun _ -> 
+                typechecker_env_set d d'
+                on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
+            (fun r -> 
+                match_single acc pattern (destructure_deep d r) 
+                    (fun _ -> failwith "The subpattern in F failed to match.")
+                    ret)
 
     let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
+        printfn "I am in match_single.\nl=%A\nr=%A\n" l r
         let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | F (name,args) , body -> case_f acc body args on_fail (fun r -> case_bind acc name r ret)
+        | F (pattern, meth), args -> case_f acc pattern args meth on_fail ret
         | R([],None), TyVV([], _) -> case_bind acc "" r ret
         | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
         | S' x, _ | S x, _ -> case_bind acc x r ret
@@ -616,15 +597,19 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | R([],None), TyVV(_, _) -> on_fail () // <| sprintf "More arguments than can be matched in R."
         | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
     
-    let match_single_inl' case_f dup_name_checker = match_single case_f case_r_inl (case_bind_inl dup_name_checker)
-    let match_single_method' case_f dup_name_checker = match_single case_f case_r_method (case_bind_method dup_name_checker)
+    let rec match_single_inl' case_f dup_name_checker = 
+        let case_f x = case_f (match_single_inl' case_f dup_name_checker) x
+        match_single case_f case_r_inl (case_bind_inl dup_name_checker)
+    let rec match_single_method' case_f dup_name_checker = 
+        let case_f x = case_f (match_single_method' case_f dup_name_checker) x
+        match_single case_f case_r_method (case_bind_method dup_name_checker)
 
     let match_single_inl case_f = match_single_inl' case_f (h0())
     let match_single_method case_f = match_single_method' case_f (h0())
 
-    let match_all match_single env l args on_fail ret =
+    let match_all match_single (env: Env) l (args: TypedCudaExpr) on_fail ret =
         let rec loop = function
-            | (pattern, body) :: xs ->
+            | (pattern: CudaPattern, body: CudaExpr) :: xs ->
                 match_single env pattern args
                     (fun _ -> loop xs)
                     (fun x -> ret (x, body))
@@ -674,16 +659,20 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                     make_method_call (get_type body)
                 |> ret)
 
-    let rec apply_template d apply_inlineable apply_method la ra =
+    let rec apply_template d apply_inlineable apply_method (la: CudaExpr) ra on_fail ret =
+        printfn "I am in apply_template.\nla=%A\nra=%A" la ra
         match get_type (tev d la) with
-        | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) (x,env) ra
-        | MethodT(x,env) -> apply_method d (case_f d apply_both) (x,env) ra 
-        | _ -> failwith "impossible"
+        | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) (x,env) ra on_fail ret
+        | MethodT(x,env) -> apply_method d (case_f d apply_both) (x,env) ra on_fail ret
+        | _ -> on_fail() // "Trying to apply a type other than InlineableT or MethodT."
 
-    and apply_both d = apply_template d apply_inlineable apply_method
+    and apply_both d (la: CudaExpr) ra = apply_template d apply_inlineable apply_method la ra
     and apply_method_only d = apply_template d (fun _ -> failwith "Inlineable not supported.") apply_method
 
-    let apply d expr args = apply_both d expr (tev d args) (fun _ -> failwith "Pattern matching cases failed to match")
+    let apply d expr args = 
+        let t = (tev d args)
+        printfn "In apply.\nexpr=%A\nargs=%A\n(tev d args)=%A" expr args t
+        apply_both d expr t (fun _ -> failwith "Pattern matching cases failed to match")
 
     match exp with
     | T x -> x // To assist in CubBlockReduce so evaled cases do not have to be evaluated twice.
@@ -974,4 +963,8 @@ let typecheck dims body inputs =
 let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
+let test_cuda_map =
+    meth (SS []) (ap cuda_map (VV [inl (SS [S' "result"; S' "out"]) (V "result"); VV [LitFloat64 4.5; LitInt32 2]]))
 
+let test_cuda_map' = typecheck0 test_cuda_map
+            

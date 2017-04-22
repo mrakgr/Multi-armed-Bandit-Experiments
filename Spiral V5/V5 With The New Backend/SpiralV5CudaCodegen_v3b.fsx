@@ -316,19 +316,8 @@ let eval body (inputs, dims) =
 
 let eval0 body = eval body (VV [], default_dims)
 
-let while_ cond body rest = While(cond,body,rest)
-let s l fin = List.foldBack (fun x rest -> x rest) l fin
-   
-let for_template end_ init cond body =
-    l (S "init") (cref init)
-        (while_ (ap cond (dref <| V "init"))
-            (MSet(dref (V "init"), ap body (dref <| V "init"))) end_)
-
-let for' init cond body = for_template (dref <| V "init") init cond body
-let for_ init cond body = l E (for_template B init cond body)
-
 let cuda_module_map =
-    meth (SS [S "map_op"; S "n"; S "ins"; S "outs"])
+    meth (SS [S "map_op"; S' "n"; S "ins"; S "outs"])
         (s [l (S "stride") (GridDimX*BlockDimX)
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
             for_ (V "i") 
@@ -339,7 +328,7 @@ let cuda_module_map =
             ] B)
 
 let cuda_module_map_redo_map =
-    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; S "n";S "ins"; S "outs"])
+    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; S' "n"; S "ins"; S "outs"])
         (s [l (S "stride") (GridDimX*BlockDimX)
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
             l (SS [E; S "value"])
@@ -348,11 +337,16 @@ let cuda_module_map_redo_map =
                     (inl (SS [S "i"; S "value"]) 
                         (VV [V "i" + V "stride"; ap (V "reduce_op") (VV [V "value";ap (V "map_load_op") (VV [V "i";V "ins"])])])))
             l (S "result") (CubBlockReduce(V "value",V "reduce_op",None))
-            l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "result"; V "outs"]), B))
+            l E (If(ThreadIdxX .= LitUInt64 0UL, 
+                    s  [l (S "x") (VVZip (VV [ap (V "map_store_op") (V "result"); V "outs"]))
+                        l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",[BlockIdxX]), V "result")))
+                        l E (ap cuda_map (VV [V "f"; V "x"]))
+                        ] B
+                    , B))
             ] B)
 
 let cuda_module_map_redocol_map =
-    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; SS [S "num_cols"; S "num_rows"];S "ins";S "outs"])
+    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; SS [S' "num_cols"; S' "num_rows"];S "ins";S "outs"])
         (for_ BlockIdxX
             (inl (S "col") (V "col" .< V "num_cols"))
             (inl (S "col") 
@@ -361,8 +355,13 @@ let cuda_module_map_redocol_map =
                             (inl (SS [S "row"; S ""]) (V "row" .< V "num_rows"))
                             (inl (SS [S "row"; S "value"])
                                 (VV [V "row" + BlockDimX; 
-                                        ap (V "reduce_op") (VV [V "value"; ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"])])])))
+                                     ap (V "reduce_op") (VV [V "value"; ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"])])])))
                     l (S "result") (CubBlockReduce(V "value",V "reduce_op",None))
-                    l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "result"; V "col"; V "outs"]), B))
+                    l E (If(ThreadIdxX .= LitUInt64 0UL, 
+                            s  [l (S "x") (VVZip (VV [ap (V "map_store_op") (V "result"); V "outs"]))
+                                l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",[V "col"]), V "result")))
+                                l E (ap cuda_map (VV [V "f"; V "x"]))
+                                ] B
+                            , B))
                     ] (V "col" + GridDimX)))
             B)

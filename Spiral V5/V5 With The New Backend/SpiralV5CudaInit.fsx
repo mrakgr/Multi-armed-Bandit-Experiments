@@ -153,7 +153,7 @@ let memoize f =
             cache.[x] <- res
             res
 
-//let make_tyv () = TyV (get_tag(),PrimT UInt64T)
+let make_tyv () = TyV (get_tag(),PrimT UInt64T)
 
 //let map_1_1 = 
 //    let n = make_tyv()
@@ -163,42 +163,44 @@ let memoize f =
 //    let map_op = 
 //        inl (SS [S "i";S "in1";S "out1"])
 //            (MSet(ArrayIndex(V "out1",[V "i"]),ArrayIndex(V "in1",[V "i"])))
-//    eval map_module (VV [map_op; T n;V' in_;V' out_], default_dims)
-//
-//let map_redocol_map_1_1 = 
-//    let num_cols = make_tyv()
-//    let num_rows = make_tyv()
-//    let in_ = get_tag(),GlobalArrayT([num_cols;num_rows],PrimT Float32T)
-//    let out_ = get_tag(),GlobalArrayT([num_cols],PrimT Float32T)
-//
-//    let map_load_op =
-//        inl (SS [SS [S "col"; S "row"];S "in1"]) (ArrayIndex(V "in1",[V "col";V "row"]))
-//    let reduce_op = 
-//        meth (SS [S "a"; S "b"]) (V "a" + V "b")
-//    let map_store_op =
-//        inl (SS [S "result"; S "col"; S "out1"])
-//            (l E (AtomicAdd(ArrayIndex(V "out1",[V "col"]),V "result")) B)
-//
-//    eval map_redocol_map_module (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_], default_dims)
-//
-//let map_redo_map_1_1 = 
-//    let n = make_tyv()
-//    let in_ = get_tag(),GlobalArrayT([n],PrimT Float32T)
-//    let out_ = get_tag(),GlobalArrayT([],PrimT Float32T)
-//
-//    let map_load_op =
-//        inl (SS [S "i";S "in1"]) (ArrayIndex(V "in1",[V "i"]))
-//    let reduce_op = 
-//        meth (SS [S "a"; S "b"]) (V "a" + V "b")
-//    let map_store_op =
-//        inl (SS [S "result"; S "out1"])
-//            (l E (AtomicAdd(dref (V "out1"),V "result")) B)
-//
-//    eval map_redo_map_module (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_], default_dims)
-//
-//printfn "%A" map_redo_map_1_1
-//
-//let x = 
-//    let get = function Succ x -> x | _ -> failwith "Error"
-//    let k = get map_redocol_map_1_1
-//    compile_kernel_using_nvcc_bat_router (k |> hash |> string) k
+//    eval cuda_module_map (VV [map_op; T n;V' in_;V' out_], default_dims)
+
+let map_redocol_map_1_1 = 
+    let num_cols = make_tyv()
+    let num_rows = make_tyv()
+    let in_ = get_tag(),GlobalArrayT([num_cols;num_rows],PrimT Float32T)
+    let out_ = get_tag(),GlobalArrayT([num_cols],PrimT Float32T)
+
+    let map_load_op =
+        inl (SS [SS [S "col"; S "row"];S "in1"]) (ArrayIndex(V "in1",[V "col";V "row"]))
+    let reduce_op = 
+        meth (SS [S "a"; S "b"]) (V "a" + V "b")
+    let map_store_op =
+        inl (S "result") (V "result" * V "result" + V "result")
+
+    eval cuda_module_map_redocol_map (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_], default_dims)
+
+printfn "%A" map_redocol_map_1_1
+
+let map_redo_map_1_1 = 
+    let n = make_tyv()
+    let in_ = get_tag(),GlobalArrayT([n],PrimT Float32T)
+    let out_ = 
+        let gridDimX = default_dims |> fun (_,x) -> x.x
+        get_tag(),GlobalArrayT([TyLitUInt32 gridDimX],PrimT Float32T)
+
+    let map_load_op =
+        inl (SS [S "i";S "in1"]) (ArrayIndex(V "in1",[V "i"]))
+    let reduce_op = 
+        meth (SS [S "a"; S "b"]) (V "a" + V "b")
+    let map_store_op =
+        inl (S "result") ((V "result" * V "result") / (V "result" + V "result"))
+
+    eval cuda_module_map_redo_map (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_], default_dims)
+
+
+
+let x = 
+    let get = function Succ x -> x | _ -> failwith "Error"
+    let k = get map_redocol_map_1_1
+    compile_kernel_using_nvcc_bat_router (k |> hash |> string) k

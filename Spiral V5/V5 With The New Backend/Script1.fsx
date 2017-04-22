@@ -39,7 +39,7 @@ and CudaPattern =
     | S of string
     | S' of string // match if not tuple
     | R of CudaPattern list * CudaPattern option // Tuple
-    | Let of CudaPattern * CudaExpr // Functiona application with retracing.
+    | F of CudaPattern * CudaExpr // Functiona application with retracing.
 
 and CudaExpr = 
     | V of string // standard variable
@@ -376,13 +376,13 @@ let rec inlr' name args body =
     | x :: xs -> inlr name x (inl' xs body)
     | [] -> body
 
-/// The tuple map function. Pass it a pattern matching function that takes in on_fail and q as arguments.
+/// The tuple map function. Goes over the tuple scanning for a pattern and triggers only if it finds it.
 let cuda_map =
     let recurse x = ap (V "rec") (VV [V "f"; V x])
     inlr "rec" (SS [S "f"; S "q"])
         (match_ (V "q")
             [
-            Let(S "x",V "q"), V "f"
+            F(S "x",V "q"), V "f"
             SSS [SS' "v1"] "rest", cons (recurse "v1") (recurse "rest")
             SS [], VV []
             ]) 
@@ -572,13 +572,14 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 typechecker_env_set d d'
                 on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
             (fun r -> 
-                match_single pattern (destructure_deep d r)
-                |> ret)
+                match_single acc pattern (destructure_deep d r) 
+                    (fun _ -> failwith "The subpattern in F failed to match.")
+                    ret)
 
     let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
         let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
-        | Let (pattern, args), body -> case_f acc pattern args body on_fail ret
+        | F (pattern, args), body -> case_f acc pattern args body on_fail ret
         | R([],None), TyVV([], _) -> case_bind acc "" r ret
         | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
         | S' x, _ | S x, _ -> case_bind acc x r ret
@@ -597,9 +598,9 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let match_single_inl case_f = match_single_inl' case_f (h0())
     let match_single_method case_f = match_single_method' case_f (h0())
 
-    let match_all match_single env l args on_fail ret =
+    let match_all match_single (env: Env) l (args: TypedCudaExpr) on_fail ret =
         let rec loop = function
-            | (pattern, body) :: xs ->
+            | (pattern: CudaPattern, body: CudaExpr) :: xs ->
                 match_single env pattern args
                     (fun _ -> loop xs)
                     (fun x -> ret (x, body))
@@ -655,41 +656,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | MethodT(x,env) -> apply_method d (case_f d apply_both) (x,env) ra 
         | _ -> failwith "impossible"
 
-    and apply_both d la ra on_fail ret = //apply_template d apply_inlineable apply_method la ra on_fail ret
-        match get_type (tev d la) with
-        | InlineableT(x,env) ->
-            let case_f = case_f d apply_both
-            //apply_inlineable d (case_f d apply_both) (x,env) ra
-            //let apply_inlineable d case_f ((name,l),_ as inlineable_key) args on_fail ret =
-            let (name,l),_ as inlineable_key = x,env
-            let args = ra
-            let env = d.memoized_inlineable_envs.[inlineable_key]
-            let args = destructure_deep d args
-            let rec match_single_inl' dup_name_checker = 
-                let case_f = case_f (match_single_inl' dup_name_checker)
-                //match_single case_f case_r_inl (case_bind_inl dup_name_checker)
-                let case_bind = case_bind_inl dup_name_checker
-                let case_r = case_r_inl
-                let rec match_single (acc: Env) l r on_fail ret =
-                    let recurse acc l r ret = match_single acc l r on_fail ret
-                    match l,r with // destructure_deep is called in apply_method and apply_inlineable
-                    | Let (pattern, args), body -> case_f acc pattern args body on_fail ret
-                    | R([],None), TyVV([], _) -> case_bind acc "" r ret
-                    | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
-                    | S' x, _ | S x, _ -> case_bind acc x r ret
-                    | R([],Some ls), TyVV _ -> recurse acc ls r ret
-                    | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
-                    | R([],None), TyVV(_, _) -> on_fail () // <| sprintf "More arguments than can be matched in R."
-                    | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
-                //match_single (case_bind_inl dup_name_checker)
-                failwith "x"
-
-            let t = match_single_inl' (h0())
-            match_all t env l args
-                on_fail
-                (fun (env, body) -> 
-                    let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
-                    tev d body |> ret)
+    and apply_both d la ra on_fail ret = apply_template d apply_inlineable apply_method la ra on_fail ret
     and apply_method_only d = apply_template d (fun _ -> failwith "Inlineable not supported.") apply_method
 
     let apply d expr args = apply_both d expr (tev d args) (fun _ -> failwith "Pattern matching cases failed to match")
