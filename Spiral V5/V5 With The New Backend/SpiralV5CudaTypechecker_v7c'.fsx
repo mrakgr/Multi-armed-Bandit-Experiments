@@ -135,7 +135,7 @@ and TypedCudaExpr =
     | TyMethodCall of TyMethodKey * TypedCudaExpr * CudaTy
     
     // Tuple cases
-    | TyIndexVV of TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyVVIndex of TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyVV of TypedCudaExpr list * CudaTy
 
     // Array cases
@@ -217,7 +217,7 @@ let rec get_type = function
     | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> PrimT UInt64T
 
     // Tuple cases
-    | TyVV(_,t) | TyIndexVV(_,_,t) -> t
+    | TyVV(_,t) | TyVVIndex(_,_,t) -> t
 
     // Array cases
     | TyArrayIndex(_,_,t) | TyArrayCreate(t) -> t
@@ -512,7 +512,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let destructure_deep d r = destructure_deep_template d nonseq_push r
         match r with
         | TyV _ | TyUnit | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
-        | TyVV(l,t) -> List.map (destructure_deep d) l |> fun x -> TyVV(x,t)
+        | TyVV(l,t) -> TyVV(List.map (destructure_deep d) l,t)
         | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
         | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
         | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -521,15 +521,17 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             match get_type r with
             | VVT tuple_types -> 
                 let indexed_tuple_args = List.mapi (fun i typ -> 
-                    destructure_deep d <| TyIndexVV(r,TyLitInt32 i,typ)) tuple_types
+                    destructure_deep d <| TyVVIndex(r,TyLitInt32 i,typ)) tuple_types
                 TyVV(indexed_tuple_args, VVT tuple_types)
             | _ -> 
                 match r with
-                | TyIndexVV _ -> nonseq_push r
+                | TyVVIndex(a,b,c) -> nonseq_push r //(TyVVIndex(destructure_deep d a,b,c))
+                | TyArrayIndex(a,sizes,c) when List.isEmpty sizes -> nonseq_push (TyArrayIndex(destructure_deep d a,sizes,c))
                 | _ -> make_tyv_and_push d r
 
     let destructure_deep d r = destructure_deep_template d id r
     let destructure_deep_method d r = destructure_deep_template d (make_tyv >> TyV) r
+        
 
     let process_create_array d args typeof_expr =
         let typ = get_type (tev d typeof_expr)
@@ -574,7 +576,6 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let case_f d apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
         let d' = typechecker_env_copy d
         let d = {d with env = acc}
-        printfn "I am in case_f.\n(tev d meth)=%A\nargs=%A" (tev d meth) args
         apply d meth args
             (fun _ -> 
                 typechecker_env_set d d'
@@ -585,7 +586,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                     ret)
 
     let rec match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
-        printfn "I am in match_single.\nl=%A\nr=%A\n" l r
+        //printfn "I am in match_single.\nl=%A\nr=%A\n" l r
         let recurse acc l r ret = match_single case_f case_r case_bind acc l r on_fail ret
         match l,r with // destructure_deep is called in apply_method and apply_inlineable
         | F (pattern, meth), args -> case_f acc pattern args meth on_fail ret
@@ -660,7 +661,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 |> ret)
 
     let rec apply_template d apply_inlineable apply_method (la: CudaExpr) ra on_fail ret =
-        printfn "I am in apply_template.\nla=%A\nra=%A" la ra
+        //printfn "I am in apply_template.\nla=%A\nra=%A" la ra
         match get_type (tev d la) with
         | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) (x,env) ra on_fail ret
         | MethodT(x,env) -> apply_method d (case_f d apply_both) (x,env) ra on_fail ret
@@ -671,7 +672,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     let apply d expr args = 
         let t = (tev d args)
-        printfn "In apply.\nexpr=%A\nargs=%A\n(tev d args)=%A" expr args t
+        //printfn "In apply.\nexpr=%A\nargs=%A\n(tev d args)=%A" expr args t
         apply_both d expr t (fun _ -> failwith "Pattern matching cases failed to match")
 
     match exp with
@@ -781,7 +782,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | v, (TyLitInt32 i as i') ->
             match get_type v with
             | VVT ts -> 
-                if i >= 0 || i < List.length ts then TyIndexVV(v,i',ts.[i])
+                if i >= 0 || i < List.length ts then TyVVIndex(v,i',ts.[i])
                 else failwith "(i >= 0 || i < List.length ts) = false in IndexVT"
             | x -> failwithf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
         | v, i ->
@@ -894,7 +895,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
     | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ | TyUnit -> Set.empty
     | TyVV(vars,t) -> Set.unionMany (List.map c vars)
-    | TyIndexVV(t,i,_) -> Set.union (c t) (c i)
+    | TyVVIndex(t,i,_) -> Set.union (c t) (c i)
     | TyMethodCall(m,ar,_) ->
         let method_implicit_args =
             match imemo.TryGetValue m with
@@ -963,8 +964,9 @@ let typecheck dims body inputs =
 let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
-let test_cuda_map =
-    meth (SS []) (ap cuda_map (VV [inl (SS [S' "result"; S' "out"]) (V "result"); VV [LitFloat64 4.5; LitInt32 2]]))
 
-let test_cuda_map' = typecheck0 test_cuda_map
+//let test_cuda_map =
+//    meth (SS []) (ap cuda_map (VV [inl (SS [S' "result"; S' "out"]) (V "result"); VV [LitFloat64 4.5; LitInt32 2]]))
+//
+//let test_cuda_map' = typecheck0 test_cuda_map
             

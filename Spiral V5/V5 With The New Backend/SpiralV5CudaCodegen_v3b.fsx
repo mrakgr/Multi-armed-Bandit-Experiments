@@ -156,7 +156,7 @@ let print_method_dictionary (imemo: MethodImplDict) =
             sprintf "%s(%s)" method_name args
 
         // Value tuple cases
-        | TyIndexVV(v,i,_) -> sprintf "%s.tup%s" (codegen v) (codegen i)
+        | TyVVIndex(v,i,_) -> sprintf "%s.tup%s" (codegen v) (codegen i)
         | TyVV(l,(VVT t)) -> 
             List.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
             |> String.concat ", "

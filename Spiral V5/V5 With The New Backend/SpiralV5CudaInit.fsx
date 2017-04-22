@@ -165,6 +165,22 @@ let make_tyv () = TyV (get_tag(),PrimT UInt64T)
 //            (MSet(ArrayIndex(V "out1",[V "i"]),ArrayIndex(V "in1",[V "i"])))
 //    eval cuda_module_map (VV [map_op; T n;V' in_;V' out_], default_dims)
 
+//let map_redo_map_1_1 = 
+//    let n = make_tyv()
+//    let in_ = get_tag(),GlobalArrayT([n],PrimT Float32T)
+//    let out_ = 
+//        let gridDimX = default_dims |> fun (_,x) -> x.x
+//        get_tag(),GlobalArrayT([TyLitUInt32 gridDimX],PrimT Float32T)
+//
+//    let map_load_op =
+//        inl (SS [S "i";S "in1"]) (ArrayIndex(V "in1",[V "i"]))
+//    let reduce_op = 
+//        meth (SS [S "a"; S "b"]) (V "a" + V "b")
+//    let map_store_op =
+//        inl (S "result") ((V "result" * V "result") / (V "result" + V "result"))
+//
+//    eval cuda_module_map_redo_map (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_], default_dims)
+
 let map_redocol_map_1_1 = 
     let num_cols = make_tyv()
     let num_rows = make_tyv()
@@ -181,24 +197,6 @@ let map_redocol_map_1_1 =
     eval cuda_module_map_redocol_map (VV [map_load_op;reduce_op;map_store_op;VV [T num_cols; T num_rows];V' in_;V' out_], default_dims)
 
 printfn "%A" map_redocol_map_1_1
-
-let map_redo_map_1_1 = 
-    let n = make_tyv()
-    let in_ = get_tag(),GlobalArrayT([n],PrimT Float32T)
-    let out_ = 
-        let gridDimX = default_dims |> fun (_,x) -> x.x
-        get_tag(),GlobalArrayT([TyLitUInt32 gridDimX],PrimT Float32T)
-
-    let map_load_op =
-        inl (SS [S "i";S "in1"]) (ArrayIndex(V "in1",[V "i"]))
-    let reduce_op = 
-        meth (SS [S "a"; S "b"]) (V "a" + V "b")
-    let map_store_op =
-        inl (S "result") ((V "result" * V "result") / (V "result" + V "result"))
-
-    eval cuda_module_map_redo_map (VV [map_load_op;reduce_op;map_store_op;T n;V' in_;V' out_], default_dims)
-
-
 
 let x = 
     let get = function Succ x -> x | _ -> failwith "Error"
