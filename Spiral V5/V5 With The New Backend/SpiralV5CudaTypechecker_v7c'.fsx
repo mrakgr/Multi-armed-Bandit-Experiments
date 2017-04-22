@@ -509,25 +509,24 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`. 
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
     let rec destructure_deep_template d nonseq_push r = 
-        let destructure_deep d r = destructure_deep_template d nonseq_push r
-        match r with
-        | TyV _ | TyUnit | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
-        | TyVV(l,t) -> TyVV(List.map (destructure_deep d) l,t)
-        | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
-        | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
-        | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
-        | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> nonseq_push r // Will not be evaluated except at method calls.
-        | _ -> 
+        let destructure_deep r = destructure_deep_template d nonseq_push r
+        let destructure_tuple r on_non_tuple on_tuple =
             match get_type r with
             | VVT tuple_types -> 
                 let indexed_tuple_args = List.mapi (fun i typ -> 
-                    destructure_deep d <| TyVVIndex(r,TyLitInt32 i,typ)) tuple_types
-                TyVV(indexed_tuple_args, VVT tuple_types)
-            | _ -> 
-                match r with
-                | TyVVIndex(a,b,c) -> nonseq_push r //(TyVVIndex(destructure_deep d a,b,c))
-                | TyArrayIndex(a,sizes,c) when List.isEmpty sizes -> nonseq_push (TyArrayIndex(destructure_deep d a,sizes,c))
-                | _ -> make_tyv_and_push d r
+                    destructure_deep <| TyVVIndex(r,TyLitInt32 i,typ)) tuple_types
+                TyVV(indexed_tuple_args, VVT tuple_types) |> on_tuple
+            | _ -> on_non_tuple r
+        match r with
+        | TyUnit | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
+        | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
+        | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
+        | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
+        | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+        | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> nonseq_push r // Will not be assigned to a variable except at method calls.
+        | TyV _ -> destructure_tuple r id nonseq_push
+        | TyVVIndex _ | TyArrayIndex(_,[],_) -> destructure_tuple r nonseq_push nonseq_push
+        | _ -> make_tyv_and_push d r |> destructure_deep
 
     let destructure_deep d r = destructure_deep_template d id r
     let destructure_deep_method d r = destructure_deep_template d (make_tyv >> TyV) r
@@ -808,8 +807,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             else failwith "Array size not available."
         | _ -> failwithf "Something is wrong in ArraySize.\nar=%A, ind=%A" ar ind
 
-    | ArrayCreateLocal(args,t) -> let args,t = process_create_array d args t in TyArrayCreate(LocalArrayT(args,t))
-    | ArrayCreateShared(args,t) -> let args,t = process_create_array d args t in TyArrayCreate(SharedArrayT(args,t))
+    | ArrayCreateLocal(args,t) -> let args,t = process_create_array d args t in TyArrayCreate(LocalArrayT(args,t)) |> make_tyv_and_push d
+    | ArrayCreateShared(args,t) -> let args,t = process_create_array d args t in TyArrayCreate(SharedArrayT(args,t)) |> make_tyv_and_push d
 
     | ThreadIdxX -> TyThreadIdxX 
     | ThreadIdxY -> TyThreadIdxY 
