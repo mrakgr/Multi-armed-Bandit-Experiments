@@ -963,8 +963,4 @@ let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
 
-//let test_cuda_map =
-//    meth (SS []) (ap cuda_map (VV [inl (SS [S' "result"; S' "out"]) (V "result"); VV [LitFloat64 4.5; LitInt32 2]]))
-//
-//let test_cuda_map' = typecheck0 test_cuda_map
             

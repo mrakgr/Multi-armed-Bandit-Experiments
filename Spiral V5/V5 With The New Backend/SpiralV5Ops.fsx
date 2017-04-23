@@ -187,71 +187,114 @@ let reserve_tags n =
         tags.Add(get_tag())
     tags
 
-let reserved_tags = reserve_tags 100
+let reserved_tags = reserve_tags 128
 
-let launcher_map =
-    let n = TyV (reserved_tags.[0], PrimT UInt64T)
-    fun (str: CudaStream) map_op (inputs: DM list) (outputs: DM list) ->
-        let args = inputs @ outputs
-        let total_size = total_size args.Head
-        let block_size = 256UL
-        let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup total_size block_size)
-
-        let dims = dim3(int block_size), dim3(int grid_size)
-
-        match args with
-        | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
-        | [] -> ()
-
-        let to_typechecking_form =
-            let mutable i = 0
-            let inc() = i <- i+1; i
-            let conv (x : DM) = V' (reserved_tags.[inc()],GlobalArrayT([n],PrimT x.Type))
-            fun inputs ->
-                match inputs with
-                | [x] -> conv x
-                | x :: xs -> VV (List.map conv inputs)
-                | [] -> B
-        let ins = to_typechecking_form inputs
-        let outs = to_typechecking_form outputs
-
-        let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
-
-        let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
-        let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
-        kernel.RunAsync(str.Stream,args)
-
-let launcher_map_redo_map =
-    let n = TyV (reserved_tags.[0], PrimT UInt64T)
-    fun (str: CudaStream) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) ->
-        let block_size = 128UL
-        let input_size = total_size inputs.Head
-        let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size) |> min 128UL
-
-        let dims = dim3(int block_size), dim3(int grid_size)
-
+let to_typechecking_form_template init_i =
+    let mutable i = init_i
+    let inc() = i <- i+1; i
+    fun size_vars inputs ->
+        let conv (x : DM) = V' (reserved_tags.[inc()],GlobalArrayT(size_vars,PrimT x.Type))
         match inputs with
-        | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
-        | [] -> ()
+        | [x] -> conv x
+        | x :: xs -> VV (List.map conv inputs)
+        | [] -> B
 
-        outputs |> List.iter (fun x -> if total_size x <> 1UL then failwith "Outputs to map_redo_map must all be of size 1.")
+let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
 
-        let to_typechecking_form typ =
-            let mutable i = 0
-            let inc() = i <- i+1; i
-            let conv (x : DM) = V' (reserved_tags.[inc()],typ x.Type)
-            fun inputs ->
-                match inputs with
-                | [x] -> conv x
-                | x :: xs -> VV (List.map conv inputs)
-                | [] -> B
+let run_kernel_template (str: CudaStream) (kernel: CudaKernel) args (block_dim, grid_dim) =
+    kernel.BlockDimensions <- block_dim
+    kernel.GridDimensions <- grid_dim
+    kernel.RunAsync(str.Stream,args)
 
-        let ins = to_typechecking_form (fun x -> GlobalArrayT([n],PrimT x)) inputs
-        let outs = to_typechecking_form (fun x -> GlobalArrayT([TyLitUInt64 grid_size],PrimT x)) outputs
+let launcher_map (env: SpiralEnv<_>) map_op (inputs: DM list) (outputs: DM list) =
+    let str = env.Str
+    let n = TyV (reserved_tags.[0], PrimT UInt64T)
 
+    let args = inputs @ outputs
+    let inputs_size = total_size args.Head
+    let block_size = min 256UL inputs_size
+    let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup inputs_size block_size)
+
+    match args with
+    | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
+    | [] -> ()
+
+    let to_typechecking_form = to_typechecking_form_template 0 [n]
+    let ins = to_typechecking_form inputs
+    let outs = to_typechecking_form outputs
+
+    let dims = dim3(int block_size), dim3(int grid_size)
+    let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
+    let args = [|[|box total_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
+
+    run_kernel_template str kernel args dims
+
+let launcher_map_redo_map (env: SpiralEnv<_>) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) =
+    let str = env.Str
+    let n = TyV (reserved_tags.[0], PrimT UInt64T)
+
+    let input_size = total_size inputs.Head
+    let block_size = min 128UL input_size
+    let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size)
+
+    match inputs with
+    | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
+    | [] -> ()
+
+    outputs |> List.iter (fun x -> if total_size x <> 1UL then failwith "Outputs to map_redo_map must all be of size 1.")
+
+    let to_typechecking_form = to_typechecking_form_template 0
+
+    let ins = to_typechecking_form [n] inputs
+    let run_kernel map_load_op map_store_op (block_size: uint64, grid_size) inputs outputs =
+        let outs = to_typechecking_form [TyLitUInt64 grid_size] outputs
+       
+        let dims = dim3(int block_size), dim3(int grid_size)
         let kernel = call_map_redo_map (VV [map_load_op; redo_op; map_store_op; CudaExpr.T n; ins; outs], dims)
-
-        let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
         let args = [|[|box input_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
-        kernel.RunAsync(str.Stream,args)
 
+        run_kernel_template str kernel args dims
+    
+    if grid_size > 1UL then
+        let inputs = 
+            let outputs = List.map (fun x -> env.Mem.GetDM([|grid_size|],x.Type,1,env)) outputs
+            let id = inl (S "x") (V "x")
+            run_kernel id id (grid_size, 1UL) inputs outputs
+            outputs
+        run_kernel map_load_op map_store_op (block_size, grid_size) inputs outputs
+    else
+        run_kernel map_load_op map_store_op (block_size, grid_size) inputs outputs
+    
+let launcher_map_redocol_map (env: SpiralEnv<_>) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) =
+    let str = env.Str
+    let num_cols = TyV (reserved_tags.[0], PrimT UInt64T)
+    let num_rows = TyV (reserved_tags.[1], PrimT UInt64T)
+
+    let input_size = total_size inputs.Head
+    let block_size = min 128UL input_size
+    let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size)
+
+    match inputs with
+    | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
+    | [] -> ()
+
+    let input_col, input_row = 
+        inputs |> List.head |> fun x -> x.Size 
+        |> function [|input_col;input_row|] -> input_col, input_row | _ -> failwith "Expecting two dimensions in the inputs to map_redocol_map."
+
+    outputs |> List.iter (fun x -> 
+        x.Size
+        |> function 
+            | [|output_col|] -> if output_col <> input_col then failwithf "output_col(%i) <> input_col(%i) in map_redocol_map." output_col input_col
+            | _ -> failwith "Expected one dimension in the output to to map_redocol_map.")
+
+    let to_typechecking_form = to_typechecking_form_template 1
+
+    let ins = to_typechecking_form [num_cols;num_rows] inputs
+    let outs = to_typechecking_form [num_cols] outputs
+
+    let dims = dim3(int block_size), dim3(int grid_size)
+    let kernel = call_map_redocol_map (VV [map_load_op; redo_op; map_store_op; VV [CudaExpr.T num_cols; CudaExpr.T num_rows]; ins; outs], dims)
+    let args = [|[|box input_col; box input_row|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
+
+    run_kernel_template str kernel args dims
