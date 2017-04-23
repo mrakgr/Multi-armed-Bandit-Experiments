@@ -215,15 +215,6 @@ let launcher_map =
         let ins = to_typechecking_form inputs
         let outs = to_typechecking_form outputs
 
-        let map_op = 
-            let ind x = ArrayIndex(V x,[V "i"])
-            inl (SS [S "i";S "ins";S "outs"])
-                (s [l (S "ins") (ap cuda_map (VV [inl (S' "x") (ind "x"); V "ins"]))
-                    l (S "results") (ap map_op (ind "ins"))
-                    l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
-                    l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ind "out",V "result")))
-                    ] (ap cuda_map (VV [V "f"; V "results_outs"])))
-
         let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
 
         let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
@@ -235,7 +226,7 @@ let launcher_map_redo_map =
     fun (str: CudaStream) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) ->
         let block_size = 128UL
         let input_size = total_size inputs.Head
-        let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size)
+        let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size) |> min 128UL
 
         let dims = dim3(int block_size), dim3(int grid_size)
 
@@ -256,23 +247,9 @@ let launcher_map_redo_map =
                 | [] -> B
 
         let ins = to_typechecking_form (fun x -> GlobalArrayT([n],PrimT x)) inputs
-        let outs = to_typechecking_form (fun x -> GlobalArrayT([],PrimT x)) outputs
+        let outs = to_typechecking_form (fun x -> GlobalArrayT([TyLitUInt64 grid_size],PrimT x)) outputs
 
-        let ind x = ArrayIndex(V x,[V "i"])
-        let map_load_op = 
-            inl (SS [S' "i";S "ins"])
-                (l (S "ins") 
-                    (ap cuda_map (VV [inl (S' "x") (ind "x"); V "ins"]))
-                    (ap map_load_op (V "ins")))
-        let map_store_op =
-            inl (SS [S' "i";S "results";S "outs"])
-                (s [l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
-                    l (S "f") 
-                        (inl (SS [S' "result"; S' "out"]) 
-                            (l E (AtomicAdd(V "out",V "result")) B))
-                    ] (ap cuda_map (VV [V "f"; V "results_outs"])))
-
-        let kernel = call_map (VV [map_op; CudaExpr.T n; ins; outs], dims)
+        let kernel = call_map_redo_map (VV [map_load_op; redo_op; map_store_op; CudaExpr.T n; ins; outs], dims)
 
         let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
         let args = [|[|box input_size|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
