@@ -156,7 +156,10 @@ let inline axpy str alpha x y =
     ((^a or ^f or ^v): (static member Axpy: ^a * CudaStream * ^f * ^v * ^v -> unit) 
         GenericPrim,str,alpha,x,y)
 
-let inline add proj_2d proj_1d alpha (a: DM) beta (b: DM) (c: DM) (env: SpiralEnv<_>) = // TODO: Figure out how to do projections.
+let inline add alpha (a: DM) beta (b: DM) (c: DM) (env: SpiralEnv<_>) =
+    let proj_2d x = size_to_total_size x,1UL
+    let proj_1d x = size_to_total_size x
+    
     guard_sizes a.Size b.Size |> guard_sizes c.Size |> ignore
     geam env.Str nT nT alpha (a.P' proj_2d) beta (b.P' proj_2d) (c.P' proj_2d)
 

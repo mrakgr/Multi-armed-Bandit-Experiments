@@ -36,6 +36,8 @@ and TyMethodKey = MethodAlias * TyEnv
 and TyInlineableKey = InlineableAlias * TyEnv
 
 and CudaPattern =
+    | A of CudaPattern * CudaExpr // Type annotation case
+    | A' of CudaPattern * CudaTy
     | S of string
     | S' of string // match if not tuple
     | R of CudaPattern list * CudaPattern option // Tuple
@@ -511,25 +513,26 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`. 
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let rec destructure_deep_template d nonseq_push r = 
-        let destructure_deep r = destructure_deep_template d nonseq_push r
-        let destructure_tuple r on_non_tuple on_tuple =
-            match get_type r with
-            | VVT tuple_types -> 
-                let indexed_tuple_args = List.mapi (fun i typ -> 
-                    destructure_deep <| TyVVIndex(r,TyLitInt32 i,typ)) tuple_types
-                TyVV(indexed_tuple_args, VVT tuple_types) |> on_tuple
-            | _ -> on_non_tuple r
-        match r with
-        | TyUnit | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
-        | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
-        | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
-        | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
-        | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
-        | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> nonseq_push r // Will not be assigned to a variable except at method calls.
-        | TyV _ -> destructure_tuple r id nonseq_push
-        | TyVVIndex _ | TyArrayIndex(_,[],_) -> destructure_tuple r nonseq_push nonseq_push
-        | _ -> make_tyv_and_push d r |> destructure_deep
+    let destructure_deep_template d nonseq_push r = 
+        let rec destructure_deep r = 
+            let destructure_tuple r on_non_tuple on_tuple =
+                match get_type r with
+                | VVT tuple_types -> 
+                    let indexed_tuple_args = List.mapi (fun i typ -> 
+                        destructure_deep <| TyVVIndex(r,TyLitInt32 i,typ)) tuple_types
+                    TyVV(indexed_tuple_args, VVT tuple_types) |> on_tuple
+                | _ -> on_non_tuple r
+            match r with
+            | TyUnit | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
+            | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
+            | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
+            | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
+            | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
+            | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> nonseq_push r // Will not be assigned to a variable except at method calls.
+            | TyV _ -> destructure_tuple r id nonseq_push
+            | TyVVIndex _ | TyArrayIndex(_,[],_) -> destructure_tuple r nonseq_push nonseq_push
+            | _ -> make_tyv_and_push d r |> destructure_deep
+        destructure_deep r
 
     let destructure_deep d r = destructure_deep_template d id r
     let destructure_deep_method d r = destructure_deep_template d (make_tyv >> TyV) r
@@ -587,9 +590,14 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                     (fun _ -> failwith "The subpattern in F failed to match.")
                     ret)
 
-    let match_single case_f case_r case_bind (acc: Env) l r on_fail ret =
+    let case_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
+    let case_a d annot = case_a' (tev d annot |> get_type) 
+
+    let match_single case_a case_a' case_f case_r case_bind (acc: Env) l r on_fail ret =
         let rec recurse acc l r ret = //match_single case_f case_r case_bind acc l r on_fail ret
             match l,r with // destructure_deep is called in apply_method and apply_inlineable
+            | A (pattern,annot), _ -> case_a annot r on_fail (fun _ -> recurse acc pattern r ret) 
+            | A' (pattern,annot), _ -> case_a' annot r on_fail (fun _ -> recurse acc pattern r ret) 
             | F (pattern, meth), args -> case_f acc pattern args meth on_fail ret
             | R([],None), TyVV([], _) -> case_bind acc "" r ret
             | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
@@ -600,15 +608,15 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
         recurse acc l r ret
     
-    let rec match_single_inl' case_f dup_name_checker = 
-        let case_f x = case_f (match_single_inl' case_f dup_name_checker) x
-        match_single case_f case_r_inl (case_bind_inl dup_name_checker)
-    let rec match_single_method' case_f dup_name_checker = 
-        let case_f x = case_f (match_single_method' case_f dup_name_checker) x
-        match_single case_f case_r_method (case_bind_method dup_name_checker)
+    let rec match_single_inl' case_a case_a' case_f dup_name_checker = 
+        let case_f x = case_f (match_single_inl' case_a case_a' case_f dup_name_checker) x
+        match_single case_a case_a' case_f case_r_inl (case_bind_inl dup_name_checker)
+    let rec match_single_method' case_a case_a' case_f dup_name_checker = 
+        let case_f x = case_f (match_single_method' case_a case_a' case_f dup_name_checker) x
+        match_single case_a case_a' case_f case_r_method (case_bind_method dup_name_checker)
 
-    let match_single_inl case_f = match_single_inl' case_f (h0())
-    let match_single_method case_f = match_single_method' case_f (h0())
+    let match_single_inl case_a case_a' case_f = match_single_inl' case_a case_a' case_f (h0())
+    let match_single_method case_a case_a' case_f = match_single_method' case_a case_a' case_f (h0())
 
     let match_all match_single (env: Env) l (args: TypedCudaExpr) on_fail ret =
         let rec loop = function
@@ -619,19 +627,19 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | [] -> on_fail (l,args) //"All patterns in the matcher failed to match."
         loop l
 
-    let apply_inlineable d case_f ((name,l),_ as inlineable_key) args on_fail ret =
+    let apply_inlineable d case_a case_a' case_f ((name,l),_ as inlineable_key) args on_fail ret =
         let env = d.memoized_inlineable_envs.[inlineable_key]
         let args = destructure_deep d args
-        match_all (match_single_inl case_f) env l args
+        match_all (match_single_inl case_a case_a' case_f) env l args
             on_fail
             (fun (env, body) -> 
                 let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
                 tev d body |> ret)
 
-    let apply_method d case_f ((name,l), _ as method_key) args on_fail ret =
+    let apply_method d case_a case_a' case_f ((name,l), _ as method_key) args on_fail ret =
         let initial_env = d.memoized_method_envs.[method_key]
         let bound_outside_args = destructure_deep d args
-        match_all (match_single_method case_f) initial_env l (destructure_deep_method d bound_outside_args) 
+        match_all (match_single_method case_a case_a' case_f) initial_env l (destructure_deep_method d bound_outside_args) 
             on_fail
             (fun ((bound_inside_args, env), body) ->
                 let bound_outside_args, bound_inside_args, env, body = 
@@ -664,8 +672,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     let rec apply_template d apply_inlineable apply_method (la: CudaExpr) ra on_fail ret =
         match get_type (tev d la) with
-        | InlineableT(x,env) -> apply_inlineable d (case_f d apply_both) (x,env) ra on_fail ret
-        | MethodT(x,env) -> apply_method d (case_f d apply_both) (x,env) ra on_fail ret
+        | InlineableT(x,env) -> apply_inlineable d (case_a d) case_a' (case_f d apply_both) (x,env) ra on_fail ret
+        | MethodT(x,env) -> apply_method d (case_a d) case_a' (case_f d apply_both) (x,env) ra on_fail ret
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
     and apply_both d (la: CudaExpr) ra = apply_template d apply_inlineable apply_method la ra
@@ -962,5 +970,3 @@ let typecheck dims body inputs =
 let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
-
-            
