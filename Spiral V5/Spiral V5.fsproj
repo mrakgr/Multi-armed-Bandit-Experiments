@@ -70,7 +70,7 @@
     <None Include="V5 With The New Backend\tuple_zip.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v2.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v3.fsx" />
-    <None Include="V5 With The New Backend\tiple_zip_v4.fsx" />
+    <None Include="V5 With The New Backend\tuple_zip_v4.fsx" />
     <None Include="V5 With The New Backend\map_tup.fsx" />
     <None Include="V5 With The New Backend\load-references-release.fsx" />
     <None Include="V5 With The New Backend\load-project-release.fsx" />
@@ -80,7 +80,11 @@
     <None Include="V5 With The New Backend\SpiralV5CudaInit.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
-    <None Include="V5 With The New Backend\Script1.fsx" />
+    <None Include="V5 With The New Backend\tuple_unzip_v1.fsx" />
+    <None Include="V5 With The New Backend\tuple_unzip_v2.fsx" />
+    <None Include="V5 With The New Backend\tuple_unzip_v3.fsx" />
+    <None Include="V5 With The New Backend\tuple_zip_v5.fsx" />
+    <None Include="V5 With The New Backend\zip_and_unzip_fin.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />
