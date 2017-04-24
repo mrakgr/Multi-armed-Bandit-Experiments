@@ -192,24 +192,32 @@ let reserve_tags n =
 
 let reserved_tags = reserve_tags 128
 
-let to_typechecking_form_template init_i =
+let conv_forward inc size_vars (x : DM) = V' (reserved_tags.[inc()],GlobalArrayT(size_vars,PrimT x.Type))
+let conv_backward inc size_vars (x : DM) = 
+    VV [V' (reserved_tags.[inc()],GlobalArrayT(size_vars,PrimT x.Type))
+        V' (reserved_tags.[inc()],GlobalArrayT(size_vars,PrimT x.Type))]
+let to_typechecking_form_template conv init_i =
     let mutable i = init_i
     let inc() = i <- i+1; i
     fun size_vars inputs ->
-        let conv (x : DM) = V' (reserved_tags.[inc()],GlobalArrayT(size_vars,PrimT x.Type))
+        let conv x = conv inc size_vars x
         match inputs with
         | [x] -> conv x
         | x :: xs -> VV (List.map conv inputs)
         | [] -> B
 
-let get_ptrs x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
+let lam_id = inl (S "x") (V "x")
+let lam_add = inl (SS [S' "a"; S' "b"]) (V "a" + V "b")
+
+let get_ptrs_forward x = List.map (fun (x: DM) -> box x.P.GetDevicePtr.Value) x |> List.toArray
+let get_ptrs_backward x = List.collect (fun (x: DM) -> [box x.P.GetDevicePtr.Value; box x.A.GetDevicePtr.Value]) x |> List.toArray
 
 let run_kernel_template (str: CudaStream) (kernel: CudaKernel) args (block_dim, grid_dim) =
     kernel.BlockDimensions <- block_dim
     kernel.GridDimensions <- grid_dim
     kernel.RunAsync(str.Stream,args)
 
-let launcher_map (env: SpiralEnv<_>) map_op (inputs: DM list) (outputs: DM list) =
+let launcher_map to_typechecking_form_template get_ptrs map_op (env: SpiralEnv<_>) (inputs: DM list) (outputs: DM list) =
     let str = env.Str
     let n = TyV (reserved_tags.[0], PrimT UInt64T)
 
@@ -232,7 +240,7 @@ let launcher_map (env: SpiralEnv<_>) map_op (inputs: DM list) (outputs: DM list)
 
     run_kernel_template str kernel args dims
 
-let launcher_map_redo_map (env: SpiralEnv<_>) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) =
+let launcher_map_redo_map to_typechecking_form_template get_ptrs map_load_op redo_op map_store_op (env: SpiralEnv<_>) (inputs: DM list) (outputs: DM list) =
     let str = env.Str
     let n = TyV (reserved_tags.[0], PrimT UInt64T)
 
@@ -261,14 +269,13 @@ let launcher_map_redo_map (env: SpiralEnv<_>) map_load_op redo_op map_store_op (
     if grid_size > 1UL then
         let inputs = 
             let outputs = List.map (fun x -> env.Mem.GetDM([|grid_size|],x.Type,1,env)) outputs
-            let id = inl (S "x") (V "x")
-            run_kernel id id (grid_size, 1UL) inputs outputs
+            run_kernel lam_id lam_id (grid_size, 1UL) inputs outputs
             outputs
         run_kernel map_load_op map_store_op (block_size, grid_size) inputs outputs
     else
         run_kernel map_load_op map_store_op (block_size, grid_size) inputs outputs
     
-let launcher_map_redocol_map (env: SpiralEnv<_>) map_load_op redo_op map_store_op (inputs: DM list) (outputs: DM list) =
+let launcher_map_redocol_map to_typechecking_form_template get_ptrs map_load_op redo_op map_store_op (env: SpiralEnv<_>) (inputs: DM list) (outputs: DM list) =
     let str = env.Str
     let num_cols = TyV (reserved_tags.[0], PrimT UInt64T)
     let num_rows = TyV (reserved_tags.[1], PrimT UInt64T)
@@ -298,6 +305,21 @@ let launcher_map_redocol_map (env: SpiralEnv<_>) map_load_op redo_op map_store_o
 
     let dims = dim3(int block_size), dim3(int grid_size)
     let kernel = call_map_redocol_map (VV [map_load_op; redo_op; map_store_op; VV [CudaExpr.T num_cols; CudaExpr.T num_rows]; ins; outs], dims)
-    let args = [|[|box input_col; box input_row|];get_ptrs inputs; get_ptrs outputs|] |> Array.concat
+    let args = [|[|box input_col; box input_row|]; get_ptrs inputs; get_ptrs outputs|] |> Array.concat
 
     run_kernel_template str kernel args dims
+
+let launcher_map_forward x = launcher_map (to_typechecking_form_template conv_forward) get_ptrs_forward x
+let launcher_map_backward x = launcher_map (to_typechecking_form_template conv_backward) get_ptrs_backward x
+
+let launcher_map_redo_map_forward x = launcher_map_redo_map (to_typechecking_form_template conv_forward) get_ptrs_forward x
+let launcher_map_redo_map_backward x = launcher_map_redo_map (to_typechecking_form_template conv_backward) get_ptrs_backward x
+
+let launcher_map_redocol_map_forward x = launcher_map_redocol_map (to_typechecking_form_template conv_forward) get_ptrs_forward x
+let launcher_map_redocol_map_backward x = launcher_map_redocol_map (to_typechecking_form_template conv_backward) get_ptrs_backward x
+
+//let sum env inputs outputs =
+//    launcher_map_redo_map_forward lam_id lam_add lam_id env inputs outputs,
+//    fun () -> launcher_map_backward (inl (SS [])) env inputs outputs
+
+    
