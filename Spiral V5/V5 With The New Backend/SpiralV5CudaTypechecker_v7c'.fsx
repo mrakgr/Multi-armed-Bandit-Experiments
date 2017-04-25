@@ -21,9 +21,9 @@ type CudaTy =
     | UnitT
     | PrimT of SpiralDeviceVarType
     | VVT of CudaTy list
-    | GlobalArrayT of TypedCudaExpr list * CudaTy
-    | SharedArrayT of TypedCudaExpr list * CudaTy
-    | LocalArrayT of TypedCudaExpr list * CudaTy
+    | GlobalArrayT of TypedCudaExpr * CudaTy
+    | SharedArrayT of TypedCudaExpr * CudaTy
+    | LocalArrayT of TypedCudaExpr * CudaTy
     | InlineableT of TyInlineableKey
     | MethodT of TyMethodKey
 
@@ -68,10 +68,10 @@ and CudaExpr =
     | VVUnzip of CudaExpr
 
     // Array cases
-    | ArrayIndex of CudaExpr * CudaExpr list
+    | ArrayIndex of CudaExpr * CudaExpr
     | ArraySize of CudaExpr * CudaExpr
-    | ArrayCreateShared of CudaExpr list * typeof: CudaExpr
-    | ArrayCreateLocal of CudaExpr list * typeof: CudaExpr
+    | ArrayCreateShared of CudaExpr * typeof: CudaExpr
+    | ArrayCreateLocal of CudaExpr * typeof: CudaExpr
 
     // Primitive operations on expressions.
     | Add of CudaExpr * CudaExpr
@@ -359,10 +359,10 @@ let l v b e = Apply(inl v e,b)
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let dref x = ArrayIndex(x,[])
+let dref x = ArrayIndex(x,VV [])
 let cref x = 
     s [l (S "x") x
-       l (S "ref") (ArrayCreateLocal([],V "x")) 
+       l (S "ref") (ArrayCreateLocal(VV [],V "x")) 
        l E (MSet(dref (V "ref"),V "x"))] (V "ref")
    
 let for_template end_ init cond body =
@@ -537,16 +537,17 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     let destructure_deep d r = destructure_deep_template d id r
     let destructure_deep_method d r = destructure_deep_template d (make_tyv >> TyV) r
-        
 
     let process_create_array d args typeof_expr =
         let typ = get_type (tev d typeof_expr)
         let args = 
-            List.map (tev d) args
-            |> fun args -> 
-                if List.forall is_int args then args 
-                else failwithf "An arg in CreateArray is not of Type int.\nGot: %A" args
-            |> List.map (destructure_deep d)
+            tev d args
+            |> destructure_deep d
+            |> function 
+                | TyVV(args,_) as x -> 
+                    if List.forall is_int args then x
+                    else failwithf "An arg in CreateArray is not of Type int.\nGot: %A" args
+                | _ -> failwith "Array sizes need to be a tuple"
         args, typ
 
     let dup_name_check (name_checker: HashSet<string>) arg_name f =
@@ -682,6 +683,37 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     let apply d expr args = apply_both d expr (tev d args) (failwithf "Pattern matching cases failed to match.\n%A")
 
+    let transpose l on_fail on_succ =
+        let is_all_vv_empty x = List.forall (function VV [] -> true | _ -> false) x
+        let rec loop acc_total acc_head acc_tail = function
+            | VV [] :: ys -> 
+                if List.isEmpty acc_head && is_all_vv_empty ys then 
+                    if List.isEmpty acc_total then failwith "Empty inputs in the inner dimension to transpose are invalid."
+                    else List.rev acc_total |> on_succ
+                else on_fail ()
+            | VV (x :: xs) :: ys -> loop acc_total (x :: acc_head) (VV xs :: acc_tail) ys
+            | _ :: _ -> on_fail ()
+            | [] -> 
+                match acc_tail with
+                | _ :: _ -> loop (VV (List.rev acc_head) :: acc_total) [] [] (List.rev acc_tail)
+                | _ -> List.rev acc_total |> on_succ
+        loop [] [] [] l
+
+    let rec zip l = 
+        match l with
+        | _ :: _ -> transpose l (fun _ -> l) (List.map (function VV x -> zip x | x -> x)) |> VV
+        | _ -> failwith "Empty input to zip is invalid."
+
+    let rec unzip l = 
+        let is_all_vv x = List.forall (function VV _ -> true | _ -> false) x
+        match l with
+        | VV x ->
+            match x with
+            | _ :: _ when is_all_vv x -> let t = List.map (unzip >> VV) x in transpose t (fun _ -> x) id
+            | _ :: _ -> x
+            | _ -> failwith "Empty inputs to unzip are invalid."
+        | _ -> failwith "Unzip called on a non-VV."
+
     let zip_op d f a = 
         let rec zip_remap = function
             | TyVV(a,_) -> VV (List.map zip_remap a)
@@ -739,44 +771,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
-    | VVZip a ->
-        let rec zip l =
-            let is_all_vv_empty x = List.forall (function VV [] -> true | _ -> false) x
-            let rec loop acc_total acc_head acc_tail x =
-                match x with
-                | VV [] :: ys -> 
-                    if List.isEmpty acc_head && is_all_vv_empty ys then List.rev acc_total |> VV
-                    else VV l
-                | VV (x :: xs) :: ys -> loop acc_total (x :: acc_head) (VV xs :: acc_tail) ys
-                | _ :: _ -> VV l
-                | [] -> 
-                    match acc_tail with
-                    | _ :: _ -> loop ((List.rev acc_head |> zip) :: acc_total) [] [] (List.rev acc_tail)
-                    | _ -> List.rev acc_total |> VV
-            loop [] [] [] l
-        
-        zip_op d (function VV x -> zip x |> tev d | x -> tev d x) a
-    | VVUnzip a ->
-        let rec unzip l =
-            let transpose l =
-                let is_all_empty x = List.forall (function _ :: _ -> false | _ -> true) x
-                let rec loop acc_total acc_head acc_tail = function
-                    | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
-                    | [] :: ys -> 
-                        if List.isEmpty acc_head && is_all_empty ys then loop acc_total acc_head acc_tail ys 
-                        else l
-                    | [] ->
-                        match acc_tail with
-                        | _ :: _ -> loop (List.rev acc_head :: acc_total) [] [] (List.rev acc_tail)
-                        | _ -> List.rev acc_total
-                loop [] [] [] l
-            let is_all_vv x = List.forall (function VV _ -> true | _ -> false) x
-            match l with
-            | VV x when is_all_vv x -> List.map unzip x |> transpose |> List.map VV
-            | VV x -> x
-            | _ -> failwith "Unzip called on a non-VV."
-
-        zip_op d (unzip >> VV >> tev d) a
+    | VVZip a -> zip_op d (function VV x -> zip x |> tev d | x -> tev d x) a
+    | VVUnzip a -> zip_op d (unzip >> VV >> tev d) a
     | VV vars ->
         let vv = List.map (tev d) vars
         TyVV(vv,make_vvt vv)
@@ -798,17 +794,16 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         | _ -> failwith "Expected a tuple on the right is in VVCons."
     // Array cases
     | ArrayIndex(exp,args) ->
-        let exp,args = tev d exp, List.map (tev d) args
-        match get_type exp with
-        | LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t) when List.forall is_int args && List.length vs = List.length args ->
-            TyArrayIndex(exp,args,t)
+        let exp,args = tev d exp, tev d args
+        match get_type exp, args with
+        | (LocalArrayT(TyVV(vs,_), t) | SharedArrayT(TyVV(vs,_), t) | GlobalArrayT(TyVV(vs,_), t)), TyVV(args,_) when List.forall is_int args-> 
+            if List.length vs = List.length args then TyArrayIndex(exp,args,t) else failwith "The index lengths in ArrayIndex do not match"
         | _ -> failwithf "Something is wrong in ArrayIndex.\nexp=%A, args=%A" exp args
     | ArraySize(ar,ind) ->
         let ar, ind = tev d ar, tev d ind
         match get_type ar, ind with
-        | (LocalArrayT(vs, t) | SharedArrayT(vs, t) | GlobalArrayT(vs, t)), TyLitInt32 i ->
-            if i < vs.Length then vs.[i]
-            else failwith "Array size not available."
+        | (LocalArrayT(TyVV(vs,_), t) | SharedArrayT(TyVV(vs,_), t) | GlobalArrayT(TyVV(vs,_), t)), TyLitInt32 i ->
+            if i < vs.Length then vs.[i] else failwith "The index into array exceeds the number of its dimensions."
         | _ -> failwithf "Something is wrong in ArraySize.\nar=%A, ind=%A" ar ind
 
     | ArrayCreateLocal(args,t) -> let args,t = process_create_array d args t in TyArrayCreate(LocalArrayT(args,t)) |> make_tyv_and_push d
@@ -877,7 +872,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let method_ =
             match get_type evaled_input with
             | LocalArrayT(_,t) | SharedArrayT(_,t) -> 
-                let arg = ArrayIndex(T evaled_input,[LitInt32 0])
+                let arg = ArrayIndex(T evaled_input,VV [LitInt32 0])
                 tev d (VV [arg;arg])
             | x -> 
                 let arg() = evaled_input |> make_tyv |> TyV
@@ -926,7 +921,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TyArrayIndex(a,b,_) -> 
         let a = 
             match get_type a with
-            | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
+            | LocalArrayT(TyVV(x,_),_) | SharedArrayT(TyVV(x,_),_) | GlobalArrayT(TyVV(x,_),_) ->
                 let b = 
                     match x with
                     | [] -> []
@@ -936,7 +931,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
         Set.union a (Set.unionMany (List.map c b))
     | TyArrayCreate t -> 
         match t with
-        | LocalArrayT(x,_) | SharedArrayT(x,_) | GlobalArrayT(x,_) ->
+        | LocalArrayT(TyVV(x,_),_) | SharedArrayT(TyVV(x,_),_) | GlobalArrayT(TyVV(x,_),_) ->
             Set.unionMany (List.map c x)
         | _ -> failwith "impossible"
     // Cuda kernel constants

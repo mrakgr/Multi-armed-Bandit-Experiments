@@ -316,24 +316,30 @@ let eval body (inputs, dims) =
 
 let eval0 body = eval body (VV [], default_dims)
 
-let cuda_module_map =
-    meth (SS [S "map_op"; S' "n"; S "ins"; S "outs"])
-        (s [l (S "stride") (GridDimX*BlockDimX)
-            l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
-            for_ (V "i") 
-                (inl (S "i") (V "i" .< V "n"))
-                (inl (S "i") 
-                    (l E 
-                       ((s [l (S "array_index") (inl (S "x") (ArrayIndex(V "x",[V "i"])))
-                            l (S "f") (inl (S' "in") (ap (V "map_op") (VV [V "i"; ap (V "array_index") (V "in")])))
-                            l (S "results") (ap cuda_map (VV [V "f"; V "ins"]))
-                            l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
-                            l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ap (V "array_index") (V "out"),V "result")))
-                            ] (ap cuda_map (VV [V "f"; V "results_outs"]))))
-                        (V "i" + V "stride")))
-            ] B)
+let map_forward_setter = inl' [S' "array_index"; SS [S' "result"; S' "out"]] (MSet(ap (V "array_index") (V "out"), V "result"))
+let map_backward_setter = inl' [S' "array_index"; SS [S' "result"; S' "out"]] (AtomicAdd(ap (V "array_index") (V "out"), V "result"))
+let map_redo_map_backward_setter = inl' [S' "array_index"; SS [S' "result"; S' "out"]] (AtomicAdd(V "out", V "result"))
+let cuda_module_map_template =
+    inl (S "setter")
+        (meth (SS [S "map_op"; S' "n"; S "ins"; S "outs"])
+            (s [l (S "stride") (GridDimX*BlockDimX)
+                l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
+                for_ (V "i") 
+                    (inl (S "i") (V "i" .< V "n"))
+                    (inl (S "i") 
+                        (l E 
+                           (s  [l (S "array_index") (inl (S "x") (ArrayIndex(V "x",[V "i"])))
+                                l (S "f") (inl (S' "in") (ap (V "map_op") (VV [V "i"; ap (V "array_index") (V "in")])))
+                                l (S "results") (ap cuda_map (VV [V "f"; V "ins"]))
+                                l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
+                                ] (ap cuda_map (VV [ap (V "setter") (V "array_index"); V "results_outs"])))
+                            (V "i" + V "stride")))
+                ] B))
 
-let cuda_module_map_redo_map =
+let cuda_module_map_forward = ap cuda_module_map_template map_forward_setter
+let cuda_module_map_backward = ap cuda_module_map_template map_backward_setter
+
+let cuda_module_map_redo_map_template =
     meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; S' "n"; S "ins"; S "outs"])
         (s [l (S "stride") (GridDimX*BlockDimX)
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
@@ -357,7 +363,10 @@ let cuda_module_map_redo_map =
             l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (V "results"), B))
             ] B)
 
-let cuda_module_map_redocol_map =
+let cuda_module_map_redo_map_forward = cuda_module_map_redo_map_template
+let cuda_module_map_redo_map_backward = ap cuda_module_map_template map_redo_map_backward_setter
+
+let cuda_module_map_redocol_map_template =
     meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; SS [S' "num_cols"; S' "num_rows"];S "ins";S "outs"])
         (s [l (S "map_load_op")
                 (inl (SS [S' "col"; S' "row"]) 
@@ -384,3 +393,25 @@ let cuda_module_map_redocol_map =
                         l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "col"; V "results"]), B))
                         ] (ap (V "inc_col") (V "col"))))
             ] B)
+
+let cuda_module_mapcol_template =
+    meth (SS [S "map_op"; SS [S' "num_cols"; S' "num_rows"]; S "ins"; S "outs"])
+        (s [l (S "inc_col") (inl (S "col") (V "col" + GridDimX))
+            l (S "inc_row") (inl (S "row") (V "row" + BlockDimX))
+            for_ BlockIdxX
+                (inl (S "col") (V "col" .< V "num_cols"))
+                (inl (S "col")
+                    (s [l (S "array_index") (inl (SS [S' "x"; S' "i"]) (ArrayIndex(V "x",V "i")))
+                        l (S "ins") (ap cuda_map (VV [V "array_index_col"; V "ins"]))
+                        for_ ThreadIdxX 
+                            (inl (SS [S "row"]) (V "row" .< V "num_rows"))
+                            (inl (SS [S "row"])
+                               (s  [l (S "outs") ()
+                                    l (S "f") (inl (S' "in") (ap (V "map_op") (VV [V "i"; ap (V "array_index") (V "in")])))
+                                    l (S "results") (ap cuda_map (VV [V "f"; V "ins"]))
+                                    l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
+                                    ] (ap (V "inc_row") (V "row"))))
+                        ] (ap (V "inc_col") (V "col"))))
+            ] B)
+
+let cuda_module_map_redocol_map_forward = cuda_module_map_redocol_map_template
