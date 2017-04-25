@@ -38,18 +38,15 @@ let rec unzip l =
             | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
             | [] :: ys -> 
                 if List.isEmpty acc_head && is_all_empty ys then loop acc_total acc_head acc_tail ys 
-                else None
+                else l
             | [] ->
                 match acc_tail with
                 | _ :: _ -> loop (List.rev acc_head :: acc_total) [] [] (List.rev acc_tail)
-                | _ -> List.rev acc_total |> Some
+                | _ -> List.rev acc_total
         loop [] [] [] l
     let is_all_r x = List.forall (function R _ -> true | _ -> false) x
     match l with
-    | R x when is_all_r x -> 
-        match List.map unzip x |> transpose with
-        | Some x -> x |> List.map R
-        | None -> x
+    | R x when is_all_r x -> List.map unzip x |> transpose |> List.map R
     | R x -> x
     | S _ -> failwith "Unzip called on S."
 
@@ -62,11 +59,11 @@ let rec unzip l =
 //let u1 = unzip t4
 //let r1 = u1 = [t3;c]
 //let u2 = unzip t3
-//let r2 = u2 = [a;b]
+//let r2 = u2 = [a;b] // The above works fine on tuples with regular dimensions.
 
 let a = R [R [S "q"; S "w"; S "e"]]
 let b = R [R [S "a"; S "s"]; R [S "z"]; S "wqe"]
 let ab = [a;b]
 let t = zip ab
 let t' = unzip t
-ab = t'
+ab = t' // This is false, but I would like the ziping and then unziping to be reversible if possible.

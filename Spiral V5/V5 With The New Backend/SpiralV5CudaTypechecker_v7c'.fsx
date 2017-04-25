@@ -65,6 +65,7 @@ and CudaExpr =
     | VV of CudaExpr list // tuple
     | VVCons of CudaExpr * CudaExpr
     | VVZip of CudaExpr
+    | VVUnzip of CudaExpr
 
     // Array cases
     | ArrayIndex of CudaExpr * CudaExpr list
@@ -681,6 +682,13 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     let apply d expr args = apply_both d expr (tev d args) (failwithf "Pattern matching cases failed to match.\n%A")
 
+    let zip_op d f a = 
+        let rec zip_remap = function
+            | TyVV(a,_) -> VV (List.map zip_remap a)
+            | a -> T a
+
+        tev d a |> destructure_deep d |> zip_remap |> f
+
     match exp with
     | T x -> x // To assist in CubBlockReduce so evaled cases do not have to be evaluated twice.
     | V' x -> TyV x // To assist in interfacing with the outside.
@@ -731,55 +739,44 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
-    | VVZip(a) ->
-        let case_s l on_fatalfail on_fail ret =
-            let rec loop (acc: CudaExpr list) = function
-                | VV _ :: _ when acc.IsEmpty = false -> on_fatalfail()
-                | VV _ :: _ -> on_fail ()
-                | x :: xs -> loop (x :: acc) xs
-                | [] -> ret (List.rev acc)
-            loop [] l
+    | VVZip a ->
+        let rec zip l =
+            let is_all_vv_empty x = List.forall (function VV [] -> true | _ -> false) x
+            let rec loop acc_total acc_head acc_tail x =
+                match x with
+                | VV [] :: ys -> 
+                    if List.isEmpty acc_head && is_all_vv_empty ys then List.rev acc_total |> VV
+                    else VV l
+                | VV (x :: xs) :: ys -> loop acc_total (x :: acc_head) (VV xs :: acc_tail) ys
+                | _ :: _ -> VV l
+                | [] -> 
+                    match acc_tail with
+                    | _ :: _ -> loop ((List.rev acc_head |> zip) :: acc_total) [] [] (List.rev acc_tail)
+                    | _ -> List.rev acc_total |> VV
+            loop [] [] [] l
+        
+        zip_op d (function VV x -> zip x |> tev d | x -> tev d x) a
+    | VVUnzip a ->
+        let rec unzip l =
+            let transpose l =
+                let is_all_empty x = List.forall (function _ :: _ -> false | _ -> true) x
+                let rec loop acc_total acc_head acc_tail = function
+                    | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
+                    | [] :: ys -> 
+                        if List.isEmpty acc_head && is_all_empty ys then loop acc_total acc_head acc_tail ys 
+                        else l
+                    | [] ->
+                        match acc_tail with
+                        | _ :: _ -> loop (List.rev acc_head :: acc_total) [] [] (List.rev acc_tail)
+                        | _ -> List.rev acc_total
+                loop [] [] [] l
+            let is_all_vv x = List.forall (function VV _ -> true | _ -> false) x
+            match l with
+            | VV x when is_all_vv x -> List.map unzip x |> transpose |> List.map VV
+            | VV x -> x
+            | _ -> failwith "Unzip called on a non-VV."
 
-        let case_r l on_fatalfail on_fail ret =
-            let rec loop (acc_head: CudaExpr list) (acc_tail: CudaExpr list) = function
-                | (VV (h :: t)) :: xs -> loop (h :: acc_head) (VV t :: acc_tail) xs
-                | _ :: _ when acc_head.IsEmpty = false -> on_fatalfail()
-                | _ :: _ -> on_fail ()
-                | [] -> ret (List.rev acc_head, List.rev acc_tail)
-            loop [] [] l
-
-        let case_r_empty l on_fail ret =
-            let rec loop = function
-                | VV [] :: xs -> loop xs
-                | [] -> ret()
-                | _ -> on_fail ()
-            loop l
-
-        let rec zip_all l =
-            let fatalfail acc _ = List.rev acc @ l |> VV
-            case_s l 
-                (fatalfail [])
-                (fun _ ->
-                    let rec loop acc l =
-                        case_r l 
-                            (fatalfail acc)
-                            (fun _ -> 
-                                case_r_empty l 
-                                    (fatalfail acc)
-                                    (fun _ -> List.rev acc |> VV ))
-                            (fun (head, tail) ->
-                                let r = zip_all head 
-                                loop (r :: acc) tail)
-                    loop [] l)
-                (VV )
-
-        let rec zip_remap = function
-            | TyVV(a,_) -> VV (List.map zip_remap a)
-            | a -> T a
-
-        match tev d a |> destructure_deep d |> zip_remap with
-        | VV x -> zip_all x |> tev d
-        | x -> x |> tev d
+        zip_op d (unzip >> VV >> tev d) a
     | VV vars ->
         let vv = List.map (tev d) vars
         TyVV(vv,make_vvt vv)

@@ -72,6 +72,11 @@
     <None Include="V5 With The New Backend\tuple_zip_v3.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v4.fsx" />
     <None Include="V5 With The New Backend\map_tup.fsx" />
+    <None Include="V5 With The New Backend\tuple_unzip_v1.fsx" />
+    <None Include="V5 With The New Backend\tuple_unzip_v2.fsx" />
+    <None Include="V5 With The New Backend\tuple_unzip_v3.fsx" />
+    <None Include="V5 With The New Backend\tuple_zip_v5.fsx" />
+    <None Include="V5 With The New Backend\zip_and_unzip_fin.fsx" />
     <None Include="V5 With The New Backend\load-references-release.fsx" />
     <None Include="V5 With The New Backend\load-project-release.fsx" />
     <None Include="V5 With The New Backend\Speed test.fsx" />
@@ -80,11 +85,7 @@
     <None Include="V5 With The New Backend\SpiralV5CudaInit.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
-    <None Include="V5 With The New Backend\tuple_unzip_v1.fsx" />
-    <None Include="V5 With The New Backend\tuple_unzip_v2.fsx" />
-    <None Include="V5 With The New Backend\tuple_unzip_v3.fsx" />
-    <None Include="V5 With The New Backend\tuple_zip_v5.fsx" />
-    <None Include="V5 With The New Backend\zip_and_unzip_fin.fsx" />
+    <None Include="V5 With The New Backend\zip_and_unzip_fin_v2.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />
@@ -145,6 +146,10 @@
     <None Include="Cuda Backend\Typechecker_v6e.fsx" />
     <None Include="Cuda Backend\alternative_destructure_v6e.fsx" />
     <None Include="Cuda Backend\Codegen_v3a.fsx" />
+    <None Include="any\netstandard1.6\FSharp.Core.sigdata" />
+    <None Include="any\netstandard1.6\FSharp.Core.optdata" />
+    <None Include="Scripts\load-references-release.fsx" />
+    <None Include="Scripts\load-project-release.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
@@ -159,8 +164,12 @@
       <HintPath>..\packages\ManagedCuda-CURAND.8.0.13\lib\net46\CudaRand.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="FsCheck">
+      <HintPath>..\packages\FsCheck.2.8.0\lib\net452\FsCheck.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="FSharp.Core">
-      <HintPath>..\packages\FSharp.Core.4.1.2\lib\net45\FSharp.Core.dll</HintPath>
+      <HintPath>..\packages\FSharp.Core.4.1.12\lib\net45\FSharp.Core.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="ManagedCuda">
