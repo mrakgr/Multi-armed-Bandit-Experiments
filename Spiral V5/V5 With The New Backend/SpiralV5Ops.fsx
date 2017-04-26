@@ -12,8 +12,8 @@ open ManagedCuda.CudaBlas
 let T = Operation.Transpose
 let nT = Operation.NonTranspose
 
-let inline guard_sizes x y =
-    if x <> y then failwithf "guard_sizes failed.\n%A <> %A" x y
+let inline guard_sizes (x: DM) (y: DM) =
+    if x.Size <> y.Size then failwithf "guard_sizes failed.\n%A <> %A" x y
     y
 
 let guard_cublas _status = if _status <> CublasStatus.Success then raise <| new CudaBlasException(_status)
@@ -159,8 +159,8 @@ let inline axpy str alpha x y =
 let inline add alpha (a: DM) beta (b: DM) (c: DM) (env: SpiralEnv<_>) =
     let proj_2d x = size_to_total_size x,1UL
     let proj_1d x = size_to_total_size x
-    
-    guard_sizes a.Size b.Size |> guard_sizes c.Size |> ignore
+
+    guard_sizes a b |> guard_sizes c |> ignore
     geam env.Str nT nT alpha (a.P' proj_2d) beta (b.P' proj_2d) (c.P' proj_2d)
 
     c, fun _ ->
@@ -226,9 +226,7 @@ let launcher_map to_typechecking_form_template get_ptrs map_op (env: SpiralEnv<_
     let block_size = min 256UL inputs_size
     let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup inputs_size block_size)
 
-    match args with
-    | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
-    | [] -> ()
+    List.reduce guard_sizes args |> ignore
 
     let to_typechecking_form = to_typechecking_form_template 0 [n]
     let ins = to_typechecking_form inputs
@@ -248,9 +246,7 @@ let launcher_map_redo_map to_typechecking_form_template get_ptrs map_load_op red
     let block_size = min 128UL input_size
     let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size)
 
-    match inputs with
-    | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
-    | [] -> ()
+    List.reduce guard_sizes inputs |> ignore
 
     outputs |> List.iter (fun x -> if total_size x <> 1UL then failwith "Outputs to map_redo_map must all be of size 1.")
 
@@ -284,9 +280,7 @@ let launcher_map_redocol_map to_typechecking_form_template get_ptrs map_load_op 
     let block_size = min 128UL input_size
     let grid_size = min (2UL*numSm*(1024UL/block_size)) (divup input_size block_size)
 
-    match inputs with
-    | x :: xs -> List.fold (fun x y -> guard_sizes x (size y)) (size x) xs |> ignore
-    | [] -> ()
+    List.reduce guard_sizes inputs |> ignore
 
     let input_col, input_row = 
         inputs |> List.head |> fun x -> x.Size 

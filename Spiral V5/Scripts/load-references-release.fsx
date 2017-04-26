@@ -10,3 +10,6 @@
 #r "System.dll"
 #r "System.Numerics.dll"
 #r "../../packages/System.ValueTuple.4.3.0/lib/netstandard1.0/System.ValueTuple.dll"
+#r "../../packages/FParsec-Pipes.0.3.1.0/lib/net45/FParsec-Pipes.dll"
+#r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
+#r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"

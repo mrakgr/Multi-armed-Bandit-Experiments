@@ -397,7 +397,7 @@ let cuda_module_map_redocol_map_template =
                         ] (ap (V "inc_col") (V "col"))))
             ] B)
 
-let cuda_module_mapcol_template =
+let cuda_module_mapcol_template = // TODO: Revisit this after finishing the parser.
     inl (S "setter")
         (meth (SS [S "map_op"; SS [S' "num_cols"; S' "num_rows"]; S "outs_prim_adj"; S "ins_prim_adj"])
             (s [l (S "inc_col") (inl (S "col") (V "col" + GridDimX))

@@ -38,7 +38,7 @@ let rec zip l =
     | _ :: _ -> transpose l (fun _ -> l) (List.map (function VV x -> zip x | x -> x)) |> VV
     | _ -> failwith "Empty input to zip is invalid."
 
-let rec unzip l = 
+let rec unzip l =
     let is_all_vv x = List.forall (function VV _ -> true | _ -> false) x
     match l with
     | VV x ->
@@ -78,14 +78,24 @@ let zip_and_unzip_eq_orig orig = zip_and_unzip orig = orig
 
 // For regular tuples it passes with flying colors.
 
-Check.One ({Config.Quick with EndSize = 10}, zip_and_unzip_eq_orig)
+Check.One ({Config.Quick with EndSize = 2}, zip_and_unzip_eq_orig)
 
 // I can't get it to be isomorphic for irregularly sized arrays as expected.
 
-//let f x = 
-//    let x' = zip x
-//    printfn "x'=%A" x'
-//    printfn "unzip x'=%A" (unzip x')
-//    printfn "zip_and_unzip_eq_orig x=%A" (zip_and_unzip_eq_orig x)
-//
-//f [VV [VV [S "12"; S "qwe"]; VV [S "d"]]; VV [VV [S ""; S "ug"]; VV [S ""]]]
+let f x = 
+    let x' = zip x
+    printfn "after_zip=%A" x'
+    printfn "after_zip_unzip=%A" (unzip x')
+    printfn "zip_and_unzip_eq_orig x=%A" (zip_and_unzip_eq_orig x)
+
+let fail_case = [VV [VV [S "12"; S "qwe"]]; VV [VV [S ""; S "ug"]; VV [S ""]]]
+let fail_after_zip = zip fail_case
+let fail_after_zip_unzip = unzip fail_after_zip
+let fail_fater_zip_unzip_eq_orig = fail_case = fail_after_zip_unzip
+
+let succ_case = [VV [VV [S "12"; S "qwe"]]; VV [VV [S ""; S "ug"]]]
+let succ_after_zip = zip succ_case
+let succ_after_zip_unzip = unzip succ_after_zip
+let succ_fater_zip_unzip_eq_orig = succ_case = succ_after_zip_unzip
+
+f [VV [VV [S ""; S ""]; VV [S "v"; S ""]]]
