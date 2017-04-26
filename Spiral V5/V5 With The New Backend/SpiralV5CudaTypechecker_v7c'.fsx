@@ -547,7 +547,9 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 | TyVV(args,_) as x -> 
                     if List.forall is_int args then x
                     else failwithf "An arg in CreateArray is not of Type int.\nGot: %A" args
-                | _ -> failwith "Array sizes need to be a tuple"
+                | args -> 
+                    if is_int args then args
+                    else failwithf "The arg in CreateArray is not of Type int.\nGot: %A" args
         args, typ
 
     let dup_name_check (name_checker: HashSet<string>) arg_name f =
@@ -798,6 +800,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match get_type exp, args with
         | (LocalArrayT(TyVV(vs,_), t) | SharedArrayT(TyVV(vs,_), t) | GlobalArrayT(TyVV(vs,_), t)), TyVV(args,_) when List.forall is_int args-> 
             if List.length vs = List.length args then TyArrayIndex(exp,args,t) else failwith "The index lengths in ArrayIndex do not match"
+        | (LocalArrayT(TyVV(vs,_), t) | SharedArrayT(TyVV(vs,_), t) | GlobalArrayT(TyVV(vs,_), t)), args when is_int args -> 
+            if List.isEmpty vs = false then TyArrayIndex(exp,[args],t) else failwith "The index lengths in ArrayIndex do not match"
         | _ -> failwithf "Something is wrong in ArrayIndex.\nexp=%A, args=%A" exp args
     | ArraySize(ar,ind) ->
         let ar, ind = tev d ar, tev d ind

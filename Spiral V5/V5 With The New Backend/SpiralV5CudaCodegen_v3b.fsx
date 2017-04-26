@@ -127,8 +127,10 @@ let print_method_dictionary (imemo: MethodImplDict) =
             ""
         | TyLet((_,t) as v,TyArrayCreate _, rest,_) ->
             match t with
-            | LocalArrayT(ar_sizes,typ) -> print_array_declaration false typ v ar_sizes
-            | SharedArrayT(ar_sizes,typ) -> print_array_declaration true typ v ar_sizes
+            | LocalArrayT(TyVV(ar_sizes,_),typ) -> print_array_declaration false typ v ar_sizes
+            | SharedArrayT(TyVV(ar_sizes,_),typ) -> print_array_declaration true typ v ar_sizes
+            | LocalArrayT(ar_sizes,typ) -> print_array_declaration false typ v [ar_sizes]
+            | SharedArrayT(ar_sizes,typ) -> print_array_declaration true typ v [ar_sizes]
             | _ -> failwith "impossible"
             codegen rest
         | TyLet(_,(TyUnit | TyType _),rest,_) -> codegen rest
@@ -168,7 +170,8 @@ let print_method_dictionary (imemo: MethodImplDict) =
             let index = 
                 let ar_sizes =
                     match get_type ar with
-                    | LocalArrayT(sizes,_) | SharedArrayT(sizes,_) | GlobalArrayT(sizes,_) -> sizes
+                    | LocalArrayT(TyVV(sizes,_),_) | SharedArrayT(TyVV(sizes,_),_) | GlobalArrayT(TyVV(sizes,_),_) -> sizes
+                    | LocalArrayT(sizes,_) | SharedArrayT(sizes,_) | GlobalArrayT(sizes,_) -> [sizes]
                     | _ -> failwith "impossible"
                 let rec loop x =
                     match x with
@@ -328,7 +331,7 @@ let cuda_module_map_template =
                     (inl (S "i") (V "i" .< V "n"))
                     (inl (S "i") 
                         (l E 
-                           (s  [l (S "array_index") (inl (S "x") (ArrayIndex(V "x",[V "i"])))
+                           (s  [l (S "array_index") (inl (S "x") (ArrayIndex(V "x",V "i")))
                                 l (S "f") (inl (S' "in") (ap (V "map_op") (VV [V "i"; ap (V "array_index") (V "in")])))
                                 l (S "results") (ap cuda_map (VV [V "f"; V "ins"]))
                                 l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
@@ -345,12 +348,12 @@ let cuda_module_map_redo_map_template =
             l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
             l (S "map_load_op") 
                 (inl (S' "i") 
-                    (l (S "ins") (ap cuda_map (VV [inl (S' "in") (ArrayIndex(V "in",[V "i"])); V "ins"]))
+                    (l (S "ins") (ap cuda_map (VV [inl (S' "in") (ArrayIndex(V "in",V "i")); V "ins"]))
                     (ap (V "map_load_op") (VV [V "i"; V "ins"]))))
             l (S "map_store_op")
                 (inl (S "results")
                      (s [l (S "x") (VVZip (VV [ap (V "map_store_op") (V "results"); V "outs"]))
-                         l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",[BlockIdxX]), V "result")))
+                         l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",BlockIdxX), V "result")))
                          l E (ap cuda_map (VV [V "f"; V "x"]))
                          ] B))
             l (S "inc") (inl (S "i") (V "i" + V "stride"))
@@ -370,12 +373,12 @@ let cuda_module_map_redocol_map_template =
     meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; SS [S' "num_cols"; S' "num_rows"];S "ins";S "outs"])
         (s [l (S "map_load_op")
                 (inl (SS [S' "col"; S' "row"]) 
-                    (l (S "ins") (ap cuda_map (VV [inl (S' "in") (ArrayIndex(V "in",[V "col"; V "row"])); V "ins"]))
+                    (l (S "ins") (ap cuda_map (VV [inl (S' "in") (ArrayIndex(V "in",VV [V "col"; V "row"])); V "ins"]))
                     (ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"]))))
             l (S "map_store_op")
                 (inl (SS [S' "col"; S "results"])
                         (s [l (S "x") (VVZip (VV [ap (V "map_store_op") (V "results"); V "outs"]))
-                            l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",[V "col"]), V "result")))
+                            l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",V "col"), V "result")))
                             l E (ap cuda_map (VV [V "f"; V "x"]))
                             ] B))
             l (S "inc_col") (inl (S "col") (V "col" + GridDimX))
@@ -395,23 +398,26 @@ let cuda_module_map_redocol_map_template =
             ] B)
 
 let cuda_module_mapcol_template =
-    meth (SS [S "map_op"; SS [S' "num_cols"; S' "num_rows"]; S "ins"; S "outs"])
-        (s [l (S "inc_col") (inl (S "col") (V "col" + GridDimX))
-            l (S "inc_row") (inl (S "row") (V "row" + BlockDimX))
-            for_ BlockIdxX
-                (inl (S "col") (V "col" .< V "num_cols"))
-                (inl (S "col")
-                    (s [l (S "array_index") (inl (SS [S' "x"; S' "i"]) (ArrayIndex(V "x",V "i")))
-                        l (S "ins") (ap cuda_map (VV [V "array_index_col"; V "ins"]))
-                        for_ ThreadIdxX 
-                            (inl (SS [S "row"]) (V "row" .< V "num_rows"))
-                            (inl (SS [S "row"])
-                               (s  [l (S "outs") ()
-                                    l (S "f") (inl (S' "in") (ap (V "map_op") (VV [V "i"; ap (V "array_index") (V "in")])))
-                                    l (S "results") (ap cuda_map (VV [V "f"; V "ins"]))
-                                    l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
-                                    ] (ap (V "inc_row") (V "row"))))
-                        ] (ap (V "inc_col") (V "col"))))
-            ] B)
+    inl (S "setter")
+        (meth (SS [S "map_op"; SS [S' "num_cols"; S' "num_rows"]; S "outs_prim_adj"; S "ins_prim_adj"])
+            (s [l (S "inc_col") (inl (S "col") (V "col" + GridDimX))
+                l (S "inc_row") (inl (S "row") (V "row" + BlockDimX))
+                l (S "array_index") (inl' [S' "i"; S' "x"] (ArrayIndex(V "x",V "i")))
+                for_ BlockIdxX
+                    (inl (S "col") (V "col" .< V "num_cols"))
+                    (inl (S "col")
+                        (s [l (S "outs_prim_adj") (ap cuda_map (VV [ap (V "array_index") (V "col"); V "outs_prim_adj"]))
+                            for_ ThreadIdxX 
+                                (inl (SS [S "row"]) (V "row" .< V "num_rows"))
+                                (inl (SS [S "row"])
+                                   (l E (s [l (SS [S "ins_prim"; S "ins_adj"]) (VVUnzip(V "ins_prim_adj"))
+                                            l (S "ins_prim") (ap cuda_map (VV [ap (V "array_index") (VV [V "col"; V "row"]); V "ins_prim"]))
+                                            l (S "f") (inl (SS [SS [S' "out_prim"; S' "out_adj"]; S' "in_prim"]) (ap (V "map_op") (VV [VV [V "col"; V "row"]; VV [V "out_prim"; V "out_adj"]; V "in_prim"])))
+                                            l (S "results") (ap cuda_map (VV [V "f"; VVZip(VV [V "outs_prim_adj"; V "in_prim"])]))
+                                            l (S "results_ins_adj") (VVZip(VV [V "results"; V "ins_adj"]))
+                                            ] (ap cuda_map (VV [ap (V "setter") (ap (V "array_index") (VV [V "col"; V "row"])); V "results_ins_adj"])))
+                                        (ap (V "inc_row") (V "row"))))
+                            ] (ap (V "inc_col") (V "col"))))
+                ] B))
 
 let cuda_module_map_redocol_map_forward = cuda_module_map_redocol_map_template
