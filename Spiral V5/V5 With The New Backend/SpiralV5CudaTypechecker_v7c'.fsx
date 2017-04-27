@@ -390,6 +390,16 @@ let rec inlr' name args body =
     | x :: xs -> inlr name x (inl' xs body)
     | [] -> body
 
+let rec meth' args body = 
+    match args with
+    | x :: xs -> meth x (meth' xs body)
+    | [] -> body
+
+let rec methr' name args body = 
+    match args with
+    | x :: xs -> methr name x (meth' xs body)
+    | [] -> body
+
 /// The tuple map function. Goes over the tuple scanning for a pattern and triggers only if it finds it.
 let cuda_map =
     let recurse x = ap (V "rec") (VV [V "f"; V x])

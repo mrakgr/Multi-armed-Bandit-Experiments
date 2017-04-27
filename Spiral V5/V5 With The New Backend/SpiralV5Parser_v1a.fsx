@@ -27,7 +27,6 @@ let between_curlies p = between_brackets '{' p '}'
 let between_squares p = between_brackets '[' p ']'
 
 let rec pattern x = (spaces >>. (pattern_identifier <|> (sepBy (spaces >>. pattern) comma |> between_rounds |>> SS))) x
-
 let pattern_list = sepEndBy1 pattern spaces
 
 let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "true" |>> fun _ -> LitBool true)
@@ -40,11 +39,11 @@ let pfloat64 = pfloat |>> LitFloat64
 
 let plit = spaces >>. ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice)
 let variable = identifier_template V
-//let expr_body = spaces >>. ([plit; variable; application] |> List.map attempt |> choice)
-
 let application expr = 
     spaces >>. many1 expr
     |>> function x :: xs -> ap' x xs | _ -> failwith "impossible"
+
+let term expr = spaces >>. ([plit; variable; application expr] |> List.map attempt |> choice)
 
 // There will be 7 basic patterns in the language.
 
@@ -62,28 +61,30 @@ let application expr =
 let name = identifier_template id
 
 let case_pat expr = pipe2 pattern (eq >>. expr) (fun pattern body -> ParserStatement <| l pattern body)
-let case_name_pat_list expr = pipe3 name pattern (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (inlr "" pattern body))
-let case_inl_name_pat expr = pipe3 (inl_ >>. name) pattern (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (inlr name pattern body))
-let case_inl_pat expr = pipe2 (inl_ >>. pattern) (lam >>. expr) (fun pattern body -> ParserExpr <| inl pattern body)
-let case_fun_name_pat expr = pipe3 (fun_ >>. name) pattern (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (methr name pattern body))
-let case_fun_pat expr = pipe2 (fun_ >>. pattern) (lam >>. expr) (fun pattern body -> ParserExpr <| meth pattern body)
+let case_name_pat_list expr = pipe3 name pattern_list (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (inlr' "" pattern body))
+let case_inl_name_pat_list expr = pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (inlr' name pattern body))
+let case_inl_pat_list expr = pipe2 (inl_ >>. pattern_list) (lam >>. expr) (fun pattern body -> ParserExpr <| inl' pattern body)
+let case_fun_name_pat_list expr = pipe3 (fun_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (methr' name pattern body))
+let case_fun_pat_list expr = pipe2 (fun_ >>. pattern_list) (lam >>. expr) (fun pattern body -> ParserExpr <| meth' pattern body)
 let case_expr expr = expr |>> ParserExpr
-
-let process_parser_expr a b =
-    match a,b with
-    | ParserStatement a, ParserExpr b -> a b
-    | ParserExpr a, ParserExpr b -> l E a b
-    | _, ParserStatement _ -> failwith "Parser statements not allowed in the last position of a block. Expected an expression."
 
 let cases_all expr = 
     let cases = 
-        [case_pat; case_name_pat_list; case_inl_name_pat; case_inl_pat; case_fun_name_pat; case_fun_pat; case_expr] 
+        [case_pat; case_name_pat_list; case_inl_name_pat_list; case_inl_pat_list; case_fun_name_pat_list; case_fun_pat_list; case_expr] 
         |> List.map (fun x -> x expr |> attempt)
     spaces >>. choice cases
 
-let expr_single expr = spaces >>. application expr
-let expr_block expr = between_curlies (sepBy1 (expr_single expr) semicolon)
-let expr = failwith "" //spaces >>. (expr_block <|> expr_single)
+let expr_block expr = 
+    let process_parser_expr a b =
+        match a,b with
+        | ParserStatement a, ParserExpr b -> a b |> ParserExpr
+        | ParserExpr a, ParserExpr b -> l E a b |> ParserExpr
+        | _, ParserStatement _ -> failwith "Parser statements not allowed in the last position of a block. Expected an expression."
+    between_curlies (sepBy1 (cases_all expr) semicolon)
+    |>> List.reduceBack process_parser_expr
+    |>> function ParserExpr a -> a | _ -> failwith "impossible"
 
-run (case_pat expr) "(a,b) = a + b;"
+let rec expr x = (spaces >>. (term expr <|> expr_block expr)) x
+
+run expr "{(a,b) = a b;}"
 
