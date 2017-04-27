@@ -6,19 +6,17 @@
 open SpiralV5CudaTypechecker_v7c'
 open FParsec
 
+type ParserExpr =
+    | ParserStatement of (CudaExpr -> CudaExpr)
+    | ParserExpr of CudaExpr
+
 let skipSpacesChar x = spaces >>. skipChar x
 let comma = skipSpacesChar ','
 let semicolon = skipSpacesChar ';'
 let eq = skipSpacesChar '='
-let lam x = 
-    spaces >>. skipString "->"
-    <| x
-let inl x = 
-    spaces >>. skipString "inl"
-    <| x
-let fun_ x = 
-    spaces >>. skipString "fun"
-    <| x
+let lam = spaces >>. skipString "->"
+let inl_ = spaces >>. skipString "inl"
+let fun_ = spaces >>. skipString "fun"
 
 let identifier_template x = spaces >>. many1Satisfy isAsciiLetter |>> x 
 let pattern_identifier = identifier_template S
@@ -42,13 +40,11 @@ let pfloat64 = pfloat |>> LitFloat64
 
 let plit = spaces >>. ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice)
 let variable = identifier_template V
-let application = failwith ""
+//let expr_body = spaces >>. ([plit; variable; application] |> List.map attempt |> choice)
 
-let expr_body = spaces >>. ([plit; variable; application] |> List.map attempt |> choice)
-
-let expr_single = spaces >>. expr_body
-let expr_block = between_curlies (sepBy1 expr_single semicolon)
-let expr = spaces >>. (expr_block <|> expr_single)
+let application expr = 
+    spaces >>. many1 expr
+    |>> function x :: xs -> ap' x xs | _ -> failwith "impossible"
 
 // There will be 7 basic patterns in the language.
 
@@ -65,13 +61,29 @@ let expr = spaces >>. (expr_block <|> expr_single)
 
 let name = identifier_template id
 
-let case_pat = pipe2 pattern (eq >>. expr) (fun a b -> a)
-let case_name_pat_list = pipe3 name pattern (eq >>. expr) (fun a b c -> (a,b))
-let case_inl_name_pat = pipe3 (inl >>. name) pattern (eq >>. expr) (fun a b c -> (a,b))
-let case_inl_pat = pipe3 (inl >>. name) pattern (lam >>. expr) (fun a b c -> (a,b))
-let case_fun_name_pat = pipe3 (fun_ >>. name) pattern (eq >>. expr) (fun a b c -> (a,b))
-let case_fun_pat = pipe3 (fun_ >>. name) pattern (lam >>. expr) (fun a b c -> (a,b))
-let case_expr = expr
+let case_pat expr = pipe2 pattern (eq >>. expr) (fun pattern body -> ParserStatement <| l pattern body)
+let case_name_pat_list expr = pipe3 name pattern (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (inlr "" pattern body))
+let case_inl_name_pat expr = pipe3 (inl_ >>. name) pattern (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (inlr name pattern body))
+let case_inl_pat expr = pipe2 (inl_ >>. pattern) (lam >>. expr) (fun pattern body -> ParserExpr <| inl pattern body)
+let case_fun_name_pat expr = pipe3 (fun_ >>. name) pattern (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (methr name pattern body))
+let case_fun_pat expr = pipe2 (fun_ >>. pattern) (lam >>. expr) (fun pattern body -> ParserExpr <| meth pattern body)
+let case_expr expr = expr |>> ParserExpr
 
-run case_pat "(a,b) = a + b;"
+let process_parser_expr a b =
+    match a,b with
+    | ParserStatement a, ParserExpr b -> a b
+    | ParserExpr a, ParserExpr b -> l E a b
+    | _, ParserStatement _ -> failwith "Parser statements not allowed in the last position of a block. Expected an expression."
+
+let cases_all expr = 
+    let cases = 
+        [case_pat; case_name_pat_list; case_inl_name_pat; case_inl_pat; case_fun_name_pat; case_fun_pat; case_expr] 
+        |> List.map (fun x -> x expr |> attempt)
+    spaces >>. choice cases
+
+let expr_single expr = spaces >>. application expr
+let expr_block expr = between_curlies (sepBy1 (expr_single expr) semicolon)
+let expr = failwith "" //spaces >>. (expr_block <|> expr_single)
+
+run (case_pat expr) "(a,b) = a + b;"
 

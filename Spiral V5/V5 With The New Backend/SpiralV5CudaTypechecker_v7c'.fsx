@@ -343,6 +343,7 @@ let inl x y = Inlineable("",[x,y])
 let inlr name x y = Inlineable(name,[x,y])
 let ap x y = Apply(x,y)
 let meth x y = Method("",[x,y])
+let methr name x y = Method(name,[x,y])
 
 let E = S ""
 /// Matches tuples without a tail.
