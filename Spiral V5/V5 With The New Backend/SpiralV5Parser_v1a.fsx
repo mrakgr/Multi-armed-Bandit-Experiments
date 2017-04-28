@@ -39,11 +39,8 @@ let pfloat64 = pfloat |>> LitFloat64
 
 let plit = spaces >>. ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice)
 let variable = identifier_template V
-let application expr = 
-    spaces >>. many1 expr
-    |>> function x :: xs -> ap' x xs | _ -> failwith "impossible"
 
-let term expr = spaces >>. ([plit; variable; application expr] |> List.map attempt |> choice)
+let term = spaces >>. choice [plit; variable]
 
 // There will be 7 basic patterns in the language.
 
@@ -68,13 +65,13 @@ let case_fun_name_pat_list expr = pipe3 (fun_ >>. name) pattern_list (eq >>. exp
 let case_fun_pat_list expr = pipe2 (fun_ >>. pattern_list) (lam >>. expr) (fun pattern body -> ParserExpr <| meth' pattern body)
 let case_expr expr = expr |>> ParserExpr
 
-let cases_all expr = 
-    let cases = 
-        [case_pat; case_name_pat_list; case_inl_name_pat_list; case_inl_pat_list; case_fun_name_pat_list; case_fun_pat_list; case_expr] 
+let cases_all expr =
+    let cases =
+        [case_pat; case_name_pat_list; case_inl_name_pat_list; case_inl_pat_list; case_fun_name_pat_list; case_fun_pat_list; case_expr]
         |> List.map (fun x -> x expr |> attempt)
     spaces >>. choice cases
 
-let expr_block expr = 
+let expr_block expr =
     let process_parser_expr a b =
         match a,b with
         | ParserStatement a, ParserExpr b -> a b |> ParserExpr
@@ -84,7 +81,14 @@ let expr_block expr =
     |>> List.reduceBack process_parser_expr
     |>> function ParserExpr a -> a | _ -> failwith "impossible"
 
-let rec expr x = (spaces >>. (term expr <|> expr_block expr)) x
+let application expr =
+    spaces >>. many1 expr
+    |>> function x :: xs -> ap' x xs | _ -> failwith "impossible"
 
-run expr "{(a,b) = a b;}"
+let rec expr x = 
+    let expr_body x = (spaces >>. (term <|> expr_block expr)) x
+    application expr_body x
+
+run (expr) ""
+run (expr) "{f g {q w e}}"
 
