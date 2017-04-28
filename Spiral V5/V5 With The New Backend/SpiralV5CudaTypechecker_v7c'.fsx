@@ -47,7 +47,6 @@ and CudaExpr =
     | V of string // standard variable
     | V' of TyV // given variable
     | T of TypedCudaExpr
-    | B // blank
     | If of CudaExpr * CudaExpr * CudaExpr
     | LitUInt32 of uint32
     | LitUInt64 of uint64
@@ -127,7 +126,6 @@ and TypedCudaExpr =
     | TyV of TyV
     | TyIf of TypedCudaExpr * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyLet of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
-    | TyUnit
     | TyLitUInt32 of uint32
     | TyLitUInt64 of uint64
     | TyLitInt32 of int
@@ -240,7 +238,6 @@ let rec get_type = function
     | TyAtomicAdd(_,_,t) -> t
     
     // Statements
-    | TyUnit -> UnitT
     | TyMSet(_,_,_,t) | TyWhile(_,_,_,t) | TyLet((_,_),_,_,t)  -> t
     // Cub operations
     | TyCubBlockReduce(_,_,_,_,t) -> t
@@ -322,7 +319,7 @@ let filter_tyvs evaled_cur_args =
         | _ -> []
     loop evaled_cur_args
 
-let is_arg = function TyUnit | TyType _ -> false | _ -> true
+let is_arg = function TyType _ -> false | _ -> true
 
 let filter_vars check evaled_cur_args =
     let rec loop = function
@@ -346,6 +343,8 @@ let meth x y = Method("",[x,y])
 let methr name x y = Method(name,[x,y])
 
 let E = S ""
+let B = VV []
+let TyB = TyVV([], VVT [])
 /// Matches tuples without a tail.
 let SS x = R (x, None) 
 /// Opposite of S', matches only a tuple.
@@ -535,7 +534,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                     TyVV(indexed_tuple_args, VVT tuple_types) |> on_tuple
                 | _ -> on_non_tuple r
             match r with
-            | TyUnit | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
+            | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
             | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
@@ -744,7 +743,6 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | LitFloat32 x -> TyLitFloat32 x
     | LitFloat64 x -> TyLitFloat64 x
     | LitBool x -> TyLitBool x
-    | B -> TyUnit
     | V x -> 
         match Map.tryFind x d.env with
         | Some v -> v
@@ -869,8 +867,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let l = tev d a
         let r = destructure_deep d (tev d b)
         match l, r with 
-        | TyArrayIndex(_,_,lt), r when lt = get_type r -> push_sequence d (fun rest -> TyMSet(l,r,rest,get_type rest)); TyUnit
-        | _ -> failwithf "Error in mset. Expected: (TyArrayIndex(_,_,lt) as v), r when lt = get_type r or TyVV(l,_), TyVV(r,_).\nGot: %A and %A" l r
+        | TyArrayIndex(_,_,lt), r when lt = get_type r -> push_sequence d (fun rest -> TyMSet(l,r,rest,get_type rest)); TyB
+        | _ -> failwithf "Error in mset. Expected: TyArrayIndex(_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
     | AtomicAdd(a,b) -> prim_atomic_add_op d a b TyAtomicAdd
     | While(cond,body,e) ->
         let cond, body = tev d (Apply(Method("",[E,cond]),B)), with_empty_seq d body
@@ -906,7 +904,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TyV v -> Set.singleton v
     | TyIf(cond,tr,fl,t) -> c cond + c tr + c fl
     | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
-    | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ | TyUnit -> Set.empty
+    | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ -> Set.empty
     | TyVV(vars,t) -> Set.unionMany (List.map c vars)
     | TyVVIndex(t,i,_) -> Set.union (c t) (c i)
     | TyMethodCall(m,ar,_) ->
