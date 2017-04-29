@@ -17,13 +17,13 @@ let lam = skipString "->" .>> spaces
 let inl_ = skipString "inl" .>> spaces
 let fun_ = skipString "fun" .>> spaces
 
-let identifier_template x = many1Satisfy isAsciiLetter .>> spaces |>> x 
+let identifier_template = many1Satisfy2L isAsciiLetter (fun x -> isAsciiLetter x || isDigit x || x = ''') "identifier" .>> spaces
 let between_brackets l p r = between (skipChar l .>> spaces) (skipChar r .>> spaces) p
 let between_rounds p = between_brackets '(' p ')'
 let between_curlies p = between_brackets '{' p '}'
 let between_squares p = between_brackets '[' p ']'
 
-let pattern_identifier = identifier_template S 
+let pattern_identifier = identifier_template |>> S 
 let rec pattern_inner_template f = f pattern comma |>> SS
 and pattern_inner x = pattern_inner_template sepBy x 
 and pattern_inner1 x = pattern_inner_template sepBy1 x
@@ -38,10 +38,21 @@ let pint64 = pint64 .>> skipChar 'L' |>> LitInt64
 let pint32 = pint32 .>> notFollowedByString "."  |>> LitInt32
 let pfloat64 = pfloat |>> LitFloat64
 
-let plit = ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice) .>> spaces
-let variable = identifier_template V
-
-let term = choice [plit; variable]
+let plit = ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice) .>> notFollowedBy asciiLetter .>> spaces
+let variable_or_if_then_else expr =
+    identifier_template 
+    >>=? function
+        | "if" -> 
+            pipe3
+                expr
+                (skipString "then" >>. spaces1 >>. expr)
+                (skipString "else" >>. spaces1 >>. expr)
+                (fun cond tr fl -> If(cond,tr,fl))
+        | "then" | "else" | "inl" | "fun" as x -> 
+            fun _ -> Reply(Error, messageError <| sprintf "variable cannot be named one of: then, else, inl, fun.\nGot: %s" x)
+        | x -> fun _ -> Reply(V x)
+            
+let term expr = plit <|> variable_or_if_then_else expr
 
 // There will be 8 basic patterns in the language.
 
@@ -54,7 +65,7 @@ let term = choice [plit; variable]
 // 7) expr
 // 8) [pat] -> expr
 
-let name = identifier_template id
+let name = identifier_template
 
 let case_pat expr = pipe2 pattern_inner1 (eq >>. expr) (fun pattern body -> ParserStatement <| l pattern body)
 let case_name_pat_list expr = pipe3 name pattern_list (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (inlr' "" pattern body))
@@ -96,9 +107,29 @@ let tuple expr =
         | x :: _ -> x
         | _ -> failwith "Empty tuples are handled in expr_block."
 
-let rec expr x = 
-    let expr_body x = (choice [expr_block expr; term]) x
-    tuple (application expr_body) x
+let expr =
+    let opp = new OperatorPrecedenceParser<_,_,_>()
 
-run (expr) ""
-run (spaces >>. expr) "(q = (f -> 2) 3; q)"
+    opp.AddOperator(InfixOperator("+", spaces, 6, Associativity.Left, fun x y -> Add(x,y)))
+    opp.AddOperator(InfixOperator("-", spaces, 6, Associativity.Left, fun x y -> Sub(x,y)))
+    opp.AddOperator(PrefixOperator("-", spaces, 10, true, Neg))
+    opp.AddOperator(InfixOperator("*", spaces, 7, Associativity.Left, fun x y -> Mult(x,y)))
+    opp.AddOperator(InfixOperator("/", spaces, 7, Associativity.Left, fun x y -> Div(x,y)))
+
+    opp.AddOperator(InfixOperator("<=", spaces, 4, Associativity.None, fun x y -> LTE(x,y)))
+    opp.AddOperator(InfixOperator("<", spaces, 4, Associativity.None, fun x y -> LT(x,y)))
+    opp.AddOperator(InfixOperator("==", spaces, 4, Associativity.None, fun x y -> EQ(x,y)))
+    opp.AddOperator(InfixOperator(">", spaces, 4, Associativity.None, fun x y -> GT(x,y)))
+    opp.AddOperator(InfixOperator(">=", spaces, 4, Associativity.None, fun x y -> GTE(x,y)))
+
+    opp.AddOperator(InfixOperator("||", spaces, 2, Associativity.Right, fun x y -> And(x,y)))
+    opp.AddOperator(InfixOperator("&&", spaces, 3, Associativity.Right, fun x y -> Or(x,y)))
+
+    let expr = tuple opp.ExpressionParser
+    opp.TermParser <- application (expr_block expr <|> term expr)
+    expr
+
+//run (expr) ""
+run (spaces >>. expr) "q,2 4 + (f r + w, e),4"
+
+

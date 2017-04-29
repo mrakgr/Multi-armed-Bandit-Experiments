@@ -78,11 +78,13 @@ and CudaExpr =
     | Mult of CudaExpr * CudaExpr
     | Div of CudaExpr * CudaExpr
     | Mod of CudaExpr * CudaExpr
-    | LT of CudaExpr * CudaExpr
     | LTE of CudaExpr * CudaExpr
+    | LT of CudaExpr * CudaExpr
     | EQ of CudaExpr * CudaExpr
     | GT of CudaExpr * CudaExpr
     | GTE of CudaExpr * CudaExpr
+    | And of CudaExpr * CudaExpr
+    | Or of CudaExpr * CudaExpr
     | LeftShift of CudaExpr * CudaExpr
     | RightShift of CudaExpr * CudaExpr
     | Syncthreads
@@ -158,6 +160,8 @@ and TypedCudaExpr =
     | TyEQ of TypedCudaExpr * TypedCudaExpr
     | TyGT of TypedCudaExpr * TypedCudaExpr
     | TyGTE of TypedCudaExpr * TypedCudaExpr
+    | TyAnd of TypedCudaExpr * TypedCudaExpr
+    | TyOr of TypedCudaExpr * TypedCudaExpr
     | TyLeftShift of TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyRightShift of TypedCudaExpr * TypedCudaExpr * CudaTy
     | TySyncthreads
@@ -227,7 +231,7 @@ let rec get_type = function
     | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
     | TyDiv(_,_,t) | TyMod(_,_,t) -> t
     | TyLT _ | TyLTE _ | TyEQ _ | TyGT _
-    | TyGTE _ -> PrimT BoolT
+    | TyGTE _ | TyAnd _ | TyOr _ -> PrimT BoolT
     | TyLeftShift(_,_,t) | TyRightShift(_,_,t) -> t
     | TySyncthreads -> UnitT
     | TyShuffleXor(_,_,t) | TyShuffleUp(_,_,t)
@@ -847,6 +851,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | EQ(a,b) -> prim_bool_op d a b TyEQ
     | GT(a,b) -> prim_bool_op d a b TyGT
     | GTE(a,b) -> prim_bool_op d a b TyGTE
+    | And(a,b) -> prim_bool_op d a b TyAnd
+    | Or(a,b) -> prim_bool_op d a b TyOr
 
     | Syncthreads -> TySyncthreads
 
@@ -954,7 +960,7 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TySyncthreads -> Set.empty
     | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
     | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
-    | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) 
+    | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) | TyAnd(a,b) | TyOr(a,b)
     | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
     | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
     | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
