@@ -85,13 +85,15 @@ let cases_all expr =
 let expr_indent expr (s: CharStream<_>) =
     let i = s.Column
     let mutable idx = s.Index
-    (many1 (expr >>=? fun x -> 
-        if i = s.Column then 
-            if idx <> s.Index then 
-                idx <- s.Index
-                preturn x 
-            else pzero
-        else pzero)) s
+    let expr (s: CharStream<_>) = 
+        if i = s.Column then
+            (expr >>=? fun x -> 
+                if idx <> s.Index then 
+                    idx <- s.Index
+                    preturn x 
+                else pzero) s
+        else pzero s
+    many1 expr s
 
 let expr_semicolon expr = sepBy expr semicolon
 
@@ -115,8 +117,7 @@ let expr_block expr =
 
     let cases x = cases_all expr x
 
-    between_rounds (expr_indent (expr_semicolon cases) |>> (fun x -> printfn "Done with expr_indent.x=%A" x; x)) 
-    |>> (List.concat >> process_fin)
+    between_rounds (expr_indent (expr_semicolon cases)) |>> (List.concat >> process_fin)
     //<|> (expr_indent cases |>> process_fin)
 
     //between_rounds (expr_semicolon cases) |>> process_fin
@@ -154,11 +155,10 @@ let expr =
     let expr = tuple opp.ExpressionParser
     //opp.TermParser <- application (expr_block expr <|> term expr)
     opp.TermParser <- expr_block expr <|> term expr
-    //opp.TermParser <- expr_block (term expr)
     expr
 
 let test = 
-    """(2)"""
+    """a,(b + e),c"""
 
 //run (expr) ""
 run (spaces >>. expr) test
