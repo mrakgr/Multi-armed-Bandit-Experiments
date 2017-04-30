@@ -129,7 +129,12 @@ let expr =
     opp.TermParser <- application (expr_block expr <|> term expr)
     expr
 
-//run (expr) ""
-run (spaces >>. expr) "q,2 4 + (f r + w, e),4"
+let test = 
+    """
+    (add x y z = (x+y+z);
+     add 1 2 3)
+    """
+
+let result = runParserOnString (spaces >>. expr) -1L "" test
 
 
