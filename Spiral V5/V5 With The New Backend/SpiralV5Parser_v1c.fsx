@@ -10,8 +10,18 @@ type ParserExpr =
     | ParserStatement of (CudaExpr -> CudaExpr)
     | ParserExpr of CudaExpr
 
+let loop_breaker expr (s: CharStream<_>) =
+    let state = s.UserState
+    if state <> s.Index then
+        s.UserState <- s.Index
+        let r = expr s
+        s.UserState <- state
+        r
+    else
+        Reply(Error,messageError "loop detected")
+
 let comma = skipChar ',' .>> spaces
-let semicolon = skipChar ';' .>> spaces
+let semicolon x = (skipChar ';' .>> spaces) x
 let eq = skipChar '=' .>> spaces
 let lam = skipString "->" .>> spaces
 let inl_ = skipString "inl" .>> spaces
@@ -73,7 +83,7 @@ let case_inl_name_pat_list expr = pipe3 (inl_ >>. name) pattern_list (eq >>. exp
 let case_inl_pat_list expr = pipe2 (inl_ >>. pattern_list) (lam >>. expr) (fun pattern body -> ParserExpr <| inl' pattern body)
 let case_fun_name_pat_list expr = pipe3 (fun_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> ParserStatement <| l (S name) (methr' name pattern body))
 let case_fun_pat_list expr = pipe2 (fun_ >>. pattern_list) (lam >>. expr) (fun pattern body -> ParserExpr <| meth' pattern body)
-let case_expr expr = expr |>> ParserExpr
+let case_expr expr = loop_breaker expr |>> ParserExpr
 let case_pat_list expr = pipe2 pattern_list (lam >>. expr) (fun pattern body -> ParserExpr <| inl' pattern body)
 
 let cases_all expr =
@@ -84,14 +94,8 @@ let cases_all expr =
 
 let expr_indent expr (s: CharStream<_>) =
     let i = s.Column
-    let mutable idx = s.Index
     let expr (s: CharStream<_>) = 
-        if i = s.Column then
-            (expr >>=? fun x -> 
-                if idx <> s.Index then 
-                    idx <- s.Index
-                    preturn x 
-                else pzero) s
+        if i = s.Column then expr s
         else pzero s
     many1 expr s
 
@@ -117,10 +121,8 @@ let expr_block expr =
 
     let cases x = cases_all expr x
 
-    between_rounds (expr_indent (expr_semicolon cases)) |>> (List.concat >> process_fin)
-    //<|> (expr_indent cases |>> process_fin)
-
-    //between_rounds (expr_semicolon cases) |>> process_fin
+    expr_indent (between_rounds (expr_semicolon cases) <|> (cases |>> List.singleton))
+    |>> (List.concat >> process_fin)
     
 
 let application expr =
@@ -158,8 +160,14 @@ let expr =
     expr
 
 let test = 
-    """a,(b + e),c"""
+    """
+    inl add (a,b) = 
+        q = r
+        w = 3
+        q + w
+    0
+    1
+    """
 
-//run (expr) ""
-run (spaces >>. expr) test
+runParserOnString (spaces >>. expr) -1L "" test
   
