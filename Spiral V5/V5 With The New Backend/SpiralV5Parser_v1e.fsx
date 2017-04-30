@@ -21,21 +21,20 @@ let fun_rec = skipString "fun" .>> spaces .>> skipString "rec" .>> spaces
 
 let identifier_template = 
     many1Satisfy2L isAsciiLetter (fun x -> isAsciiLetter x || isDigit x || x = ''') "identifier" .>> spaces
-    >>=? function
-        | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
-            Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
+    >>= function
+        | "inl" | "fun" as x -> fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
         
 let between_brackets l p r = between (skipChar l .>> spaces) (skipChar r .>> spaces) p
-let rounds p = between_brackets '(' p ')'
-let curlies p = between_brackets '{' p '}'
-let quares p = between_brackets '[' p ']'
+let between_rounds p = between_brackets '(' p ')'
+let between_curlies p = between_brackets '{' p '}'
+let between_squares p = between_brackets '[' p ']'
 
 let pattern_identifier = identifier_template |>> S 
 let rec pattern_inner_template f = f pattern comma |>> SS
 and pattern_inner x = pattern_inner_template sepBy x 
 and pattern_inner1 x = pattern_inner_template sepBy1 x
-and pattern x = (pattern_identifier <|> rounds pattern_inner) x
+and pattern x = (pattern_identifier <|> between_rounds pattern_inner) x
 let pattern_list = sepEndBy1 pattern_inner1 spaces
 
 let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "true" |>> fun _ -> LitBool true)
@@ -46,14 +45,22 @@ let pint64 = pint64 .>> skipChar 'L' |>> LitInt64
 let pint32 = pint32 .>> notFollowedByString "."  |>> LitInt32
 let pfloat64 = pfloat |>> LitFloat64
 
-let lit = ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice) .>> notFollowedBy asciiLetter .>> spaces
-let var = identifier_template |>> V
-let if_then_else expr =
-    pipe3
-        (skipString "id" >>. spaces1 >>. expr)
-        (skipString "then" >>. spaces1 >>. expr)
-        (skipString "else" >>. spaces1 >>. expr)
-        (fun cond tr fl -> If(cond,tr,fl))
+let plit = ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice) .>> notFollowedBy asciiLetter .>> spaces
+let variable_or_if_then_else expr =
+    identifier_template 
+    >>=? function
+        | "if" -> 
+            pipe3
+                expr
+                (skipString "then" >>. spaces1 >>. expr)
+                (skipString "else" >>. spaces1 >>. expr)
+                (fun cond tr fl -> If(cond,tr,fl))
+        | "then" | "else" as x -> 
+            fun _ -> Reply(Error, messageError <| sprintf "variable cannot be named one of: then, else.\nGot: %s" x)
+        | x -> fun _ -> Reply(V x)
+            
+let term expr = plit <|> variable_or_if_then_else expr
+let rounds expr = between_rounds expr
 
 // Language cases.
 
@@ -80,54 +87,21 @@ let case_inl_pat_expr expr = pipe2 (inl_ >>. pattern_inner1) (lam >>. expr) (fun
 let case_inl_rec_name_pat_list_expr expr = pipe3 (inl_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> ParserExpr <| inlr' name pattern body)
 let case_fun_rec_name_pat_list_expr expr = pipe3 (fun_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> ParserExpr <| methr' name pattern body)
 
-let case_plit expr = lit |>> ParserExpr
-let case_if_then_else expr = if_then_else expr |>> ParserExpr
+let case_term expr = term expr |>> ParserExpr
 let case_rounds expr = rounds expr |>> ParserExpr
-let case_var expr s = 
-    let r = (var |>> ParserExpr) s
-    printfn "r_cases_var=%A" (r.Status,r.Result,r.Equals)
-    r
 
-let cases_all expr s =
-    printfn "I am in cases_all."
-    let r =
-        (
-        [
-        case_inl_pat_statement, "case_inl_pat_statement"
-        case_inl_name_pat_list_statement, "case_inl_name_pat_list_statement"
-        case_inl_rec_name_pat_list_statement, "case_inl_rec_name_pat_list_statement"
-        case_fun_name_pat_list_statement, "case_fun_name_pat_list_statement" 
-        case_fun_rec_name_pat_list_statement, "case_fun_rec_name_pat_list_statement"
-        case_inl_pat_expr, "case_inl_pat_expr"
-        case_inl_rec_name_pat_list_expr, "case_inl_rec_name_pat_list_expr"
-        case_fun_rec_name_pat_list_expr, "case_fun_rec_name_pat_list_expr"
-        case_plit, "case_plit"
-        case_rounds, "case_rounds"
-        case_if_then_else, "case_if_then_else"
-        case_var, "case_var"
-        ]
-        |> List.map (fun (x,name) -> 
-            let f = x expr |> attempt 
-            let r = f s
-            printfn "name=%s" name
-            printfn "r_cases_all_inner=%A" (r.Status,r.Error,r.Result)
-            f
-            )
-        |> choice 
-        ) s
-    printfn "r_cases_all=%A" (r.Status,r.Result,r.Error)
-    r
+let cases_all expr =
+    [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement; 
+     case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement; case_inl_pat_expr; 
+     case_inl_rec_name_pat_list_expr; case_inl_rec_name_pat_list_expr; case_term; case_rounds]
+    |> List.map (fun x -> x expr |> attempt)
+    |> choice 
 
 let expr_block expr =
     let expr_indent expr (s: CharStream<_>) =
         let i = s.Column
         let expr (s: CharStream<_>) = 
-            printfn "I am in expr_block..."
-            if i = s.Column then 
-                printfn "...i = s.Column"
-                let r: Reply<_> = expr s
-                printfn "r_expr_block=%A" (r.Status,r.Result,r.Error)
-                r
+            if i = s.Column then expr s
             else pzero s
         many1 expr s
 
@@ -165,20 +139,12 @@ let application expr (s: CharStream<_>) =
     let expr_up (s: CharStream<_>) = 
         if i < s.Column then expr s
         else pzero s
-    printfn "I am in application."
-    let r =
-        pipe2 expr (many expr_up) (fun x xs -> 
-            printfn "I am in application's pipe lambda. x=%A\nxs=%A" x xs
-            ap' x xs) s
-    printfn "r_application=%A" (r.Status,r.Result,r.Error)
-    r
+    (pipe2 expr (many expr_up) (fun x xs -> 
+        printfn "I am in application. x=%A\nxs=%A" x xs
+        ap' x xs)) s
 
 let tuple expr =
-    sepBy1 (fun s -> 
-        printfn "I am in tuple."
-        let r: Reply<_> = expr s
-        printfn "r_tuple=%A"  (r.Status, r.Result, r.Error)
-        r) comma
+    sepBy1 expr comma
     |>> function
         | _ :: _ :: _ as l -> VV l
         | x :: _ -> x
@@ -202,15 +168,13 @@ let expr =
     opp.AddOperator(InfixOperator("||", spaces, 2, Associativity.Right, fun x y -> And(x,y)))
     opp.AddOperator(InfixOperator("&&", spaces, 3, Associativity.Right, fun x y -> Or(x,y)))
 
-    let operators expr =
-        let p = opp.ExpressionParser
-        opp.TermParser <- expr
-        p |>> ParserExpr
-    let rec expr s = tuple (expr_block (statements expr <|> application (operators (expressions expr)))) s
-
-    expr
+    let expr = tuple opp.ExpressionParser
+    opp.TermParser <- expr_block expr
+    //opp.TermParser <- application (expr_block expr)
     
-let test2 = 
+    expr
+
+let test = 
     """
     inl add (x,y) = 
         inl q = x
@@ -220,8 +184,6 @@ let test2 =
     2
     3
     """
-
-let test = "(a,b,c)"
 
 let result = runParserOnString (spaces >>. expr) -1L "" test
 

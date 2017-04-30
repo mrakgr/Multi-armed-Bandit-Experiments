@@ -90,6 +90,7 @@
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Parser_v1d.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5Parser_v1e.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />
