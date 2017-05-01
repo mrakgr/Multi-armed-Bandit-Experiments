@@ -158,7 +158,7 @@ let expr =
         p
 
     let rec expr s = 
-        tuple (indentations (statements expr) (operators (application (expressions expr)))) s
+        indentations (statements expr) (tuple (operators (application (expressions expr)))) s
 
     expr
     
@@ -166,8 +166,8 @@ let test = "a,(b + f e, 2, 3),c"
 
 let test2 = 
     """
-    inl w = 4;2
-    2
+    w+2
+    2,3,4
     """
 
 let result = run (spaces >>. expr) test2
