@@ -109,22 +109,17 @@ let process_parser_exprs exprs =
     | _ :: _ -> process_parser_exprs exprs
     | _ -> preturn (VV [])
 
-let expr_alternate alternator statements expressions = 
-    alternator ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs
-
 let indentations statements expressions =
     let expr_indent expr (s: CharStream<_>) =
         let i = s.Column
         let expr (s: CharStream<_>) = 
-            if i = s.Column then expr s
+            if i = s.Column then (optional semicolon >>. expr) s
+            elif i < s.Column then (semicolon >>. expr) s
             else pzero s
         many1 expr s
 
-    expr_alternate expr_indent statements expressions
+    expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs
 
-let semicolons statements expressions = 
-    expr_alternate (fun x -> sepBy x semicolon) statements expressions
-    
 let application expr (s: CharStream<_>) =
     let i = s.Column
     let expr_up (s: CharStream<_>) = 
@@ -163,22 +158,17 @@ let expr =
         p
 
     let rec expr s = 
-//        semicolons
-//            (statements expr)
-            (tuple (indentations (statements expr) (operators (application (expressions expr)))))
-                s
+        tuple (indentations (statements expr) (operators (application (expressions expr)))) s
 
     expr
     
-let test2 = 
-    """
-    inl w = 
-        function if true then q else f
-            2
-            3
-    1
-    """
-
 let test = "a,(b + f e, 2, 3),c"
 
+let test2 = 
+    """
+    inl w = 4;2
+    2
+    """
+
 let result = run (spaces >>. expr) test2
+
