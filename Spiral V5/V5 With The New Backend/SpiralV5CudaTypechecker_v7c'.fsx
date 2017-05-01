@@ -81,6 +81,7 @@ and CudaExpr =
     | LTE of CudaExpr * CudaExpr
     | LT of CudaExpr * CudaExpr
     | EQ of CudaExpr * CudaExpr
+    | NEQ of CudaExpr * CudaExpr
     | GT of CudaExpr * CudaExpr
     | GTE of CudaExpr * CudaExpr
     | And of CudaExpr * CudaExpr
@@ -158,6 +159,7 @@ and TypedCudaExpr =
     | TyLT of TypedCudaExpr * TypedCudaExpr
     | TyLTE of TypedCudaExpr * TypedCudaExpr
     | TyEQ of TypedCudaExpr * TypedCudaExpr
+    | TyNEQ of TypedCudaExpr * TypedCudaExpr
     | TyGT of TypedCudaExpr * TypedCudaExpr
     | TyGTE of TypedCudaExpr * TypedCudaExpr
     | TyAnd of TypedCudaExpr * TypedCudaExpr
@@ -230,7 +232,7 @@ let rec get_type = function
     // Primitive operations on expressions.
     | TyAdd(_,_,t) | TySub(_,_,t) | TyMult(_,_,t)
     | TyDiv(_,_,t) | TyMod(_,_,t) -> t
-    | TyLT _ | TyLTE _ | TyEQ _ | TyGT _
+    | TyLT _ | TyLTE _ | TyEQ _ | TyNEQ _ | TyGT _
     | TyGTE _ | TyAnd _ | TyOr _ -> PrimT BoolT
     | TyLeftShift(_,_,t) | TyRightShift(_,_,t) -> t
     | TySyncthreads -> UnitT
@@ -849,6 +851,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | LT(a,b) -> prim_bool_op d a b TyLT
     | LTE(a,b) -> prim_bool_op d a b TyLTE
     | EQ(a,b) -> prim_bool_op d a b TyEQ
+    | NEQ(a,b) -> prim_bool_op d a b TyNEQ
     | GT(a,b) -> prim_bool_op d a b TyGT
     | GTE(a,b) -> prim_bool_op d a b TyGTE
     | And(a,b) -> prim_bool_op d a b TyAnd
@@ -960,7 +963,8 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TySyncthreads -> Set.empty
     | TyLog(a,_) | TyExp(a,_) | TyTanh(a,_) | TyNeg(a,_) -> c a
     | TyAdd(a,b,_) | TySub(a,b,_) | TyMult(a,b,_) | TyDiv(a,b,_) | TyMod(a,b,_)
-    | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyGT(a,b) | TyGTE(a,b) | TyAnd(a,b) | TyOr(a,b)
+    | TyLT(a,b) | TyLTE(a,b) | TyEQ(a,b) | TyNEQ(a,b) | TyGT(a,b) 
+    | TyGTE(a,b) | TyAnd(a,b) | TyOr(a,b)
     | TyLeftShift(a,b,_) | TyRightShift(a,b,_) | TyShuffleXor(a,b,_)
     | TyShuffleUp(a,b,_) | TyShuffleDown(a,b,_) | TyShuffleIndex(a,b,_) 
     | TyAtomicAdd(a,b,_) -> Set.union (c a) (c b)
