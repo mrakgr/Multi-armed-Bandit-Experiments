@@ -38,15 +38,28 @@ and pattern_inner1 x = pattern_inner_template sepBy1 x
 and pattern x = (pattern_identifier <|> rounds pattern_inner) x
 let pattern_list = sepEndBy1 pattern_inner1 spaces
 
-let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "true" |>> fun _ -> LitBool true)
-let puint32 = puint32 .>> skipChar 'u' |>> LitUInt32
-let pfloat32 = pfloat .>> skipChar 'f' |>> (float32 >> LitFloat32)
-let puint64 = puint64 .>> skipChar 'U' |>> LitUInt64
-let pint64 = pint64 .>> skipChar 'L' |>> LitInt64
-let pint32 = pint32 .>> notFollowedByString "."  |>> LitInt32
-let pfloat64 = pfloat |>> LitFloat64
 
-let lit = ([pbool;puint32;pfloat32;puint64;pint64;pint32;pfloat64] |> List.map attempt |> choice) .>> notFollowedBy asciiLetter .>> spaces
+let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "true" |>> fun _ -> LitBool true)
+
+// FParsec has inbuilt parsers for ints and floats, but they will scan + and - which will wreak havoc with other parts
+// of the library hence the custom number parsers.
+let pnumber = 
+    let pnumber = many1Satisfy isDigit
+    
+
+    pnumber >>= fun a ->
+        choice [
+            skipChar 'u' |>> (fun _ -> uint32 a |> LitUInt32)
+            skipString "UL" |>> (fun _ -> uint64 a |> LitUInt64)
+            skipString "L" |>> (fun _ -> int64 a |> LitInt64)
+            skipChar '.' >>. pnumber >>= fun b ->
+                let cfloat f = sprintf "%s.%s" a b |> f
+                skipChar 'f' |>> fun _ -> cfloat float32 |> LitFloat32
+                <|> fun _ -> Reply(cfloat float |> LitFloat64)
+            fun _ -> Reply(int a |> LitInt32)
+            ]
+
+let lit = (pbool <|> pnumber) .>> notFollowedBy asciiLetter .>> spaces
 let var = identifier_template |>> V
 let if_then_else expr =
     pipe3
@@ -112,10 +125,13 @@ let process_parser_exprs exprs =
 let indentations statements expressions =
     let expr_indent expr (s: CharStream<_>) =
         let i = s.Column
-        let expr (s: CharStream<_>) = 
-            if i = s.Column then (optional semicolon >>. expr) s
-            elif i < s.Column then (semicolon >>. expr) s
-            else pzero s
+        let inline if_col op tr fl (s: CharStream<_>) = if op i s.Column then tr s else fl s
+        let expr = 
+            if_col (=) 
+                (optional semicolon >>. expr)
+                (if_col (<)
+                    (semicolon >>. (if_col (<=) expr pzero))
+                    pzero)
         many1 expr s
 
     expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs
@@ -125,7 +141,7 @@ let application expr (s: CharStream<_>) =
     let expr_up (s: CharStream<_>) = 
         if i < s.Column then expr s
         else pzero s
-    pipe2 expr (many expr_up) (fun x xs -> ap' x xs) s
+    pipe2 expr (many expr_up) ap' s
 
 let tuple expr =
     sepBy1 expr comma
@@ -166,7 +182,7 @@ let test = "a,(b + f e, 2, 3),c"
 
 let test2 = 
     """
-    w+2
+    5+3
     2,3,4
     """
 
