@@ -133,15 +133,15 @@ let print_method_dictionary (imemo: MethodImplDict) =
             | SharedArrayT(ar_sizes,typ) -> print_array_declaration true typ v [ar_sizes]
             | _ -> failwith "impossible"
             codegen rest
-        | TyLet(_,(TyUnit | TyType _),rest,_) -> codegen rest
+        | TyLet(_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
         | TyType _ -> failwith "Inlineable and Method (TyType) should never appear in isolation."
-        | TyLet((_,t),b,rest,_) when t = UnitT ->
+        | TyLet((_,t),b,rest,_) when t = VVT [] ->
             sprintf "%s;" (codegen b) |> state
             codegen rest
         | TyLet(tyv,b,rest,_) ->
             sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
             codegen rest
-        | TyUnit -> ""
+        | TyVV([],_) -> ""
         | TyLitUInt32 x -> string x 
         | TyLitUInt64 x -> string x 
         | TyLitInt32 x -> string x
@@ -209,8 +209,11 @@ let print_method_dictionary (imemo: MethodImplDict) =
         | TyLT (x,y) -> sprintf "(%s < %s)" (codegen x) (codegen y)
         | TyLTE (x,y) -> sprintf "(%s <= %s)" (codegen x) (codegen y)
         | TyEQ (x,y) -> sprintf "(%s == %s)" (codegen x) (codegen y)
+        | TyNEQ (x,y) -> sprintf "(%s != %s)" (codegen x) (codegen y)
         | TyGT (x,y) -> sprintf "(%s > %s)" (codegen x) (codegen y)
         | TyGTE (x,y) -> sprintf "(%s >= %s)" (codegen x) (codegen y)
+        | TyAnd (x,y) -> sprintf "(%s && %s)" (codegen x) (codegen y)
+        | TyOr (x,y) -> sprintf "(%s || %s)" (codegen x) (codegen y)
         | TyLeftShift (x,y,_) -> sprintf "(%s << %s)" (codegen x) (codegen y)
         | TyRightShift (x,y,_) -> sprintf "(%s >> %s)" (codegen x) (codegen y)
         | TySyncthreads -> state "syncthreads();"; ""
@@ -319,28 +322,20 @@ let eval body (inputs, dims) =
 
 let eval0 body = eval body (VV [], default_dims)
 
-let map_forward_setter = inl' [S' "array_index"; SS [S' "result"; S' "out"]] (MSet(ap (V "array_index") (V "out"), V "result"))
-let map_backward_setter = inl' [S' "array_index"; SS [S' "result"; S' "out"]] (AtomicAdd(ap (V "array_index") (V "out"), V "result"))
-let map_redo_map_backward_setter = inl' [S' "array_index"; SS [S' "result"; S' "out"]] (AtomicAdd(V "out", V "result"))
+let map_forward_setter = "inl i (*result, *out) -> out.[i] <- result"
+let map_backward_setter = "inl i (*result, *out) -> Cuda.AtomicAdd(out.[i],result)"
+let map_redo_map_backward_setter = "inl _ (*result, *out) -> Cuda.AtomicAdd(out,result)"
 let cuda_module_map_template =
-    inl (S "setter")
-        (meth (SS [S "map_op"; S' "n"; S "ins"; S "outs"])
-            (s [l (S "stride") (GridDimX*BlockDimX)
-                l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
-                for_ (V "i") 
-                    (inl (S "i") (V "i" .< V "n"))
-                    (inl (S "i") 
-                        (l E 
-                           (s  [l (S "array_index") (inl (S "x") (ArrayIndex(V "x",V "i")))
-                                l (S "f") (inl (S' "in") (ap (V "map_op") (VV [V "i"; ap (V "array_index") (V "in")])))
-                                l (S "results") (ap cuda_map (VV [V "f"; V "ins"]))
-                                l (S "results_outs") (VVZip(VV [V "results"; V "outs"]))
-                                ] (ap cuda_map (VV [ap (V "setter") (V "array_index"); V "results_outs"])))
-                            (V "i" + V "stride")))
-                ] B))
-
-let cuda_module_map_forward = ap cuda_module_map_template map_forward_setter
-let cuda_module_map_backward = ap cuda_module_map_template map_backward_setter
+    """
+fun (setter, map_op, *n, ins, outs) ->
+    inl stride = Cuda.GridDimX * Cuda.BlockDimX
+    fun rec loop i =
+        if i < n then
+            inl results = Tuple.Map (inl *in -> in.[i]) ins |> map_op i
+            Tuple.Zip (outs,results) |> setter i
+            loop (i+stride)
+    loop (Cuda.BlockIdxX * Cuda.BlockDimX + Cuda.ThreadIdxX)
+    """
 
 let cuda_module_map_redo_map_template =
     meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; S' "n"; S "ins"; S "outs"])

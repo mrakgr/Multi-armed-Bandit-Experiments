@@ -44,6 +44,7 @@ and CudaPattern =
     | F of CudaPattern * CudaExpr // Functiona application with retracing.
 
 and CudaExpr = 
+    | TypeError of string
     | V of string // standard variable
     | V' of TyV // given variable
     | T of TypedCudaExpr
@@ -406,7 +407,7 @@ let rec methr' name args body =
     | [] -> body
 
 /// The tuple map function. Goes over the tuple scanning for a pattern and triggers only if it finds it.
-let cuda_map =
+let tuple_map line =
     let recurse x = ap (V "rec") (VV [V "f"; V x])
     inlr "rec" (SS [S "f"; S "q"])
         (match_ (V "q")
@@ -414,8 +415,10 @@ let cuda_map =
             F(S "x",V "f"), V "x"
             SSS [SS' "v1"] "rest", cons (recurse "v1") (recurse "rest")
             SS [], VV []
-            ]) 
+            E, TypeError <| sprintf "Cuda.Map failed to match on line %i." line
+            ])
 
+           
 let data_empty (blockDim, gridDim) = 
     {memoized_method_envs=d0(); memoized_inlineable_envs=d0()
      memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
@@ -740,6 +743,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         tev d a |> destructure_deep d |> zip_remap |> f
 
     match exp with
+    | TypeError er -> failwith er
     | T x -> x // To assist in CubBlockReduce so evaled cases do not have to be evaluated twice.
     | V' x -> TyV x // To assist in interfacing with the outside.
     | LitInt32 x -> TyLitInt32 x

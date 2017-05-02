@@ -31,12 +31,18 @@ let rounds p = between_brackets '(' p ')'
 let curlies p = between_brackets '{' p '}'
 let quares p = between_brackets '[' p ']'
 
-let pattern_identifier = identifier_template |>> S 
+let pattern_identifier = 
+    choice
+        [
+        skipChar '_' |>> fun _ -> S ""
+        skipChar '*' >>. identifier_template |>> S'
+        identifier_template |>> S
+        ]
 let rec pattern_inner_template f = f pattern comma |>> SS
 and pattern_inner x = pattern_inner_template sepBy x 
 and pattern_inner1 x = pattern_inner_template sepBy1 x
 and pattern x = (pattern_identifier <|> rounds pattern_inner) x
-let pattern_list = sepEndBy1 pattern_inner1 spaces
+let pattern_list = sepEndBy1 (rounds pattern_inner1 <|> pattern_inner1) spaces
 
 
 let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "true" |>> fun _ -> LitBool true)
@@ -61,12 +67,17 @@ let pnumber =
 
 let lit = (pbool <|> pnumber) .>> notFollowedBy asciiLetter .>> spaces
 let var = identifier_template |>> V
-let if_then_else expr =
+let if_then_else expr (s: CharStream<_>) =
+    let i = s.Column
+    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
     pipe3
         (skipString "if" >>. spaces1 >>. expr)
-        (skipString "then" >>. spaces1 >>. expr)
-        (skipString "else" >>. spaces1 >>. expr)
-        (fun cond tr fl -> If(cond,tr,fl))
+        (expr_indent (skipString "then" >>. spaces1 >>. expr))
+        (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
+        (fun cond tr fl -> 
+            let fl = match fl with Some x -> x | None -> VV []
+            If(cond,tr,fl))
+        s
 
 let name = identifier_template
 
@@ -82,7 +93,8 @@ let statements expr =
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
-let case_inl_pat_expr expr = pipe2 (inl_ >>. pattern_inner1) (lam >>. expr) (fun pattern body -> inl pattern body)
+let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list) (lam >>. expr) (fun pattern body -> inl' pattern body)
+let case_fun_pat_list_expr expr = pipe2 (fun_ >>. pattern_list) (lam >>. expr) (fun pattern body -> meth' pattern body)
 let case_inl_rec_name_pat_list_expr expr = pipe3 (inl_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> inlr' name pattern body)
 let case_fun_rec_name_pat_list_expr expr = pipe3 (fun_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> methr' name pattern body)
 
@@ -92,7 +104,7 @@ let case_rounds expr = rounds expr
 let case_var expr = var
 
 let expressions expr =
-    [case_inl_pat_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
+    [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
      case_plit; case_if_then_else; case_rounds; case_var]
     |> List.map (fun x -> x expr |> attempt)
     |> choice
@@ -162,6 +174,7 @@ let expr =
     opp.AddOperator(InfixOperator("<=", spaces, 4, Associativity.None, fun x y -> LTE(x,y)))
     opp.AddOperator(InfixOperator("<", spaces, 4, Associativity.None, fun x y -> LT(x,y)))
     opp.AddOperator(InfixOperator("=", spaces, 4, Associativity.None, fun x y -> EQ(x,y)))
+    opp.AddOperator(InfixOperator("<>", spaces, 4, Associativity.None, fun x y -> NEQ(x,y)))
     opp.AddOperator(InfixOperator(">", spaces, 4, Associativity.None, fun x y -> GT(x,y)))
     opp.AddOperator(InfixOperator(">=", spaces, 4, Associativity.None, fun x y -> GTE(x,y)))
 
