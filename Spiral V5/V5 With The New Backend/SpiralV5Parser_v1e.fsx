@@ -134,10 +134,10 @@ let process_parser_exprs exprs =
     | _ :: _ -> process_parser_exprs exprs
     | _ -> preturn (VV [])
 
-let indentations statements expressions =
+let indentations statements expressions (s: CharStream<_>) =
+    let i = s.Column
+    let inline if_col op tr fl (s: CharStream<_>) = if op i s.Column then tr s else fl s
     let expr_indent expr (s: CharStream<_>) =
-        let i = s.Column
-        let inline if_col op tr fl (s: CharStream<_>) = if op i s.Column then tr s else fl s
         let expr = 
             if_col (=) 
                 (optional semicolon >>. expr)
@@ -146,7 +146,8 @@ let indentations statements expressions =
                     pzero)
         many1 expr s
 
-    expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs
+    expr_indent ((statements |>> ParserStatement) <|> (expressions i |>> ParserExpr)) >>= process_parser_exprs
+    <| s
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
@@ -155,12 +156,14 @@ let application expr (s: CharStream<_>) =
         else pzero s
     pipe2 expr (many expr_up) ap' s
 
-let tuple expr =
-    sepBy1 expr comma
+let tuple expr i (s: CharStream<_>) =
+    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    sepBy1 (expr_indent (expr i)) (expr_indent comma)
     |>> function
         | _ :: _ :: _ as l -> VV l
         | x :: _ -> x
         | _ -> failwith "Empty tuples are handled in expr_block."
+    <| s
 
 let expr =
     let opp = new OperatorPrecedenceParser<_,_,_>()
@@ -181,22 +184,26 @@ let expr =
     opp.AddOperator(InfixOperator("||", spaces, 2, Associativity.Right, fun x y -> And(x,y)))
     opp.AddOperator(InfixOperator("&&", spaces, 3, Associativity.Right, fun x y -> Or(x,y)))
 
-    let operators expr =
-        let p = opp.ExpressionParser
-        opp.TermParser <- expr
-        p
+    opp.AddOperator(InfixOperator("|>", spaces, 1, Associativity.Left, fun a f -> Apply(f,a)))
+    opp.AddOperator(InfixOperator(">>", spaces, 1, Associativity.Left, fun a b -> inl (S "x") (Apply(b,Apply(a,V "x")))))
+    opp.AddOperator(InfixOperator("<|", spaces, 1, Associativity.Left, fun f a -> Apply(f,a)))
+    opp.AddOperator(InfixOperator("<<", spaces, 1, Associativity.Left, fun b a -> inl (S "x") (Apply(b,Apply(a,V "x")))))
 
-    let rec expr s = 
-        indentations (statements expr) (tuple (operators (application (expressions expr)))) s
+    let operators expr i =
+        let f expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+        opp.TermParser <- f expr
+        f opp.ExpressionParser
+
+    let rec expr s = indentations (statements expr) (tuple (operators (application (expressions expr)))) s
 
     expr
     
 let test = "a,(b + f e, 2, 3),c"
 
-let test2 = 
+let test2 = // I'd like this to be an error.
     """
-    5+3
-    2,3,4
+    2 
+   + 2
     """
 
 let result = run (spaces >>. expr) test2
