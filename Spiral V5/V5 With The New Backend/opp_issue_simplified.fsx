@@ -33,8 +33,8 @@ let expr =
 let test2 = // I'd like this to be an error.
     """
     a 
-   + 
-    b 
+     + 
+   b 
     """
 
 let result = run (spaces >>. expr) test2

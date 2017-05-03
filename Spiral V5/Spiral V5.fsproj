@@ -82,6 +82,7 @@
     <None Include="V5 With The New Backend\SpiralV5Parser_v1b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Parser_v1c.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Parser_v1d.fsx" />
+    <None Include="V5 With The New Backend\opp_issue_simplified.fsx" />
     <None Include="V5 With The New Backend\load-references-release.fsx" />
     <None Include="V5 With The New Backend\load-project-release.fsx" />
     <None Include="V5 With The New Backend\Speed test.fsx" />
@@ -91,7 +92,6 @@
     <None Include="V5 With The New Backend\SpiralV5CudaInit.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
-    <None Include="V5 With The New Backend\opp_issue_simplified.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />

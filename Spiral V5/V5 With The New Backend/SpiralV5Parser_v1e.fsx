@@ -51,8 +51,6 @@ let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "tru
 // of the library hence the custom number parsers.
 let pnumber = 
     let pnumber = many1Satisfy isDigit
-    
-
     pnumber >>= fun a ->
         choice [
             skipChar 'u' |>> (fun _ -> uint32 a |> LitUInt32)
@@ -192,7 +190,7 @@ let expr =
     let operators expr i =
         let f expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
         opp.TermParser <- f expr
-        f opp.ExpressionParser
+        opp.ExpressionParser
 
     let rec expr s = indentations (statements expr) (tuple (operators (application (expressions expr)))) s
 
@@ -200,10 +198,11 @@ let expr =
     
 let test = "a,(b + f e, 2, 3),c"
 
-let test2 = // I'd like this to be an error.
+let test2 = 
     """
     2 
-   + 2
+     + 
+    2
     """
 
 let result = run (spaces >>. expr) test2
