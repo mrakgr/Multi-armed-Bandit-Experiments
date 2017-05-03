@@ -98,7 +98,7 @@ let case_fun_rec_name_pat_list_expr expr = pipe3 (fun_rec >>. name) pattern_list
 
 let case_plit expr = lit
 let case_if_then_else expr = if_then_else expr 
-let case_rounds expr = rounds expr 
+let case_rounds expr = rounds (expr <|> preturn (VV []))
 let case_var expr = var
 
 let expressions expr =
@@ -200,9 +200,9 @@ let test = "a,(b + f e, 2, 3),c"
 
 let test2 = 
     """
-    2 
-     + 
     2
+    |> 3
+    ()
     """
 
 let result = run (spaces >>. expr) test2

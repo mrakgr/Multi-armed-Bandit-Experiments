@@ -323,96 +323,83 @@ let eval body (inputs, dims) =
 let eval0 body = eval body (VV [], default_dims)
 
 let map_forward_setter = "inl i (*result, *out) -> out.[i] <- result"
-let map_backward_setter = "inl i (*result, *out) -> Cuda.AtomicAdd(out.[i],result)"
-let map_redo_map_backward_setter = "inl _ (*result, *out) -> Cuda.AtomicAdd(out,result)"
-let cuda_module_map_template =
+let map_backward_setter = "inl i (*result, *out) -> out.[i] <- out.[i] + result"
+
+let cuda_modules =
     """
-fun (setter, map_op, *n, ins, outs) ->
-    inl stride = Cuda.GridDimX * Cuda.BlockDimX
-    fun rec loop i =
-        if i < n then
-            inl results = Tuple.Map (inl *in -> in.[i]) ins |> map_op i
-            Tuple.Zip (outs,results) |> setter i
-            loop (i+stride)
-    loop (Cuda.BlockIdxX * Cuda.BlockDimX + Cuda.ThreadIdxX)
+inl module_selector ->
+    inl index_if_array i *in =
+        typecase in with
+        | Array(in,size) -> in.[i]
+        | Array(in,()) -> in.[()]
+
+    inl map_load_op ins map_op i = Tuple.Map (index_if_array i) ins |> map_op i
+
+    fun map (setter, map_op, *n, ins, outs) =
+        inl stride = Cuda.GridDimX * Cuda.BlockDimX
+        inl map_load_op = map_load_op ins map_op
+        
+        fun rec loop i =
+            if i < n then
+                Tuple.ZipReg (outs,map_load_op ins) |> Tuple.Map (setter i)
+                loop (i+stride)
+        loop (Cuda.BlockIdxX * Cuda.BlockDimX + Cuda.ThreadIdxX)
+
+    fun map_redo (map_op,(neutral_elem,reduce_op),*n,ins,outs) =
+        inl stride = Cuda.GridDimX * Cuda.BlockDimX
+        inl map_load_op = map_load_op ins map_op
+
+        fun rec loop (i, value) =
+            if i < n then loop (i + stride, reduce_op value (map_load_op i))
+            else value
+    
+        inl results = 
+            inl i = Cuda.BlockIdxX * Cuda.BlockDimX + Cuda.ThreadIdxX
+            Cuda.CubBlockReduce(loop (i, neutral_elem), fun (a,b) -> reduce_op a b)
+
+        if Cuda.ThreadIdxX = 0UL then 
+            Tuple.ZipReg(outs,results)
+            |> Tuple.Map (inl (*out,*result) -> out.[Cuda.BlockIdxX] <- result)
+            ()
+
+    fun map_redocol_map (map_op,(neutral_elem,reduce_op),map_store_op,(*num_cols,*num_rows),ins,outs) =
+        inl map_load_op = map_load_op ins map_op
+
+        fun rec loop_col col =
+            let rec loop_row (row, value) = 
+                if row < num_rows then loop_row (row + Cuda.BlockDimX, reduce_op value (map_load_op (col,row)))
+                else value
+
+            if col < num_cols then 
+                inl results = Cuda.CubBlockReduce(loop_row (Cuda.ThreadIdxX, neutral_elem), fun (a,b) -> reduce_op a b)
+                    
+                if Cuda.ThreadIdxX = 0UL then 
+                    Tuple.ZipReg(outs,map_store_op results)
+                    |> Tuple.Map (inl (*out,*result) -> out.[col] <- result)
+                    ()        
+                loop_col (col + Cuda.GridDimX)
+        loop_col Cuda.BlockIdxX
+
+    fun mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
+        inl map_load_op = map_load_op ins map_op
+
+        fun rec loop_col col =
+            inl ins = map_load_op col
+            let rec loop_row row = 
+                if row < num_rows then 
+                    Tuple.ZipReg(outs, ins) |> Tuple.Map (setter (col,row))
+                    loop_row (row + Cuda.BlockDimX)
+
+            if col < num_cols then 
+                loop_row Cuda.ThreadIdxX
+                loop_col (col + Cuda.GridDimX)
+
+        loop_col Cuda.BlockIdxX
+
+    module_selector (map, map_redo, map_redocol_map, mapcol)
     """
 
-let cuda_module_map_redo_map_template =
-    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; S' "n"; S "ins"; S "outs"])
-        (s [l (S "stride") (GridDimX*BlockDimX)
-            l (S "i") (BlockIdxX * BlockDimX + ThreadIdxX)
-            l (S "map_load_op") 
-                (inl (S' "i") 
-                    (l (S "ins") (ap cuda_map (VV [inl (S' "in") (ArrayIndex(V "in",V "i")); V "ins"]))
-                    (ap (V "map_load_op") (VV [V "i"; V "ins"]))))
-            l (S "map_store_op")
-                (inl (S "results")
-                     (s [l (S "x") (VVZip (VV [ap (V "map_store_op") (V "results"); V "outs"]))
-                         l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",BlockIdxX), V "result")))
-                         l E (ap cuda_map (VV [V "f"; V "x"]))
-                         ] B))
-            l (S "inc") (inl (S "i") (V "i" + V "stride"))
-            l (SS [E; S "value"])
-                (for' (VV [ap (V "inc") (V "i"); ap (V "map_load_op") (V "i")])
-                    (inl (SS [S "i"; E]) (V "i" .< V "n"))
-                    (inl (SS [S "i"; S "value"]) 
-                        (VV [ap (V "inc") (V "i"); ap (V "reduce_op") (VV [V "value";ap (V "map_load_op") (V "i")])])))
-            l (S "results") (CubBlockReduce(V "value",meth (SS [S "a"; S "b"]) (ap (V "reduce_op") (VV [V "a"; V "b"])),None))
-            l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (V "results"), B))
-            ] B)
-
-let cuda_module_map_redo_map_forward = cuda_module_map_redo_map_template
-let cuda_module_map_redo_map_backward = ap cuda_module_map_template map_redo_map_backward_setter
-
-let cuda_module_map_redocol_map_template =
-    meth (SS [S "map_load_op";S "reduce_op";S "map_store_op"; SS [S' "num_cols"; S' "num_rows"];S "ins";S "outs"])
-        (s [l (S "map_load_op")
-                (inl (SS [S' "col"; S' "row"]) 
-                    (l (S "ins") (ap cuda_map (VV [inl (S' "in") (ArrayIndex(V "in",VV [V "col"; V "row"])); V "ins"]))
-                    (ap (V "map_load_op") (VV [VV [V "col"; V "row"]; V "ins"]))))
-            l (S "map_store_op")
-                (inl (SS [S' "col"; S "results"])
-                        (s [l (S "x") (VVZip (VV [ap (V "map_store_op") (V "results"); V "outs"]))
-                            l (S "f") (inl (SS [S' "result"; S' "out"]) (MSet(ArrayIndex(V "out",V "col"), V "result")))
-                            l E (ap cuda_map (VV [V "f"; V "x"]))
-                            ] B))
-            l (S "inc_col") (inl (S "col") (V "col" + GridDimX))
-            l (S "inc_row") (inl (S "row") (V "row" + BlockDimX))
-            for_ BlockIdxX
-                (inl (S "col") (V "col" .< V "num_cols"))
-                (inl (S "col")
-                    (s [l (SS [E; S "value"]) 
-                            (for' (VV [ap (V "inc_row") ThreadIdxX; ap (V "map_load_op") (VV [V "col"; ThreadIdxX])])
-                                (inl (SS [S "row"; S ""]) (V "row" .< V "num_rows"))
-                                (inl (SS [S "row"; S "value"])
-                                    (VV [ap (V "inc_row") (V "row"); 
-                                         ap (V "reduce_op") (VV [V "value"; ap (V "map_load_op") (VV [V "col"; V "row"])])])))
-                        l (S "results") (CubBlockReduce(V "value",meth (SS [S "a"; S "b"]) (ap (V "reduce_op") (VV [V "a"; V "b"])),None))
-                        l E (If(ThreadIdxX .= LitUInt64 0UL, ap (V "map_store_op") (VV [V "col"; V "results"]), B))
-                        ] (ap (V "inc_col") (V "col"))))
-            ] B)
-
-let cuda_module_mapcol_template = // TODO: Revisit this after finishing the parser.
-    inl (S "setter")
-        (meth (SS [S "map_op"; SS [S' "num_cols"; S' "num_rows"]; S "outs_prim_adj"; S "ins_prim_adj"])
-            (s [l (S "inc_col") (inl (S "col") (V "col" + GridDimX))
-                l (S "inc_row") (inl (S "row") (V "row" + BlockDimX))
-                l (S "array_index") (inl' [S' "i"; S' "x"] (ArrayIndex(V "x",V "i")))
-                for_ BlockIdxX
-                    (inl (S "col") (V "col" .< V "num_cols"))
-                    (inl (S "col")
-                        (s [l (S "outs_prim_adj") (ap cuda_map (VV [ap (V "array_index") (V "col"); V "outs_prim_adj"]))
-                            for_ ThreadIdxX 
-                                (inl (SS [S "row"]) (V "row" .< V "num_rows"))
-                                (inl (SS [S "row"])
-                                   (l E (s [l (SS [S "ins_prim"; S "ins_adj"]) (VVUnzip(V "ins_prim_adj"))
-                                            l (S "ins_prim") (ap cuda_map (VV [ap (V "array_index") (VV [V "col"; V "row"]); V "ins_prim"]))
-                                            l (S "f") (inl (SS [SS [S' "out_prim"; S' "out_adj"]; S' "in_prim"]) (ap (V "map_op") (VV [VV [V "col"; V "row"]; VV [V "out_prim"; V "out_adj"]; V "in_prim"])))
-                                            l (S "results") (ap cuda_map (VV [V "f"; VVZip(VV [V "outs_prim_adj"; V "in_prim"])]))
-                                            l (S "results_ins_adj") (VVZip(VV [V "results"; V "ins_adj"]))
-                                            ] (ap cuda_map (VV [ap (V "setter") (ap (V "array_index") (VV [V "col"; V "row"])); V "results_ins_adj"])))
-                                        (ap (V "inc_row") (V "row"))))
-                            ] (ap (V "inc_col") (V "col"))))
-                ] B))
-
-let cuda_module_map_redocol_map_forward = cuda_module_map_redocol_map_template
+let cuda_module_map_template = "fun map :: _ -> map"
+let cuda_module_map_redo_template = "fun _ :: map_redo :: _ -> map_redo"
+let cuda_module_map_redocol_map_template = "fun _ :: _ :: map_redocol_map :: _ -> map_redocol_map"
+let cuda_module_mapcol_template = "fun _ :: _ :: _ :: map_redocol_map :: _ -> mapcol"

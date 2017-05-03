@@ -64,7 +64,8 @@ and CudaExpr =
     | VVIndex of CudaExpr * CudaExpr
     | VV of CudaExpr list // tuple
     | VVCons of CudaExpr * CudaExpr
-    | VVZip of CudaExpr
+    | VVZipReg of CudaExpr
+    | VVZipIrreg of CudaExpr
     | VVUnzip of CudaExpr
 
     // Array cases
@@ -720,10 +721,18 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 | _ -> List.rev acc_total |> on_succ
         loop [] [] [] l
 
-    let rec zip l = 
-        match l with
-        | _ :: _ -> transpose l (fun _ -> l) (List.map (function VV x -> zip x | x -> x)) |> VV
-        | _ -> failwith "Empty input to zip is invalid."
+    let zip_template on_ireg l = 
+        let rec zip l = 
+            match l with
+            | _ :: _ -> transpose l (fun _ -> on_ireg l) (List.map (function VV x -> zip x | x -> x)) |> VV
+            | _ -> failwith "Empty input to zip is invalid."
+        zip l
+
+    let zip_reg = zip_template id
+    let zip_irreg = 
+        zip_template <| fun l ->
+            if List.forall (function VV _ -> false | _ -> true) l then l
+            else failwith "Irregular inputs in zip."
 
     let rec unzip l = 
         let is_all_vv x = List.forall (function VV _ -> true | _ -> false) x
@@ -792,7 +801,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
-    | VVZip a -> zip_op d (function VV x -> zip x |> tev d | x -> tev d x) a
+    | VVZipReg a -> zip_op d (function VV x -> zip_reg x |> tev d | x -> tev d x) a
+    | VVZipIrreg a -> zip_op d (function VV x -> zip_irreg x |> tev d | x -> tev d x) a
     | VVUnzip a -> zip_op d (unzip >> VV >> tev d) a
     | VV vars ->
         let vv = List.map (tev d) vars
