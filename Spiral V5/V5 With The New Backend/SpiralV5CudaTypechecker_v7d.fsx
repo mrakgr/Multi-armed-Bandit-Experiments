@@ -999,3 +999,4 @@ let typecheck dims body inputs =
 let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
+
