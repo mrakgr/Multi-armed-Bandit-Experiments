@@ -20,7 +20,7 @@ let inl_rec = skipString "inl" .>> spaces .>> skipString "rec" .>> spaces
 let fun_rec = skipString "fun" .>> spaces .>> skipString "rec" .>> spaces
 
 let identifier_template = 
-    many1Satisfy2L isAsciiLetter (fun x -> isAsciiLetter x || isDigit x || x = ''') "identifier" .>> spaces
+    many1Satisfy2L isAsciiLetter (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "identifier" .>> spaces
     >>=? function
         | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
             Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)

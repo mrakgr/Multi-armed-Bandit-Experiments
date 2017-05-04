@@ -402,4 +402,4 @@ inl module_selector ->
 let cuda_module_map_template = "fun map :: _ -> map"
 let cuda_module_map_redo_template = "fun _ :: map_redo :: _ -> map_redo"
 let cuda_module_map_redocol_map_template = "fun _ :: _ :: map_redocol_map :: _ -> map_redocol_map"
-let cuda_module_mapcol_template = "fun _ :: _ :: _ :: map_redocol_map :: _ -> mapcol"
+let cuda_module_mapcol_template = "fun _ :: _ :: _ :: mapcol :: _ -> mapcol"
