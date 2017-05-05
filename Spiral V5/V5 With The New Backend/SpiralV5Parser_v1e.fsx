@@ -223,8 +223,8 @@ let expr =
     opp.AddOperator(InfixOperator("<<", spaces, 1, Associativity.Left, fun b a -> inl (S "x") (Apply(b,Apply(a,V "x")))))
 
     let operators expr i =
-        let f expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
-        opp.TermParser <- f expr
+        let f (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+        opp.TermParser <- f
         opp.ExpressionParser
 
     let rec expr s = indentations (statements expr) (tuple (operators (application (expressions expr)))) s
