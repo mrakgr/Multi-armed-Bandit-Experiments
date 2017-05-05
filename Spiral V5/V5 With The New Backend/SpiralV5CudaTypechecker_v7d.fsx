@@ -68,7 +68,8 @@ and CudaExpr =
     | VVCons of CudaExpr * CudaExpr
     | VVZipReg of CudaExpr
     | VVZipIrreg of CudaExpr
-    | VVUnzip of CudaExpr
+    | VVUnzipReg of CudaExpr
+    | VVUnzipIrreg of CudaExpr
 
     // Array cases
     | ArrayIndex of CudaExpr * CudaExpr
@@ -388,6 +389,7 @@ let rec ap' f = function
     | [] -> f
 
 let match_ x pat = ap (Inlineable("",pat)) x
+let function_ pat = Inlineable("",pat)
 
 let rec inl' args body = 
     match args with
@@ -410,7 +412,7 @@ let rec methr' name args body =
     | [] -> body
 
 /// The tuple map function. Goes over the tuple scanning for a pattern and triggers only if it finds it.
-let tuple_map line =
+let tuple_map =
     let recurse x = ap (V "rec") (VV [V "f"; V x])
     inlr "rec" (SS [S "f"; S "q"])
         (match_ (V "q")
@@ -418,8 +420,41 @@ let tuple_map line =
             F(S "x",V "f"), V "x"
             SSS [SS' "v1"] "rest", cons (recurse "v1") (recurse "rest")
             SS [], VV []
-            E, TypeError <| sprintf "Cuda.Map failed to match on line %i." line
+            E, TypeError <| sprintf "tuple .Map failed to match."
             ])
+
+let tuple_library =
+    function_
+        [
+        N("Map", S "x"), ap tuple_map (V "x")
+        N("ZipReg", S "x"), VVZipReg (V "x")
+        N("ZipIrreg", S "x"), VVZipIrreg (V "x")
+        N("UnzipReg", S "x"), VVUnzipReg (V "x")
+        N("UnzipIrreg", S "x"), VVUnzipIrreg (V "x")
+        E, TypeError "Call to non-existent case in the tuple function."
+        ]
+
+let cuda_library =
+    function_
+        [
+        N("BlockDimX",S ""), BlockDimX
+        N("BlockDimY",S ""), BlockDimY
+        N("BlockDimZ",S ""), BlockDimZ
+        N("GridDimX",S ""), GridDimX
+        N("GridDimY",S ""), GridDimY
+        N("GridDimZ",S ""), GridDimZ
+        N("ThreadIdxX",S ""), ThreadIdxX
+        N("ThreadIdxY",S ""), ThreadIdxY
+        N("ThreadIdxZ",S ""), ThreadIdxZ
+        N("BlockIdxX",S ""), BlockIdxX
+        N("BlockIdxY",S ""), BlockIdxY
+        N("BlockIdxZ",S ""), BlockIdxZ
+        N("CubBlockReduce",SS [S "value"; S "method"]), CubBlockReduce(V "value",V "method",None)
+        N("CubBlockReduce",SS [S "value"; S "method"; S "valid_threads"]), CubBlockReduce(V "value",V "method",Some <| V "valid_threads")
+        N("ArrayCreateShared",SS [S "size"; S "typeof"]), ArrayCreateShared(V "size",V "x")
+        N("ArrayCreateLocal",SS [S "size"; S "typeof"]), ArrayCreateLocal(V "size",V "x")
+        E, TypeError "Call to non-existent case in the cuda function."
+        ]
 
            
 let data_empty (blockDim, gridDim) = 
@@ -699,9 +734,15 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 |> ret)
 
     let rec apply_template d apply_inlineable apply_method (la: CudaExpr) ra on_fail ret =
-        match get_type (tev d la) with
+        let la = tev d la
+        match get_type la with
         | InlineableT(x,env) -> apply_inlineable d (case_a d) case_a' (case_f d apply_both) (x,env) ra on_fail ret
         | MethodT(x,env) -> apply_method d (case_a d) case_a' (case_f d apply_both) (x,env) ra on_fail ret
+        | LocalArrayT _ | SharedArrayT _ | GlobalArrayT _ -> 
+            // This case is a bit of a hack to make the indexing syntax nicer. 
+            // In the full language, I'd use closures for arrays instead. 
+            // That is some ways off, and I do not feel like implementing them just yet.
+            ArrayIndex(T la, T ra) |> tev d 
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
     and apply_both d (la: CudaExpr) ra = apply_template d apply_inlineable apply_method la ra
@@ -732,21 +773,26 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | _ -> failwith "Empty input to zip is invalid."
         zip l
 
+    let zip_reg_guard l =
+        if List.forall (function VV _ -> false | _ -> true) l then l
+        else failwith "Irregular inputs in zip."
     let zip_reg = zip_template id
-    let zip_irreg = 
-        zip_template <| fun l ->
-            if List.forall (function VV _ -> false | _ -> true) l then l
-            else failwith "Irregular inputs in zip."
+    let zip_irreg = zip_template zip_reg_guard
 
-    let rec unzip l = 
+    let rec unzip_template on_irreg l = 
         let is_all_vv x = List.forall (function VV _ -> true | _ -> false) x
-        match l with
-        | VV x ->
-            match x with
-            | _ :: _ when is_all_vv x -> let t = List.map (unzip >> VV) x in transpose t (fun _ -> x) id
-            | _ :: _ -> x
-            | _ -> failwith "Empty inputs to unzip are invalid."
-        | _ -> failwith "Unzip called on a non-VV."
+        let rec unzip l =
+            match l with
+            | VV x ->
+                match x with
+                | _ :: _ when is_all_vv x -> let t = List.map (unzip >> VV) x in transpose t (fun _ -> on_irreg x) id
+                | _ :: _ -> x
+                | _ -> failwith "Empty inputs to unzip are invalid."
+            | _ -> failwith "Unzip called on a non-VV."
+        unzip l
+
+    let unzip_reg = unzip_template zip_reg_guard
+    let unzip_irreg = unzip_template id
 
     let zip_op d f a = 
         let rec zip_remap = function
@@ -813,7 +859,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
     | VVZipReg a -> zip_op d (function VV x -> zip_reg x |> tev d | x -> tev d x) a
     | VVZipIrreg a -> zip_op d (function VV x -> zip_irreg x |> tev d | x -> tev d x) a
-    | VVUnzip a -> zip_op d (unzip >> VV >> tev d) a
+    | VVUnzipReg a -> zip_op d (unzip_reg >> VV >> tev d) a
+    | VVUnzipIrreg a -> zip_op d (unzip_irreg >> VV >> tev d) a
     | VV vars -> vv_make vars null
     | VVNamed (vars, name) -> vv_make vars name
     | VVIndex(v,i) ->
@@ -998,6 +1045,9 @@ let typecheck dims body inputs =
     try
         let main_method, memo = 
             let d = data_empty dims
+            let body =
+                (l (S "cuda") (cuda_library)
+                (l (S "tuple") (tuple_library) body))
             exp_and_seq d (Apply(body,inputs)), d.memoized_methods
         let imemo = Dictionary(HashIdentity.Structural)
         closure_conv imemo memo main_method |> ignore

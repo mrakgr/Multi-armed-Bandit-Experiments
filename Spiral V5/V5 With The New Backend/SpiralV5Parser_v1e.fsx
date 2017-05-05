@@ -1,9 +1,9 @@
-﻿#load "SpiralV5CudaTypechecker_v7c'.fsx"
+﻿#load "SpiralV5CudaTypechecker_v7d.fsx"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
 //#r "../../packages/FParsec-Pipes.0.3.1.0/lib/net45/FParsec-Pipes.dll"
 
-open SpiralV5CudaTypechecker_v7c'
+open SpiralV5CudaTypechecker_v7d
 open FParsec
 
 type ParserExpr =
@@ -11,20 +11,26 @@ type ParserExpr =
     | ParserExpr of CudaExpr
 
 let comma = skipChar ',' .>> spaces
+let underscore = skipChar '_' .>> spaces
 let semicolon = skipChar ';' .>> spaces
 let eq = skipChar '=' .>> spaces
+let rdash = skipChar '\\' .>> spaces
 let lam = skipString "->" .>> spaces
+let pppp = skipString "::" .>> spaces
+let from = skipString "from" .>> spaces
 let inl_ = skipString "inl" .>> spaces
 let fun_ = skipString "fun" .>> spaces
 let inl_rec = skipString "inl" .>> spaces .>> skipString "rec" .>> spaces
 let fun_rec = skipString "fun" .>> spaces .>> skipString "rec" .>> spaces
 
-let identifier_template = 
-    many1Satisfy2L isAsciiLetter (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "identifier" .>> spaces
+let var_name = 
+    many1Satisfy2L isAsciiLower (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "identifier" .>> spaces
     >>=? function
-        | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
+        | "typecase" | "with" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
             Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
+let type_name = 
+    many1Satisfy2L isAsciiUpper (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "Identifier" .>> spaces
         
 let between_brackets l p r = between (skipChar l .>> spaces) (skipChar r .>> spaces) p
 let rounds p = between_brackets '(' p ')'
@@ -34,17 +40,40 @@ let quares p = between_brackets '[' p ']'
 let pattern_identifier = 
     choice
         [
-        skipChar '_' |>> fun _ -> S ""
-        skipChar '*' >>. identifier_template |>> S'
-        identifier_template |>> S
+        underscore |>> fun _ -> S ""
+        skipChar '*' >>. var_name |>> S'
+        var_name |>> S
         ]
-let rec pattern_inner_template f = f pattern comma |>> SS
-and pattern_inner x = pattern_inner_template sepBy x 
-and pattern_inner1 x = pattern_inner_template sepBy1 x
-and pattern x = (pattern_identifier <|> rounds pattern_inner) x
-let pattern_list = sepEndBy1 (rounds pattern_inner1 <|> pattern_inner1) spaces
 
+let pattern_tuple pattern = 
+    sepBy1 pattern comma 
+    |>> function 
+        | _ :: _ :: _ as x -> SS x
+        | x :: _ -> x
+        | _ -> failwith "impossible"
+    
+let pattern_tuple' pattern = 
+    let f = function
+        | last :: rest ->
+            match last with
+            | S last when rest.IsEmpty = false -> preturn (SSS (List.rev rest) last)
+            | S last -> preturn (S last)
+            | _ -> fun _ -> Reply(FatalError, expected "standard identifier")
+        | _ -> failwith "impossible"
+    sepBy1 pattern pppp 
+    >>= (List.rev >> f)
+let pattern_rounds pattern = rounds (pattern <|> preturn (SS []))
+let pattern_type_name pattern = type_name >>. pattern_rounds pattern 
+let pattern_active pattern = 
+    pipe2 (rdash >>. pattern)
+        (from >>. var_name)
+        (fun pattern name -> F(pattern, V name))
+let rec patterns s = 
+    let cases s = choice [pattern_identifier; pattern_type_name pattern_identifier; pattern_rounds patterns; pattern_active patterns] s
+    pattern_tuple (pattern_tuple' cases) s
 
+let pattern_list = many1 patterns
+    
 let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "true" |>> fun _ -> LitBool true)
 
 // FParsec has inbuilt parsers for ints and floats, but they will scan + and - which will wreak havoc with other parts
@@ -64,7 +93,7 @@ let pnumber =
             ]
 
 let lit = (pbool <|> pnumber) .>> notFollowedBy asciiLetter .>> spaces
-let var = identifier_template |>> V
+let var = var_name |>> V
 let if_then_else expr (s: CharStream<_>) =
     let i = s.Column
     let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
@@ -77,9 +106,9 @@ let if_then_else expr (s: CharStream<_>) =
             If(cond,tr,fl))
         s
 
-let name = identifier_template
+let name = var_name
 
-let case_inl_pat_statement expr = pipe2 (inl_ >>. pattern_inner1) (eq >>. expr) (fun pattern body -> l pattern body)
+let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body)
 let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (inlr' "" pattern body))
 let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (inlr' name pattern body))
 let case_fun_name_pat_list_statement expr = pipe3 (fun_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (methr' "" pattern body))
@@ -99,11 +128,17 @@ let case_fun_rec_name_pat_list_expr expr = pipe3 (fun_rec >>. name) pattern_list
 let case_plit expr = lit
 let case_if_then_else expr = if_then_else expr 
 let case_rounds expr = rounds (expr <|> preturn (VV []))
+let case_named_tuple expr = 
+    pipe2 (skipChar '.' >>. type_name)
+        (case_rounds expr)
+        (fun name -> function
+            | VV args -> VVNamed(args,name)
+            | args -> VVNamed([args],name))
 let case_var expr = var
 
 let expressions expr =
     [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
-     case_plit; case_if_then_else; case_rounds; case_var]
+     case_plit; case_if_then_else; case_rounds; case_var; case_named_tuple]
     |> List.map (fun x -> x expr |> attempt)
     |> choice
    
