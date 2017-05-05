@@ -21,7 +21,9 @@ type CudaTy =
     | PrimT of SpiralDeviceVarType
     | VVT of CudaTy list
     | VVNamedT of CudaTy list * string
-    | ClosureT of CudaTy
+    | GlobalArrayT of TypedCudaExpr * CudaTy
+    | SharedArrayT of TypedCudaExpr * CudaTy
+    | LocalArrayT of TypedCudaExpr * CudaTy
     | InlineableT of TyInlineableKey
     | MethodT of TyMethodKey
 
@@ -143,7 +145,6 @@ and TypedCudaExpr =
     // Tuple cases
     | TyVVIndex of TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyVV of TypedCudaExpr list * CudaTy
-    | TyVVNamed of TypedCudaExpr list * CudaTy
 
     // Array cases
     | TyArrayIndex of TypedCudaExpr * TypedCudaExpr list * CudaTy
@@ -210,9 +211,6 @@ and CudaTypecheckerEnv =
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
-let B = VV []
-let TyB = TyVV([], VVT [])
-
 let rec get_type = function
     | TyType t
     | TyV(_,t) | TyIf(_,_,_,t) -> t
@@ -230,7 +228,7 @@ let rec get_type = function
     | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> PrimT UInt64T
 
     // Tuple cases
-    | TyVV(_,t) | TyVVNamed(_,t) | TyVVIndex(_,_,t) -> t
+    | TyVV(_,t) | TyVVIndex(_,_,t) -> t
 
     // Array cases
     | TyArrayIndex(_,_,t) | TyArrayCreate(t) -> t
@@ -260,6 +258,7 @@ let rec is_returnable' = function
         | UInt8T | UInt16T | UInt32T | UInt64T 
         | Int8T | Int16T | Int32T | Int64T 
         | Float32T | Float64T | BoolT -> true
+    | GlobalArrayT _ -> true
     | VVT x -> List.forall is_returnable' x
     | _ -> false
 let is_returnable a = is_returnable' (get_type a)
@@ -354,6 +353,8 @@ let meth x y = Method("",[x,y])
 let methr name x y = Method(name,[x,y])
 
 let E = S ""
+let B = VV []
+let TyB = TyVV([], VVT [])
 /// Matches tuples without a tail.
 let SS x = R (x, None) 
 /// Opposite of S', matches only a tuple.
@@ -368,13 +369,10 @@ let l v b e = Apply(inl v e,b)
 let while_ cond body rest = While(cond,body,rest)
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let command name args = VVNamed(args,name)
-let call_cuda name args = Apply(V "cuda", command name args) // cuda will be a top level function with all the auxiliaries.
-
-let dref x = Apply(x,command "" [])
+let dref x = ArrayIndex(x,VV [])
 let cref x = 
     s [l (S "x") x
-       l (S "ref") (call_cuda "ArrayCreateLocal" [B; V "x"])
+       l (S "ref") (ArrayCreateLocal(VV [],V "x")) 
        l E (MSet(dref (V "ref"),V "x"))] (V "ref")
    
 let for_template end_ init cond body =
@@ -513,8 +511,6 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let check a = true
         prim_un_op_template d er check (fun t a -> t (a, get_type a))
 
-    let make_vvt x = VVT (List.map get_type x)
-
     let filter_duplicate_vars x =
         let h = h0()
         let rec loop = function
@@ -603,7 +599,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let case_r_method recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
         recurse acc l r <| fun (x, x_acc) ->
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT ts)) <| function
-                | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT (t :: ts)), xs_acc)
+                | (TyVV(xs,VVT ts), xs_acc) -> ret (TyVV(x :: xs, VVT <| t :: ts), xs_acc)
                 | _ -> failwith "impossible"
 
     let case_f d apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
@@ -634,7 +630,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts)) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
             | R([],None), TyVV(_, _) -> on_fail () // <| sprintf "More arguments than can be matched in R."
             | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
-            | N (name, next), TyVVNamed(x, VVNamedT(t, name')) ->
+            | N (name, next), TyVV(x, VVNamedT(t, name')) ->
                 if name = name' then recurse acc next (TyVV(x,VVT t)) ret
                 else on_fail() // <| sprintf "Cannot pattern match %s against %s" name name'
             | N _, _ -> on_fail() // "Cannot match name against a non-named argument."
@@ -759,6 +755,12 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
         tev d a |> destructure_deep d |> zip_remap |> f
 
+    let vv_make vars name =
+        let vv = List.map (tev d) vars
+        match name with
+        | null | "" -> TyVV(vv, List.map get_type vv |> VVT)
+        | _ -> TyVV(vv, VVNamedT(List.map get_type vv, name))
+
     match exp with
     | TypeError er -> failwith er
     | T x -> x // To assist in CubBlockReduce so evaled cases do not have to be evaluated twice.
@@ -812,9 +814,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | VVZipReg a -> zip_op d (function VV x -> zip_reg x |> tev d | x -> tev d x) a
     | VVZipIrreg a -> zip_op d (function VV x -> zip_irreg x |> tev d | x -> tev d x) a
     | VVUnzip a -> zip_op d (unzip >> VV >> tev d) a
-    | VV vars ->
-        let vv = List.map (tev d) vars
-        TyVV(vv,make_vvt vv)
+    | VV vars -> vv_make vars null
+    | VVNamed (vars, name) -> vv_make vars name
     | VVIndex(v,i) ->
         match tev d v, tev d i with
         | v, (TyLitInt32 i as i') ->
@@ -904,8 +905,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     | While(cond,body,e) ->
         let cond, body = tev d (Apply(Method("",[E,cond]),B)), with_empty_seq d body
         match get_type cond, get_type body with
-        | PrimT BoolT, UnitT -> push_sequence d (fun rest -> TyWhile(cond,body,rest,get_type rest)); tev d e
-        | PrimT BoolT, _ -> failwith "Expected UnitT as the type of While's body."
+        | PrimT BoolT, VVT [] -> push_sequence d (fun rest -> TyWhile(cond,body,rest,get_type rest)); tev d e
+        | PrimT BoolT, _ -> failwith "Expected VVT [] as the type of While's body."
         | _ -> failwith "Expected BoolT as the type of While's conditional."
     | CubBlockReduce(input, method_, num_valid) ->
         let dim = 
@@ -1007,4 +1008,3 @@ let typecheck dims body inputs =
 let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
-
