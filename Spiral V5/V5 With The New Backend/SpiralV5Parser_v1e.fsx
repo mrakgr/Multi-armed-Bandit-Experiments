@@ -57,11 +57,11 @@ let pattern_tuple pattern =
     
 let pattern_tuple' pattern = 
     let f = function
-        | last :: rest ->
+        | last :: (_ :: _ as rest) ->
             match last with
-            | S last when rest.IsEmpty = false -> preturn (SSS (List.rev rest) last)
-            | S last -> preturn (S last)
+            | S last -> preturn (SSS (List.rev rest) last)
             | _ -> fun _ -> Reply(FatalError, expected "standard identifier")
+        | last :: _ -> preturn last
         | _ -> failwith "impossible"
     sepBy1 pattern pppp 
     >>= (List.rev >> f)
@@ -166,18 +166,14 @@ let process_parser_exprs exprs =
 
 let indentations statements expressions (s: CharStream<_>) =
     let i = s.Column
-    let inline if_col op tr fl (s: CharStream<_>) = if op i s.Column then tr s else fl s
-    let expr_indent expr (s: CharStream<_>) =
-        let expr = 
-            if_col (=) 
-                (optional semicolon >>. expr)
-                (if_col (<)
-                    (semicolon >>. (if_col (<=) expr pzero))
-                    pzero)
-        many1 expr s
-
-    expr_indent ((statements |>> ParserStatement) <|> (expressions i |>> ParserExpr)) >>= process_parser_exprs
-    <| s
+    let inline if_ op tr (s: CharStream<_>) = if op i s.Column then tr s else pzero s
+    let expr_indent expr =
+        let mutable op = (=)
+        let set_op op' x = op <- op'; x
+        let semicolon s = if_ (<) (semicolon |>> set_op (<=)) s
+        let expr s = if_ op (expr |>> set_op (=)) s
+        many1 (expr .>> optional semicolon)
+    expr_indent ((statements |>> ParserStatement) <|> (expressions i |>> ParserExpr)) >>= process_parser_exprs <| s
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
@@ -245,12 +241,11 @@ let expr =
 
 let test = "a,(b + f e, 2, 3),c"
 
-let test2 = 
+let test2 =
     """
-    2
-    |> 3
-    ()
-    """
+inl q = 1; 2; 3
+qwe
+"""
 
 let result = run (spaces >>. expr) test2
 
