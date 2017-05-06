@@ -15,6 +15,7 @@ let underscore = skipChar '_' .>> spaces
 let semicolon = skipChar ';' .>> spaces
 let eq = skipChar '=' .>> spaces
 let rdash = skipChar '\\' .>> spaces
+let bar = skipChar '|' >>. spaces
 let lam = skipString "->" .>> spaces
 let pppp = skipString "::" .>> spaces
 let from = skipString "from" .>> spaces
@@ -22,6 +23,8 @@ let inl_ = skipString "inl" .>> spaces
 let fun_ = skipString "fun" .>> spaces
 let inl_rec = skipString "inl" .>> spaces .>> skipString "rec" .>> spaces
 let fun_rec = skipString "fun" .>> spaces .>> skipString "rec" .>> spaces
+let typecase = skipString "typecase" >>. spaces
+let with_ = skipString "with" >>. spaces
 
 let var_name = 
     many1Satisfy2L isAsciiLower (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "identifier" .>> spaces
@@ -62,7 +65,7 @@ let pattern_tuple' pattern =
         | _ -> failwith "impossible"
     sepBy1 pattern pppp 
     >>= (List.rev >> f)
-let pattern_rounds pattern = rounds (pattern <|> preturn (SS []))
+let pattern_rounds pattern = rounds (pattern <|>% SS [])
 let pattern_type_name pattern = type_name >>. pattern_rounds pattern 
 let pattern_active pattern = 
     pipe2 (rdash >>. pattern)
@@ -125,9 +128,9 @@ let case_fun_pat_list_expr expr = pipe2 (fun_ >>. pattern_list) (lam >>. expr) (
 let case_inl_rec_name_pat_list_expr expr = pipe3 (inl_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> inlr' name pattern body)
 let case_fun_rec_name_pat_list_expr expr = pipe3 (fun_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> methr' name pattern body)
 
-let case_plit expr = lit
+let case_lit expr = lit
 let case_if_then_else expr = if_then_else expr 
-let case_rounds expr = rounds (expr <|> preturn (VV []))
+let case_rounds expr = rounds (expr <|>% VV [])
 let case_named_tuple expr = 
     pipe2 (skipChar '.' >>. type_name)
         (case_rounds expr)
@@ -135,13 +138,7 @@ let case_named_tuple expr =
             | VV args -> VVNamed(args,name)
             | args -> VVNamed([args],name))
 let case_var expr = var
-
-let expressions expr =
-    [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
-     case_plit; case_if_then_else; case_rounds; case_var; case_named_tuple]
-    |> List.map (fun x -> x expr |> attempt)
-    |> choice
-   
+ 
 let process_parser_exprs exprs = 
     let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")
     let process_parser_expr a b on_fail on_succ =
@@ -184,9 +181,7 @@ let indentations statements expressions (s: CharStream<_>) =
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_up (s: CharStream<_>) = 
-        if i < s.Column then expr s
-        else pzero s
+    let expr_up (s: CharStream<_>) = if i < s.Column then expr s else pzero s
     pipe2 expr (many expr_up) ap' s
 
 let tuple expr i (s: CharStream<_>) =
@@ -195,12 +190,30 @@ let tuple expr i (s: CharStream<_>) =
     |>> function
         | _ :: _ :: _ as l -> VV l
         | x :: _ -> x
-        | _ -> failwith "Empty tuples are handled in expr_block."
+        | _ -> failwith "impossible"
     <| s
+
+let case_typecase expr (s: CharStream<_>) =
+    let i = s.Column
+    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    let pat_body = expr_indent patterns .>> expr_indent lam
+    let pat_first = expr_indent (optional bar) >>. pat_body
+    let pat = expr_indent bar >>. pat_body
+    let body = expr_indent expr
+    let case_case pat = pipe2 pat body (fun a b -> a,b)
+    pipe3 (typecase >>. expr .>> with_)
+        (case_case pat_first)
+        (many (case_case pat))
+        (fun e x xs -> match_ e (x :: xs)) s
+
+let expressions expr =
+    [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
+     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase]
+    |> List.map (fun x -> x expr |> attempt)
+    |> choice
 
 let expr =
     let opp = new OperatorPrecedenceParser<_,_,_>()
-
     opp.AddOperator(InfixOperator("+", spaces, 6, Associativity.Left, fun x y -> Add(x,y)))
     opp.AddOperator(InfixOperator("-", spaces, 6, Associativity.Left, fun x y -> Sub(x,y)))
     opp.AddOperator(PrefixOperator("-", spaces, 10, true, Neg))
@@ -223,14 +236,13 @@ let expr =
     opp.AddOperator(InfixOperator("<<", spaces, 1, Associativity.Left, fun b a -> inl (S "x") (Apply(b,Apply(a,V "x")))))
 
     let operators expr i =
-        let f (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
-        opp.TermParser <- f
+        opp.TermParser <- fun (s: CharStream<_>) -> if i <= s.Column then expr s else pzero s
         opp.ExpressionParser
 
     let rec expr s = indentations (statements expr) (tuple (operators (application (expressions expr)))) s
 
     expr
-    
+
 let test = "a,(b + f e, 2, 3),c"
 
 let test2 = 
