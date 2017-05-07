@@ -391,25 +391,20 @@ let rec ap' f = function
 let match_ x pat = ap (Inlineable("",pat)) x
 let function_ pat = Inlineable("",pat)
 
-let rec inl' args body = 
-    match args with
-    | x :: xs -> inl x (inl' xs body)
-    | [] -> body
-
 let rec inlr' name args body = 
     match args with
-    | x :: xs -> inlr name x (inl' xs body)
+    | x :: xs -> inlr name x (inlr' "" xs body)
     | [] -> body
 
-let rec meth' args body = 
-    match args with
-    | x :: xs -> meth x (meth' xs body)
-    | [] -> body
+let rec inl' args body = inlr' "" args body
 
 let rec methr' name args body = 
     match args with
-    | x :: xs -> methr name x (meth' xs body)
+    | [x] -> methr name x body
+    | x :: xs -> inlr name x (methr' "" xs body)
     | [] -> body
+
+let meth' args body = methr' "" args body
 
 /// The tuple map function. Goes over the tuple scanning for a pattern and triggers only if it finds it.
 let tuple_map =

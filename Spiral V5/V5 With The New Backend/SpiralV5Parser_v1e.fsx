@@ -57,11 +57,11 @@ let pattern_tuple pattern =
     
 let pattern_tuple' pattern = 
     let f = function
-        | last :: (_ :: _ as rest) ->
+        | [last] -> preturn last
+        | last :: rest ->
             match last with
             | S last -> preturn (SSS (List.rev rest) last)
             | _ -> fun _ -> Reply(FatalError, expected "standard identifier")
-        | last :: _ -> preturn last
         | _ -> failwith "impossible"
     sepBy1 pattern pppp 
     >>= (List.rev >> f)
