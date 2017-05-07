@@ -858,8 +858,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then 
-                //tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
-                TyIf(cond,tr,fl,type_tr)
+                tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
+                //TyIf(cond,tr,fl,type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
     | VVZipReg a -> zip_op d (function VV x -> zip_reg x |> tev d | x -> tev d x) a
     | VVZipIrreg a -> zip_op d (function VV x -> zip_irreg x |> tev d | x -> tev d x) a

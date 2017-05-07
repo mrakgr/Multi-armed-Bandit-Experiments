@@ -255,19 +255,25 @@ let tc body =
             let d = data_empty default_dims
             exp_and_seq d body, d.memoized_methods
         let imemo = Dictionary(HashIdentity.Structural)
-        printfn "Done with typechecking. Going into closure conversion."
-        closure_conv imemo memo main_method |> ignore
-        Succ imemo
+        //printfn "Done with typechecking. Going into closure conversion."
+        //closure_conv imemo memo main_method |> ignore
+        //Succ imemo
+        Succ memo
     with e -> Fail (e.Message, e.StackTrace)
 
 let test = "a,(b + f e, 2, 3),c"
 
 let fib =
     """
-fun () ->
-    fun rec fib x =
-        if x <= 0 then 0 else fib (x-1) + fib (x-2)
-    fib 5
+fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
+fib 5
+"""
+
+let fib_y =
+    """
+fun rec y f x = f (y f) x
+fun fib r x = if x <= 0 then 0 else r (x-1) + r (x-2)
+y fib 5
 """
 
 let ot1 = 
@@ -276,12 +282,14 @@ fun rec meth cond = if cond then 1 else meth cond
 meth true
     """
 
-let result = run (spaces >>. expr) ot1
+let result = run (spaces >>. expr) fib_y
 
 let t = 
     match result with
     | Success (r,_,_) -> 
         match tc r with Succ x -> x
+
+t.Count
 
 for x in t do
     let (name,body),env = x.Key
@@ -289,10 +297,10 @@ for x in t do
     printfn "body=%A" body
     printfn "env=%A" env
     printfn "---"
-    let sole_args, tyexpr, tag, impl_args = x.Value
-    printfn "sole_args=%A" sole_args
-    printfn "tyexpr=%A" tyexpr
-    printfn "tag=%i" tag
-    printfn "impl_args=%A" impl_args
-    printfn "==="
+//    let sole_args, tyexpr, tag, impl_args = x.Value
+//    printfn "sole_args=%A" sole_args
+//    printfn "tyexpr=%A" tyexpr
+//    printfn "tag=%i" tag
+//    printfn "impl_args=%A" impl_args
+//    printfn "==="
 
