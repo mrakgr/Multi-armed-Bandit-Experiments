@@ -17,6 +17,7 @@ let eq = skipChar '=' .>> spaces
 let rdash = skipChar '\\' .>> spaces
 let bar = skipChar '|' >>. spaces
 let lam = skipString "->" .>> spaces
+let set_me = skipString "<-" .>> spaces
 let pppp = skipString "::" .>> spaces
 let from = skipString "from" .>> spaces
 let inl_ = skipString "inl" .>> spaces
@@ -208,7 +209,13 @@ let expressions expr =
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
-let mset = ...
+let mset expr i (s: CharStream<_>) = 
+    let expr_indent expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
+    pipe2 (expr i)
+        (opt (expr_indent set_me >>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
+        (fun l -> function
+            | Some r -> MSet(l,r)
+            | None -> l) s
 
 let expr =
     let opp = new OperatorPrecedenceParser<_,_,_>()
@@ -237,17 +244,55 @@ let expr =
         opp.TermParser <- fun (s: CharStream<_>) -> if i <= s.Column then expr s else pzero s
         opp.ExpressionParser
 
-    let rec expr s = indentations (statements expr) (tuple (operators (application (expressions expr)))) s
+    let rec expr s = indentations (statements expr) (mset (tuple (operators (application (expressions expr))))) s
 
     expr
 
+open System.Collections.Generic
+let tc body = 
+    try
+        let main_method, memo = 
+            let d = data_empty default_dims
+            exp_and_seq d body, d.memoized_methods
+        let imemo = Dictionary(HashIdentity.Structural)
+        printfn "Done with typechecking. Going into closure conversion."
+        closure_conv imemo memo main_method |> ignore
+        Succ imemo
+    with e -> Fail (e.Message, e.StackTrace)
+
 let test = "a,(b + f e, 2, 3),c"
 
-let test2 =
+let fib =
     """
-inl q = 1; 2; 3
-qwe
+fun () ->
+    fun rec fib x =
+        if x <= 0 then 0 else fib (x-1) + fib (x-2)
+    fib 5
 """
 
-let result = run (spaces >>. expr) test2
+let ot1 = 
+    """
+fun rec meth cond = if cond then 1 else meth cond
+meth true
+    """
+
+let result = run (spaces >>. expr) ot1
+
+let t = 
+    match result with
+    | Success (r,_,_) -> 
+        match tc r with Succ x -> x
+
+for x in t do
+    let (name,body),env = x.Key
+    printfn "name=%s" name
+    printfn "body=%A" body
+    printfn "env=%A" env
+    printfn "---"
+    let sole_args, tyexpr, tag, impl_args = x.Value
+    printfn "sole_args=%A" sole_args
+    printfn "tyexpr=%A" tyexpr
+    printfn "tag=%i" tag
+    printfn "impl_args=%A" impl_args
+    printfn "==="
 

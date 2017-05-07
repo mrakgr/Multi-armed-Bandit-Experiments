@@ -700,6 +700,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match_all (match_single_method case_a case_a' case_f) initial_env l (destructure_deep_method d bound_outside_args) 
             on_fail
             (fun ((bound_inside_args, env), body) ->
+                printfn "I am inside method."
                 let bound_outside_args, bound_inside_args, env, body = 
                     filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
 
@@ -710,7 +711,9 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                     d.memoized_methods.[method_key] <- MethodInEvaluation(None)
 
                     let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
+                    printfn "I am going to call with_empty_seq."
                     let body = with_empty_seq d body
+                    printfn "Done with with_empty_seq."
                     let sole_arguments = filter_tyvs bound_inside_args
 
                     d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, get_tag())
@@ -827,6 +830,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         MethodT k |> TyType
     | Apply(expr,args) -> apply d expr args id
     | If(cond,tr,fl) ->
+        printfn "I am in If."
         let cond = tev d cond
         if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
@@ -838,19 +842,24 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 x
 
             let mutable fl_result = None
-            
+
+            printfn "Evaluating the true branch."
             let tr = tev' tr (fun _ -> 
                 let fl = tev d fl
                 fl_result <- Some fl
                 fl)
-
+            printfn "Done with the true branch."
+            printfn "Evaluating the false branch."
             let fl = 
                 match fl_result with
                 | Some fl -> fl
                 | None -> tev' fl (fun _ -> tr)
+            printfn "Done with the false branch."
 
             let type_tr, type_fl = get_type tr, get_type fl
-            if type_tr = type_fl then tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
+            if type_tr = type_fl then 
+                //tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
+                TyIf(cond,tr,fl,type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
     | VVZipReg a -> zip_op d (function VV x -> zip_reg x |> tev d | x -> tev d x) a
     | VVZipIrreg a -> zip_op d (function VV x -> zip_irreg x |> tev d | x -> tev d x) a
