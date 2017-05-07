@@ -1,9 +1,6 @@
-﻿#load "SpiralV5CudaTypechecker_v7d.fsx"
-#r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
-#r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
-//#r "../../packages/FParsec-Pipes.0.3.1.0/lib/net45/FParsec-Pipes.dll"
+﻿module SpiralV5.Parser
 
-open SpiralV5CudaTypechecker_v7d
+open SpiralV5.Typechecker
 open FParsec
 
 type ParserExpr =
@@ -208,38 +205,33 @@ let expressions expr =
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
-let mset = ...
+let opp = new OperatorPrecedenceParser<_,_,_>()
+opp.AddOperator(InfixOperator("+", spaces, 6, Associativity.Left, fun x y -> Add(x,y)))
+opp.AddOperator(InfixOperator("-", spaces, 6, Associativity.Left, fun x y -> Sub(x,y)))
+opp.AddOperator(PrefixOperator("-", spaces, 10, true, Neg))
+opp.AddOperator(InfixOperator("*", spaces, 7, Associativity.Left, fun x y -> Mult(x,y)))
+opp.AddOperator(InfixOperator("/", spaces, 7, Associativity.Left, fun x y -> Div(x,y)))
 
-let expr =
-    let opp = new OperatorPrecedenceParser<_,_,_>()
-    opp.AddOperator(InfixOperator("+", spaces, 60, Associativity.Left, fun x y -> Add(x,y)))
-    opp.AddOperator(InfixOperator("-", spaces, 60, Associativity.Left, fun x y -> Sub(x,y)))
-    opp.AddOperator(PrefixOperator("-", spaces, 100, true, Neg))
-    opp.AddOperator(InfixOperator("*", spaces, 70, Associativity.Left, fun x y -> Mult(x,y)))
-    opp.AddOperator(InfixOperator("/", spaces, 70, Associativity.Left, fun x y -> Div(x,y)))
+opp.AddOperator(InfixOperator("<=", spaces, 4, Associativity.None, fun x y -> LTE(x,y)))
+opp.AddOperator(InfixOperator("<", spaces, 4, Associativity.None, fun x y -> LT(x,y)))
+opp.AddOperator(InfixOperator("=", spaces, 4, Associativity.None, fun x y -> EQ(x,y)))
+opp.AddOperator(InfixOperator("<>", spaces, 4, Associativity.None, fun x y -> NEQ(x,y)))
+opp.AddOperator(InfixOperator(">", spaces, 4, Associativity.None, fun x y -> GT(x,y)))
+opp.AddOperator(InfixOperator(">=", spaces, 4, Associativity.None, fun x y -> GTE(x,y)))
 
-    opp.AddOperator(InfixOperator("<=", spaces, 40, Associativity.None, fun x y -> LTE(x,y)))
-    opp.AddOperator(InfixOperator("<", spaces, 40, Associativity.None, fun x y -> LT(x,y)))
-    opp.AddOperator(InfixOperator("=", spaces, 40, Associativity.None, fun x y -> EQ(x,y)))
-    opp.AddOperator(InfixOperator("<>", spaces, 40, Associativity.None, fun x y -> NEQ(x,y)))
-    opp.AddOperator(InfixOperator(">", spaces, 40, Associativity.None, fun x y -> GT(x,y)))
-    opp.AddOperator(InfixOperator(">=", spaces, 40, Associativity.None, fun x y -> GTE(x,y)))
+opp.AddOperator(InfixOperator("||", spaces, 2, Associativity.Right, fun x y -> And(x,y)))
+opp.AddOperator(InfixOperator("&&", spaces, 3, Associativity.Right, fun x y -> Or(x,y)))
 
-    opp.AddOperator(InfixOperator("||", spaces, 20, Associativity.Right, fun x y -> And(x,y)))
-    opp.AddOperator(InfixOperator("&&", spaces, 30, Associativity.Right, fun x y -> Or(x,y)))
+opp.AddOperator(InfixOperator("|>", spaces, 1, Associativity.Left, fun a f -> Apply(f,a)))
+opp.AddOperator(InfixOperator(">>", spaces, 1, Associativity.Left, fun a b -> inl (S "x") (Apply(b,Apply(a,V "x")))))
+opp.AddOperator(InfixOperator("<|", spaces, 1, Associativity.Left, fun f a -> Apply(f,a)))
+opp.AddOperator(InfixOperator("<<", spaces, 1, Associativity.Left, fun b a -> inl (S "x") (Apply(b,Apply(a,V "x")))))
 
-    opp.AddOperator(InfixOperator("|>", spaces, 10, Associativity.Left, fun a f -> Apply(f,a)))
-    opp.AddOperator(InfixOperator(">>", spaces, 10, Associativity.Left, fun a b -> inl (S "x") (Apply(b,Apply(a,V "x")))))
-    opp.AddOperator(InfixOperator("<|", spaces, 10, Associativity.Left, fun f a -> Apply(f,a)))
-    opp.AddOperator(InfixOperator("<<", spaces, 10, Associativity.Left, fun b a -> inl (S "x") (Apply(b,Apply(a,V "x")))))
+let operators expr i =
+    opp.TermParser <- fun (s: CharStream<_>) -> if i <= s.Column then expr s else pzero s
+    opp.ExpressionParser
 
-    let operators expr i =
-        opp.TermParser <- fun (s: CharStream<_>) -> if i <= s.Column then expr s else pzero s
-        opp.ExpressionParser
-
-    let rec expr s = indentations (statements expr) (tuple (operators (application (expressions expr)))) s
-
-    expr
+let rec expr_main s = indentations (statements expr_main) (tuple (operators (application (expressions expr_main)))) s
 
 let test = "a,(b + f e, 2, 3),c"
 
@@ -249,5 +241,6 @@ inl q = 1; 2; 3
 qwe
 """
 
-let result = run (spaces >>. expr) test2
+let result = run (spaces >>. expr_main) test2
 
+printfn "%A" result

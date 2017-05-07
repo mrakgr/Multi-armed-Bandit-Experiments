@@ -57,7 +57,8 @@
     <Compile Include="AssemblyInfo.fs" />
     <None Include="App.config" />
     <Content Include="packages.config" />
-    <Content Include="TextFile1.txt" />
+    <Compile Include="SpiralV5CudaTypechecker_v7d.fs" />
+    <Compile Include="SpiralV5Parser_v1e.fs" />
     <None Include="V5 With The New Backend\Dual Eq Abandonware\Typechecker_v7a.fsx" />
     <None Include="V5 With The New Backend\Dual Eq Abandonware\Codegen_v3b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v6e.fsx" />
