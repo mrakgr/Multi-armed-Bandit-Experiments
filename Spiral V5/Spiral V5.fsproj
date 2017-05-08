@@ -94,6 +94,7 @@
     <None Include="V5 With The New Backend\SpiralV5CudaInit.fsx" />
     <None Include="V5 With The New Backend\SpiralV5DevVar.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Ops.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v7e.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />

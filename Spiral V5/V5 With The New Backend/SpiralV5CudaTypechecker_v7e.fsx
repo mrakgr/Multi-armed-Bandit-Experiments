@@ -24,15 +24,16 @@ type CudaTy =
     | GlobalArrayT of TypedCudaExpr * CudaTy
     | SharedArrayT of TypedCudaExpr * CudaTy
     | LocalArrayT of TypedCudaExpr * CudaTy
-    | InlineableT of TyInlineableKey
-    | MethodT of TyMethodKey
+    | InlineableT of FunctionKey
+    | MethodT of FunctionKey
+    | ClosureT of ClosureKey
 
 and TyV = int64 * CudaTy
 and Env = Map<string, TypedCudaExpr>
 and TyEnv = Map<string,CudaTy>
 and FunctionAlias = string * (CudaPattern * CudaExpr) list
-and TyMethodKey = FunctionAlias * TyEnv
-and TyInlineableKey = FunctionAlias * TyEnv
+and FunctionKey = FunctionAlias * TyEnv
+and ClosureKey = CudaTy * CudaTy
 
 and CudaPattern =
     | A of CudaPattern * CudaExpr // Type annotation case
@@ -57,8 +58,8 @@ and CudaExpr =
     | LitFloat64 of float
     | LitBool of bool
     | Apply of CudaExpr * args: CudaExpr
-    | Inlineable of InlineableAlias
-    | Method of MethodAlias
+    | Inlineable of FunctionAlias
+    | Method of FunctionAlias
 
     // Tuple cases
     | VVIndex of CudaExpr * CudaExpr
@@ -140,7 +141,8 @@ and TypedCudaExpr =
     | TyLitFloat32 of float32
     | TyLitFloat64 of float
     | TyLitBool of bool
-    | TyMethodCall of TyMethodKey * TypedCudaExpr * CudaTy
+    | TyMethodCall of FunctionKey * TypedCudaExpr * CudaTy
+    | TyMakeClosure of TypedCudaExpr * CudaTy
     
     // Tuple cases
     | TyVVIndex of TypedCudaExpr * TypedCudaExpr * CudaTy
@@ -190,19 +192,15 @@ and TypedCudaExpr =
 and MethodCases =
     | MethodInEvaluation of CudaTy option
     | MethodDone of TyV list * TypedCudaExpr * int64
-and MethodDict = Dictionary<TyMethodKey * CudaTy, MethodCases>
-and MethodDictEnvs = Dictionary<TyMethodKey, Env>
-and InlineableDictEnvs = Dictionary<TyInlineableKey, Env>
+and MethodDict = Dictionary<FunctionKey * CudaTy, MethodCases>
 // method key * method body * implicit arguments
-and MethodImplDict = Dictionary<TyMethodKey * CudaTy, TyV list * TypedCudaExpr * int64 * Set<TyV>>
+and MethodImplDict = Dictionary<FunctionKey * CudaTy, TyV list * TypedCudaExpr * int64 * Set<TyV>>
 and CudaTypecheckerEnv =
     {
     // Immutable
     env : Env
     // Mutable
     memoized_methods : MethodDict // For typechecking methods.
-    memoized_method_envs : MethodDictEnvs // For storing their environments.
-    memoized_inlineable_envs : InlineableDictEnvs // Ditto for Inlineables.
     sequences : (TypedCudaExpr -> TypedCudaExpr) option ref // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
     blockDim : dim3 // since Cub needs hard constants, I need to have them during typechecking.
@@ -1055,3 +1053,4 @@ let typecheck dims body inputs =
 let default_dims = dim3(256), dim3(20)
 
 let typecheck0 program = typecheck default_dims program (VV [])
+
