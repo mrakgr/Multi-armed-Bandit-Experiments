@@ -1,9 +1,9 @@
-﻿#load "SpiralV5CudaTypechecker_v7d.fsx"
+﻿#load "SpiralV5CudaTypechecker_v7e.fsx"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
 //#r "../../packages/FParsec-Pipes.0.3.1.0/lib/net45/FParsec-Pipes.dll"
 
-open SpiralV5CudaTypechecker_v7d
+open SpiralV5CudaTypechecker_v7e
 open FParsec
 
 type ParserExpr =
@@ -261,25 +261,25 @@ let tc body =
         Succ memo
     with e -> Fail (e.Message, e.StackTrace)
 
-let rec print_typed_ast expr = 
-    let print_fun = function
-        | MethodT ((a,b),_) -> sprintf "<method %s=%A>" a b
-        | InlineableT ((a,b),_) -> sprintf "<inlineable %s=%A>" a b
-    match expr with
-    | TyType f -> print_fun f
-    | TyV (a,b) -> sprintf "(V %i : %A)" a b
-    | TyIf (cond,tr,fl,t) ->
-        sprintf "(If %s then %s else %s : %A)" (print_typed_ast cond) (print_typed_ast tr) (print_typed_ast fl) t
-    | TyLet ((a,b),body,rest,t) -> //of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
-        sprintf "Let (%i : %A): %A = %s in\n %s" a b t (print_typed_ast body) (print_typed_ast rest)
-    | TyLitUInt32 x -> string x
-    | TyLitUInt64 x -> string x
-    | TyLitInt32 x -> string x
-    | TyLitInt64 x -> string x
-    | TyLitFloat32 x -> string x
-    | TyLitFloat64 x -> string x
-    | TyLitBool x -> string x
-    | TyMethodCall (f,b,t) -> sprintf "[%s <== %s : %A]" (print_fun (MethodT f)) (print_typed_ast b) t
+//let rec print_typed_ast expr = 
+//    let print_fun = function
+//        | MethodT ((a,b),_) -> sprintf "<method %s=%A>" a b
+//        | InlineableT ((a,b),_) -> sprintf "<inlineable %s=%A>" a b
+//    match expr with
+//    | TyType f -> print_fun f
+//    | TyV (a,b) -> sprintf "(V %i : %A)" a b
+//    | TyIf (cond,tr,fl,t) ->
+//        sprintf "(If %s then %s else %s : %A)" (print_typed_ast cond) (print_typed_ast tr) (print_typed_ast fl) t
+//    | TyLet ((a,b),body,rest,t) -> //of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
+//        sprintf "Let (%i : %A): %A = %s in\n %s" a b t (print_typed_ast body) (print_typed_ast rest)
+//    | TyLitUInt32 x -> string x
+//    | TyLitUInt64 x -> string x
+//    | TyLitInt32 x -> string x
+//    | TyLitInt64 x -> string x
+//    | TyLitFloat32 x -> string x
+//    | TyLitFloat64 x -> string x
+//    | TyLitBool x -> string x
+//    | TyMethodCall (f,b,t) -> sprintf "[%s <== %s : %A]" (print_fun (MethodT f)) (print_typed_ast b) t
     
     // Tuple cases
 //    | TyVVIndex of TypedCudaExpr * TypedCudaExpr * CudaTy
@@ -287,9 +287,14 @@ let rec print_typed_ast expr =
 
 let prod_lam2 =
     """
-fun rec meth cond l = 
-    if cond then meth cond l else l 1.5
+fun rec meth cond l = if cond then meth cond l else l 1.5
 meth true (inl x -> x)
+    """
+
+let fib =
+    """
+fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
+fib 5
     """
 
 let fib_y =
@@ -301,8 +306,7 @@ y fib 5
 
 let prod_lam3 = // Stackoverflow
     """
-fun rec meth cond l = 
-    if cond then meth cond (inl x -> x) else l 1.5
+fun rec meth cond l = if cond then meth cond (inl x -> x) else l 1.5
 meth true (inl x -> x)
     """
 
@@ -312,10 +316,10 @@ let get = function Succ x -> x
 
 let t = 
     match result with
-    | Success (r,_,_) -> tc r |> get
+    | Success (r,_,_) -> tc r
 
-for x in t do
-    match x.Value with
-    | MethodDone(sole_args, tyexpr, tag) ->
-        printfn "tyexpr=%A" (print_typed_ast tyexpr)
-        printfn "==="
+//for x in t do
+//    match x.Value with
+//    | MethodDone(sole_args, tyexpr, tag) ->
+//        printfn "tyexpr=%A" (print_typed_ast tyexpr)
+//        printfn "==="

@@ -28,11 +28,10 @@ type CudaTy =
     | MethodT of FunctionKey
     | ClosureT of ClosureKey
 
-and TyV = int64 * CudaTy
+and TyV = (int64 * int64) * CudaTy
 and Env = Map<string, TypedCudaExpr>
-and TyEnv = Map<string,CudaTy>
-and FunctionAlias = string * (CudaPattern * CudaExpr) list
-and FunctionKey = FunctionAlias * TyEnv
+and FunctionCore = string * (CudaPattern * CudaExpr) list
+and FunctionKey = int64 * Env * FunctionCore
 and ClosureKey = CudaTy * CudaTy
 
 and CudaPattern =
@@ -58,8 +57,8 @@ and CudaExpr =
     | LitFloat64 of float
     | LitBool of bool
     | Apply of CudaExpr * args: CudaExpr
-    | Inlineable of FunctionAlias
-    | Method of FunctionAlias
+    | Inlineable of FunctionCore
+    | Method of FunctionCore
 
     // Tuple cases
     | VVIndex of CudaExpr * CudaExpr
@@ -205,9 +204,21 @@ and CudaTypecheckerEnv =
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
     blockDim : dim3 // since Cub needs hard constants, I need to have them during typechecking.
     gridDim : dim3
+    // These tags are used to essentially emulate what a pass to assign a depth tag to every function would do.
+    // ...Hopefully the code is correct.
+    method_calling_tag : int64 
+    destructuring_tag : int64
+    mutable let_tag : int64
     }
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
+
+let get_tag =
+    let mutable x = 0L
+    fun () -> 
+        let x' = x
+        x <- x + 1L
+        x'
 
 let rec get_type = function
     | TyType t
@@ -220,6 +231,7 @@ let rec get_type = function
     | TyLitFloat64 _ -> PrimT Float32T   
     | TyLitBool _ -> PrimT BoolT
     | TyMethodCall(_,_,t) -> t
+    | TyMakeClosure(_,t) -> t
 
     // Cuda kernel constants
     | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
@@ -308,13 +320,6 @@ let is_vv' = function
     | VVT _ -> true
     | _ -> false
 let is_vv a = is_vv' (get_type a)
-
-let get_tag =
-    let mutable x = 0L
-    fun () -> 
-        let x' = x
-        x <- x + 1L
-        x'
 
 let get_body_from (stack: Stack<unit -> TypedCudaExpr>) = 
     if stack.Count > 0 then stack.Pop()()
@@ -450,29 +455,28 @@ let cuda_library =
 
            
 let data_empty (blockDim, gridDim) = 
-    {memoized_method_envs=d0(); memoized_inlineable_envs=d0()
-     memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
+    {memoized_methods=d0();blockDim=blockDim;gridDim=gridDim
+     method_calling_tag=0L;destructuring_tag=0L;let_tag=0L
      env=Map.empty;sequences=ref None;recursive_methods_stack=Stack()}
 
 let typechecker_env_copy (d: CudaTypecheckerEnv) =
     {
-    memoized_method_envs = d.memoized_method_envs |> Dictionary
-    memoized_inlineable_envs = d.memoized_inlineable_envs |> Dictionary
     memoized_methods = d.memoized_methods |> Dictionary
     blockDim = d.blockDim
     gridDim = d.gridDim
     env = d.env
     sequences = ref !d.sequences
     recursive_methods_stack = d.recursive_methods_stack |> Stack
+    method_calling_tag=d.method_calling_tag
+    destructuring_tag=d.destructuring_tag
+    let_tag=d.let_tag
     }
 
 let typechecker_env_set (t: CudaTypecheckerEnv) (d: CudaTypecheckerEnv) =
-    t.memoized_method_envs.Clear(); d.memoized_method_envs |> Seq.iter (fun x -> t.memoized_method_envs.Add(x.Key,x.Value))
-    t.memoized_inlineable_envs.Clear(); d.memoized_inlineable_envs |> Seq.iter (fun x -> t.memoized_inlineable_envs.Add(x.Key,x.Value))
     t.memoized_methods.Clear(); d.memoized_methods |> Seq.iter (fun x -> t.memoized_methods.Add(x.Key,x.Value))
     t.sequences := !d.sequences
     t.recursive_methods_stack.Clear(); d.recursive_methods_stack |> Seq.iter t.recursive_methods_stack.Push
-    
+    t.let_tag <- d.let_tag
 
 let rec with_empty_seq (d: CudaTypecheckerEnv) expr =
     let d = {d with sequences = ref None}
@@ -550,10 +554,12 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         let f current_sequence rest = apply_sequences current_sequence (x rest)
         d.sequences := Some (f !d.sequences)
 
-    let make_tyv ty_exp = get_tag(), get_type ty_exp
+    let make_tyv d ty_exp = 
+        d.let_tag <- d.let_tag + 1L
+        (d.destructuring_tag,d.let_tag), get_type ty_exp
 
     let make_tyv_and_push' d ty_exp =
-        let v = make_tyv ty_exp
+        let v = make_tyv d ty_exp
         push_sequence d (fun rest -> TyLet(v,ty_exp,rest,get_type rest))
         v
 
@@ -561,29 +567,29 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`. 
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let destructure_deep_template d nonseq_push r = 
+    let destructure_deep_template d on_method r = 
         let rec destructure_deep r = 
-            let destructure_tuple r on_non_tuple on_tuple =
+            let destructure_tuple r ret =
                 match get_type r with
                 | VVT tuple_types -> 
                     let indexed_tuple_args = List.mapi (fun i typ -> 
                         destructure_deep <| TyVVIndex(r,TyLitInt32 i,typ)) tuple_types
-                    TyVV(indexed_tuple_args, VVT tuple_types) |> on_tuple
-                | _ -> on_non_tuple r
+                    TyVV(indexed_tuple_args, VVT tuple_types) |> ret
+                | _ -> ret r
             match r with
-            | TyType _ -> r // Won't be passed into method as arguments apart from TyV.
+            | TyType _ -> r // Won't be passed into method as argument
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | TyLitUInt32 _ | TyLitUInt64 _ | TyLitInt32 _ | TyLitInt64 _ 
             | TyLitFloat32 _ | TyLitFloat64 _ | TyLitBool _ 
             | TyThreadIdxX | TyThreadIdxY | TyThreadIdxZ
-            | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> nonseq_push r // Will not be assigned to a variable except at method calls.
-            | TyV _ -> destructure_tuple r id nonseq_push
-            | TyVVIndex _ | TyArrayIndex(_,[],_) -> destructure_tuple r nonseq_push nonseq_push
+            | TyBlockIdxX | TyBlockIdxY | TyBlockIdxZ -> on_method r // Will not be assigned to a variable except at method calls.
+            | TyV _ -> destructure_tuple r id
+            | TyVVIndex _ | TyArrayIndex(_,[],_) -> destructure_tuple r on_method // Will get turned into vars on method calls.
             | _ -> make_tyv_and_push d r |> destructure_deep
         destructure_deep r
 
     let destructure_deep d r = destructure_deep_template d id r
-    let destructure_deep_method d r = destructure_deep_template d (make_tyv >> TyV) r
+    let destructure_deep_method d r = destructure_deep_template d (make_tyv d >> TyV) r
 
     let process_create_array d args typeof_expr =
         let typ = get_type (tev d typeof_expr)
@@ -682,17 +688,17 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
             | [] -> on_fail (l,args) //"All patterns in the matcher failed to match."
         loop l
 
-    let apply_inlineable d case_a case_a' case_f ((name,l),_ as inlineable_key) args on_fail ret =
-        let env = d.memoized_inlineable_envs.[inlineable_key]
+    let apply_inlineable d case_a case_a' case_f (method_tag,initial_env,(name,l) as fun_key) args on_fail ret =
+        let d = {d with method_calling_tag=method_tag}
         let args = destructure_deep d args
-        match_all (match_single_inl case_a case_a' case_f) env l args
+        match_all (match_single_inl case_a case_a' case_f) initial_env l args
             on_fail
             (fun (env, body) -> 
-                let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT inlineable_key) env else env}
+                let d = {d with env = if name <> "" then Map.add name (TyType <| InlineableT fun_key) env else env}
                 tev d body |> ret)
 
-    let apply_method d case_a case_a' case_f ((name,l), _ as method_key) args on_fail ret =
-        let initial_env = d.memoized_method_envs.[method_key]
+    let apply_method d case_a case_a' case_f (method_tag,initial_env,(name,l) as fun_key) args on_fail ret =
+        let d = {d with method_calling_tag=method_tag; destructuring_tag=method_tag; let_tag=0L}
         let bound_outside_args = destructure_deep d args
         match_all (match_single_method case_a case_a' case_f) initial_env l (destructure_deep_method d bound_outside_args) 
             on_fail
@@ -700,13 +706,14 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 let bound_outside_args, bound_inside_args, env, body = 
                     filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
 
-                let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
-                let key_args = method_key, get_type bound_outside_args
+                let make_method_call body_type = TyMethodCall(fun_key, bound_outside_args, body_type)
+                let key_args = fun_key, get_type bound_outside_args
+                
                 match d.memoized_methods.TryGetValue key_args with
                 | false, _ ->                         
                     d.memoized_methods.[key_args] <- MethodInEvaluation(None)
 
-                    let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
+                    let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT fun_key) env else env}
                     let body = with_empty_seq d body
                     let sole_arguments = filter_tyvs bound_inside_args
 
@@ -728,8 +735,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
     let rec apply_template d apply_inlineable apply_method (la: CudaExpr) ra on_fail ret =
         let la = tev d la
         match get_type la with
-        | InlineableT(x,env) -> apply_inlineable d (case_a d) case_a' (case_f d apply_both) (x,env) ra on_fail ret
-        | MethodT(x,env) -> apply_method d (case_a d) case_a' (case_f d apply_both) (x,env) ra on_fail ret
+        | InlineableT x -> apply_inlineable d (case_a d) case_a' (case_f d apply_both) x ra on_fail ret
+        | MethodT x -> apply_method d (case_a d) case_a' (case_f d apply_both) x ra on_fail ret
         | LocalArrayT _ | SharedArrayT _ | GlobalArrayT _ -> 
             // This case is a bit of a hack to make the indexing syntax nicer. 
             // In the full language, I'd use closures for arrays instead. 
@@ -814,14 +821,8 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match Map.tryFind x d.env with
         | Some v -> v
         | None -> failwithf "Variable %A not bound." x
-    | Inlineable l -> 
-        let k = l, Map.map (fun _ -> get_type) d.env
-        d.memoized_inlineable_envs.[k] <- d.env
-        InlineableT k |> TyType
-    | Method(name, l) -> 
-        let k = (name, l), Map.map (fun _ -> get_type) d.env
-        d.memoized_method_envs.[k] <- d.env
-        MethodT k |> TyType
+    | Inlineable l -> InlineableT (d.method_calling_tag,d.env, l) |> TyType
+    | Method l -> MethodT (d.method_calling_tag+1L,d.env,l) |> TyType
     | Apply(expr,args) -> apply d expr args id
     | If(cond,tr,fl) ->
         let cond = tev d cond
@@ -961,7 +962,7 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
                 let arg = ArrayIndex(T evaled_input,VV [LitInt32 0])
                 tev d (VV [arg;arg])
             | x -> 
-                let arg() = evaled_input |> make_tyv |> TyV
+                let arg() = evaled_input |> make_tyv d |> TyV
                 tev d (VV [T (arg()); T (arg())])
             |> fun x -> apply_method_only d method_ x (failwithf "Failed to pattern match the method in CubBlockReduce.\n%A") id
 
