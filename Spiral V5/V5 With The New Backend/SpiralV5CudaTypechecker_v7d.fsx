@@ -191,11 +191,11 @@ and TypedCudaExpr =
 and MethodCases =
     | MethodInEvaluation of CudaTy option
     | MethodDone of TyV list * TypedCudaExpr * int64
-and MethodDict = Dictionary<TyMethodKey, MethodCases>
+and MethodDict = Dictionary<TyMethodKey * CudaTy, MethodCases>
 and MethodDictEnvs = Dictionary<TyMethodKey, Env>
 and InlineableDictEnvs = Dictionary<TyInlineableKey, Env>
 // method key * method body * implicit arguments
-and MethodImplDict = Dictionary<TyMethodKey, TyV list * TypedCudaExpr * int64 * Set<TyV>>
+and MethodImplDict = Dictionary<TyMethodKey * CudaTy, TyV list * TypedCudaExpr * int64 * Set<TyV>>
 and CudaTypecheckerEnv =
     {
     // Immutable
@@ -700,30 +700,27 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         match_all (match_single_method case_a case_a' case_f) initial_env l (destructure_deep_method d bound_outside_args) 
             on_fail
             (fun ((bound_inside_args, env), body) ->
-                printfn "I am inside method."
                 let bound_outside_args, bound_inside_args, env, body = 
                     filter_duplicate_vars bound_outside_args, filter_duplicate_vars bound_inside_args, env, body
 
                 let make_method_call body_type = TyMethodCall(method_key, bound_outside_args, body_type)
-
-                match d.memoized_methods.TryGetValue method_key with
+                let key_args = method_key, get_type bound_outside_args
+                match d.memoized_methods.TryGetValue key_args with
                 | false, _ ->                         
-                    d.memoized_methods.[method_key] <- MethodInEvaluation(None)
+                    d.memoized_methods.[key_args] <- MethodInEvaluation(None)
 
                     let d = {d with env = if name <> "" then Map.add name (TyType <| MethodT method_key) env else env}
-                    printfn "I am going to call with_empty_seq."
                     let body = with_empty_seq d body
-                    printfn "Done with with_empty_seq."
                     let sole_arguments = filter_tyvs bound_inside_args
 
-                    d.memoized_methods.[method_key] <- MethodDone(sole_arguments, body, get_tag())
+                    d.memoized_methods.[key_args] <- MethodDone(sole_arguments, body, get_tag())
 
                     if is_returnable body then make_method_call (get_type body)
                     else failwithf "Expected a simple type as the function return.\nGot: %A" (get_type body)
                 | true, MethodInEvaluation None ->
                     let body = get_body_from d.recursive_methods_stack
                     let t = get_type body
-                    d.memoized_methods.[method_key] <- MethodInEvaluation (Some t)
+                    d.memoized_methods.[key_args] <- MethodInEvaluation (Some t)
                     make_method_call t
                 | true, MethodInEvaluation (Some t) ->
                     make_method_call t
@@ -830,7 +827,6 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
         MethodT k |> TyType
     | Apply(expr,args) -> apply d expr args id
     | If(cond,tr,fl) ->
-        printfn "I am in If."
         let cond = tev d cond
         if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
@@ -843,23 +839,20 @@ and exp_and_seq (d: CudaTypecheckerEnv) exp: TypedCudaExpr =
 
             let mutable fl_result = None
 
-            printfn "Evaluating the true branch."
             let tr = tev' tr (fun _ -> 
                 let fl = tev d fl
                 fl_result <- Some fl
                 fl)
-            printfn "Done with the true branch."
-            printfn "Evaluating the false branch."
+
             let fl = 
                 match fl_result with
                 | Some fl -> fl
                 | None -> tev' fl (fun _ -> tr)
-            printfn "Done with the false branch."
 
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then 
-                tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
-                //TyIf(cond,tr,fl,type_tr)
+                //tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
+                TyIf(cond,tr,fl,type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
     | VVZipReg a -> zip_op d (function VV x -> zip_reg x |> tev d | x -> tev d x) a
     | VVZipIrreg a -> zip_op d (function VV x -> zip_irreg x |> tev d | x -> tev d x) a
@@ -991,21 +984,22 @@ let rec closure_conv (imemo: MethodImplDict) (memo: MethodDict) (exp: TypedCudaE
     | TyVV(vars,t) -> Set.unionMany (List.map c vars)
     | TyVVIndex(t,i,_) -> Set.union (c t) (c i)
     | TyMethodCall(m,ar,_) ->
+        let key_args = m, get_type ar
         let method_implicit_args =
-            match imemo.TryGetValue m with
+            match imemo.TryGetValue key_args with
             | true, (_,_,_,impl_args) -> impl_args
             | false, _ ->
-                match memo.[m] with
+                match memo.[key_args] with
                 | MethodDone(sol_arg, body, tag) -> 
                     let impl_args = c body - Set(sol_arg)
-                    imemo.Add(m,(sol_arg,body,tag,impl_args))
+                    imemo.Add(key_args,(sol_arg,body,tag,impl_args))
                     impl_args
                 | _ -> failwith "impossible"
         Set.union method_implicit_args (c ar)
-    | TyCubBlockReduce(_,inp,(TyMethodCall(key,_,_) as m),num_valid,t) ->
+    | TyCubBlockReduce(_,inp,(TyMethodCall(key,args,_) as m),num_valid,t) ->
         ignore <| c m // This is so it gets added to the env.
 
-        match imemo.[key] with
+        match imemo.[(key, get_type args)] with
         | _,_,_,impl_args when impl_args.IsEmpty ->
             match num_valid with
             | Some num_valid -> Set.union (c num_valid) (c inp)

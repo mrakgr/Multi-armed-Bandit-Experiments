@@ -261,46 +261,61 @@ let tc body =
         Succ memo
     with e -> Fail (e.Message, e.StackTrace)
 
-let test = "a,(b + f e, 2, 3),c"
+let rec print_typed_ast expr = 
+    let print_fun = function
+        | MethodT ((a,b),_) -> sprintf "<method %s=%A>" a b
+        | InlineableT ((a,b),_) -> sprintf "<inlineable %s=%A>" a b
+    match expr with
+    | TyType f -> print_fun f
+    | TyV (a,b) -> sprintf "(V %i : %A)" a b
+    | TyIf (cond,tr,fl,t) ->
+        sprintf "(If %s then %s else %s : %A)" (print_typed_ast cond) (print_typed_ast tr) (print_typed_ast fl) t
+    | TyLet ((a,b),body,rest,t) -> //of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
+        sprintf "Let (%i : %A): %A = %s in\n %s" a b t (print_typed_ast body) (print_typed_ast rest)
+    | TyLitUInt32 x -> string x
+    | TyLitUInt64 x -> string x
+    | TyLitInt32 x -> string x
+    | TyLitInt64 x -> string x
+    | TyLitFloat32 x -> string x
+    | TyLitFloat64 x -> string x
+    | TyLitBool x -> string x
+    | TyMethodCall (f,b,t) -> sprintf "[%s <== %s : %A]" (print_fun (MethodT f)) (print_typed_ast b) t
+    
+    // Tuple cases
+//    | TyVVIndex of TypedCudaExpr * TypedCudaExpr * CudaTy
+//    | TyVV of TypedCudaExpr list * CudaTy
 
-let fib =
+let prod_lam2 =
     """
-fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
-fib 5
-"""
+fun rec meth cond l = 
+    if cond then meth cond l else l 1.5
+meth true (inl x -> x)
+    """
 
 let fib_y =
     """
 fun rec y f x = f (y f) x
 fun fib r x = if x <= 0 then 0 else r (x-1) + r (x-2)
 y fib 5
-"""
-
-let ot1 = 
-    """
-fun rec meth cond = if cond then 1 else meth cond
-meth true
     """
 
-let result = run (spaces >>. expr) fib_y
+let prod_lam3 = // Stackoverflow
+    """
+fun rec meth cond l = 
+    if cond then meth cond (inl x -> x) else l 1.5
+meth true (inl x -> x)
+    """
+
+let result = run (spaces >>. expr) prod_lam3
+
+let get = function Succ x -> x
 
 let t = 
     match result with
-    | Success (r,_,_) -> 
-        match tc r with Succ x -> x
-
-t.Count
+    | Success (r,_,_) -> tc r |> get
 
 for x in t do
-    let (name,body),env = x.Key
-    printfn "name=%s" name
-    printfn "body=%A" body
-    printfn "env=%A" env
-    printfn "---"
-//    let sole_args, tyexpr, tag, impl_args = x.Value
-//    printfn "sole_args=%A" sole_args
-//    printfn "tyexpr=%A" tyexpr
-//    printfn "tag=%i" tag
-//    printfn "impl_args=%A" impl_args
-//    printfn "==="
-
+    match x.Value with
+    | MethodDone(sole_args, tyexpr, tag) ->
+        printfn "tyexpr=%A" (print_typed_ast tyexpr)
+        printfn "==="
