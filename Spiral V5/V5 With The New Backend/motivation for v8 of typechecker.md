@@ -14,7 +14,7 @@ This essentially proves that handling any arguments at all in the function is a 
 
 There is absolutely no way I can memoize functions such as that.
 
-There is an enormous amount of friction right now between different phases of the compiler. Free argument propagation stack overflows on recursive function, and type inference for recursive functions is not even correct, not by a long shot.
+There is an enormous amount of friction right now between different phases of the compiler. Free argument propagation stack overflows on recursive functions, and type inference for recursive functions is not even correct, not by a long shot.
 
 It does not mean that what I have done is useless, it is just that I have made a lot of pieces which make sense on an individual basis, but not the way they've been brought together.
 
@@ -35,7 +35,7 @@ What is going to happen in such a language when the MemoizedExpression's case is
 ```
 // This is intended to be pseudocode.
 let call_as_method expr env =
-    expr_used_variable_elimination env expr 
+    env_used_variable_elimination env expr 
     |> pool_make_from_env
     |> pool_duplicate_variable_elimination 
     // The variable pools are necessary for the renaming phase.
@@ -50,6 +50,9 @@ let call_as_method expr env =
     // shortest match in its list based on the env passed to it. Or that would
     // be the case if expr_used_variable_elimination was not called at the start.
     |> memoize (eval expr)
+	// I do not want to allow closures or local arrays being returned from 
+	// non-Inlineable expressions.
+	|> typed_expr_guard_type
     // pool_typedexpr_used_variable_elimination is essentially what closure_conversion 
     // was in the previous version.
     // It also performs the role of tuple deforestation. I made the mistake in
