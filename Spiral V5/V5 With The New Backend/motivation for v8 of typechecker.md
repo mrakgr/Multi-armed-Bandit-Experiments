@@ -37,7 +37,7 @@ What is going to happen in such a language when the MemoizedExpression's case is
 let call_as_method expr env =
     env_used_variable_elimination env expr 
     |> pool_make_from_env
-    |> pool_duplicate_variable_elimination 
+    |> pool_duplicate_variable_elimination
     // The variable pools are necessary for the renaming phase.
     // What gave me so much trouble in the previous version is the tracking of variables.
     // If it was only types that needed to be accounted for it would be quite doable.
