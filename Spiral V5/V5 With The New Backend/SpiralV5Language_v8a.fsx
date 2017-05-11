@@ -307,11 +307,14 @@ let data_empty () =
      sequences=ref None
      recursive_methods_stack=Stack()}
 
+let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
+let inline vars_union f l = vars_union' Set.empty f l
+
 let rec expr_free_variables e =
     let f e = expr_free_variables e
     match e with
     | V n -> Set.singleton n
-    | VV(l,_) -> List.map f l |> Set.unionMany
+    | VV(l,_) -> vars_union f l
     | If(a,b,c) -> f a + f b + f c
     | BinOp(_,a,b) -> f a + f b
     | UnOp(_,a) -> f a
@@ -322,15 +325,14 @@ let rec expr_free_variables e =
             | F (pat,var) | A (pat,var) -> on_expr (g pat) var
             | N (_,pat) | A' (pat,_) -> g pat
             | S x | S' x -> on_name x
-            | R (l,Some o) -> g o :: List.map g l |> Set.unionMany
-            | R (l,None) -> List.map g l |> Set.unionMany
+            | R (l,Some o) -> vars_union' (g o) g l
+            | R (l,None) -> vars_union g l
+                
 
         let pat_vars p = pat_template (fun _ -> Set.empty) (fun s var -> Set.add var s) p
         let pat_names p = pat_template Set.singleton (fun s _ -> s) p
 
-        let fv = 
-            List.map (fun (pat,body) -> pat_vars pat + (f body - pat_names pat |> Set.remove name)) l
-            |> Set.unionMany
+        let fv = vars_union (fun (pat,body) -> pat_vars pat + (f body - pat_names pat |> Set.remove name)) l
         free_var_set := fv
         fv
         
@@ -490,7 +492,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         let f e = typed_expr_free_variables e
         match e with
         | TyV (n,t) -> (if n <> fun_tag then Set.singleton n else Set.empty) + ty_free_variables t
-        | TyVV(l,_) -> List.map f l |> Set.unionMany
+        | TyVV(l,_) -> vars_union f l
         | TyIf(a,b,c,_) -> f a + f b + f c
         | TyBinOp(_,a,b,_) -> f a + f b
         | TyMethodCall(used_vars,_,_) -> used_vars
@@ -513,7 +515,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         
     let renamer_apply_pool r s = Set.map (fun x -> Map.find x r) s
     let renamer_reverse r = 
-        Map.toArray r |> Array.map (fun (a,b) -> b,a) |> Map
+        Map.fold (fun s k v -> Map.add v k s) Map.empty r
         |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
 
     let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e
