@@ -33,12 +33,12 @@ and FunctionKey = Env * FunctionCore
 and MemoKey = Env * CudaExpr
 
 and CudaPattern =
-    | A of CudaPattern * CudaExpr // Type annotation case
+    | A of CudaPattern * string // Type annotation case
     | A' of CudaPattern * CudaTy
     | S of string
     | S' of string // match if not tuple
     | R of CudaPattern list * CudaPattern option // Tuple
-    | F of CudaPattern * CudaExpr // Functiona application with retracing.
+    | F of CudaPattern * string // Functiona application with retracing.
     | N of string * CudaPattern // matches a tuple name and proceeds onto the pattern on a hit.
 
 and Value = 
@@ -65,7 +65,7 @@ and BinOp =
     | GTE 
     | And 
     | Or 
-    //| MSet 
+    | MSet 
 
     | Apply
     | VVIndex
@@ -236,7 +236,8 @@ let meth x y = methr "" x y
 
 let E = S ""
 let B = VV ([], "")
-let TyB = TyVV([], VVT ([], ""))
+let BVVT = VVT ([], "")
+let TyB = TyVV([], BVVT)
 /// Matches tuples without a tail.
 let SS x = R (x, None) 
 /// Opposite of S', matches only a tuple.
@@ -281,7 +282,7 @@ let tuple_map =
     inlr "rec" (SS [S "f"; S "q"])
         (match_ (V "q")
             [
-            F(S "x",V "f"), V "x"
+            F(S "x", "f"), V "x"
             SSS [SS' "v1"] "rest", cons (recurse "v1") (recurse "rest")
             SS [], vv []
             E, type_error "tuple .Map failed to match."
@@ -318,17 +319,17 @@ let rec expr_free_variables e =
         let rec pat_template on_name on_expr p = 
             let g p = pat_template on_name on_expr p
             match p with
-            | F (pat,expr) | A (pat,expr) -> on_expr (g pat) expr
+            | F (pat,var) | A (pat,var) -> on_expr (g pat) var
             | N (_,pat) | A' (pat,_) -> g pat
             | S x | S' x -> on_name x
             | R (l,Some o) -> g o :: List.map g l |> Set.unionMany
             | R (l,None) -> List.map g l |> Set.unionMany
 
-        let pat_bodies p = pat_template (fun _ -> Set.empty) (fun s expr -> Set.union s (f expr)) p
+        let pat_vars p = pat_template (fun _ -> Set.empty) (fun s var -> Set.add var s) p
         let pat_names p = pat_template Set.singleton (fun s _ -> s) p
 
         let fv = 
-            List.map (fun (pat,body) -> pat_bodies pat + (f body - pat_names pat)) l
+            List.map (fun (pat,body) -> pat_vars pat + (f body - pat_names pat |> Set.remove name)) l
             |> Set.unionMany
         free_var_set := fv
         fv
@@ -442,7 +443,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
 
     let case_f d apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
-        apply {d with env = acc} meth args
+        apply {d with env = acc} (V meth) args
             (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
             (fun r -> 
                 match_single acc pattern (destructure_deep d r) 
@@ -450,7 +451,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                     ret)
 
     let case_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
-    let case_a d annot = case_a' (tev d annot |> get_type) 
+    let case_a d annot = case_a' (tev d (V annot) |> get_type) 
 
     let match_single' case_a case_f (acc: Env) l r on_fail ret =
         let rec recurse acc l r ret = //match_single case_f case_r case_bind acc l r on_fail ret
@@ -613,12 +614,12 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 TyIf(cond,tr,fl,type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
-//    let mset a b =
-//        let l = tev d a
-//        let r = destructure_deep d (tev d b)
-//        match l, r with
-//        | TyArrayIndex(_,_,lt), r when lt = get_type r -> push_sequence d (fun rest -> TyMSet(l,r,rest,get_type rest)); TyB
-//        | _ -> failwithf "Error in mset. Expected: TyArrayIndex(_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
+    let mset d a b =
+        let l = tev d a
+        let r = destructure_deep d (tev d b)
+        match l, r with
+        | TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r -> make_tyv_and_push d <| TyBinOp(MSet,l,r,BVVT)
+        | _ -> failwithf "Error in mset. Expected: TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
 
     let vv_index v i =
         match tev d v, tev d i with
@@ -701,6 +702,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | ArrayCreate -> array_create d "Array" a b
         | ArrayCreateShared -> array_create d "ArrayShared" a b
         | ArrayIndex -> let size,args,typ = array_index d a b in TyBinOp(ArrayIndex,size,args,typ)
+        | MSet -> mset d a b
             
     | UnOp (op,a) -> 
         match op with
