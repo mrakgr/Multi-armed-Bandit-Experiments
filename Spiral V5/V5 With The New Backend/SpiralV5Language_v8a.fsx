@@ -80,7 +80,7 @@ and UnOp =
 and CudaExpr = 
     | V of string
     | Lit of Value
-    | Function of FunctionCore
+    | Function of FunctionCore * Set<string> ref
     | VV of CudaExpr list * string // named tuple
     | If of CudaExpr * CudaExpr * CudaExpr
     | BinOp of BinOp * CudaExpr * CudaExpr
@@ -96,13 +96,13 @@ and TypedCudaExpr =
     | TyVV of TypedCudaExpr list * CudaTy
     | TyBinOp of BinOp * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyUnOp of UnOp * TypedCudaExpr * CudaTy
-    | TyMethodCall of Set<int64> * CudaTy
+    | TyMethodCall of Set<int64> * int64 * CudaTy
 
 and MemoCases =
     | MethodInEvaluation of TypedCudaExpr option
     | MethodDone of TypedCudaExpr
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
-and MemoDict = Dictionary<MemoKey, MemoCases> 
+and MemoDict = Dictionary<MemoKey, MemoCases * int64> 
 
 and LangEnv =
     {
@@ -112,6 +112,7 @@ and LangEnv =
     memoized_methods : MemoDict // For typechecking recursive functions.
     sequences : (TypedCudaExpr -> TypedCudaExpr) option ref // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
+    method_tag : int64 ref
     mutable let_tag : int64
     }
 
@@ -129,7 +130,7 @@ let get_type_of_value = function
 
 let get_type = function
     | TyLit x -> get_type_of_value x
-    | TyV (_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) | TyMethodCall(_,t)
+    | TyV (_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) | TyMethodCall(_,_,t)
     | TyVV(_,t) | TyBinOp(_,_,_,t) | TyUnOp(_,_,t) -> t
 
 let rec is_returnable' = function
@@ -205,7 +206,8 @@ let apply_sequences sequences x =
     | None -> x
 
 
-let inlr name x y = Function(name,[x,y])
+let fun_ name pat = Function((name,pat),ref Set.empty)
+let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = BinOp(Apply,x,y)
 let methr name x y = UnOp(CallAsMethod,inlr name x y)
@@ -230,8 +232,8 @@ let rec ap' f = function
     | x :: xs -> ap' (ap f x) xs
     | [] -> f
 
-let match_ x pat = ap (Function("",pat)) x
-let function_ pat = Function("",pat)
+let match_ x pat = ap (fun_ "" pat) x
+let function_ pat = fun_ "" pat
 
 let rec inlr' name args body = 
     match args with
@@ -277,33 +279,48 @@ let tuple_library =
 
 let data_empty () = 
     {memoized_methods=d0()
+     method_tag=ref 0L
      let_tag=0L
      env=Map.empty
      sequences=ref None
      recursive_methods_stack=Stack()}
 
-let typechecker_env_copy (d: LangEnv) =
-    {
-    memoized_methods = d.memoized_methods |> Dictionary
-    env = d.env
-    sequences = ref !d.sequences
-    recursive_methods_stack = d.recursive_methods_stack |> Stack
-    let_tag=d.let_tag
-    }
+let rec expr_free_variables e =
+    let f e = expr_free_variables e
+    match e with
+    | V n -> Set.singleton n
+    | VV(l,_) -> List.map f l |> Set.unionMany
+    | If(a,b,c) -> f a + f b + f c
+    | BinOp(_,a,b) -> f a + f b
+    | UnOp(_,a) -> f a
+    | Function((name,l),free_var_set) ->
+        let rec pat_template on_name on_expr p = 
+            let g p = pat_template on_name on_expr p
+            match p with
+            | F (pat,expr) | A (pat,expr) -> on_expr (g pat) expr
+            | N (_,pat) | A' (pat,_) -> g pat
+            | S x | S' x -> on_name x
+            | R (l,Some o) -> g o :: List.map g l |> Set.unionMany
+            | R (l,None) -> List.map g l |> Set.unionMany
 
-let typechecker_env_set (t: LangEnv) (d: LangEnv) =
-    t.memoized_methods.Clear(); d.memoized_methods |> Seq.iter (fun x -> t.memoized_methods.Add(x.Key,x.Value))
-    t.sequences := !d.sequences
-    t.recursive_methods_stack.Clear(); d.recursive_methods_stack |> Seq.iter t.recursive_methods_stack.Push
-    t.let_tag <- d.let_tag
+        let pat_bodies p = pat_template (fun _ -> Set.empty) (fun s expr -> Set.union s (f expr)) p
+        let pat_names p = pat_template Set.singleton (fun s _ -> s) p
 
-let rec with_empty_seq (d: LangEnv) expr =
+        let fv = 
+            List.map (fun (pat,body) -> pat_bodies pat + (f body - pat_names pat)) l
+            |> Set.unionMany
+        free_var_set := fv
+        fv
+        
+    | Lit _ -> Set.empty
+
+let rec expr_typecheck_with_empty_seq (d: LangEnv) expr =
     let d = {d with sequences = ref None}
-    let expr = exp_and_seq d expr
+    let expr = expr_typecheck d expr
     apply_sequences !d.sequences expr
 
-and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
-    let tev d exp = exp_and_seq d exp
+and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
+    let tev d exp = expr_typecheck d exp
 
     let prim_bin_op_template d check_error is_check k a b t =
         let constraint_both_eq_numeric f k =
@@ -387,9 +404,9 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
                     TyVV(indexed_tuple_args, VVT (tuple_types, name))
                 | _ -> r
             match r with
-            | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | TyLit _ -> r // Literals are propagated.
             | TyV _ | TyBinOp (VVIndex,_,_,_) -> destructure_tuple r
+            | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | _ -> make_tyv_and_push d r |> destructure_deep
         destructure_deep r
 
@@ -400,15 +417,11 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
 
     let case_f d apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
-        let d' = typechecker_env_copy d
-        let d = {d with env = acc}
-        apply d meth args
-            (fun _ -> 
-                typechecker_env_set d d'
-                on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
+        apply {d with env = acc} meth args
+            (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
             (fun r -> 
                 match_single acc pattern (destructure_deep d r) 
-                    (fun _ -> failwith "The subpattern in F failed to match.")
+                    (fun _ -> failwith "The function call subpattern in the matcher failed to match.")
                     ret)
 
     let case_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
@@ -449,31 +462,6 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
 
     let fun_tag = -1L
 
-    let rec expr_free_variables e =
-        let f e = expr_free_variables e
-        match e with
-        | V n -> Set.singleton n
-        | VV(l,_) -> List.map f l |> Set.unionMany
-        | If(a,b,c) -> f a + f b + f c
-        | BinOp(_,a,b) -> f a + f b
-        | UnOp(_,a) -> f a
-        | Function(name,l) ->
-            let rec pat_template on_name on_expr p = 
-                let g p = pat_template on_name on_expr p
-                match p with
-                | F (pat,expr) | A (pat,expr) -> on_expr (g pat) expr
-                | N (_,pat) | A' (pat,_) -> g pat
-                | S x | S' x -> on_name x
-                | R (l,Some o) -> g o :: List.map g l |> Set.unionMany
-                | R (l,None) -> List.map g l |> Set.unionMany
-
-            let pat_bodies p = pat_template (fun _ -> Set.empty) (fun s expr -> Set.union s (f expr)) p
-            let pat_names p = pat_template Set.singleton (fun s _ -> s) p
-
-            List.map (fun (pat,body) -> pat_bodies pat + (f body - pat_names pat)) l
-            |> Set.unionMany
-        | Lit _ -> Set.empty
-
     let rec typed_expr_free_variables_template on_functiont e =
         let f e = typed_expr_free_variables_template on_functiont e
         match e with
@@ -481,7 +469,7 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
         | TyVV(l,_) -> List.map f l |> Set.unionMany
         | TyIf(a,b,c,_) -> f a + f b + f c
         | TyBinOp(_,a,b,_) -> f a + f b
-        | TyMethodCall(used_vars,_) -> used_vars
+        | TyMethodCall(used_vars,_,_) -> used_vars
         | TyUnOp(_,a,_) -> f a
         | TyLet((n,_),a,b,_) -> Set.remove n (f b) + f a
         | TyLit _ -> Set.empty
@@ -515,7 +503,7 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
         | TyVV(l,t) -> TyVV(List.map f l,t)
         | TyIf(a,b,c,t) -> TyIf(f a,f b,f c,t)
         | TyBinOp(o,a,b,t) -> TyBinOp(o,f a,f b,t)
-        | TyMethodCall(used_vars,t) -> TyMethodCall(renamer_apply_pool r used_vars,t)
+        | TyMethodCall(used_vars,tag,t) -> TyMethodCall(renamer_apply_pool r used_vars,tag,t)
         | TyUnOp(o,a,t) -> TyUnOp(o,f a,t)
         | TyLet((n,t),a,b,t') -> TyLet((Map.find n r,t),f a,f b,t')
         | TyLit _ -> e
@@ -531,7 +519,6 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
-
     let rec apply_template d (la: CudaExpr) ra on_fail ret =
         let la = tev d la
         match get_type la with
@@ -544,27 +531,27 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
         let key_args = d.env, expr
         match d.memoized_methods.TryGetValue key_args with
         | false, _ ->                         
-            d.memoized_methods.[key_args] <- MethodInEvaluation(None)
-            let typed_expr = with_empty_seq d expr
-            d.memoized_methods.[key_args] <- MethodDone(typed_expr)
-            typed_expr
-        | true, MethodInEvaluation None ->
+            let tag = !d.method_tag
+            d.method_tag := tag + 1L
+
+            d.memoized_methods.[key_args] <- (MethodInEvaluation(None), tag)
+            let typed_expr = expr_typecheck_with_empty_seq d expr
+            d.memoized_methods.[key_args] <- (MethodDone(typed_expr), tag)
+            typed_expr, tag
+        | true, (MethodInEvaluation None, tag) ->
             let typed_expr = get_body_from d.recursive_methods_stack
-            d.memoized_methods.[key_args] <- MethodInEvaluation (Some typed_expr)
-            typed_expr
-        | true, MethodInEvaluation (Some typed_expr) -> typed_expr
-        | true, MethodDone typed_expr -> typed_expr
+            d.memoized_methods.[key_args] <- (MethodInEvaluation (Some typed_expr), tag)
+            typed_expr, tag
+        | true, (MethodInEvaluation (Some typed_expr), tag) -> typed_expr, tag
+        | true, (MethodDone typed_expr, tag) -> typed_expr, tag
 
     let call_as_method d expr = 
-        let env = Set.fold (fun s k -> 
-            match Map.tryFind k d.env with
-            | Some v -> Map.add k v s
-            | None -> failwithf "Variable %s not bound." k) Map.empty (expr_free_variables expr)
-        
+        let env = d.env
+
         let renamer = renamer_make (pool_make env)
         let renamed_env = renamer_apply_env renamer env
 
-        let typed_expr = memoizing_eval {d with env=renamed_env} expr
+        let typed_expr, tag = memoizing_eval {d with env=renamed_env; let_tag=0L} expr
         let typed_expr_ty = get_type typed_expr
         match typed_expr_ty with
         | FunctionT _ -> failwith "Type level function are not allowed to be returned from functions."
@@ -574,7 +561,7 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
             typed_expr_free_variables typed_expr
             |> renamer_apply_pool (renamer_reverse renamer)
 
-        TyMethodCall(typed_expr_fv_pool, typed_expr_ty)
+        TyMethodCall(typed_expr_fv_pool, tag, typed_expr_ty)
 
     let if_ cond tr fl =
         let cond = tev d cond
@@ -583,7 +570,7 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
             let tev' e f =
                 let mutable is_popped = false
                 d.recursive_methods_stack.Push (fun _ -> is_popped <- true; f())
-                let x = with_empty_seq d e
+                let x = expr_typecheck_with_empty_seq d e
                 if is_popped = false then d.recursive_methods_stack.Pop() |> ignore
                 x
 
@@ -638,7 +625,9 @@ and exp_and_seq (d: LangEnv) exp: TypedCudaExpr =
         match Map.tryFind x d.env with
         | Some v -> v
         | None -> failwithf "Variable %A not bound." x
-    | Function core -> TyV(fun_tag,FunctionT(d.env,core))
+    | Function (core, free_var_set) -> 
+        let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
+        TyV(fun_tag,FunctionT(env,core))
     | If(cond,tr,fl) -> if_ cond tr fl
     | VV(vars,name) -> let vv = List.map (tev d) vars in TyVV(vv, VVT(List.map get_type vv, name))
     | BinOp (op,a,b) -> 
