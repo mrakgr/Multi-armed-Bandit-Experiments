@@ -489,7 +489,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     let rec typed_expr_free_variables e =
         let f e = typed_expr_free_variables e
         match e with
-        | TyV (n,t) -> if n <> fun_tag then Set.singleton n else Set.empty + ty_free_variables t
+        | TyV (n,t) -> (if n <> fun_tag then Set.singleton n else Set.empty) + ty_free_variables t
         | TyVV(l,_) -> List.map f l |> Set.unionMany
         | TyIf(a,b,c,_) -> f a + f b + f c
         | TyBinOp(_,a,b,_) -> f a + f b
@@ -521,7 +521,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         let f e = renamer_apply_typedexpr r e
         let g e = renamer_apply_ty r e
         match e with
-        | TyV (n,t) -> if n <> fun_tag then TyV (Map.find n r,t) else TyV(n,g t)
+        | TyV (n,t) -> if n <> fun_tag then TyV (Map.find n r,g t) else TyV(n,g t)
         | TyVV(l,t) -> TyVV(List.map f l,t)
         | TyIf(a,b,c,t) -> TyIf(f a,f b,f c,t)
         | TyBinOp(o,a,b,t) -> TyBinOp(o,f a,f b,t)
