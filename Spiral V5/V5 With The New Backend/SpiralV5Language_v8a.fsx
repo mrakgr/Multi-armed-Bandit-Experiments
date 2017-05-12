@@ -231,7 +231,7 @@ let fun_ name pat = Function((name,pat),ref Set.empty)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = BinOp(Apply,x,y)
-let methr name x y = UnOp(CallAsMethod,inlr name x y)
+let methr name x y = inlr name x <| UnOp(CallAsMethod, y)
 let meth x y = methr "" x y
 
 let E = S ""
@@ -327,7 +327,6 @@ let rec expr_free_variables e =
             | S x | S' x -> on_name x
             | R (l,Some o) -> vars_union' (g o) g l
             | R (l,None) -> vars_union g l
-                
 
         let pat_vars p = pat_template (fun _ -> Set.empty) (fun s var -> Set.add var s) p
         let pat_names p = pat_template Set.singleton (fun s _ -> s) p
@@ -536,7 +535,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | StructT e -> StructT(renamer_apply_typedexpr r e)
         | e -> e
 
-    let apply_inlineable d case_a case_f (initial_env,(name,l) as fun_key) args on_fail ret =
+    let apply_inlineable tev d case_a case_f (initial_env,(name,l) as fun_key) args on_fail ret =
         match_all (match_single case_a case_f) initial_env l (destructure_deep d args)
             on_fail
             (fun (env, body) ->
@@ -544,13 +543,13 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
-    let rec apply_template d (la: CudaExpr) ra on_fail ret =
+    let rec apply_template tev d (la: CudaExpr) ra on_fail ret =
         let la = tev d la
         match get_type la with
-        | FunctionT x -> apply_inlineable d (case_a d) (case_f d apply_template) x ra on_fail ret
+        | FunctionT x -> apply_inlineable tev d (case_a d) (case_f d (apply_template expr_typecheck_with_empty_seq)) x ra on_fail ret
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
-    let apply d expr args = apply_template d expr (tev d args) (failwithf "Pattern matching cases failed to match.\n%A")
+    let apply d expr args = apply_template tev d expr (tev d args) (failwithf "Pattern matching cases failed to match.\n%A")
 
     let memoizing_eval d expr =
         let key_args = d.env, expr
