@@ -1,9 +1,9 @@
-﻿#load "SpiralV5Language_v8a.fsx"
+﻿#load "SpiralV5Language_v8b.fsx"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
 //#r "../../packages/FParsec-Pipes.0.3.1.0/lib/net45/FParsec-Pipes.dll"
 
-open SpiralV5Language_v8a
+open SpiralV5Language_v8b
 open FParsec
 
 type ParserExpr =
@@ -262,7 +262,8 @@ let tc body =
         let d = data_empty ()
         let s = expr_free_variables body // Is mutable
         if s.IsEmpty = false then failwithf "Variables %A are not bound anywhere." s
-        Succ (expr_typecheck d body, d.memoized_methods)
+        let deforest_tuples x = typed_expr_optimization_pass 2L d.memoized_methods x |> ignore; x // Is mutable
+        Succ (expr_typecheck d body |> deforest_tuples, d.memoized_methods)
     with e -> Fail (e.Message, e.StackTrace)
 
 let prod_lam2 =
@@ -294,16 +295,26 @@ let t1 =
     """
 inl a = 1+0
 inl b = 2+0
-fun f _ = a+b
-f ()
+inl c = 3+0
+inl d = 4+0
+fun f g (a,b,c,d) = if true then a+b, b, d else g (a,b,c,d)
+fun rec g (a,b,c,d) = f g (a*2,b*2,c,d)
+g (a,b,c,d)
     """
 
-let result = run (spaces >>. expr) fib
+let t2 =
+    """
+fun rec q x =
+    fun w x = if true then q 4.5 else x
+    w x
+q 3
+    """
+
+let result = run (spaces >>. expr) prod_lam3
 
 let get = function Succ x -> x
 
 let t = 
     match result with
     | Success (r,_,_) -> tc r
-
 

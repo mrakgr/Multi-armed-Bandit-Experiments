@@ -104,7 +104,7 @@ and TypedCudaExpr =
     | TyVV of TypedCudaExpr list * CudaTy
     | TyBinOp of BinOp * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyUnOp of UnOp * TypedCudaExpr * CudaTy
-    | TyMethodCall of Set<int64> * int64 * CudaTy
+    | TyMethodCall of Set<int64> ref * Map<int64,int64> * int64 * CudaTy
 
 and MemoCases =
     | MethodInEvaluation of TypedCudaExpr option
@@ -138,7 +138,7 @@ let get_type_of_value = function
 
 let get_type = function
     | TyLit x -> get_type_of_value x
-    | TyV (_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) | TyMethodCall(_,_,t)
+    | TyV (_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) | TyMethodCall(_,_,_,t)
     | TyVV(_,t) | TyBinOp(_,_,_,t) | TyUnOp(_,_,t) -> t
 
 /// Returns an empty string if not a tuple.
@@ -337,6 +337,83 @@ let rec expr_free_variables e =
         
     | Lit _ -> Set.empty
 
+let renamer_make s =
+    Set.toArray s
+    |> Array.mapi (fun i x -> x, int64 i)
+    |> Map
+        
+let renamer_apply_pool r s = Set.map (fun x -> Map.find x r) s
+let renamer_reverse r = 
+    Map.fold (fun s k v -> Map.add v k s) Map.empty r
+    |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
+
+let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e
+and renamer_apply_typedexpr r e =
+    let f e = renamer_apply_typedexpr r e
+    let g e = renamer_apply_ty r e
+    match e with
+    | TyV (n,t) -> if n <> fun_tag then TyV (Map.find n r,g t) else TyV(n,g t)
+    | TyVV(l,t) -> TyVV(List.map f l,t)
+    | TyIf(a,b,c,t) -> TyIf(f a,f b,f c,t)
+    | TyBinOp(o,a,b,t) -> TyBinOp(o,f a,f b,t)
+    | TyMethodCall(used_vars,renamer,tag,t) -> TyMethodCall(ref <| renamer_apply_pool r !used_vars,renamer,tag,t)
+    | TyUnOp(o,a,t) -> TyUnOp(o,f a,t)
+    | TyLet((n,t),a,b,t') -> TyLet((Map.find n r,t),f a,f b,t')
+    | TyLit _ -> e
+and renamer_apply_ty r = function
+    | FunctionT(e,t) -> FunctionT(renamer_apply_env r e,t)
+    | StructT e -> StructT(renamer_apply_typedexpr r e)
+    | e -> e
+
+let rec typed_expr_free_variables on_method_call e =
+    let inline f e = typed_expr_free_variables on_method_call e
+    match e with
+    | TyV (n,t) -> (if n <> fun_tag then Set.singleton n else Set.empty) + ty_free_variables on_method_call t
+    | TyVV(l,_) -> vars_union f l
+    | TyIf(a,b,c,_) -> f a + f b + f c
+    | TyBinOp(_,a,b,_) -> f a + f b
+    | TyMethodCall(used_vars,renamer,tag,_) -> on_method_call used_vars renamer tag
+    | TyUnOp(_,a,_) -> f a
+    | TyLet((n,_),a,b,_) -> Set.remove n (f b) + f a
+    | TyLit _ -> Set.empty
+
+and ty_free_variables on_method_call x = 
+    match x with
+    | FunctionT(env,_) -> env_free_variables on_method_call env
+    | StructT e -> typed_expr_free_variables on_method_call e
+    | _ -> Set.empty
+
+and env_free_variables on_method_call env = Map.fold (fun s _ v -> typed_expr_free_variables on_method_call v + s) Set.empty env
+
+let on_method_call_typechecking_pass used_vars _ _ = !used_vars
+
+/// Optimizes the free variables for the sake of tuple deforestation.
+/// It needs at least two passes to converge properly. And probably exactly two.
+let typed_expr_optimization_pass num_passes (memo: MemoDict) =
+    let rec on_method_call_optimization_pass (memo: (Set<int64> * int64) []) (expr_map: Map<int64,TypedCudaExpr>) r renamer tag =
+        let vars,counter = memo.[int tag]
+        let set_vars vars = r := renamer_apply_pool renamer vars; !r
+        if counter < num_passes then
+            let counter = counter + 1L
+            memo.[int tag] <- vars, counter
+            let vars =
+                let ty_expr = expr_map.[tag]
+                typed_expr_free_variables (on_method_call_optimization_pass memo expr_map) ty_expr
+            memo.[int tag] <- vars, counter
+            set_vars vars
+        else
+            set_vars vars
+
+    let memo =
+        Seq.map (fun x ->
+            match x with
+            | MethodDone e, tag -> tag, e
+            | _ -> failwith "impossible") memo.Values
+        |> Map
+        
+    typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0L)) memo)
+
+
 let rec expr_typecheck_with_empty_seq (d: LangEnv) expr =
     let d = {d with sequences = ref None}
     let expr = expr_typecheck d expr
@@ -444,7 +521,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         recurse acc l r <| fun x_acc ->
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
 
-    let case_f d apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
+    let case_f (d: LangEnv) apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
         apply {d with env = acc} (V meth) args
             (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
             (fun r -> 
@@ -488,54 +565,6 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             | [] -> on_fail (l,args) //"All patterns in the matcher failed to match."
         loop l
 
-    let rec typed_expr_free_variables e =
-        let f e = typed_expr_free_variables e
-        match e with
-        | TyV (n,t) -> (if n <> fun_tag then Set.singleton n else Set.empty) + ty_free_variables t
-        | TyVV(l,_) -> vars_union f l
-        | TyIf(a,b,c,_) -> f a + f b + f c
-        | TyBinOp(_,a,b,_) -> f a + f b
-        | TyMethodCall(used_vars,_,_) -> used_vars
-        | TyUnOp(_,a,_) -> f a
-        | TyLet((n,_),a,b,_) -> Set.remove n (f b) + f a
-        | TyLit _ -> Set.empty
-
-    and ty_free_variables x = 
-        match x with
-        | FunctionT(env,_) -> env_free_variables env
-        | StructT e -> typed_expr_free_variables e
-        | _ -> Set.empty
-
-    and env_free_variables env = Map.fold (fun s _ v -> typed_expr_free_variables v + s) Set.empty env
-
-    let renamer_make s =
-        Set.toArray s
-        |> Array.mapi (fun i x -> x, int64 i)
-        |> Map
-        
-    let renamer_apply_pool r s = Set.map (fun x -> Map.find x r) s
-    let renamer_reverse r = 
-        Map.fold (fun s k v -> Map.add v k s) Map.empty r
-        |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
-
-    let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e
-    and renamer_apply_typedexpr r e =
-        let f e = renamer_apply_typedexpr r e
-        let g e = renamer_apply_ty r e
-        match e with
-        | TyV (n,t) -> if n <> fun_tag then TyV (Map.find n r,g t) else TyV(n,g t)
-        | TyVV(l,t) -> TyVV(List.map f l,t)
-        | TyIf(a,b,c,t) -> TyIf(f a,f b,f c,t)
-        | TyBinOp(o,a,b,t) -> TyBinOp(o,f a,f b,t)
-        | TyMethodCall(used_vars,tag,t) -> TyMethodCall(renamer_apply_pool r used_vars,tag,t)
-        | TyUnOp(o,a,t) -> TyUnOp(o,f a,t)
-        | TyLet((n,t),a,b,t') -> TyLet((Map.find n r,t),f a,f b,t')
-        | TyLit _ -> e
-    and renamer_apply_ty r = function
-        | FunctionT(e,t) -> FunctionT(renamer_apply_env r e,t)
-        | StructT e -> StructT(renamer_apply_typedexpr r e)
-        | e -> e
-
     let apply_inlineable tev d case_a case_f (initial_env,(name,l) as fun_key) args on_fail ret =
         match_all (match_single case_a case_f) initial_env l (destructure_deep d args)
             on_fail
@@ -573,7 +602,8 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     let call_as_method d expr = 
         let env = d.env
 
-        let renamer = renamer_make (env_free_variables env)
+        let fv = env_free_variables on_method_call_typechecking_pass env
+        let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
 
         let typed_expr, tag = memoizing_eval {d with env=renamed_env; let_tag=int64 renamer.Count} expr
@@ -581,11 +611,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
         if is_returnable' typed_expr_ty = false then failwithf "%A is not a type that can be returned from a method. Consider using Inlineable instead." typed_expr
 
-        let typed_expr_fv_pool = 
-            typed_expr_free_variables typed_expr
-            |> renamer_apply_pool (renamer_reverse renamer)
-
-        TyMethodCall(typed_expr_fv_pool, tag, typed_expr_ty)
+        TyMethodCall(ref fv, renamer_reverse renamer, tag, typed_expr_ty)
 
     let if_ cond tr fl =
         let cond = tev d cond
