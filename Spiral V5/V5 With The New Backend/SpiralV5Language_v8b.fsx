@@ -24,7 +24,8 @@ type CudaTy =
     | FunctionT of FunctionKey
     | StructT of TypedCudaExpr // Structs here are pretty much the opposite of what they are in C. They are a type level feature.
 
-and TyV = int64 * CudaTy
+and Tag = int64
+and TyV = Tag * CudaTy
 and Env = Map<string, TypedCudaExpr>
 and FunctionCore = string * (CudaPattern * CudaExpr) list
 and FunctionKey = Env * FunctionCore
@@ -92,6 +93,8 @@ and CudaExpr =
     | BinOp of BinOp * CudaExpr * CudaExpr
     | UnOp of UnOp * CudaExpr
 
+and Arguments = Set<TyV> ref
+
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedCudaExpr =
     | TyV of TyV
@@ -103,13 +106,13 @@ and TypedCudaExpr =
     | TyBinOp of BinOp * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyUnOp of UnOp * TypedCudaExpr * CudaTy
     | TyType of CudaTy
-    | TyMethodCall of Set<int64> ref * Map<int64,int64> * int64 * CudaTy
+    | TyMethodCall of Arguments * Map<Tag,Tag> * Tag * CudaTy
 
 and MemoCases =
     | MethodInEvaluation of TypedCudaExpr option
     | MethodDone of TypedCudaExpr
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
-and MemoDict = Dictionary<MemoKey, MemoCases * int64> 
+and MemoDict = Dictionary<MemoKey, MemoCases * Tag * Arguments> 
 
 and LangEnv =
     {
@@ -119,8 +122,8 @@ and LangEnv =
     memoized_methods : MemoDict // For typechecking recursive functions.
     sequences : (TypedCudaExpr -> TypedCudaExpr) option ref // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
-    method_tag : int64 ref
-    mutable let_tag : int64
+    method_tag : Tag ref
+    mutable let_tag : Tag
     }
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
@@ -346,12 +349,9 @@ let rec expr_free_variables e =
         
     | Lit _ -> Set.empty
 
-let renamer_make s =
-    Set.toArray s
-    |> Array.mapi (fun i x -> x, int64 i)
-    |> Map
-        
-let renamer_apply_pool r s = Set.map (fun x -> Map.find x r) s
+let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
+let renamer_apply_pool r s = Set.map (fun (tag,ty) -> Map.find tag r, ty) s
+
 let renamer_reverse r = 
     Map.fold (fun s k v -> Map.add v k s) Map.empty r
     |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
@@ -379,7 +379,7 @@ and renamer_apply_ty r = function
 let rec typed_expr_free_variables on_method_call e =
     let inline f e = typed_expr_free_variables on_method_call e
     match e with
-    | TyV (n,t) -> Set.singleton n
+    | TyV (n,t) -> Set.singleton (n,t)
     | TyType t -> ty_free_variables on_method_call t
 
     | TyVV(l,_) -> vars_union f l
@@ -387,7 +387,7 @@ let rec typed_expr_free_variables on_method_call e =
     | TyBinOp(_,a,b,_) -> f a + f b
     | TyUnOp(_,a,_) -> f a
     | TyMethodCall(used_vars,renamer,tag,_) -> on_method_call used_vars renamer tag
-    | TyLet((n,_),a,b,_) -> Set.remove n (f b) + f a
+    | TyLet(x,a,b,_) -> Set.remove x (f b) + f a
     | TyLit _ -> Set.empty
 
 and ty_free_variables on_method_call x = 
@@ -396,36 +396,37 @@ and ty_free_variables on_method_call x =
     | StructT e -> typed_expr_free_variables on_method_call e
     | _ -> Set.empty
 
-and env_free_variables on_method_call env = Map.fold (fun s _ v -> typed_expr_free_variables on_method_call v + s) Set.empty env
+and env_free_variables on_method_call env = 
+    Map.fold (fun s _ v -> typed_expr_free_variables on_method_call v + s) Set.empty env
 
 let on_method_call_typechecking_pass used_vars _ _ = !used_vars
+
+let memo_value = function
+    | MethodDone e, tag, args -> e, tag, args
+    | _ -> failwith "impossible"
 
 /// Optimizes the free variables for the sake of tuple deforestation.
 /// It needs at least two passes to converge properly. And probably exactly two.
 let typed_expr_optimization_pass num_passes (memo: MemoDict) =
-    let rec on_method_call_optimization_pass (memo: (Set<int64> * int64) []) (expr_map: Map<int64,TypedCudaExpr>) r renamer tag =
+    let rec on_method_call_optimization_pass (memo: (Set<Tag * CudaTy> * int) []) (expr_map: Map<Tag,TypedCudaExpr * Arguments>) r renamer tag =
         let vars,counter = memo.[int tag]
-        let set_vars vars = r := renamer_apply_pool renamer vars; !r
+        let set_vars vars = 
+//            printfn "renamer=%A" renamer
+//            printfn "vars=%A" vars
+            r := renamer_apply_pool renamer vars; !r
         if counter < num_passes then
-            let counter = counter + 1L
+            let counter = counter + 1
             memo.[int tag] <- vars, counter
-            let vars =
-                let ty_expr = expr_map.[tag]
-                typed_expr_free_variables (on_method_call_optimization_pass memo expr_map) ty_expr
+            let ty_expr, arguments = expr_map.[tag]
+            let vars = typed_expr_free_variables (on_method_call_optimization_pass memo expr_map) ty_expr
+            arguments := vars
             memo.[int tag] <- vars, counter
             set_vars vars
         else
             set_vars vars
 
-    let memo =
-        Seq.map (fun x ->
-            match x with
-            | MethodDone e, tag -> tag, e
-            | _ -> failwith "impossible") memo.Values
-        |> Map
-        
-    typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0L)) memo)
-
+    let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
+    typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo)
 
 let rec expr_typecheck_with_empty_seq (d: LangEnv) expr =
     let d = {d with sequences = ref None}
@@ -521,11 +522,12 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                     TyVV(indexed_tuple_args, VVT (tuple_types, name))
                 | _ -> r
             match r with
-            | TyLit _ -> r // Literals are propagated.
+            | TyType _ | TyLit _ -> r // Literals are propagated.
             | TyBinOp(ArrayIndex,Array(_,[],_),_,_)
             | TyV _ | TyBinOp (VVIndex,_,_,_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
-            | _ -> make_tyv_and_push d r |> destructure_deep
+            | TyMethodCall _ | TyLet _ | TyBinOp _ | TyUnOp _ | TyIf _ -> 
+                make_tyv_and_push d r |> destructure_deep
         destructure_deep r
 
     let inline case_bind acc arg_name x = if is_full_name arg_name then Map.add arg_name x acc else acc
@@ -546,8 +548,8 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     let case_a d annot = case_a' (tev d (V annot) |> get_type) 
 
     let match_single' case_a case_f (acc: Env) l r on_fail ret =
-        let rec recurse acc l r ret = //match_single case_f case_r case_bind acc l r on_fail ret
-            match l,r with // destructure_deep is called in apply_method and apply_inlineable
+        let rec recurse acc l r ret = 
+            match l,r with 
             | A (pattern,annot), _ -> case_a annot r on_fail (fun _ -> recurse acc pattern r ret) 
             | A' (pattern,annot), _ -> case_a' annot r on_fail (fun _ -> recurse acc pattern r ret) 
             | F (pattern, meth), args -> case_f acc pattern args meth on_fail ret
@@ -601,16 +603,16 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             let tag = !d.method_tag
             d.method_tag := tag + 1L
 
-            d.memoized_methods.[key_args] <- (MethodInEvaluation(None), tag)
+            d.memoized_methods.[key_args] <- (MethodInEvaluation(None), tag, ref Set.empty)
             let typed_expr = expr_typecheck_with_empty_seq d expr
-            d.memoized_methods.[key_args] <- (MethodDone(typed_expr), tag)
+            d.memoized_methods.[key_args] <- (MethodDone(typed_expr), tag, ref Set.empty)
             typed_expr, tag
-        | true, (MethodInEvaluation None, tag) ->
+        | true, (MethodInEvaluation None, tag, args) ->
             let typed_expr = get_body_from d.recursive_methods_stack
-            d.memoized_methods.[key_args] <- (MethodInEvaluation (Some typed_expr), tag)
+            d.memoized_methods.[key_args] <- (MethodInEvaluation (Some typed_expr), tag, args)
             typed_expr, tag
-        | true, (MethodInEvaluation (Some typed_expr), tag) -> typed_expr, tag
-        | true, (MethodDone typed_expr, tag) -> typed_expr, tag
+        | true, (MethodInEvaluation (Some typed_expr), tag, _) -> typed_expr, tag
+        | true, (MethodDone typed_expr, tag, _) -> typed_expr, tag
 
     let call_as_method d expr = 
         let env = d.env
@@ -622,11 +624,11 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         let typed_expr, tag = memoizing_eval {d with env=renamed_env; let_tag=int64 renamer.Count} expr
         let typed_expr_ty = get_type typed_expr
 
-        if is_returnable' typed_expr_ty = false then failwithf "%A is not a type that can be returned from a method. Consider using Inlineable instead." typed_expr
+        if is_returnable' typed_expr_ty = false then failwithf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
 
         TyMethodCall(ref fv, renamer_reverse renamer, tag, typed_expr_ty)
 
-    let if_ cond tr fl =
+    let if_ d cond tr fl =
         let cond = tev d cond
         if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
         else
@@ -650,9 +652,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 | None -> tev' fl (fun _ -> tr)
 
             let type_tr, type_fl = get_type tr, get_type fl
-            if type_tr = type_fl then 
-                //tev d (Apply(Method("",[E,T (TyIf(cond,tr,fl,type_tr))]),B))
-                TyIf(cond,tr,fl,type_tr)
+            if type_tr = type_fl then TyIf(cond,tr,fl,type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
     let mset d a b =
@@ -715,7 +715,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     | Function (core, free_var_set) -> 
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
         TyType(FunctionT(env,core))
-    | If(cond,tr,fl) -> if_ cond tr fl
+    | If(cond,tr,fl) -> if_ d cond tr fl
     | VV(vars,name) -> let vv = List.map (tev d) vars in TyVV(vv, VVT(List.map get_type vv, name))
     | BinOp (op,a,b) -> 
         match op with
@@ -751,11 +751,11 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | TypeError -> failwithf "%A" a
         | StructCreate -> failwith "StructCreate is not supposed to be typechecked. It is only for the benefit of the code generator."
 
-let tc body = 
+let spiral_typecheck body = 
     try
         let d = data_empty ()
         let s = expr_free_variables body // Is mutable
         if s.IsEmpty = false then failwithf "Variables %A are not bound anywhere." s
-        let deforest_tuples x = typed_expr_optimization_pass 2L d.memoized_methods x |> ignore; x // Is mutable
+        let deforest_tuples x = typed_expr_optimization_pass 2 d.memoized_methods x |> ignore; x // Is mutable
         Succ (expr_typecheck d body |> deforest_tuples, d.memoized_methods)
     with e -> Fail (e.Message, e.StackTrace)

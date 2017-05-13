@@ -104,8 +104,8 @@ let print_method_dictionary (imemo: MemoDict) =
     let print_simple_type = print_type (fun t -> sprintf "%s *" (print_type case_array_in_array t))
     let print_array_type = print_type case_array_in_array
 
-    let print_tyv tag = sprintf "var_%i" tag
-    let print_tyv_with_type (tag,ty) = sprintf "%s %s" (print_simple_type ty) (print_tyv tag)
+    let print_tyv (tag,_) = sprintf "var_%i" tag
+    let print_tyv_with_type (tag,ty as v) = sprintf "%s %s" (print_simple_type ty) (print_tyv v)
     let print_method tag = sprintf "method_%i" tag
 
     let print_value = function
@@ -118,7 +118,32 @@ let print_method_dictionary (imemo: MemoDict) =
         | LitBool x -> if x then "1" else "0"
         | LitString x -> x
 
-    let rec print_array_declaration is_shared typ v ar_sizes =   
+    let rec print_array a b =
+        let ar_sizes =
+            match a with
+            | Array(_,sizes,_) -> sizes
+            | _ -> failwith "impossible"
+
+        let i = tuple_field b
+
+        // Array cases
+        let index = 
+            let rec loop x =
+                match x with
+                | None, s :: sx, i :: ix ->
+                    loop (Some(sprintf "(%s) * %s" (codegen i) (codegen s)),sx,ix)
+                | None, [], [i] ->
+                    codegen i
+                | Some p, s :: sx, i :: ix ->
+                    loop (Some(sprintf "(%s + (%s)) * %s" p (codegen i) (codegen s)),sx,ix)
+                | Some p, [], [i] ->
+                    sprintf "%s + (%s)" p (codegen i)
+                | _ -> failwith "invalid state"
+            if i.IsEmpty = false then loop (None,List.tail ar_sizes,i)
+            else "0"
+        sprintf "%s[%s]" (codegen a) index
+
+    and print_array_declaration is_shared typ v ar_sizes =   
         let typ = print_array_type typ
         let nam = print_tyv v
         let dim =
@@ -131,9 +156,8 @@ let print_method_dictionary (imemo: MemoDict) =
         | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
         | false -> sprintf "%s %s[%s];" typ nam dim |> state
 
-    //and print_methodcall x = List.map codegen (filter_vars is_arg x)
     and codegen = function
-        | TyV (x,_) -> print_tyv x
+        | TyV v -> print_tyv v
         | TyIf(cond,tr,fl,_) -> // If statements will aways be hoisted into methods in this language.
             sprintf "if (%s) {" (codegen cond) |> state
             enter <| fun _ -> sprintf "return %s;" (codegen tr)
@@ -142,124 +166,64 @@ let print_method_dictionary (imemo: MemoDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet((tag,_), TyUnOp(StructCreate,Array(ar_typ,ar_sizes,typ),_), rest, _) ->
+        | TyLet(v, TyUnOp(StructCreate,Array(ar_typ,ar_sizes,typ),_), rest, _) ->
             match ar_typ with
-            | Local | Global -> print_array_declaration false typ tag ar_sizes
-            | Shared -> print_array_declaration true typ tag ar_sizes
+            | Local | Global -> print_array_declaration false typ v ar_sizes
+            | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
         | TyLet(_, TyUnOp(StructCreate, _, _), _, _) -> failwith "Unknown struct. For now each struct is intended to have their own case in the codegen."
+        | TyVV([],_) | TyType _ -> ""
         | TyLet(_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
-        | TyType _ -> ""
-        | TyLet((_,VVT([],_)),b,rest,_) ->
-            sprintf "%s;" (codegen b) |> state
-            codegen rest
-        | TyLet(tyv,b,rest,_) ->
-            sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state
-            codegen rest
-        | TyVV([],_) -> ""
+        | TyLet((_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
+        | TyLet(_,TyBinOp(MSet,a,b,_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
+        | TyLet(tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
         | TyMethodCall(used_vars,_,tag,t) ->
             let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
-
-        // Value tuple cases
-        | TyVVIndex(v,i,_) -> sprintf "%s.tup%s" (codegen v) (codegen i)
-        | TyVV(l,(VVT t)) -> 
+        | TyVV(l,(VVT (t, _))) -> 
             List.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
             |> String.concat ", "
             |> sprintf "make_tuple_%i(%s)" (tuple_def_proc t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
 
-        // Array cases
-        | TyArrayIndex(ar,i,_) as ar' ->
-            let index = 
-                let ar_sizes =
-                    match get_type ar with
-                    | LocalArrayT(TyVV(sizes,_),_) | SharedArrayT(TyVV(sizes,_),_) | GlobalArrayT(TyVV(sizes,_),_) -> sizes
-                    | LocalArrayT(sizes,_) | SharedArrayT(sizes,_) | GlobalArrayT(sizes,_) -> [sizes]
-                    | _ -> failwith "impossible"
-                let rec loop x =
-                    match x with
-                    | None, s :: sx, i :: ix ->
-                        loop (Some(sprintf "(%s) * %s" (codegen i) (codegen s)),sx,ix)
-                    | None, [], [i] ->
-                        codegen i
-                    | Some p, s :: sx, i :: ix ->
-                        loop (Some(sprintf "(%s + (%s)) * %s" p (codegen i) (codegen s)),sx,ix)
-                    | Some p, [], [i] ->
-                        sprintf "%s + (%s)" p (codegen i)
-                    | _ -> failwith "invalid state"
-                if i.IsEmpty = false then
-                    loop (None,List.tail ar_sizes,i)
-                else 
-                    "0"
-            sprintf "%s[%s]" (codegen ar) index
+        | TyUnOp(op,a,t) ->
+            match op with
+            | Neg -> sprintf "(-%s)" (codegen a)
+            | StructCreate -> failwith "It should have been taken care of in a let statement."
+            | CallAsMethod | TypeError -> failwith "Does not appear in codegen."
 
-        | TyArrayCreate _ -> failwith "This expression should never appear in isolation."
+        | TyBinOp(op,a,b,t) ->
+            match op with
+            | VVIndex -> sprintf "%s.tup%s" (codegen a) (codegen b)
+            | ArrayIndex -> print_array a b
 
-        // Cuda kernel constants
-        | TyThreadIdxX -> "threadIdx.x"
-        | TyThreadIdxY -> "threadIdx.y"
-        | TyThreadIdxZ -> "threadIdx.z"
-        | TyBlockIdxX -> "blockIdx.x"
-        | TyBlockIdxY -> "blockIdx.y"
-        | TyBlockIdxZ -> "blockIdx.z"
-   
-        // Primitive operations on expressions.
-        | TyAdd (x,y,_) -> sprintf "(%s + %s)" (codegen x) (codegen y)
-        | TySub (x,y,_) -> sprintf "(%s - %s)" (codegen x) (codegen y)
-        | TyMult (x,y,_) -> sprintf "(%s * %s)" (codegen x) (codegen y)
-        | TyDiv (x,y,_) -> sprintf "(%s / %s)" (codegen x) (codegen y)
-        | TyMod (x,y,_) -> sprintf "(%s %% %s)" (codegen x) (codegen y)
-        | TyLT (x,y) -> sprintf "(%s < %s)" (codegen x) (codegen y)
-        | TyLTE (x,y) -> sprintf "(%s <= %s)" (codegen x) (codegen y)
-        | TyEQ (x,y) -> sprintf "(%s == %s)" (codegen x) (codegen y)
-        | TyNEQ (x,y) -> sprintf "(%s != %s)" (codegen x) (codegen y)
-        | TyGT (x,y) -> sprintf "(%s > %s)" (codegen x) (codegen y)
-        | TyGTE (x,y) -> sprintf "(%s >= %s)" (codegen x) (codegen y)
-        | TyAnd (x,y) -> sprintf "(%s && %s)" (codegen x) (codegen y)
-        | TyOr (x,y) -> sprintf "(%s || %s)" (codegen x) (codegen y)
-        | TyLeftShift (x,y,_) -> sprintf "(%s << %s)" (codegen x) (codegen y)
-        | TyRightShift (x,y,_) -> sprintf "(%s >> %s)" (codegen x) (codegen y)
-        | TySyncthreads -> state "syncthreads();"; ""
-        | TyShuffleXor (x,y,_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
-        | TyShuffleUp (x,y,_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
-        | TyShuffleDown (x,y,_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
-        | TyShuffleIndex (x,y,_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
-        | TyLog (x,_) -> sprintf "log(%s)" (codegen x)
-        | TyExp (x,_) -> sprintf "exp(%s)" (codegen x)
-        | TyTanh (x,_) -> sprintf "tanh(%s)" (codegen x)
-        | TyNeg (x,_) -> sprintf "(-%s)" (codegen x)
-        // Mutable operations.
-        | TyMSet (a,b,rest,_) ->
-            sprintf "%s = %s;" (codegen a) (codegen b) |> state
-            codegen rest
-        | TyAtomicAdd (a,b,_) ->
-            sprintf "atomicAdd(&(%s),%s)" (codegen a) (codegen b)
-        // Loops
-        | TyWhile (cond,body,rest,_) -> 
-            sprintf "while (%s) {" (codegen cond) |> state
-            enter <| fun _ -> codegen body
-            "}" |> state
-            codegen rest
-        | TyCubBlockReduce(dim, ins, TyMethodCall(mkey,_,_),num_valid,t) ->
-            let _,_,tag,_ = imemo.[mkey]
-            match num_valid with
-            | Some num_valid -> 
-                sprintf "cub::BlockReduce<%s,%s>().Reduce(%s,%s,%s)"  // TODO: Do not forget to change the template parameter.
-                    (print_simple_type t) (codegen dim) (codegen ins) (print_method tag) (codegen num_valid)
-            | None -> 
-                sprintf "cub::BlockReduce<%s,%s>().Reduce(%s,%s)" 
-                    (print_simple_type t) (codegen dim) (codegen ins) (print_method tag)
-        | TyCubBlockReduce _ -> failwith "impossible"
+            // Primitive operations on expressions.
+            | Add -> sprintf "(%s + %s)" (codegen a) (codegen b)
+            | Sub -> sprintf "(%s - %s)" (codegen a) (codegen b)
+            | Mult -> sprintf "(%s * %s)" (codegen a) (codegen b)
+            | Div -> sprintf "(%s / %s)" (codegen a) (codegen b)
+            | Mod -> sprintf "(%s %% %s)" (codegen a) (codegen b)
+            | LT -> sprintf "(%s < %s)" (codegen a) (codegen b)
+            | LTE -> sprintf "(%s <= %s)" (codegen a) (codegen b)
+            | EQ -> sprintf "(%s == %s)" (codegen a) (codegen b)
+            | NEQ -> sprintf "(%s != %s)" (codegen a) (codegen b)
+            | GT -> sprintf "(%s > %s)" (codegen a) (codegen b)
+            | GTE -> sprintf "(%s >= %s)" (codegen a) (codegen b)
+            | And -> sprintf "(%s && %s)" (codegen a) (codegen b)
+            | Or -> sprintf "(%s || %s)" (codegen a) (codegen b)
+            
+            // Inapplicable during codegen
+            | MSet -> failwith "It should have been taken care of in a let statement."
+            | VVCons | ArrayCreateShared | ArrayCreate | Apply -> failwith "Should never appear in the codegen phase."
 
     let print_tuple_defintion tys tag =
         let tuple_name = print_tuple tag
         sprintf "struct %s {" tuple_name |> state
         enter <| fun _ -> List.iteri (fun i ty -> 
             match ty with
-            | UnitT -> ()
+            | VVT([],_) -> ()
             | _ -> sprintf "%s tup%i;" (print_simple_type ty) i |> state) tys; ""
         "};" |> state
         sprintf "__device__ __forceinline__ %s make_tuple_%i(%s){" 
@@ -267,7 +231,7 @@ let print_method_dictionary (imemo: MemoDict) =
             tag
             (List.mapi (fun i ty -> 
                 match ty with
-                | UnitT -> ""
+                | VVT([],_) -> ""
                 | _ -> sprintf "%s tup_arg%i" (print_simple_type ty) i) tys
              |> List.filter ((<>) "") 
              |> String.concat ", ")
@@ -278,11 +242,12 @@ let print_method_dictionary (imemo: MemoDict) =
             "return tmp;" |> state
         "}" |> state
 
-    let print_method is_main (explicit_args,body,tag,implicit_args) = 
+    let print_method (body,tag,args) = 
+        let is_main = tag = 0L
         let prefix = if is_main then "__global__" else "__device__"
         let method_name = if is_main then "MainKernel" else print_method tag
         let args = 
-            Set.toList implicit_args @ explicit_args
+            Set.toList !args
             |> List.map print_tyv_with_type
             |> String.concat ", "
         sprintf "%s %s %s(%s) {" prefix (print_simple_type (get_type body)) method_name args |> state
@@ -300,12 +265,7 @@ let print_method_dictionary (imemo: MemoDict) =
         
         enter' <| fun _ ->
             with_channel CodegenChannels.Code <| fun _ ->
-                let get_tag (_,_,tag,_) = tag
-                let min = imemo |> Seq.fold (fun s kv -> 
-                    max (get_tag kv.Value) s) System.Int64.MinValue
-                for x in imemo do 
-                    let is_main = get_tag x.Value = min
-                    print_method is_main x.Value
+                for x in imemo do print_method (memo_value x.Value)
 
             with_channel CodegenChannels.TupleDefinitions <| fun _ ->
                 for x in tuple_definitions do print_tuple_defintion x.Key x.Value
@@ -321,91 +281,48 @@ let print_method_dictionary (imemo: MemoDict) =
         cur_program () |> process_statements |> Succ
     with e -> Fail (e.Message, e.StackTrace)
 
-let eval body (inputs, dims) = 
-    match typecheck dims body inputs with
-    | Succ imemo -> print_method_dictionary imemo
-    | Fail er -> Fail er
+open SpiralV5Parser_v2a
+open FParsec
 
-let eval0 body = eval body (VV [], default_dims)
+let spiral_codegen body = 
+    match spiral_parse body with
+    | Success(r,_,_) ->
+        match spiral_typecheck r with
+        | Succ(_,memo) -> print_method_dictionary memo
+        | Fail er -> Fail er
+    | Failure(er,_,_) -> 
+        Fail (er,"")
 
-let map_forward_setter = "inl i (*result, *out) -> out.[i] <- result"
-let map_backward_setter = "inl i (*result, *out) -> out.[i] <- out.[i] + result"
-
-let cuda_modules =
+let fib =
     """
-inl module_selector ->
-    inl index_if_array i *in =
-        typecase in with
-        | Array(in,size) -> in.[i]
-        | Array(in,()) -> in.[()]
-
-    inl map_load_op ins map_op i = Tuple.Map (index_if_array i) ins |> map_op i
-
-    fun map (setter, map_op, *n, ins, outs) =
-        inl stride = Cuda.GridDimX * Cuda.BlockDimX
-        inl map_load_op = map_load_op ins map_op
-        
-        fun rec loop i =
-            if i < n then
-                Tuple.ZipReg (outs,map_load_op ins) |> Tuple.Map (setter i)
-                loop (i+stride)
-        loop (Cuda.BlockIdxX * Cuda.BlockDimX + Cuda.ThreadIdxX)
-
-    fun map_redo (map_op,(neutral_elem,reduce_op),*n,ins,outs) =
-        inl stride = Cuda.GridDimX * Cuda.BlockDimX
-        inl map_load_op = map_load_op ins map_op
-
-        fun rec loop (i, value) =
-            if i < n then loop (i + stride, reduce_op value (map_load_op i))
-            else value
-    
-        inl results = 
-            inl i = Cuda.BlockIdxX * Cuda.BlockDimX + Cuda.ThreadIdxX
-            Cuda.CubBlockReduce(loop (i, neutral_elem), fun (a,b) -> reduce_op a b)
-
-        if Cuda.ThreadIdxX = 0UL then 
-            Tuple.ZipReg(outs,results)
-            |> Tuple.Map (inl (*out,*result) -> out.[Cuda.BlockIdxX] <- result)
-            ()
-
-    fun map_redocol_map (map_op,(neutral_elem,reduce_op),map_store_op,(*num_cols,*num_rows),ins,outs) =
-        inl map_load_op = map_load_op ins map_op
-
-        fun rec loop_col col =
-            let rec loop_row (row, value) = 
-                if row < num_rows then loop_row (row + Cuda.BlockDimX, reduce_op value (map_load_op (col,row)))
-                else value
-
-            if col < num_cols then 
-                inl results = Cuda.CubBlockReduce(loop_row (Cuda.ThreadIdxX, neutral_elem), fun (a,b) -> reduce_op a b)
-                    
-                if Cuda.ThreadIdxX = 0UL then 
-                    Tuple.ZipReg(outs,map_store_op results)
-                    |> Tuple.Map (inl (*out,*result) -> out.[col] <- result)
-                    ()        
-                loop_col (col + Cuda.GridDimX)
-        loop_col Cuda.BlockIdxX
-
-    fun mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
-        inl map_load_op = map_load_op ins map_op
-
-        fun rec loop_col col =
-            inl ins = map_load_op col
-            let rec loop_row row = 
-                if row < num_rows then 
-                    Tuple.ZipReg(outs, ins) |> Tuple.Map (setter (col,row))
-                    loop_row (row + Cuda.BlockDimX)
-
-            if col < num_cols then 
-                loop_row Cuda.ThreadIdxX
-                loop_col (col + Cuda.GridDimX)
-
-        loop_col Cuda.BlockIdxX
-
-    module_selector (map, map_redo, map_redocol_map, mapcol)
+fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
+fib 5
     """
 
-let cuda_module_map_template = "fun map :: _ -> map"
-let cuda_module_map_redo_template = "fun _ :: map_redo :: _ -> map_redo"
-let cuda_module_map_redocol_map_template = "fun _ :: _ :: map_redocol_map :: _ -> map_redocol_map"
-let cuda_module_mapcol_template = "fun _ :: _ :: _ :: mapcol :: _ -> mapcol"
+let fib_y =
+    """
+fun rec y f x = f (y f) x
+inl fib r x = if x <= 0 then 0 else r (x-1) + r (x-2)
+y fib 5
+    """
+
+let fib_acc =
+    """
+inl fib n =
+    fun rec fib n a b = if n >= 0 then fib (n-1) b (a+b) else a
+    fib n 0 1
+fib 2
+    """
+
+let fib_acc_y = // The Y Combinator needs all the arguments when dealing with methods.
+    """
+fun rec y f n a b = f (y f) n a b
+inl fib n =
+    inl fib r n a b = if n >= 0 then r (n-1) b (a+b) else a
+    y fib n 0 1
+fib 2
+    """
+
+let r = spiral_codegen fib_acc_y
+
+printfn "%A" r
