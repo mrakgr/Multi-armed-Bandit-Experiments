@@ -216,7 +216,7 @@ let mset expr i (s: CharStream<_>) =
             | Some r -> BinOp(MSet,l,r)
             | None -> l) s
 
-let expr =
+let expr: CharStream<unit> -> _ =
     let opp = new OperatorPrecedenceParser<_,_,_>()
 
     opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> UnOp(Neg,x)))
@@ -256,65 +256,55 @@ let expr =
 
     expr
 
-open System.Collections.Generic
-let tc body = 
-    try
-        let d = data_empty ()
-        let s = expr_free_variables body // Is mutable
-        if s.IsEmpty = false then failwithf "Variables %A are not bound anywhere." s
-        let deforest_tuples x = typed_expr_optimization_pass 2L d.memoized_methods x |> ignore; x // Is mutable
-        Succ (expr_typecheck d body |> deforest_tuples, d.memoized_methods)
-    with e -> Fail (e.Message, e.StackTrace)
-
-let prod_lam2 =
-    """
-fun rec meth cond l = if cond then meth cond l else l 1.5
-meth true (inl x -> x)
-    """
-
-let fib =
-    """
-fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
-fib 5
-    """
-
-let fib_y =
-    """
-fun rec y f x = f (y f) x
-fun fib r x = if x <= 0 then 0 else r (x-1) + r (x-2)
-y fib 5
-    """
-
-let prod_lam3 =
-    """
-fun rec meth cond l = if cond then meth cond (inl x -> x) else l 1.5
-meth true (inl x -> x)
-    """
-
-let t1 =
-    """
-inl a = 1+0
-inl b = 2+0
-inl c = 3+0
-inl d = 4+0
-fun f g (a,b,c,d) = if true then a+b, b, d else g (a,b,c,d)
-fun rec g (a,b,c,d) = f g (a*2,b*2,c,d)
-g (a,b,c,d)
-    """
-
-let t2 =
-    """
-fun rec q x =
-    fun w x = if true then q 4.5 else x
-    w x
-q 3
-    """
-
-let result = run (spaces >>. expr) prod_lam3
-
-let get = function Succ x -> x
-
-let t = 
-    match result with
-    | Success (r,_,_) -> tc r
+//let prod_lam2 =
+//    """
+//fun rec meth cond l = if cond then meth cond l else l 1.5
+//meth true (inl x -> x)
+//    """
+//
+//let fib =
+//    """
+//fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
+//fib 5
+//    """
+//
+//let fib_y =
+//    """
+//fun rec y f x = f (y f) x
+//fun fib r x = if x <= 0 then 0 else r (x-1) + r (x-2)
+//y fib 5
+//    """
+//
+//let prod_lam3 =
+//    """
+//fun rec meth cond l = if cond then meth cond (inl x -> x) else l 1.5
+//meth true (inl x -> x)
+//    """
+//
+//let t1 =
+//    """
+//inl a = 1+0
+//inl b = 2+0
+//inl c = 3+0
+//inl d = 4+0
+//fun f g (a,b,c,d) = if true then a+b, b, d else g (a,b,c,d)
+//fun rec g (a,b,c,d) = f g (a*2,b*2,c,d)
+//g (a,b,c,d)
+//    """
+//
+//let t2 =
+//    """
+//fun rec q x =
+//    fun w x = if true then q 4.5 else x
+//    w x
+//q 3
+//    """
+//
+//let result = run (spaces >>. expr .>> eof) prod_lam3
+//
+//let get = function Succ x -> x
+//
+//let t = 
+//    match result with
+//    | Success (r,_,_) -> tc r
 

@@ -18,13 +18,11 @@ type SpiralDeviceVarType =
     | BoolT
     | StringT
 
-let fun_tag = -1L
-
 type CudaTy =
     | PrimT of SpiralDeviceVarType
     | VVT of CudaTy list * string
     | FunctionT of FunctionKey
-    | StructT of TypedCudaExpr
+    | StructT of TypedCudaExpr // Structs here are pretty much the opposite of what they are in C. They are a type level feature.
 
 and TyV = int64 * CudaTy
 and Env = Map<string, TypedCudaExpr>
@@ -104,6 +102,7 @@ and TypedCudaExpr =
     | TyVV of TypedCudaExpr list * CudaTy
     | TyBinOp of BinOp * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyUnOp of UnOp * TypedCudaExpr * CudaTy
+    | TyType of CudaTy
     | TyMethodCall of Set<int64> ref * Map<int64,int64> * int64 * CudaTy
 
 and MemoCases =
@@ -139,7 +138,7 @@ let get_type_of_value = function
 let get_type = function
     | TyLit x -> get_type_of_value x
     | TyV (_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) | TyMethodCall(_,_,_,t)
-    | TyVV(_,t) | TyBinOp(_,_,_,t) | TyUnOp(_,_,t) -> t
+    | TyVV(_,t) | TyBinOp(_,_,_,t) | TyUnOp(_,_,t) | TyType t -> t
 
 /// Returns an empty string if not a tuple.
 let tuple_name = function
@@ -151,13 +150,23 @@ let tuple_field = function
     | TyVV(args,_) -> args
     | x -> [x]
 
-let is_returnable_tuple_blacklist = [|"Array";"ArrayShared"|]
+
+type ArrayType = Local | Shared | Global
+
+let (|Array|_|) = function
+    | TyVV([size;typ],VVT (_,name)) ->
+        let f array_type = Some(array_type,tuple_field size,get_type typ)
+        match name with
+        | "Array" -> f Local
+        | "ArrayShared" -> f Shared
+        | "ArrayGlobal" -> f Global
+        | _ -> None
+    | _ -> None
 
 let rec is_returnable' = function
-    | VVT (x,name) -> Array.contains name is_returnable_tuple_blacklist = false && List.forall is_returnable' x
-    | StructT e -> is_returnable e
-    | FunctionT _ -> false
-    | _ -> true
+    | VVT (x,name) -> List.forall is_returnable' x
+    | StructT _ | FunctionT _ -> false
+    | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -352,7 +361,9 @@ and renamer_apply_typedexpr r e =
     let f e = renamer_apply_typedexpr r e
     let g e = renamer_apply_ty r e
     match e with
-    | TyV (n,t) -> if n <> fun_tag then TyV (Map.find n r,g t) else TyV(n,g t)
+    | TyV (n,t) -> TyV (Map.find n r,t)
+    | TyType t -> TyType (g t)
+
     | TyVV(l,t) -> TyVV(List.map f l,t)
     | TyIf(a,b,c,t) -> TyIf(f a,f b,f c,t)
     | TyBinOp(o,a,b,t) -> TyBinOp(o,f a,f b,t)
@@ -368,12 +379,14 @@ and renamer_apply_ty r = function
 let rec typed_expr_free_variables on_method_call e =
     let inline f e = typed_expr_free_variables on_method_call e
     match e with
-    | TyV (n,t) -> (if n <> fun_tag then Set.singleton n else Set.empty) + ty_free_variables on_method_call t
+    | TyV (n,t) -> Set.singleton n
+    | TyType t -> ty_free_variables on_method_call t
+
     | TyVV(l,_) -> vars_union f l
     | TyIf(a,b,c,_) -> f a + f b + f c
     | TyBinOp(_,a,b,_) -> f a + f b
-    | TyMethodCall(used_vars,renamer,tag,_) -> on_method_call used_vars renamer tag
     | TyUnOp(_,a,_) -> f a
+    | TyMethodCall(used_vars,renamer,tag,_) -> on_method_call used_vars renamer tag
     | TyLet((n,_),a,b,_) -> Set.remove n (f b) + f a
     | TyLit _ -> Set.empty
 
@@ -509,7 +522,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 | _ -> r
             match r with
             | TyLit _ -> r // Literals are propagated.
-            | TyBinOp(ArrayIndex,_,TyVV([],VVT ([],("Array" | "ArrayShared"))),_)
+            | TyBinOp(ArrayIndex,Array(_,[],_),_,_)
             | TyV _ | TyBinOp (VVIndex,_,_,_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | _ -> make_tyv_and_push d r |> destructure_deep
@@ -569,7 +582,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         match_all (match_single case_a case_f) initial_env l (destructure_deep d args)
             on_fail
             (fun (env, body) ->
-                let fv = TyV (fun_tag, FunctionT fun_key)
+                let fv = TyType (FunctionT fun_key)
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
@@ -677,7 +690,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             |> destructure_deep d
             |> fun x -> guard_is_int (tuple_field x); x
 
-        let l = [size; typ]
+        let l = [size; TyType(get_type typ)]
         TyVV (l, VVT (List.map get_type l, name))
         |> struct_create d
 
@@ -685,14 +698,13 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         let ar, args = tev d ar, tev d args
         let fargs = tuple_field args
         guard_is_int fargs
+
         match get_type ar with
-        | StructT (TyVV([size;typ], VVT (_, ("Array" | "ArrayShared")))) ->
-            let fsize = tuple_field size
-            let lar, largs = fsize.Length, fargs.Length
-            if lar = largs then size, args, get_type typ
+        | StructT (Array(_,size,typ)) ->
+            let lar, largs = size.Length, fargs.Length
+            if lar = largs then TyBinOp(ArrayIndex,ar,args,typ)
             else failwithf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
-        | StructT (TyVV(_, VVT (_, "Array"))) -> failwith "Incorrectly formed Array tuple."
-        | _ -> failwithf "Array index needs the Array tuple.Got: %A" ar
+        | _ -> failwithf "Array index needs the Array.Got: %A" ar
             
     match exp with
     | Lit value -> TyLit value
@@ -702,7 +714,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | None -> failwithf "Variable %A not bound." x
     | Function (core, free_var_set) -> 
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
-        TyV(fun_tag,FunctionT(env,core))
+        TyType(FunctionT(env,core))
     | If(cond,tr,fl) -> if_ cond tr fl
     | VV(vars,name) -> let vv = List.map (tev d) vars in TyVV(vv, VVT(List.map get_type vv, name))
     | BinOp (op,a,b) -> 
@@ -729,7 +741,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
         | ArrayCreate -> array_create d "Array" a b
         | ArrayCreateShared -> array_create d "ArrayShared" a b
-        | ArrayIndex -> let size,args,typ = array_index d a b in TyBinOp(ArrayIndex,size,args,typ)
+        | ArrayIndex -> array_index d a b
         | MSet -> mset d a b
             
     | UnOp (op,a) -> 
@@ -738,3 +750,12 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | CallAsMethod -> call_as_method d a
         | TypeError -> failwithf "%A" a
         | StructCreate -> failwith "StructCreate is not supposed to be typechecked. It is only for the benefit of the code generator."
+
+let tc body = 
+    try
+        let d = data_empty ()
+        let s = expr_free_variables body // Is mutable
+        if s.IsEmpty = false then failwithf "Variables %A are not bound anywhere." s
+        let deforest_tuples x = typed_expr_optimization_pass 2L d.memoized_methods x |> ignore; x // Is mutable
+        Succ (expr_typecheck d body |> deforest_tuples, d.memoized_methods)
+    with e -> Fail (e.Message, e.StackTrace)
