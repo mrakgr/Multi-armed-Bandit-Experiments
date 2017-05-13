@@ -50,7 +50,11 @@ and Value =
     | LitBool of bool
     | LitString of string
 
-and BinOp =
+and Op =
+    // TriOps
+    | If
+
+    // BinOps
     | Add
     | Sub
     | Mult 
@@ -73,12 +77,31 @@ and BinOp =
     | ArrayCreate
     | ArrayCreateShared
     | ArrayIndex
+   
+    | LeftShift
+    | RightShift
+    | ShuffleXor
+    | ShuffleUp
+    | ShuffleDown
+    | ShuffleIndex
 
-and UnOp = 
+    // UnOps
     | Neg
     | CallAsMethod
     | TypeError
     | StructCreate
+    
+    | Log
+    | Exp
+    | Tanh
+
+    // Constants
+    | Syncthreads
+    | ThreadIdxX | ThreadIdxY | ThreadIdxZ
+    | BlockIdxX | BlockIdxY | BlockIdxZ
+    | BlockDimX | BlockDimY | BlockDimZ
+    | GridDimX | GridDimY | GridDimZ
+
 //    | VVZipReg
 //    | VVZipIrreg
 //    | VVUnzipReg
@@ -89,22 +112,18 @@ and CudaExpr =
     | Lit of Value
     | Function of FunctionCore * Set<string> ref
     | VV of CudaExpr list * string // named tuple
-    | If of CudaExpr * CudaExpr * CudaExpr
-    | BinOp of BinOp * CudaExpr * CudaExpr
-    | UnOp of UnOp * CudaExpr
+    | Op of Op * CudaExpr list
 
 and Arguments = Set<TyV> ref
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedCudaExpr =
     | TyV of TyV
-    | TyIf of TypedCudaExpr * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyLet of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyLit of Value
     
     | TyVV of TypedCudaExpr list * CudaTy
-    | TyBinOp of BinOp * TypedCudaExpr * TypedCudaExpr * CudaTy
-    | TyUnOp of UnOp * TypedCudaExpr * CudaTy
+    | TyOp of Op * TypedCudaExpr list * CudaTy
     | TyType of CudaTy
     | TyMethodCall of Arguments * Map<Tag,Tag> * Tag * CudaTy
 
@@ -140,8 +159,8 @@ let get_type_of_value = function
 
 let get_type = function
     | TyLit x -> get_type_of_value x
-    | TyV (_,t) | TyIf(_,_,_,t) | TyLet(_,_,_,t) | TyMethodCall(_,_,_,t)
-    | TyVV(_,t) | TyBinOp(_,_,_,t) | TyUnOp(_,_,t) | TyType t -> t
+    | TyV (_,t) | TyLet(_,_,_,t) | TyMethodCall(_,_,_,t)
+    | TyVV(_,t) | TyOp(_,_,t) | TyType t -> t
 
 /// Returns an empty string if not a tuple.
 let tuple_name = function
@@ -242,8 +261,8 @@ let apply_sequences sequences x =
 let fun_ name pat = Function((name,pat),ref Set.empty)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
-let ap x y = BinOp(Apply,x,y)
-let methr name x y = inlr name x <| UnOp(CallAsMethod, y)
+let ap x y = Op(Apply,[x;y])
+let methr name x y = inlr name x <| Op(CallAsMethod, [y])
 let meth x y = methr "" x y
 
 let E = S ""
@@ -257,9 +276,9 @@ let SS' x = R ([], Some (S x))
 /// Matches tuples with a tail.
 let SSS a b = R(a, Some (S b)) 
 
-let cons a b = BinOp(VVCons,a,b)
+let cons a b = Op(VVCons,[a;b])
 
-let l v b e = BinOp(Apply,inl v e,b)
+let l v b e = Op(Apply,[inl v e; b])
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
 let rec ap' f = function
@@ -286,7 +305,7 @@ let meth' args body = methr' "" args body
 
 let vv x = VV(x,"")
 
-let type_error x = UnOp(TypeError, Lit <| LitString x)
+let type_error x = Op(TypeError, [Lit <| LitString x])
 
 /// The tuple map function. Goes over the tuple scanning for a pattern and triggers only if it finds it.
 let tuple_map =
@@ -326,10 +345,7 @@ let rec expr_free_variables e =
     let f e = expr_free_variables e
     match e with
     | V n -> Set.singleton n
-    | VV(l,_) -> vars_union f l
-    | If(a,b,c) -> f a + f b + f c
-    | BinOp(_,a,b) -> f a + f b
-    | UnOp(_,a) -> f a
+    | Op(_,l) | VV(l,_) -> vars_union f l
     | Function((name,l),free_var_set) ->
         let rec pat_template on_name on_expr p = 
             let g p = pat_template on_name on_expr p
@@ -365,10 +381,8 @@ and renamer_apply_typedexpr r e =
     | TyType t -> TyType (g t)
 
     | TyVV(l,t) -> TyVV(List.map f l,t)
-    | TyIf(a,b,c,t) -> TyIf(f a,f b,f c,t)
-    | TyBinOp(o,a,b,t) -> TyBinOp(o,f a,f b,t)
     | TyMethodCall(used_vars,renamer,tag,t) -> TyMethodCall(ref <| renamer_apply_pool r !used_vars,renamer,tag,t)
-    | TyUnOp(o,a,t) -> TyUnOp(o,f a,t)
+    | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
     | TyLet((n,t),a,b,t') -> TyLet((Map.find n r,t),f a,f b,t')
     | TyLit _ -> e
 and renamer_apply_ty r = function
@@ -382,10 +396,7 @@ let rec typed_expr_free_variables on_method_call e =
     | TyV (n,t) -> Set.singleton (n,t)
     | TyType t -> ty_free_variables on_method_call t
 
-    | TyVV(l,_) -> vars_union f l
-    | TyIf(a,b,c,_) -> f a + f b + f c
-    | TyBinOp(_,a,b,_) -> f a + f b
-    | TyUnOp(_,a,_) -> f a
+    | TyOp(_,l,_) | TyVV(l,_) -> vars_union f l
     | TyMethodCall(used_vars,renamer,tag,_) -> on_method_call used_vars renamer tag
     | TyLet(x,a,b,_) -> Set.remove x (f b) + f a
     | TyLit _ -> Set.empty
@@ -410,10 +421,7 @@ let memo_value = function
 let typed_expr_optimization_pass num_passes (memo: MemoDict) =
     let rec on_method_call_optimization_pass (memo: (Set<Tag * CudaTy> * int) []) (expr_map: Map<Tag,TypedCudaExpr * Arguments>) r renamer tag =
         let vars,counter = memo.[int tag]
-        let set_vars vars = 
-//            printfn "renamer=%A" renamer
-//            printfn "vars=%A" vars
-            r := renamer_apply_pool renamer vars; !r
+        let set_vars vars = r := renamer_apply_pool renamer vars; !r
         if counter < num_passes then
             let counter = counter + 1
             memo.[int tag] <- vars, counter
@@ -444,8 +452,9 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
         constraint_both_eq_numeric failwith (k t)
 
-    let prim_bin_op_helper t a b = TyBinOp(t,a,b,get_type a)
-    let prim_un_op_helper t a = TyUnOp(t,a,get_type a)
+    let prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
+    let prim_un_op_helper t a = TyOp(t,[a],get_type a)
+    let bool_helper t a b = TyOp(t,[a;b],PrimT BoolT)
 
     let prim_arith_op d = 
         let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
@@ -455,12 +464,12 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     let prim_comp_op d = 
         let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
-        prim_bin_op_template d er check (fun t a b -> TyBinOp(t,a,b,PrimT BoolT))
+        prim_bin_op_template d er check bool_helper
 
     let prim_bool_op d = 
         let er = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_bool a && get_type a = get_type b
-        prim_bin_op_template d er check (fun t a b -> TyBinOp(t,a,b,PrimT BoolT))
+        prim_bin_op_template d er check bool_helper
 
     let prim_shift_op d =
         let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
@@ -508,7 +517,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let make_tyv_and_push d ty_exp = make_tyv_and_push' d ty_exp |> TyV
 
-    let struct_create d ty_exp = TyUnOp(StructCreate,ty_exp,StructT ty_exp) |> make_tyv_and_push d
+    let struct_create d ty_exp = TyOp(StructCreate,[ty_exp],StructT ty_exp) |> make_tyv_and_push d
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
@@ -518,15 +527,15 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 match get_type r with
                 | VVT (tuple_types, name) -> 
                     let indexed_tuple_args = List.mapi (fun i typ -> 
-                        destructure_deep <| TyBinOp(VVIndex,r,TyLit <| LitInt32 i,typ)) tuple_types
+                        destructure_deep <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
                     TyVV(indexed_tuple_args, VVT (tuple_types, name))
                 | _ -> r
             match r with
             | TyType _ | TyLit _ -> r // Literals are propagated.
-            | TyBinOp(ArrayIndex,Array(_,[],_),_,_)
-            | TyV _ | TyBinOp (VVIndex,_,_,_) -> destructure_tuple r
+            | TyOp(ArrayIndex,[Array(_,[],_);_],_)
+            | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
-            | TyMethodCall _ | TyLet _ | TyBinOp _ | TyUnOp _ | TyIf _ -> 
+            | TyMethodCall _ | TyLet _ | TyOp _ -> 
                 make_tyv_and_push d r |> destructure_deep
         destructure_deep r
 
@@ -652,14 +661,14 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 | None -> tev' fl (fun _ -> tr)
 
             let type_tr, type_fl = get_type tr, get_type fl
-            if type_tr = type_fl then TyIf(cond,tr,fl,type_tr)
+            if type_tr = type_fl then TyOp(If,[cond;tr;fl],type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
     let mset d a b =
         let l = tev d a
         let r = destructure_deep d (tev d b)
         match l, r with
-        | TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r -> make_tyv_and_push d <| TyBinOp(MSet,l,r,BVVT)
+        | TyOp(ArrayIndex,[_;_],lt), r when lt = get_type r -> make_tyv_and_push d <| TyOp(MSet,[l;r],BVVT)
         | _ -> failwithf "Error in mset. Expected: TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
 
     let vv_index v i =
@@ -667,7 +676,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | v, TyLit (LitInt32 i as i') ->
             match get_type v with
             | VVT (ts,"") -> 
-                if i >= 0 || i < List.length ts then TyBinOp(VVIndex,v,TyLit i',ts.[i])
+                if i >= 0 || i < List.length ts then TyOp(VVIndex,[v;TyLit i'],ts.[i])
                 else failwith "(i >= 0 || i < List.length ts) = false in IndexVT"
             | VVT (ts, name) -> failwithf "Named tuples (%s) can't be indexed directly. They must be pattern matched on the name first." name
             | x -> failwithf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
@@ -702,7 +711,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         match get_type ar with
         | StructT (Array(_,size,typ)) ->
             let lar, largs = size.Length, fargs.Length
-            if lar = largs then TyBinOp(ArrayIndex,ar,args,typ)
+            if lar = largs then TyOp(ArrayIndex,[ar;args],typ)
             else failwithf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
         | _ -> failwithf "Array index needs the Array.Got: %A" ar
             
@@ -715,41 +724,57 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     | Function (core, free_var_set) -> 
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
         TyType(FunctionT(env,core))
-    | If(cond,tr,fl) -> if_ d cond tr fl
+    
     | VV(vars,name) -> let vv = List.map (tev d) vars in TyVV(vv, VVT(List.map get_type vv, name))
-    | BinOp (op,a,b) -> 
-        match op with
-        | Apply -> apply d a b id
+    | Op(If,[cond;tr;fl]) -> if_ d cond tr fl
+    | Op(Apply,[a;b]) -> apply d a b id
         // Primitive operations on expressions.
-        | Add -> prim_arith_op d a b Add
-        | Sub -> prim_arith_op d a b Sub
-        | Mult -> prim_arith_op d a b Mult
-        | Div -> prim_arith_op d a b Div
-        | Mod -> prim_arith_op d a b Mod
-        
-        | LT -> prim_comp_op d a b LT
-        | LTE -> prim_comp_op d a b LTE
-        | EQ -> prim_comp_op d a b EQ
-        | NEQ -> prim_comp_op d a b NEQ
-        | GT -> prim_comp_op d a b GT
-        | GTE -> prim_comp_op d a b GTE
-        | And -> prim_bool_op d a b And
-        | Or -> prim_bool_op d a b Or
+    | Op(Add,[a;b]) -> prim_arith_op d a b Add
+    | Op(Sub,[a;b]) -> prim_arith_op d a b Sub
+    | Op(Mult,[a;b]) -> prim_arith_op d a b Mult
+    | Op(Div,[a;b]) -> prim_arith_op d a b Div
+    | Op(Mod,[a;b]) -> prim_arith_op d a b Mod
 
-        | VVIndex -> vv_index a b
-        | VVCons -> vv_cons a b
+    | Op(LT,[a;b]) -> prim_comp_op d a b LT
+    | Op(LTE,[a;b]) -> prim_comp_op d a b LTE
+    | Op(EQ,[a;b]) -> prim_comp_op d a b EQ
+    | Op(NEQ,[a;b]) -> prim_comp_op d a b NEQ
+    | Op(GT,[a;b]) -> prim_comp_op d a b GT
+    | Op(GTE,[a;b]) -> prim_comp_op d a b GTE
+    
+    | Op(And,[a;b]) -> prim_bool_op d a b And
+    | Op(Or,[a;b]) -> prim_bool_op d a b Or
 
-        | ArrayCreate -> array_create d "Array" a b
-        | ArrayCreateShared -> array_create d "ArrayShared" a b
-        | ArrayIndex -> array_index d a b
-        | MSet -> mset d a b
-            
-    | UnOp (op,a) -> 
-        match op with
-        | Neg -> prim_un_numeric d a Neg
-        | CallAsMethod -> call_as_method d a
-        | TypeError -> failwithf "%A" a
-        | StructCreate -> failwith "StructCreate is not supposed to be typechecked. It is only for the benefit of the code generator."
+    | Op(ShuffleXor,[a;b]) -> prim_shuffle_op d a b ShuffleXor
+    | Op(ShuffleUp,[a;b]) -> prim_shuffle_op d a b ShuffleUp
+    | Op(ShuffleDown,[a;b]) -> prim_shuffle_op d a b ShuffleDown
+    | Op(ShuffleIndex,[a;b]) -> prim_shuffle_op d a b ShuffleIndex
+
+    | Op(VVIndex,[a;b]) -> vv_index a b
+    | Op(VVCons,[a;b]) -> vv_cons a b
+
+    | Op(ArrayCreate,[a;b]) -> array_create d "Array" a b
+    | Op(ArrayCreateShared,[a;b]) -> array_create d "ArrayShared" a b
+    | Op(ArrayIndex,[a;b]) -> array_index d a b
+    | Op(MSet,[a;b]) -> mset d a b
+
+    | Op(Neg,[a]) -> prim_un_numeric d a Neg
+    | Op(CallAsMethod,[a]) -> call_as_method d a
+    | Op(TypeError,[a]) -> failwithf "%A" a
+
+    | Op(Log,[a]) -> prim_un_floating d a Log
+    | Op(Exp,[a]) -> prim_un_floating d a Exp
+    | Op(Tanh,[a]) -> prim_un_floating d a Tanh
+
+    // Constants
+    | Op(Syncthreads,[]) ->TyOp(Syncthreads,[],BVVT)
+    | Op((ThreadIdxX | ThreadIdxY 
+           | ThreadIdxZ | BlockIdxX | BlockIdxY 
+           | BlockIdxZ | BlockDimX | BlockDimY 
+           | BlockDimZ | GridDimX | GridDimY 
+           | GridDimZ as constant),[]) -> TyOp(constant,[],PrimT UInt64T)
+
+    | Op _ -> failwith "Missing Op case."
 
 let spiral_typecheck body = 
     try

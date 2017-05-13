@@ -108,7 +108,7 @@ let if_then_else expr (s: CharStream<_>) =
         (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
         (fun cond tr fl -> 
             let fl = match fl with Some x -> x | None -> B
-            let x = If(cond,tr,fl)
+            let x = Op(If,[cond;tr;fl])
             // The If statements are hoisted since C++ can't do expressions properly.
             if do_if_hoisting then ap (meth E x) B
             else x)
@@ -218,16 +218,16 @@ let mset expr i (s: CharStream<_>) =
     pipe2 (expr i)
         (opt (expr_indent set_me >>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
         (fun l -> function
-            | Some r -> BinOp(MSet,l,r)
+            | Some r -> Op(MSet,[l;r])
             | None -> l) s
 
 let expr: CharStream<unit> -> _ =
     let opp = new OperatorPrecedenceParser<_,_,_>()
 
-    opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> UnOp(Neg,x)))
+    opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> Op(Neg,[x])))
 
     let add_infix_operator assoc str prec op = opp.AddOperator(InfixOperator(str, spaces, prec, assoc, fun x y -> op x y))
-    let binop op a b = BinOp(op,a,b)
+    let binop op a b = Op(op,[a;b])
 
     let left_assoc_ops = 
         let f = add_infix_operator Associativity.Left

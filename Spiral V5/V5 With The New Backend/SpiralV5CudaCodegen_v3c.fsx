@@ -158,7 +158,7 @@ let print_method_dictionary (imemo: MemoDict) =
 
     and codegen = function
         | TyV v -> print_tyv v
-        | TyIf(cond,tr,fl,_) -> // If statements will aways be hoisted into methods in this language.
+        | TyOp(If,[cond;tr;fl],_) -> // If statements will aways be hoisted into methods in this language.
             sprintf "if (%s) {" (codegen cond) |> state
             enter <| fun _ -> sprintf "return %s;" (codegen tr)
             "}" |> state
@@ -166,16 +166,16 @@ let print_method_dictionary (imemo: MemoDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet(v, TyUnOp(StructCreate,Array(ar_typ,ar_sizes,typ),_), rest, _) ->
+        | TyLet(v, TyOp(StructCreate,[Array(ar_typ,ar_sizes,typ)],_), rest, _) ->
             match ar_typ with
             | Local | Global -> print_array_declaration false typ v ar_sizes
             | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
-        | TyLet(_, TyUnOp(StructCreate, _, _), _, _) -> failwith "Unknown struct. For now each struct is intended to have their own case in the codegen."
+        | TyLet(_, TyOp(StructCreate, _, _), _, _) -> failwith "Unknown struct. For now each struct is intended to have their own case in the codegen."
         | TyVV([],_) | TyType _ -> ""
         | TyLet(_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
         | TyLet((_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
-        | TyLet(_,TyBinOp(MSet,a,b,_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
+        | TyLet(_,TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
         | TyLet(tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
         | TyMethodCall(used_vars,_,tag,t) ->
@@ -188,35 +188,43 @@ let print_method_dictionary (imemo: MemoDict) =
             |> sprintf "make_tuple_%i(%s)" (tuple_def_proc t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
 
-        | TyUnOp(op,a,t) ->
-            match op with
-            | Neg -> sprintf "(-%s)" (codegen a)
-            | StructCreate -> failwith "It should have been taken care of in a let statement."
-            | CallAsMethod | TypeError -> failwith "Does not appear in codegen."
+        // Primitive operations on expressions.
+        | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
+        | TyOp(Sub,[a;b],t) -> sprintf "(%s - %s)" (codegen a) (codegen b)
+        | TyOp(Mult,[a;b],t) -> sprintf "(%s * %s)" (codegen a) (codegen b)
+        | TyOp(Div,[a;b],t) -> sprintf "(%s / %s)" (codegen a) (codegen b)
+        | TyOp(Mod,[a;b],t) -> sprintf "(%s %% %s)" (codegen a) (codegen b)
+        | TyOp(LT,[a;b],t) -> sprintf "(%s < %s)" (codegen a) (codegen b)
+        | TyOp(LTE,[a;b],t) -> sprintf "(%s <= %s)" (codegen a) (codegen b)
+        | TyOp(EQ,[a;b],t) -> sprintf "(%s == %s)" (codegen a) (codegen b)
+        | TyOp(NEQ,[a;b],t) -> sprintf "(%s != %s)" (codegen a) (codegen b)
+        | TyOp(GT,[a;b],t) -> sprintf "(%s > %s)" (codegen a) (codegen b)
+        | TyOp(GTE,[a;b],t) -> sprintf "(%s >= %s)" (codegen a) (codegen b)
+        | TyOp(And,[a;b],t) -> sprintf "(%s && %s)" (codegen a) (codegen b)
+        | TyOp(Or,[a;b],t) -> sprintf "(%s || %s)" (codegen a) (codegen b)
 
-        | TyBinOp(op,a,b,t) ->
-            match op with
-            | VVIndex -> sprintf "%s.tup%s" (codegen a) (codegen b)
-            | ArrayIndex -> print_array a b
+        | TyOp(ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
+        | TyOp(ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
+        | TyOp(ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
+        | TyOp(ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
 
-            // Primitive operations on expressions.
-            | Add -> sprintf "(%s + %s)" (codegen a) (codegen b)
-            | Sub -> sprintf "(%s - %s)" (codegen a) (codegen b)
-            | Mult -> sprintf "(%s * %s)" (codegen a) (codegen b)
-            | Div -> sprintf "(%s / %s)" (codegen a) (codegen b)
-            | Mod -> sprintf "(%s %% %s)" (codegen a) (codegen b)
-            | LT -> sprintf "(%s < %s)" (codegen a) (codegen b)
-            | LTE -> sprintf "(%s <= %s)" (codegen a) (codegen b)
-            | EQ -> sprintf "(%s == %s)" (codegen a) (codegen b)
-            | NEQ -> sprintf "(%s != %s)" (codegen a) (codegen b)
-            | GT -> sprintf "(%s > %s)" (codegen a) (codegen b)
-            | GTE -> sprintf "(%s >= %s)" (codegen a) (codegen b)
-            | And -> sprintf "(%s && %s)" (codegen a) (codegen b)
-            | Or -> sprintf "(%s || %s)" (codegen a) (codegen b)
-            
-            // Inapplicable during codegen
-            | MSet -> failwith "It should have been taken care of in a let statement."
-            | VVCons | ArrayCreateShared | ArrayCreate | Apply -> failwith "Should never appear in the codegen phase."
+        | TyOp(Neg,[a],t) -> sprintf "(-%s)" (codegen a)
+        | TyOp(VVIndex,[a;b],t) -> sprintf "%s.tup%s" (codegen a) (codegen b)
+        | TyOp(ArrayIndex,[a;b],t) -> print_array a b
+        | TyOp(Log,[x],_) -> sprintf "log(%s)" (codegen x)
+        | TyOp(Exp,[x],_) -> sprintf "exp(%s)" (codegen x)
+        | TyOp(Tanh,[x],_) -> sprintf "tanh(%s)" (codegen x)
+
+        // Cuda kernel constants
+        | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
+        | TyOp(ThreadIdxX,[],_) -> "threadIdx.x"
+        | TyOp(ThreadIdxY,[],_) -> "threadIdx.y"
+        | TyOp(ThreadIdxZ,[],_) -> "threadIdx.z"
+        | TyOp(BlockIdxX,[],_) -> "blockIdx.x"
+        | TyOp(BlockIdxY,[],_) -> "blockIdx.y"
+        | TyOp(BlockIdxZ,[],_) -> "blockIdx.z"
+
+        | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
 
     let print_tuple_defintion tys tag =
         let tuple_name = print_tuple tag

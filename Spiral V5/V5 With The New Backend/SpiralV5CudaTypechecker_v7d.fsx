@@ -92,7 +92,6 @@ and CudaExpr =
     | Or of CudaExpr * CudaExpr
     | LeftShift of CudaExpr * CudaExpr
     | RightShift of CudaExpr * CudaExpr
-    | Syncthreads
     | ShuffleXor of CudaExpr * CudaExpr
     | ShuffleUp of CudaExpr * CudaExpr
     | ShuffleDown of CudaExpr * CudaExpr
@@ -102,6 +101,7 @@ and CudaExpr =
     | Tanh of CudaExpr
     | Neg of CudaExpr
     // Cuda kernel constants
+    | Syncthreads
     | ThreadIdxX | ThreadIdxY | ThreadIdxZ
     | BlockIdxX | BlockIdxY | BlockIdxZ
     | BlockDimX | BlockDimY | BlockDimZ
