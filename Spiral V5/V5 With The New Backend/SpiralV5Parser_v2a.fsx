@@ -177,8 +177,11 @@ let indentations statements expressions (s: CharStream<_>) =
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_up (s: CharStream<_>) = if i < s.Column then expr s else pzero s
-    pipe2 expr (many expr_up) ap' s
+    let expr_up expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
+    let clo_cr = skipChar '`' >>. var_name |>> V |>> flip clo_create |> expr_up
+    let ap_cr = expr |>> flip ap |> expr_up
+    let f a l = List.fold (fun s x -> x s) a l
+    pipe2 expr (many (clo_cr <|> ap_cr)) f s
 
 let tuple expr i (s: CharStream<_>) =
     let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
@@ -227,7 +230,6 @@ let expr: CharStream<unit> -> _ =
     let left_assoc_ops = 
         let f = add_infix_operator Associativity.Left
         let apply a b = binop Apply a b
-        let flip f a b = f b a
         f "+" 60 <| binop Add
         f "-" 60 <| binop Sub
         f "*" 70 <| binop Mult

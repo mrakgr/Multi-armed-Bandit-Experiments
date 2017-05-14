@@ -152,6 +152,8 @@ and LangEnv =
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
+let flip f a b = f b a
+
 let get_type_of_value = function
     | LitUInt32 _ -> PrimT UInt32T
     | LitUInt64 _ -> PrimT UInt64T
@@ -175,6 +177,10 @@ let tuple_name = function
 /// Wraps the argument in a list if not a tuple.
 let tuple_field = function 
     | TyVV(args,_) -> args
+    | x -> [x]
+
+let tuple_field_ty = function 
+    | VVT(x,_) -> x
     | x -> [x]
 
 
@@ -267,6 +273,7 @@ let fun_ name pat = Function((name,pat),ref Set.empty)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = Op(Apply,[x;y])
+let clo_create x y = Op(ClosureCreate,[x;y])
 let methr name x y = inlr name x <| Op(CallAsMethod, [y])
 let meth x y = methr "" x y
 

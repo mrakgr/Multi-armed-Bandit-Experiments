@@ -27,7 +27,7 @@ let process_statements (statements: ResizeArray<CudaProgram>) =
 type CodegenChannels =
 | Main = 0
 | Code = 1
-| TupleDefinitions = 2
+| Definitions = 2
 
 let print_method_dictionary (imemo: MemoDict) =
     let program = Array.init 3 <| fun _ -> ResizeArray()
@@ -65,16 +65,23 @@ let print_method_dictionary (imemo: MemoDict) =
         let mutable i = 0
         fun () -> i <- i+1; i
 
-    let tuple_definitions = Dictionary(HashIdentity.Structural)
-    let tuple_def_proc t = 
-        match tuple_definitions.TryGetValue t with
+    let def_proc (d: Dictionary<_,_>) t = 
+        match d.TryGetValue t with
         | true, v -> v
         | false, _ ->
             let v = get_tag()
-            tuple_definitions.Add(t,v)
+            d.Add(t,v)
             v
 
-    let print_tuple v = sprintf "tuple_%i" v
+    let tuple_definitions = d0()
+    let tuple_tag x = def_proc tuple_definitions x
+    let print_tuple' v = sprintf "tuple_%i" v
+    let print_tuple t = tuple_tag t |> print_tuple'
+
+    let closure_definitions = h0()
+    let print_closure (tag,a,r) = 
+        closure_definitions.Add(tag,a,r) |> ignore
+        sprintf "closure_%i" tag
 
     let case_array_in_array _ = 
         // The only reason is really because C syntax is such a pain in the ass.
@@ -95,8 +102,9 @@ let print_method_dictionary (imemo: MemoDict) =
             | Float64T -> "double"
             | BoolT -> "int"
             | StringT -> "char *"
+        | ClosureT(tag,a,r) -> print_closure (tag,a,r)
         | VVT ([], _) -> "void"
-        | VVT (t, _) -> tuple_def_proc t |> print_tuple
+        | VVT (t, _) -> print_tuple t
         | StructT(Array(_,_,t)) -> array_case t
         | StructT _ -> failwith "Can't struct types directly."
         | FunctionT _ -> failwith "Can't function types directly."
@@ -166,12 +174,14 @@ let print_method_dictionary (imemo: MemoDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet(v, TyOp(StructCreate,[Array(ar_typ,ar_sizes,typ)],_), rest, _) ->
+        | TyLet(v, TyType (StructT (Array(ar_typ,ar_sizes,typ))), rest, _) ->
             match ar_typ with
             | Local | Global -> print_array_declaration false typ v ar_sizes
             | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
-        | TyLet(_, TyOp(StructCreate, _, _), _, _) -> failwith "Unknown struct. For now each struct is intended to have their own case in the codegen."
+        | TyLet(v, TyType (ClosureT (tag,a,r)), rest, _) ->
+            sprintf "%s = %s;" (print_tyv_with_type v) (print_closure (tag,a,r)) |> state; 
+            codegen rest
         | TyVV([],_) | TyType _ -> ""
         | TyLet(_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
         | TyLet((_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
@@ -185,7 +195,7 @@ let print_method_dictionary (imemo: MemoDict) =
         | TyVV(l,(VVT (t, _))) -> 
             List.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
             |> String.concat ", "
-            |> sprintf "make_tuple_%i(%s)" (tuple_def_proc t)
+            |> sprintf "make_tuple_%i(%s)" (tuple_tag t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
 
         // Primitive operations on expressions.
@@ -226,8 +236,13 @@ let print_method_dictionary (imemo: MemoDict) =
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
 
+    let print_closure_a a = tuple_field_ty a |> List.map print_simple_type |> String.concat ", "
+
+    let print_closure_definition (tag,a,r as v) =
+        sprintf "typedef %s(*%s)(%s);" (print_closure_a a) (print_closure v) (print_simple_type r) |> state
+
     let print_tuple_defintion tys tag =
-        let tuple_name = print_tuple tag
+        let tuple_name = print_tuple' tag
         sprintf "struct %s {" tuple_name |> state
         enter <| fun _ -> List.iteri (fun i ty -> 
             match ty with
@@ -241,8 +256,8 @@ let print_method_dictionary (imemo: MemoDict) =
                 match ty with
                 | VVT([],_) -> ""
                 | _ -> sprintf "%s tup_arg%i" (print_simple_type ty) i) tys
-             |> List.filter ((<>) "") 
-             |> String.concat ", ")
+                |> List.filter ((<>) "") 
+                |> String.concat ", ")
         |> state
         enter' <| fun _ ->
             sprintf "%s tmp;" tuple_name |> state
@@ -275,13 +290,14 @@ let print_method_dictionary (imemo: MemoDict) =
             with_channel CodegenChannels.Code <| fun _ ->
                 for x in imemo do print_method (memo_value x.Value)
 
-            with_channel CodegenChannels.TupleDefinitions <| fun _ ->
+            with_channel CodegenChannels.Definitions <| fun _ ->
                 for x in tuple_definitions do print_tuple_defintion x.Key x.Value
+                Seq.iter print_closure_definition closure_definitions
 
             // I am just swapping the positions so the tuple definitions come first in the printed code.
             // Unfortunately, getting the definitions requires a pass through the AST first
             // so I can't just print them at the start.
-            add_channels_a_to_main CodegenChannels.TupleDefinitions
+            add_channels_a_to_main CodegenChannels.Definitions
             add_channels_a_to_main CodegenChannels.Code
         
         "}" |> state
