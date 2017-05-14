@@ -6,8 +6,6 @@
 open SpiralV5Language_v8b
 open FParsec
 
-let do_if_hoisting = false
-
 type ParserExpr =
     | ParserStatement of (CudaExpr -> CudaExpr)
     | ParserExpr of CudaExpr
@@ -108,10 +106,7 @@ let if_then_else expr (s: CharStream<_>) =
         (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
         (fun cond tr fl -> 
             let fl = match fl with Some x -> x | None -> B
-            let x = Op(If,[cond;tr;fl])
-            // The If statements are hoisted since C++ can't do expressions properly.
-            if do_if_hoisting then ap (meth E x) B
-            else x)
+            Op(If,[cond;tr;fl]))
         s
 
 let name = var_name
@@ -262,56 +257,3 @@ let expr: CharStream<unit> -> _ =
     expr
 
 let spiral_parse x = run (spaces >>. expr .>> eof) x
-
-//let prod_lam2 =
-//    """
-//fun rec meth cond l = if cond then meth cond l else l 1.5
-//meth true (inl x -> x)
-//    """
-//
-//let fib =
-//    """
-//fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
-//fib 5
-//    """
-//
-//let fib_y =
-//    """
-//fun rec y f x = f (y f) x
-//fun fib r x = if x <= 0 then 0 else r (x-1) + r (x-2)
-//y fib 5
-//    """
-//
-//let prod_lam3 =
-//    """
-//fun rec meth cond l = if cond then meth cond (inl x -> x) else l 1.5
-//meth true (inl x -> x)
-//    """
-//
-//let t1 =
-//    """
-//inl a = 1+0
-//inl b = 2+0
-//inl c = 3+0
-//inl d = 4+0
-//fun f g (a,b,c,d) = if true then a+b, b, d else g (a,b,c,d)
-//fun rec g (a,b,c,d) = f g (a*2,b*2,c,d)
-//g (a,b,c,d)
-//    """
-//
-//let t2 =
-//    """
-//fun rec q x =
-//    fun w x = if true then q 4.5 else x
-//    w x
-//q 3
-//    """
-//
-//let result = run (spaces >>. expr .>> eof) fib
-//
-//let get = function Succ x -> x
-//
-//let t = 
-//    match result with
-//    | Success (r,_,_) -> tc r
-//

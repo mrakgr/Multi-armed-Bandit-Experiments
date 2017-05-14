@@ -23,6 +23,7 @@ type CudaTy =
     | VVT of CudaTy list * string
     | FunctionT of FunctionKey
     | StructT of TypedCudaExpr // Structs here are pretty much the opposite of what they are in C. They are a type level feature.
+    | ClosureT of Tag * CudaTy * CudaTy // For now since I am compiling only to Cuda, closures will be not be allowed to capture variables.
 
 and Tag = int64
 and TyV = Tag * CudaTy
@@ -71,6 +72,7 @@ and Op =
     | MSet 
 
     | Apply
+    | ClosureCreate
     | VVIndex
     | VVCons
 
@@ -89,7 +91,6 @@ and Op =
     | Neg
     | CallAsMethod
     | TypeError
-    | StructCreate
     
     | Log
     | Exp
@@ -115,6 +116,7 @@ and CudaExpr =
     | Op of Op * CudaExpr list
 
 and Arguments = Set<TyV> ref
+and Renamer = Map<Tag,Tag>
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedCudaExpr =
@@ -125,13 +127,14 @@ and TypedCudaExpr =
     | TyVV of TypedCudaExpr list * CudaTy
     | TyOp of Op * TypedCudaExpr list * CudaTy
     | TyType of CudaTy
-    | TyMethodCall of Arguments * Map<Tag,Tag> * Tag * CudaTy
+    | TyMethodCall of Arguments * Renamer * Tag * CudaTy
 
 and MemoCases =
     | MethodInEvaluation of TypedCudaExpr option
     | MethodDone of TypedCudaExpr
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
-and MemoDict = Dictionary<MemoKey, MemoCases * Tag * Arguments> 
+and MemoDict = Dictionary<MemoKey, MemoCases * Tag * Arguments>
+and ClosureDict = Dictionary<TypedCudaExpr, Tag> 
 
 and LangEnv =
     {
@@ -139,9 +142,11 @@ and LangEnv =
     env : Env
     // Mutable
     memoized_methods : MemoDict // For typechecking recursive functions.
+    memoized_closures : ClosureDict
     sequences : (TypedCudaExpr -> TypedCudaExpr) option ref // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
     method_tag : Tag ref
+    closure_tag : Tag ref
     mutable let_tag : Tag
     }
 
@@ -188,7 +193,7 @@ let (|Array|_|) = function
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
     | StructT _ | FunctionT _ -> false
-    | PrimT _ -> true
+    | ClosureT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -208,7 +213,7 @@ let is_primt a = is_primt' (get_type a)
 
 let is_comparable' = function
     | PrimT _ | VVT _ -> true
-    | StructT _ | FunctionT _ -> false
+    | ClosureT _ | StructT _ | FunctionT _ -> false
 
 let is_float' = function
     | PrimT x -> 
@@ -332,7 +337,9 @@ let tuple_library =
 
 let data_empty () = 
     {memoized_methods=d0()
+     memoized_closures=d0()
      method_tag=ref 0L
+     closure_tag=ref 0L
      let_tag=0L
      env=Map.empty
      sequences=ref None
@@ -377,40 +384,48 @@ and renamer_apply_typedexpr r e =
     let f e = renamer_apply_typedexpr r e
     let g e = renamer_apply_ty r e
     match e with
-    | TyV (n,t) -> TyV (Map.find n r,t)
+    | TyV (n,t) -> TyV (Map.find n r,g t)
     | TyType t -> TyType (g t)
-
-    | TyVV(l,t) -> TyVV(List.map f l,t)
-    | TyMethodCall(used_vars,renamer,tag,t) -> TyMethodCall(ref <| renamer_apply_pool r !used_vars,renamer,tag,t)
-    | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
-    | TyLet((n,t),a,b,t') -> TyLet((Map.find n r,t),f a,f b,t')
+    | TyVV(l,t) -> TyVV(List.map f l,g t)
+    | TyMethodCall(used_vars,renamer,tag,t) -> TyMethodCall(ref <| renamer_apply_pool r !used_vars,renamer,tag,g t)
+    | TyOp(o,l,t) -> TyOp(o,List.map f l,g t)
+    | TyLet((n,t),a,b,t') -> TyLet((Map.find n r,g t),f a,f b,g t')
     | TyLit _ -> e
-and renamer_apply_ty r = function
+and renamer_apply_ty r e = 
+    let f e = renamer_apply_ty r e
+    match e with
     | FunctionT(e,t) -> FunctionT(renamer_apply_env r e,t)
     | StructT e -> StructT(renamer_apply_typedexpr r e)
+    | ClosureT(tag,a,b) -> ClosureT(tag,f a, f b)
     | e -> e
 
 let rec typed_expr_free_variables on_method_call e =
     let inline f e = typed_expr_free_variables on_method_call e
+    let inline g e = ty_free_variables on_method_call e
     match e with
-    | TyV (n,t) -> Set.singleton (n,t)
-    | TyType t -> ty_free_variables on_method_call t
-
-    | TyOp(_,l,_) | TyVV(l,_) -> vars_union f l
-    | TyMethodCall(used_vars,renamer,tag,_) -> on_method_call used_vars renamer tag
-    | TyLet(x,a,b,_) -> Set.remove x (f b) + f a
+    | TyV (n,t) -> g t |> Set.add (n,t)
+    | TyType t -> g t
+    | TyOp(_,l,t) | TyVV(l,t) -> vars_union f l + g t
+    | TyMethodCall(used_vars,renamer,tag,t) -> on_method_call used_vars renamer tag + g t
+    | TyLet(x,a,b,t) -> Set.remove x (f b) + f a
     | TyLit _ -> Set.empty
 
 and ty_free_variables on_method_call x = 
+    let f x = ty_free_variables on_method_call x
     match x with
     | FunctionT(env,_) -> env_free_variables on_method_call env
     | StructT e -> typed_expr_free_variables on_method_call e
+    | ClosureT(_,a,b) -> f a + f b
     | _ -> Set.empty
 
 and env_free_variables on_method_call env = 
     Map.fold (fun s _ v -> typed_expr_free_variables on_method_call v + s) Set.empty env
 
 let on_method_call_typechecking_pass used_vars _ _ = !used_vars
+let env_num_args env = 
+    Map.fold (fun s k v -> 
+        let f = typed_expr_free_variables on_method_call_typechecking_pass v
+        if Set.isEmpty f then s else s+1) 0 env
 
 let memo_value = function
     | MethodDone e, tag, args -> e, tag, args
@@ -517,7 +532,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let make_tyv_and_push d ty_exp = make_tyv_and_push' d ty_exp |> TyV
 
-    let struct_create d ty_exp = TyOp(StructCreate,[ty_exp],StructT ty_exp) |> make_tyv_and_push d
+    let struct_create d ty_exp = StructT ty_exp |> TyType |> make_tyv_and_push d
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
@@ -597,10 +612,40 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
+    let closure_create tev d case_a case_f (initial_env,(name,l) as fun_key) args on_fail ret =
+        let rec args_renamer = function
+            | TyVV(l,t) -> TyVV(List.map args_renamer l,t)
+            | x -> make_tyv d x |> TyV
+        let args = args_renamer args
+        let ret r =
+            // `> 0` is not a typo. In the initial_env there should be zero arguments and the `args` variable is one.
+            if env_num_args initial_env > 0 then failwithf "The number of arguments to closure must not exceed one. Got: %A" fun_key
+            match d.memoized_closures.TryGetValue r with
+            | false, _ ->
+                let tag = !d.closure_tag
+                d.closure_tag := tag + 1L
+                d.memoized_closures.[r] <- tag
+                tag
+            | true, tag ->
+                tag
+            |> fun tag ->
+                let args_ty = get_type args
+                let r_ty = get_type r
+                if is_returnable' r_ty = false then failwithf "The type needs to be returnable in apply_closure. Got: %A" r_ty
+                let clo = ClosureT (tag, args_ty, r_ty) |> TyType |> make_tyv_and_push d
+                ret clo
+        apply_inlineable tev d case_a case_f fun_key args on_fail ret
+
+    let apply_closure clo (clo_arg_ty,clo_ret_ty) arg =
+        let arg_ty = get_type arg
+        if arg_ty = clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
+        TyOp(Apply,[clo;arg],clo_ret_ty)
+
     let rec apply_template tev d (la: CudaExpr) ra on_fail ret =
         let la = tev d la
         match get_type la with
         | FunctionT x -> apply_inlineable tev d (case_a d) (case_f d (apply_template expr_typecheck_with_empty_seq)) x ra on_fail ret
+        | ClosureT(_,a,r) -> apply_closure la (a,r) ra
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
     let apply d expr args = apply_template tev d expr (tev d args) (failwithf "Pattern matching cases failed to match.\n%A")
