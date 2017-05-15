@@ -551,7 +551,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let destructure_deep d r = 
+    let destructure_deep_template on_lit d r = 
         let rec destructure_deep r = 
             let destructure_tuple r =
                 match get_type r with
@@ -561,12 +561,19 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                     TyVV(indexed_tuple_args, VVT (tuple_types, name))
                 | _ -> r
             match r with
-            | TyType _ | TyLit _ -> r // Literals are propagated.
+            | TyType _ -> r
+            | TyLit _ -> on_lit r
             | TyOp(ArrayIndex,[Array(_,[],_);_],_)
             | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
         destructure_deep r
+
+    let destructure_deep d r = destructure_deep_template id d r
+    let destructure_deep_closure d r = destructure_deep_template (make_tyv d >> TyV) d r // TODO: Fix this tomorrow.
+
+    let apply_fail x = failwithf "Pattern matching cases failed to match.\n%A" x
+    let guard_empty _ = ()
 
     let inline match_bind acc arg_name x = if is_full_name arg_name then Map.add arg_name x acc else acc
 
@@ -608,7 +615,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         loop l
 
     and match_f (d: LangEnv) acc (pattern: CudaPattern) args meth on_fail ret =
-        apply expr_typecheck_with_empty_seq d (tev d (V meth)) args
+        apply guard_empty tev d (tev d (V meth)) args
             (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
             (fun r -> 
                 match_single d acc pattern (destructure_deep d r) 
@@ -617,7 +624,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     and apply_closure clo (clo_arg_ty,clo_ret_ty) arg =
         let arg_ty = get_type arg
-        if arg_ty = clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
+        if arg_ty <> clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         TyOp(Apply,[clo;arg],clo_ret_ty)
 
     and apply_inlineable tev d (initial_env,(name,l) as fun_key) args on_fail ret =
@@ -628,14 +635,15 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
-    and apply tev d la ra on_fail ret =
+    and apply guard_fun tev d la ra on_fail ret =
         match get_type la with
-        | FunctionT x -> apply_inlineable tev d x ra on_fail ret
+        | FunctionT x -> 
+            guard_fun x
+            apply_inlineable tev d x ra on_fail ret
         | ClosureT(a,r) -> apply_closure la (a,r) ra |> ret
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
-    let apply_fail x = failwithf "Pattern matching cases failed to match.\n%A" x
-    let apply_tev d expr args = apply tev d (tev d expr) (tev d args) apply_fail
+    let apply_tev d expr args = apply guard_empty tev d (tev d expr) (tev d args) apply_fail
 
     let method_tag d =
         let tag = !d.method_tag
@@ -675,18 +683,19 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let memo_make ex (a,b,c,d) = TyMemoizedExpr(ex,a,b,c,d)
 
-    let inline memoize_template m d x = eval_renaming eval_method d x |> memo_make m
-    let memoize_method d x = memoize_template MethodExpr d x
-    let memoize_closure d x = memoize_template ClosureExpr d x
+    let memoize_method d x = eval_renaming eval_method d x |> memo_make MethodExpr
+    let memoize_closure arg_ty d x = 
+        let a,b,c,ret_ty = eval_renaming eval_method d x
+        TyMemoizedExpr(ClosureExpr,a,b,c,ClosureT(arg_ty,ret_ty))
     
     let apply_closure d expr args =
         let expr, args = tev d expr, tev d args
-        let args = destructure_deep d args
+        let args = destructure_deep_closure d args
         
-        let env = d.env
-        if env_num_args env > 0 then failwithf "The number of arguments to closure must not exceed one. Got: %A and %A" env args
+        let guard (env,_) =
+            if env_num_args env > 0 then failwithf "The number of arguments to closure must not exceed one. Got: %A and %A" env args
 
-        apply memoize_closure d expr args apply_fail (make_tyv_and_push d)
+        apply guard (memoize_closure (get_type args)) d expr args apply_fail (make_tyv_and_push d)
 
     let if_ d cond tr fl =
         let cond = tev d cond

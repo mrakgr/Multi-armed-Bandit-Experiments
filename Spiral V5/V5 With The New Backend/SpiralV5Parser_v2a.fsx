@@ -178,7 +178,7 @@ let indentations statements expressions (s: CharStream<_>) =
 let application expr (s: CharStream<_>) =
     let i = s.Column
     let expr_up expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
-    let clo_cr = skipChar '`' >>. var_name |>> V |>> flip clo_create |> expr_up
+    let clo_cr = skipChar '`' >>. var_name |>> V |>> flip ap_closure |> expr_up
     let ap_cr = expr |>> flip ap |> expr_up
     let f a l = List.fold (fun s x -> x s) a l
     pipe2 expr (many (clo_cr <|> ap_cr)) f s

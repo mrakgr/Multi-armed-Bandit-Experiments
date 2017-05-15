@@ -33,6 +33,10 @@ let print_method_dictionary (imemo: MemoDict) =
     let program = Array.init 3 <| fun _ -> ResizeArray()
     let mutable channel = CodegenChannels.Main
 
+    let get_tag =
+        let mutable i = 0
+        fun () -> i <- i+1; i
+
     let cur_program () = program.[int channel]
     let with_channel i f =
         let x = channel
@@ -61,10 +65,6 @@ let print_method_dictionary (imemo: MemoDict) =
             | "" -> ()
             | s -> state s
 
-    let get_tag =
-        let mutable i = 0
-        fun () -> i <- i+1; i
-
     let def_proc (d: Dictionary<_,_>) t = 
         match d.TryGetValue t with
         | true, v -> v
@@ -78,13 +78,10 @@ let print_method_dictionary (imemo: MemoDict) =
     let print_tuple' v = sprintf "tuple_%i" v
     let print_tuple t = tuple_tag t |> print_tuple'
 
-    let closure_definitions = d0()
-    let closure_tag x = def_proc closure_definitions x
-    let print_closure arg = closure_tag arg |> sprintf "closure_%i"
-
     let closure_type_definitions = d0()
     let closure_type_tag x = def_proc closure_type_definitions x
-    let print_closure_type typ = closure_type_tag typ |> sprintf "clo_type_%i"
+    let print_closure_type' tag = sprintf "clo_type_%i" tag
+    let print_closure_type typ = closure_type_tag typ |> print_closure_type'
 
     let case_array_in_array _ = 
         // The only reason is really because C syntax is such a pain in the ass.
@@ -167,31 +164,40 @@ let print_method_dictionary (imemo: MemoDict) =
         | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
         | false -> sprintf "%s %s[%s];" typ nam dim |> state
 
+    and if_ cond tr fl t =
+        let p, r =
+            match t with
+            | VVT([],_) -> 
+                (fun x -> enter <| fun _ -> sprintf "%s;" (codegen x)), ""
+            | _ -> 
+                let r = get_tag() |> sprintf "if_var_%i"
+                (fun x -> enter <| fun _ -> sprintf "%s = %s;" r (codegen x)), r
+        sprintf "%s %s;" (print_simple_type t) r |> state
+        sprintf "if (%s) {" (codegen cond) |> state
+        p tr
+        "} else {" |> state
+        p fl
+        "}" |> state
+        r
+
     and codegen = function
         | TyV v -> print_tyv v
-        | TyOp(If,[cond;tr;fl],_) -> // If statements will aways be hoisted into methods in this language.
-            sprintf "if (%s) {" (codegen cond) |> state
-            enter <| fun _ -> sprintf "return %s;" (codegen tr)
-            "}" |> state
-            "else {" |> state
-            enter <| fun _ -> sprintf "return %s;" (codegen fl)
-            "}" |> state
-            ""
+        | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl t
         | TyLet(v, TyOp(StructCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
             match ar_typ with
             | Local | Global -> print_array_declaration false typ v ar_sizes
             | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
-        | TyLet(v, TyOp(ClosureCreate, [arg], ClosureT (a,r)), rest, _) ->
-            sprintf "%s = %s;" (print_tyv_with_type v) (print_closure arg) |> state; 
-            codegen rest
         | TyVV([],_) | TyType _ -> ""
         | TyLet(_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
         | TyLet((_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
         | TyLet(_,TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
+        | TyLet(v, TyMemoizedExpr(ClosureExpr,_,_,tag,ClosureT(a,r)), rest, _) ->
+            sprintf "%s = %s;" (print_tyv_with_type v) (print_method tag) |> state; 
+            codegen rest
         | TyLet(tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
-        | TyMethodCall(used_vars,_,tag,t) ->
+        | TyMemoizedExpr(MethodExpr,used_vars,_,tag,t) ->
             let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
@@ -200,6 +206,11 @@ let print_method_dictionary (imemo: MemoDict) =
             |> String.concat ", "
             |> sprintf "make_tuple_%i(%s)" (tuple_tag t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
+
+        | TyOp(Apply,[a;b],t) -> // Apply during codegen is only used for applying closures.
+            // There is one level of flattening in the outer arguments.
+            let b = tuple_field b |> List.map codegen |> String.concat ", "
+            sprintf "%s(%s)" (codegen a) b
 
         // Primitive operations on expressions.
         | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -241,10 +252,8 @@ let print_method_dictionary (imemo: MemoDict) =
 
     let print_closure_a a = tuple_field_ty a |> List.map print_simple_type |> String.concat ", "
 
-    let print_closure_type_definition (a,r as v) =
-        sprintf "typedef %s(*%s)(%s);" (print_simple_type r) (print_closure_type v) (print_closure_a a) |> state
-    let print_closure_definition clo (a,r) =
-        sprintf
+    let print_closure_type_definition (a,r) tag =
+        sprintf "typedef %s(*%s)(%s);" (print_simple_type r) (print_closure_type' tag) (print_closure_a a) |> state
 
     let print_tuple_defintion tys tag =
         let tuple_name = print_tuple' tag
@@ -297,7 +306,7 @@ let print_method_dictionary (imemo: MemoDict) =
 
             with_channel CodegenChannels.Definitions <| fun _ ->
                 for x in tuple_definitions do print_tuple_defintion x.Key x.Value
-                Seq.iter print_closure_definition closure_definitions
+                for x in closure_type_definitions do print_closure_type_definition x.Key x.Value
 
             // I am just swapping the positions so the tuple definitions come first in the printed code.
             // Unfortunately, getting the definitions requires a pass through the AST first
@@ -352,6 +361,28 @@ inl fib n =
 fib 2
     """
 
-let r = spiral_codegen fib_acc_y
+let clo2 =
+    """
+inl add () = 2 + 2
+fun t() =
+    inl f = 
+        inl r = ()
+        add `r
+    f (), f()
+t()
+    """
+
+let clo1 =
+    """
+inl add (x,y,z,q) = x + y
+fun t() =
+    inl f = 
+        inl r = (3,4,5,5)
+        add `r
+    f (1,1,2,2), f(2,2,2,2)
+t()
+    """
+
+let r = spiral_codegen clo1
 
 printfn "%A" r
