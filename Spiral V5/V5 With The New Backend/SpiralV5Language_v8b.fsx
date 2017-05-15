@@ -72,8 +72,9 @@ and Op =
     | MSet 
 
     | Apply
+    | ApplyClosure
+    | MethodMemoize
     | StructCreate
-    | ClosureCreate
     | VVIndex
     | VVCons
 
@@ -90,7 +91,6 @@ and Op =
 
     // UnOps
     | Neg
-    | CallAsMethod
     | TypeError
     
     | Log
@@ -147,7 +147,6 @@ and LangEnv =
     env : Env
     // Mutable
     memoized_methods : MemoDict // For typechecking recursive functions.
-    memoized_closures : ClosureDict
     sequences : (TypedCudaExpr -> TypedCudaExpr) option ref // For sequencing statements.
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
     method_tag : Tag ref
@@ -277,8 +276,8 @@ let fun_ name pat = Function((name,pat),ref Set.empty)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = Op(Apply,[x;y])
-let clo_create x y = Op(ClosureCreate,[x;y])
-let methr name x y = inlr name x <| Op(CallAsMethod, [y])
+let ap_closure x y = Op(ApplyClosure,[x;y])
+let methr name x y = inlr name x <| Op(MethodMemoize, [y])
 let meth x y = methr "" x y
 
 let E = S ""
@@ -348,7 +347,6 @@ let tuple_library =
 
 let data_empty () = 
     {memoized_methods=d0()
-     memoized_closures=d0()
      method_tag=ref 0L
      let_tag=0L
      env=Map.empty
@@ -459,7 +457,11 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) =
                 set_vars vars
             else
                 set_vars vars
-        | ClosureExpr -> !r
+        | ClosureExpr -> 
+            let ty_expr, arguments = expr_map.[tag]
+            if Set.isEmpty !r = false && Set.isEmpty !arguments then 
+                arguments := renamer_apply_pool (renamer_reverse renamer) !r
+            !r
 
     let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
     typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo)
@@ -563,38 +565,30 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             | TyOp(ArrayIndex,[Array(_,[],_);_],_)
             | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
-            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> 
-                make_tyv_and_push d r |> destructure_deep
+            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
         destructure_deep r
 
-    let inline case_bind acc arg_name x = if is_full_name arg_name then Map.add arg_name x acc else acc
+    let inline match_bind acc arg_name x = if is_full_name arg_name then Map.add arg_name x acc else acc
 
-    let inline case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
+    let inline match_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
         recurse acc l r <| fun x_acc ->
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
 
-    let case_f (d: LangEnv) apply match_single acc (pattern: CudaPattern) args meth on_fail ret =
-        apply {d with env = acc} (V meth) args
-            (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
-            (fun r -> 
-                match_single acc pattern (destructure_deep d r) 
-                    (fun _ -> failwith "The function call subpattern in the matcher failed to match.")
-                    ret)
+    let inline match_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
+    
+    let rec match_a d annot = match_a' (tev d (V annot) |> get_type) 
 
-    let case_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
-    let case_a d annot = case_a' (tev d (V annot) |> get_type) 
-
-    let match_single' case_a case_f (acc: Env) l r on_fail ret =
+    and match_single d (acc: Env) l r on_fail ret =
         let rec recurse acc l r ret = 
             match l,r with 
-            | A (pattern,annot), _ -> case_a annot r on_fail (fun _ -> recurse acc pattern r ret) 
-            | A' (pattern,annot), _ -> case_a' annot r on_fail (fun _ -> recurse acc pattern r ret) 
-            | F (pattern, meth), args -> case_f acc pattern args meth on_fail ret
-            | R([],None), TyVV([], _) -> case_bind acc "" r |> ret
+            | A (pattern,annot), _ -> match_a d annot r on_fail (fun _ -> recurse acc pattern r ret) 
+            | A' (pattern,annot), _ -> match_a' annot r on_fail (fun _ -> recurse acc pattern r ret) 
+            | F (pattern, meth), args -> match_f d acc pattern args meth on_fail ret
+            | R([],None), TyVV([], _) -> match_bind acc "" r |> ret
             | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
-            | S' x, _ | S x, _ -> case_bind acc x r |> ret
+            | S' x, _ | S x, _ -> match_bind acc x r |> ret
             | R([],Some ls), TyVV _ -> recurse acc ls r ret
-            | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts, "")) -> case_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
+            | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts, "")) -> match_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
             //| R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts, _)) -> on_fail() // <| "Expecting an unnamed argument."
             | R([],None), TyVV(_, _) -> on_fail () // <| sprintf "More arguments than can be matched in R."
             | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
@@ -604,48 +598,51 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             | N _, _ -> on_fail() // "Cannot match name against a non-named argument."
         recurse acc l r ret
 
-    let rec match_single case_a case_f = 
-        let case_f x = case_f (match_single case_a case_f) x
-        match_single' case_a case_f
-
-    let match_all match_single (env: Env) l (args: TypedCudaExpr) on_fail ret =
+    and match_all d (env: Env) l (args: TypedCudaExpr) on_fail ret =
         let rec loop = function
             | (pattern: CudaPattern, body: CudaExpr) :: xs ->
-                match_single env pattern args
+                match_single d env pattern args
                     (fun _ -> loop xs)
-                    (fun x -> ret (x, body))
+                    (fun acc -> ret (acc, body))
             | [] -> on_fail (l,args) //"All patterns in the matcher failed to match."
         loop l
 
-    let apply_inlineable tev d case_a case_f (initial_env,(name,l) as fun_key) args on_fail ret =
-        match_all (match_single case_a case_f) initial_env l (destructure_deep d args)
+    and match_f (d: LangEnv) acc (pattern: CudaPattern) args meth on_fail ret =
+        apply expr_typecheck_with_empty_seq d (tev d (V meth)) args
+            (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
+            (fun r -> 
+                match_single d acc pattern (destructure_deep d r) 
+                    (fun _ -> failwith "The function call subpattern in the matcher failed to match.")
+                    ret)
+
+    and apply_closure clo (clo_arg_ty,clo_ret_ty) arg =
+        let arg_ty = get_type arg
+        if arg_ty = clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
+        TyOp(Apply,[clo;arg],clo_ret_ty)
+
+    and apply_inlineable tev d (initial_env,(name,l) as fun_key) args on_fail ret =
+        match_all d initial_env l (destructure_deep d args)
             on_fail
             (fun (env, body) ->
                 let fv = TyType (FunctionT fun_key)
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
-    let apply_closure clo (clo_arg_ty,clo_ret_ty) arg =
-        let arg_ty = get_type arg
-        if arg_ty = clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
-        TyOp(Apply,[clo;arg],clo_ret_ty)
-
-    let rec apply_template tev d (la: CudaExpr) ra on_fail ret =
-        let la = tev d la
+    and apply tev d la ra on_fail ret =
         match get_type la with
-        | FunctionT x -> apply_inlineable tev d (case_a d) (case_f d (apply_template expr_typecheck_with_empty_seq)) x ra on_fail ret
-        | ClosureT(a,r) -> apply_closure la (a,r) ra
+        | FunctionT x -> apply_inlineable tev d x ra on_fail ret
+        | ClosureT(a,r) -> apply_closure la (a,r) ra |> ret
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
     let apply_fail x = failwithf "Pattern matching cases failed to match.\n%A" x
-    let apply d expr args = apply_template tev d expr (tev d args) apply_fail
+    let apply_tev d expr args = apply tev d (tev d expr) (tev d args) apply_fail
 
     let method_tag d =
         let tag = !d.method_tag
         d.method_tag := tag + 1L
         tag
 
-    let memoizing_eval d expr =
+    let eval_method d expr =
         let key_args = d.env, expr
         match d.memoized_methods.TryGetValue key_args with
         | false, _ ->                         
@@ -662,7 +659,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | true, (MethodInEvaluation (Some typed_expr), tag, _) -> typed_expr, tag
         | true, (MethodDone typed_expr, tag, _) -> typed_expr, tag
 
-    let call_as_method_template eval d expr = 
+    let eval_renaming eval d expr = 
         let env = d.env
 
         let fv = env_free_variables on_method_call_typechecking_pass env
@@ -677,26 +674,19 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
 
     let memo_make ex (a,b,c,d) = TyMemoizedExpr(ex,a,b,c,d)
-    let call_as_method d expr = call_as_method_template memoizing_eval d expr |> memo_make MethodExpr
 
-    let closure_create d expr args =
+    let inline memoize_template m d x = eval_renaming eval_method d x |> memo_make m
+    let memoize_method d x = memoize_template MethodExpr d x
+    let memoize_closure d x = memoize_template ClosureExpr d x
+    
+    let apply_closure d expr args =
+        let expr, args = tev d expr, tev d args
         let args = destructure_deep d args
         
         let env = d.env
         if env_num_args env > 0 then failwithf "The number of arguments to closure must not exceed one. Got: %A and %A" env args
 
-        let ret r = make_tyv_and_push d r
-
-        let tev d x = 
-            call_as_method_template (fun d x ->
-                let tag = method_tag d
-                let x = tev d x
-                d.memoized_closures.[tag] <- x
-                x, tag) d x
-            |> memo_make ClosureExpr
-                
-        apply_template tev d expr args apply_fail ret
-
+        apply memoize_closure d expr args apply_fail (make_tyv_and_push d)
 
     let if_ d cond tr fl =
         let cond = tev d cond
@@ -788,8 +778,10 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     
     | VV(vars,name) -> let vv = List.map (tev d) vars in TyVV(vv, VVT(List.map get_type vv, name))
     | Op(If,[cond;tr;fl]) -> if_ d cond tr fl
-    | Op(Apply,[a;b]) -> apply d a b id
-        // Primitive operations on expressions.
+    | Op(Apply,[a;b]) -> apply_tev d a b id
+    | Op(MethodMemoize,[a]) -> memoize_method d a
+    | Op(ApplyClosure,[a;b]) -> apply_closure d a b
+    // Primitive operations on expressions.
     | Op(Add,[a;b]) -> prim_arith_op d a b Add
     | Op(Sub,[a;b]) -> prim_arith_op d a b Sub
     | Op(Mult,[a;b]) -> prim_arith_op d a b Mult
@@ -820,7 +812,6 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     | Op(MSet,[a;b]) -> mset d a b
 
     | Op(Neg,[a]) -> prim_un_numeric d a Neg
-    | Op(CallAsMethod,[a]) -> call_as_method d a
     | Op(TypeError,[a]) -> failwithf "%A" a
 
     | Op(Log,[a]) -> prim_un_floating d a Log
