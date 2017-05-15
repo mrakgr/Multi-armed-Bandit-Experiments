@@ -78,10 +78,13 @@ let print_method_dictionary (imemo: MemoDict) =
     let print_tuple' v = sprintf "tuple_%i" v
     let print_tuple t = tuple_tag t |> print_tuple'
 
-    let closure_definitions = h0()
-    let print_closure (tag,a,r) = 
-        closure_definitions.Add(tag,a,r) |> ignore
-        sprintf "closure_%i" tag
+    let closure_definitions = d0()
+    let closure_tag x = def_proc closure_definitions x
+    let print_closure arg = closure_tag arg |> sprintf "closure_%i"
+
+    let closure_type_definitions = d0()
+    let closure_type_tag x = def_proc closure_type_definitions x
+    let print_closure_type typ = closure_type_tag typ |> sprintf "clo_type_%i"
 
     let case_array_in_array _ = 
         // The only reason is really because C syntax is such a pain in the ass.
@@ -102,7 +105,7 @@ let print_method_dictionary (imemo: MemoDict) =
             | Float64T -> "double"
             | BoolT -> "int"
             | StringT -> "char *"
-        | ClosureT(tag,a,r) -> print_closure (tag,a,r)
+        | ClosureT(a,r) -> print_closure_type (a,r)
         | VVT ([], _) -> "void"
         | VVT (t, _) -> print_tuple t
         | StructT(Array(_,_,t)) -> array_case t
@@ -174,13 +177,13 @@ let print_method_dictionary (imemo: MemoDict) =
             enter <| fun _ -> sprintf "return %s;" (codegen fl)
             "}" |> state
             ""
-        | TyLet(v, TyType (StructT (Array(ar_typ,ar_sizes,typ))), rest, _) ->
+        | TyLet(v, TyOp(StructCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
             match ar_typ with
             | Local | Global -> print_array_declaration false typ v ar_sizes
             | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
-        | TyLet(v, TyType (ClosureT (tag,a,r)), rest, _) ->
-            sprintf "%s = %s;" (print_tyv_with_type v) (print_closure (tag,a,r)) |> state; 
+        | TyLet(v, TyOp(ClosureCreate, [arg], ClosureT (a,r)), rest, _) ->
+            sprintf "%s = %s;" (print_tyv_with_type v) (print_closure arg) |> state; 
             codegen rest
         | TyVV([],_) | TyType _ -> ""
         | TyLet(_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
@@ -238,8 +241,10 @@ let print_method_dictionary (imemo: MemoDict) =
 
     let print_closure_a a = tuple_field_ty a |> List.map print_simple_type |> String.concat ", "
 
-    let print_closure_definition (tag,a,r as v) =
-        sprintf "typedef %s(*%s)(%s);" (print_closure_a a) (print_closure v) (print_simple_type r) |> state
+    let print_closure_type_definition (a,r as v) =
+        sprintf "typedef %s(*%s)(%s);" (print_simple_type r) (print_closure_type v) (print_closure_a a) |> state
+    let print_closure_definition clo (a,r) =
+        sprintf
 
     let print_tuple_defintion tys tag =
         let tuple_name = print_tuple' tag
