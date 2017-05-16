@@ -155,6 +155,8 @@ and LangEnv =
     recursive_methods_stack : Stack<unit -> TypedCudaExpr> // For typechecking recursive calls.
     method_tag : Tag ref
     mutable let_tag : Tag
+    blockDim : dim3 // since Cub needs hard constants, I need to have them during typechecking.
+    gridDim : dim3
     }
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
@@ -189,7 +191,6 @@ let tuple_field = function
 let tuple_field_ty = function 
     | VVT(x,_) -> x
     | x -> [x]
-
 
 type ArrayType = Local | Shared | Global
 
@@ -275,7 +276,6 @@ let apply_sequences sequences x =
     | Some sequences -> sequences x
     | None -> x
 
-
 let fun_ name pat = Function((name,pat),ref Set.empty)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
@@ -350,13 +350,16 @@ let tuple_library =
         E, type_error "Call to non-existent case in the tuple function."
         ]
 
-let data_empty () = 
+let data_empty (gridDim,blockDim) = 
     {memoized_methods=d0()
      method_tag=ref 0L
      let_tag=0L
      env=Map.empty
      sequences=ref None
-     recursive_methods_stack=Stack()}
+     recursive_methods_stack=Stack()
+     gridDim=gridDim
+     blockDim=blockDim
+     }
 
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
@@ -558,6 +561,11 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let struct_create d ty_exp = TyOp(StructCreate, [ty_exp], StructT ty_exp) |> make_tyv_and_push d
 
+    let v on_fail x = 
+        match Map.tryFind x d.env with
+        | Some v -> v
+        | None -> on_fail()
+
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
     let destructure_deep d r = 
@@ -643,6 +651,10 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         match get_type la with
         | FunctionT x -> apply_functiont tev d x ra on_fail ret
         | ClosureT(a,r) -> apply_closuret la (a,r) ra |> ret
+        | VVT(_,name) | StructT(TyVV(_,VVT(_,name))) ->
+            let oname = "overload_ap_" + name
+            let la = v (fun () -> failwithf "Cannot find an application overload for the tuple %s. %s is not in scope." name oname) oname
+            apply tev d la ra on_fail ret
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
     let apply_tev d expr args = apply tev d (tev d expr) (tev d args |> destructure_deep d) apply_fail
@@ -782,13 +794,10 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             if lar = largs then TyOp(ArrayIndex,[ar;args],typ)
             else failwithf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
         | _ -> failwithf "Array index needs the Array.Got: %A" ar
-            
+           
     match exp with
     | Lit value -> TyLit value
-    | V x -> 
-        match Map.tryFind x d.env with
-        | Some v -> v
-        | None -> failwithf "Variable %A not bound." x
+    | V x -> v (fun () -> failwithf "Variable %A not bound." x) x
     | Function (core, free_var_set) -> 
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
         TyType(FunctionT(env,core))
@@ -839,20 +848,28 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     | Op(Tanh,[a]) -> prim_un_floating d a Tanh
 
     // Constants
+    | Op(BlockDimX,[]) -> uint64 d.blockDim.x |> LitUInt64 |> TyLit
+    | Op(BlockDimY,[]) -> uint64 d.blockDim.y |> LitUInt64 |> TyLit
+    | Op(BlockDimZ,[]) -> uint64 d.blockDim.z |> LitUInt64 |> TyLit
+    | Op(GridDimX,[]) -> uint64 d.gridDim.x |> LitUInt64 |> TyLit
+    | Op(GridDimY,[]) -> uint64 d.gridDim.x |> LitUInt64 |> TyLit
+    | Op(GridDimZ,[]) -> uint64 d.gridDim.x |> LitUInt64 |> TyLit
+
     | Op(Syncthreads,[]) ->TyOp(Syncthreads,[],BVVT)
     | Op((ThreadIdxX | ThreadIdxY 
            | ThreadIdxZ | BlockIdxX | BlockIdxY 
-           | BlockIdxZ | BlockDimX | BlockDimY 
-           | BlockDimZ | GridDimX | GridDimY 
-           | GridDimZ as constant),[]) -> TyOp(constant,[],PrimT UInt64T)
+           | BlockIdxZ as constant),[]) -> TyOp(constant,[],PrimT UInt64T)
 
     | Op _ -> failwith "Missing Op case."
 
-let spiral_typecheck body = 
+let spiral_typecheck dims body = 
     try
-        let d = data_empty ()
+        let d = data_empty dims
         let s = expr_free_variables body // Is mutable
         if s.IsEmpty = false then failwithf "Variables %A are not bound anywhere." s
         let deforest_tuples x = typed_expr_optimization_pass 2 d.memoized_methods x |> ignore; x // Is mutable
         Succ (expr_typecheck d body |> deforest_tuples, d.memoized_methods)
     with e -> Fail (e.Message, e.StackTrace)
+
+/// Reasonable default for the dims.
+let default_dims = dim3(256), dim3(20)

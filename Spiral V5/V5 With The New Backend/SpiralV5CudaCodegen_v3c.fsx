@@ -124,7 +124,7 @@ let print_method_dictionary (imemo: MemoDict) =
         | LitFloat32 x -> string x
         | LitFloat64 x -> string x
         | LitBool x -> if x then "1" else "0"
-        | LitString x -> x
+        | LitString x -> sprintf "\"%s\"" x
 
     let rec print_array a b =
         let ar_sizes =
@@ -326,10 +326,10 @@ let print_method_dictionary (imemo: MemoDict) =
 open SpiralV5Parser_v2a
 open FParsec
 
-let spiral_codegen body = 
+let spiral_codegen dims body = 
     match spiral_parse body with
     | Success(r,_,_) ->
-        match spiral_typecheck r with
+        match spiral_typecheck dims r with
         | Succ(_,memo) -> print_method_dictionary memo
         | Fail er -> Fail er
     | Failure(er,_,_) -> 
@@ -385,6 +385,63 @@ fun t() =
 t()
     """
 
-let r = spiral_codegen clo1
+let zip =
+    """
+inl rec tuple_fold f s l =
+    typecase l with
+    | x :: xs -> tuple_fold f (f s x) xs
+    | _ -> s
+
+inl transpose l on_fail succ =
+    
+    """
+
+let tuple_map f l =
+    match l with
+    | x :: xs -> List.fold (fun s x -> f x :: s) [] xs
+
+let rec tuple_foldr f s l =
+    match l with
+    | x :: xs -> f x (tuple_foldr f s xs)
+    | _ -> s
+
+//let rec tuple_forall f (l: bool list) = 
+//    let g _ = true
+//    tuple_foldr (fun x () con ->
+//        let x = f x
+//        if x then con () else x
+//        ) () l
+//
+//tuple_forall id [true;true;false]
+
+let t =
+    List.fold (fun s (x: bool) con -> 
+        if x then con() else x) (fun con -> con()) [false;true;true] (fun () -> true)
+
+
+let tuple_fold =
+    """
+fun top _ =
+    inl rec tuple_foldl f s l =
+        typecase l with
+        | x :: xs -> tuple_foldl f (f s x) xs
+        | () -> s
+    
+    inl id x = x
+    inl tuple_map' f l = tuple_foldl (inl s x -> f x :: s) () l
+    inl tuple_rev l = tuple_map' id l
+    inl tuple_map f l = tuple_map' f l |> tuple_rev
+    inl tuple_forall f l = 
+        tuple_foldl (inl s x ->
+            typecase f x with
+            | .True() -> .True()
+            | .False() -> .False()
+            ) .True() l
+
+    tuple_fold f 8.8f (1,2,3)
+top ()
+    """
+
+let r = spiral_codegen default_dims tuple_fold
 
 printfn "%A" r
