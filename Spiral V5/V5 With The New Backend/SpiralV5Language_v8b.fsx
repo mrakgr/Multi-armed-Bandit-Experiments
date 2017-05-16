@@ -82,8 +82,8 @@ and Op =
     | ArrayCreateShared
     | ArrayIndex
    
-    | LeftShift
-    | RightShift
+    | ShiftLeft
+    | ShiftRight
     | ShuffleXor
     | ShuffleUp
     | ShuffleDown
@@ -814,6 +814,9 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     
     | Op(And,[a;b]) -> prim_bool_op d a b And
     | Op(Or,[a;b]) -> prim_bool_op d a b Or
+
+    | Op(ShiftLeft,[a;b]) -> prim_shift_op d a b ShiftLeft
+    | Op(ShiftRight,[a;b]) -> prim_shift_op d a b ShiftRight
 
     | Op(ShuffleXor,[a;b]) -> prim_shuffle_op d a b ShuffleXor
     | Op(ShuffleUp,[a;b]) -> prim_shuffle_op d a b ShuffleUp

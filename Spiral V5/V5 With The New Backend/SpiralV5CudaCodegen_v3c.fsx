@@ -228,6 +228,9 @@ let print_method_dictionary (imemo: MemoDict) =
         | TyOp(And,[a;b],t) -> sprintf "(%s && %s)" (codegen a) (codegen b)
         | TyOp(Or,[a;b],t) -> sprintf "(%s || %s)" (codegen a) (codegen b)
 
+        | TyOp(ShiftLeft,[x;y],_) -> sprintf "(%s << %s)" (codegen x) (codegen y)
+        | TyOp(ShiftRight,[x;y],_) -> sprintf "(%s >> %s)" (codegen x) (codegen y)
+
         | TyOp(ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
         | TyOp(ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
         | TyOp(ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
