@@ -181,23 +181,24 @@ let print_method_dictionary (imemo: MemoDict) =
         r
 
     and codegen = function
+        | TyVV([],_) | TyType _ -> ""
         | TyV v -> print_tyv v
         | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl t
-        | TyLet(v, TyOp(StructCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
+        | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
+        | TyLet(_, v, TyOp(StructCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
             match ar_typ with
             | Local | Global -> print_array_declaration false typ v ar_sizes
             | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
-        | TyVV([],_) | TyType _ -> ""
-        | TyLet(_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
-        | TyLet((_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
-        | TyLet(_,TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
-        | TyLet(v, TyMemoizedExpr(ClosureExpr,_,_,tag,ClosureT(a,r)), rest, _) ->
+        | TyLet(_,_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
+        | TyLet(_,(_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
+        | TyLet(_,_,TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
+        | TyLet(_,v, TyMemoizedExpr(MemoClosure,_,_,tag,ClosureT(a,r)), rest, _) ->
             sprintf "%s = %s;" (print_tyv_with_type v) (print_method tag) |> state; 
             codegen rest
-        | TyLet(tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
+        | TyLet(_,tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
-        | TyMemoizedExpr(MethodExpr,used_vars,_,tag,t) ->
+        | TyMemoizedExpr(MemoMethod,used_vars,_,tag,t) ->
             let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
@@ -374,12 +375,10 @@ t()
 
 let clo1 =
     """
-inl add (x,y,z,q) = x + y
+inl add (x,_) = x
 fun t() =
-    inl f = 
-        inl r = (3,4,5,5)
-        add `r
-    f (1,1,2,2), f(2,2,2,2)
+    inl f = add `((3*2,4/3),(5-1,5))
+    f ((1,1),(2,2)), f((2,2),(2,2))
 t()
     """
 

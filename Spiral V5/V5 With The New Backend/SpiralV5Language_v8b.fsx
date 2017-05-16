@@ -120,13 +120,17 @@ and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
 
 and MemoExprType =
-| ClosureExpr
-| MethodExpr
+| MemoClosure
+| MemoMethod
+
+and LetType =
+| LetStd
+| LetInvisible
 
 // This is being compiled to STLC, not System F, so no type variables are allowed in the processed AST.
 and TypedCudaExpr =
     | TyV of TyV
-    | TyLet of TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
+    | TyLet of LetType * TyV * TypedCudaExpr * TypedCudaExpr * CudaTy
     | TyLit of Value
     
     | TyVV of TypedCudaExpr list * CudaTy
@@ -169,7 +173,7 @@ let get_type_of_value = function
 
 let get_type = function
     | TyLit x -> get_type_of_value x
-    | TyV (_,t) | TyLet(_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
+    | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyOp(_,_,t) | TyType t -> t
 
 /// Returns an empty string if not a tuple.
@@ -276,7 +280,9 @@ let fun_ name pat = Function((name,pat),ref Set.empty)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = Op(Apply,[x;y])
-let ap_closure x y = Op(ApplyClosure,[x;y])
+let l v b e = ap (inl v e) b
+let ap_closure x y = Op(ApplyClosure,[x; y])
+    
 let methr name x y = inlr name x <| Op(MethodMemoize, [y])
 let meth x y = methr "" x y
 
@@ -293,7 +299,6 @@ let SSS a b = R(a, Some (S b))
 
 let cons a b = Op(VVCons,[a;b])
 
-let l v b e = Op(Apply,[inl v e; b])
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
 let rec ap' f = function
@@ -395,9 +400,12 @@ and renamer_apply_typedexpr r e =
     | TyV (n,t) -> TyV (Map.find n r,g t)
     | TyType t -> TyType (g t)
     | TyVV(l,t) -> TyVV(List.map f l,g t)
-    | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> TyMemoizedExpr(typ,ref <| renamer_apply_pool r !used_vars,renamer,tag,g t)
+    | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
+        let renamer = Map.map (fun _ v -> Map.find v r) renamer
+        let used_vars = ref <| renamer_apply_pool r !used_vars
+        TyMemoizedExpr(typ,used_vars,renamer,tag,g t)
     | TyOp(o,l,t) -> TyOp(o,List.map f l,g t)
-    | TyLet((n,t),a,b,t') -> TyLet((Map.find n r,g t),f a,f b,g t')
+    | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,g t),f a,f b,g t')
     | TyLit _ -> e
 and renamer_apply_ty r e = 
     let f e = renamer_apply_ty r e
@@ -415,7 +423,7 @@ let rec typed_expr_free_variables on_method_call e =
     | TyType t -> g t
     | TyOp(_,l,t) | TyVV(l,t) -> vars_union f l + g t
     | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> on_method_call typ used_vars renamer tag + g t
-    | TyLet(x,a,b,t) -> Set.remove x (f b) + f a
+    | TyLet(le,x,a,b,t) -> Set.remove x (f b) + f a
     | TyLit _ -> Set.empty
 
 and ty_free_variables on_method_call x = 
@@ -444,7 +452,7 @@ let memo_value = function
 let typed_expr_optimization_pass num_passes (memo: MemoDict) =
     let rec on_method_call_optimization_pass (memo: (Set<Tag * CudaTy> * int) []) (expr_map: Map<Tag,TypedCudaExpr * Arguments>) typ r renamer tag =
         match typ with
-        | MethodExpr ->
+        | MemoMethod ->
             let vars,counter = memo.[int tag]
             let set_vars vars = r := renamer_apply_pool renamer vars; !r
             if counter < num_passes then
@@ -457,7 +465,7 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) =
                 set_vars vars
             else
                 set_vars vars
-        | ClosureExpr -> 
+        | MemoClosure -> 
             let ty_expr, arguments = expr_map.[tag]
             if Set.isEmpty !r = false && Set.isEmpty !arguments then 
                 arguments := renamer_apply_pool (renamer_reverse renamer) !r
@@ -540,18 +548,19 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let make_tyv d ty_exp = get_tag d, get_type ty_exp
 
-    let make_tyv_and_push' d ty_exp =
+    let make_tyv_and_push' le d ty_exp =
         let v = make_tyv d ty_exp
-        push_sequence d (fun rest -> TyLet(v,ty_exp,rest,get_type rest))
+        push_sequence d (fun rest -> TyLet(le,v,ty_exp,rest,get_type rest))
         v
 
-    let make_tyv_and_push d ty_exp = make_tyv_and_push' d ty_exp |> TyV
+    let make_tyv_and_push d ty_exp = make_tyv_and_push' LetStd d ty_exp |> TyV
+    let make_tyv_and_push_inv d ty_exp = make_tyv_and_push' LetInvisible d ty_exp |> TyV
 
     let struct_create d ty_exp = TyOp(StructCreate, [ty_exp], StructT ty_exp) |> make_tyv_and_push d
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let destructure_deep_template on_lit d r = 
+    let destructure_deep d r = 
         let rec destructure_deep r = 
             let destructure_tuple r =
                 match get_type r with
@@ -561,19 +570,14 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                     TyVV(indexed_tuple_args, VVT (tuple_types, name))
                 | _ -> r
             match r with
-            | TyType _ -> r
-            | TyLit _ -> on_lit r
+            | TyType _ | TyLit _ -> r
             | TyOp(ArrayIndex,[Array(_,[],_);_],_)
             | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
         destructure_deep r
 
-    let destructure_deep d r = destructure_deep_template id d r
-    let destructure_deep_closure d r = destructure_deep_template (make_tyv d >> TyV) d r // TODO: Fix this tomorrow.
-
     let apply_fail x = failwithf "Pattern matching cases failed to match.\n%A" x
-    let guard_empty _ = ()
 
     let inline match_bind acc arg_name x = if is_full_name arg_name then Map.add arg_name x acc else acc
 
@@ -615,35 +619,33 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         loop l
 
     and match_f (d: LangEnv) acc (pattern: CudaPattern) args meth on_fail ret =
-        apply guard_empty tev d (tev d (V meth)) args
+        apply tev d (tev d (V meth)) args
             (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
             (fun r -> 
                 match_single d acc pattern (destructure_deep d r) 
                     (fun _ -> failwith "The function call subpattern in the matcher failed to match.")
                     ret)
 
-    and apply_closure clo (clo_arg_ty,clo_ret_ty) arg =
+    and apply_closuret clo (clo_arg_ty,clo_ret_ty) arg =
         let arg_ty = get_type arg
         if arg_ty <> clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         TyOp(Apply,[clo;arg],clo_ret_ty)
 
-    and apply_inlineable tev d (initial_env,(name,l) as fun_key) args on_fail ret =
-        match_all d initial_env l (destructure_deep d args)
+    and apply_functiont tev d (initial_env,(name,l) as fun_key) args on_fail ret =
+        match_all d initial_env l args
             on_fail
             (fun (env, body) ->
                 let fv = TyType (FunctionT fun_key)
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
-    and apply guard_fun tev d la ra on_fail ret =
+    and apply tev d la ra on_fail ret =
         match get_type la with
-        | FunctionT x -> 
-            guard_fun x
-            apply_inlineable tev d x ra on_fail ret
-        | ClosureT(a,r) -> apply_closure la (a,r) ra |> ret
+        | FunctionT x -> apply_functiont tev d x ra on_fail ret
+        | ClosureT(a,r) -> apply_closuret la (a,r) ra |> ret
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
-    let apply_tev d expr args = apply guard_empty tev d (tev d expr) (tev d args) apply_fail
+    let apply_tev d expr args = apply tev d (tev d expr) (tev d args |> destructure_deep d) apply_fail
 
     let method_tag d =
         let tag = !d.method_tag
@@ -667,7 +669,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | true, (MethodInEvaluation (Some typed_expr), tag, _) -> typed_expr, tag
         | true, (MethodDone typed_expr, tag, _) -> typed_expr, tag
 
-    let eval_renaming eval d expr = 
+    let eval_renaming env_free_variables eval d expr = 
         let env = d.env
 
         let fv = env_free_variables on_method_call_typechecking_pass env
@@ -683,19 +685,25 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let memo_make ex (a,b,c,d) = TyMemoizedExpr(ex,a,b,c,d)
 
-    let memoize_method d x = eval_renaming eval_method d x |> memo_make MethodExpr
-    let memoize_closure arg_ty d x = 
-        let a,b,c,ret_ty = eval_renaming eval_method d x
-        TyMemoizedExpr(ClosureExpr,a,b,c,ClosureT(arg_ty,ret_ty))
+    let memoize_method d x = eval_renaming env_free_variables eval_method d x |> memo_make MemoMethod
+    let memoize_closure env_free_variables arg_ty d x = 
+        let a,b,c,ret_ty = eval_renaming env_free_variables eval_method d x
+        TyMemoizedExpr(MemoClosure,a,b,c,ClosureT(arg_ty,ret_ty))
     
     let apply_closure d expr args =
-        let expr, args = tev d expr, tev d args
-        let args = destructure_deep_closure d args
-        
-        let guard (env,_) =
-            if env_num_args env > 0 then failwithf "The number of arguments to closure must not exceed one. Got: %A and %A" env args
+        let expr = tev d expr
+        let args = 
+            expr_typecheck_with_empty_seq d args
+            |> function
+                | TyVV(l,t) -> TyVV(List.map (make_tyv_and_push_inv d) l,t)
+                | x -> make_tyv_and_push_inv d x
 
-        apply guard (memoize_closure (get_type args)) d expr args apply_fail (make_tyv_and_push d)
+        let env_free_variables on_method_call_typechecking_pass env = 
+            if env_num_args env > 1 then failwithf "The number of arguments to closure must not exceed one. Got: %A" env
+            typed_expr_free_variables on_method_call_typechecking_pass args
+        let tev = memoize_closure env_free_variables (get_type args)
+
+        apply tev d expr args apply_fail (make_tyv_and_push d)
 
     let if_ d cond tr fl =
         let cond = tev d cond
