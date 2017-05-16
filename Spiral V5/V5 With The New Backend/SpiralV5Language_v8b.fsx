@@ -281,7 +281,7 @@ let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = Op(Apply,[x;y])
 let l v b e = ap (inl v e) b
-let ap_closure x y = Op(ApplyClosure,[x; y])
+let ap_closure x y = Op(ApplyClosure,[inl (S " ") (ap x (V " ")); y])
     
 let methr name x y = inlr name x <| Op(MethodMemoize, [y])
 let meth x y = methr "" x y
@@ -700,7 +700,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
         let env_free_variables on_method_call_typechecking_pass env = 
             if env_num_args env > 1 then failwithf "The number of arguments to closure must not exceed one. Got: %A" env
-            typed_expr_free_variables on_method_call_typechecking_pass args
+            env_free_variables on_method_call_typechecking_pass env
         let tev = memoize_closure env_free_variables (get_type args)
 
         apply tev d expr args apply_fail (make_tyv_and_push d)
