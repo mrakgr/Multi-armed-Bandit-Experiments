@@ -396,29 +396,6 @@ inl transpose l on_fail succ =
     
     """
 
-let tuple_map f l =
-    match l with
-    | x :: xs -> List.fold (fun s x -> f x :: s) [] xs
-
-let rec tuple_foldr f s l =
-    match l with
-    | x :: xs -> f x (tuple_foldr f s xs)
-    | _ -> s
-
-//let rec tuple_forall f (l: bool list) = 
-//    let g _ = true
-//    tuple_foldr (fun x () con ->
-//        let x = f x
-//        if x then con () else x
-//        ) () l
-//
-//tuple_forall id [true;true;false]
-
-let t =
-    List.fold (fun s (x: bool) con -> 
-        if x then con() else x) (fun con -> con()) [false;true;true] (fun () -> true)
-
-
 let tuple_fold =
     """
 fun top _ =
@@ -426,19 +403,37 @@ fun top _ =
         typecase l with
         | x :: xs -> tuple_foldl f (f s x) xs
         | () -> s
+    inl rec tuple_foldr f s l =
+        typecase l with
+        | x :: xs -> f x (tuple_foldr f s xs)
+        | () -> s
     
     inl id x = x
-    inl tuple_map' f l = tuple_foldl (inl s x -> f x :: s) () l
-    inl tuple_rev l = tuple_map' id l
-    inl tuple_map f l = tuple_map' f l |> tuple_rev
+    inl tuple_rev, tuple_map =
+        inl tuple_map' f l = tuple_foldl (inl s x -> f x :: s) () l
+        inl tuple_rev l = tuple_map' id l
+        inl tuple_map f = tuple_map' f >> tuple_rev
+        tuple_rev, tuple_map
     inl tuple_forall f l = 
+        tuple_foldl (inl con x l ->
+            typecase f x with
+            | .True() -> con l
+            | .False() -> .False()
+            ) id l .True()
+    inl tuple_exists f l =
+        tuple_foldl (inl con x l ->
+            typecase f x with
+            | .False() -> con l
+            | .True() -> .True()
+            ) id l .False()
+    inl tuple_filter f l =
         tuple_foldl (inl s x ->
             typecase f x with
-            | .True() -> .True()
-            | .False() -> .False()
-            ) .True() l
-
-    tuple_fold f 8.8f (1,2,3)
+            | .True() -> x :: s
+            | .False() -> s
+            ) [] l
+        |> tuple_rev
+    tuple_forall id (.True(),.True(),.True())
 top ()
     """
 

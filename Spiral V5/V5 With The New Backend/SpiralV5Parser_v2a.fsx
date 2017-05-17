@@ -25,12 +25,14 @@ let fun_ = skipString "fun" .>> spaces
 let inl_rec = skipString "inl" .>> spaces .>> skipString "rec" .>> spaces
 let fun_rec = skipString "fun" .>> spaces .>> skipString "rec" .>> spaces
 let typecase = skipString "typecase" >>. spaces
+let module_ = skipString "module" >>. spaces
 let with_ = skipString "with" >>. spaces
+let open_ = skipString "open" >>. spaces
 
 let var_name = 
     many1Satisfy2L isAsciiLower (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "identifier" .>> spaces
     >>=? function
-        | "typecase" | "with" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
+        | "open" | "module" | "typecase" | "with" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
             Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 let type_name = 
@@ -67,7 +69,11 @@ let pattern_tuple' pattern =
     sepBy1 pattern pppp 
     >>= (List.rev >> f)
 let pattern_rounds pattern = rounds (pattern <|>% SS [])
-let pattern_type_name pattern = type_name >>. pattern_rounds pattern 
+let pattern_type_name pattern = 
+    pipe2
+        (dot >>. type_name)
+        (pattern_rounds pattern)
+        (fun nam pat -> N(nam,pat))
 let pattern_active pattern = 
     pipe2 (dot >>. var_name)
         (rounds pattern <|> pattern_identifier)
@@ -117,10 +123,11 @@ let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) pattern_list (
 let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (inlr' name pattern body))
 let case_fun_name_pat_list_statement expr = pipe3 (fun_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (methr' "" pattern body))
 let case_fun_rec_name_pat_list_statement expr = pipe3 (fun_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (methr' name pattern body))
+let case_open expr = open_ >>. expr |>> module_open
 
 let statements expr = 
     [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
-     case_fun_name_pat_list_statement; case_fun_rec_name_pat_list_statement]
+     case_fun_name_pat_list_statement; case_fun_rec_name_pat_list_statement; case_open]
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
@@ -139,6 +146,27 @@ let case_named_tuple expr =
             | VV (args, "") -> VV(args,name)
             | args -> VV([args],name))
 let case_var expr = var
+
+let case_typecase expr (s: CharStream<_>) =
+    let i = s.Column
+    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    let pat_body = expr_indent patterns .>> expr_indent lam
+    let pat_first = expr_indent (optional bar) >>. pat_body
+    let pat = expr_indent bar >>. pat_body
+    let body = expr_indent expr
+    let case_case pat = pipe2 pat body (fun a b -> a,b)
+    pipe3 (typecase >>. expr .>> with_)
+        (case_case pat_first)
+        (many (case_case pat))
+        (fun e x xs -> match_ e (x :: xs)) s
+
+let case_module expr = module_ |>> fun _ -> module_create
+
+let expressions expr =
+    [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
+     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_module]
+    |> List.map (fun x -> x expr |> attempt)
+    |> choice
  
 let process_parser_exprs exprs = 
     let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")
@@ -180,7 +208,9 @@ let application expr (s: CharStream<_>) =
     let i = s.Column
     let expr_up expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
     let clo_cr = grave >>. expr |>> flip ap_closure |> expr_up
+    let ap_mod = dot >>. expr |>> flip ap_mod |> expr_up
     let ap_cr = expr |>> flip ap |> expr_up
+    
     let f a l = List.fold (fun s x -> x s) a l
     pipe2 expr (many (clo_cr <|> ap_cr)) f s
 
@@ -193,24 +223,6 @@ let tuple expr i (s: CharStream<_>) =
         | _ -> failwith "impossible"
     <| s
 
-let case_typecase expr (s: CharStream<_>) =
-    let i = s.Column
-    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
-    let pat_body = expr_indent patterns .>> expr_indent lam
-    let pat_first = expr_indent (optional bar) >>. pat_body
-    let pat = expr_indent bar >>. pat_body
-    let body = expr_indent expr
-    let case_case pat = pipe2 pat body (fun a b -> a,b)
-    pipe3 (typecase >>. expr .>> with_)
-        (case_case pat_first)
-        (many (case_case pat))
-        (fun e x xs -> match_ e (x :: xs)) s
-
-let expressions expr =
-    [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
-     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase]
-    |> List.map (fun x -> x expr |> attempt)
-    |> choice
 
 let mset expr i (s: CharStream<_>) = 
     let expr_indent expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
@@ -250,6 +262,7 @@ let expr: CharStream<unit> -> _ =
         let f str prec op = add_infix_operator Associativity.Right str prec (binop op)
         f "||" 20 And
         f "&&" 30 Or
+        f "::" 50 VVCons
 
     let operators expr i =
         opp.TermParser <- fun (s: CharStream<_>) -> if i <= s.Column then expr s else pzero s

@@ -24,6 +24,7 @@ type CudaTy =
     | FunctionT of FunctionKey
     | StructT of TypedCudaExpr // Structs here are pretty much the opposite of what they are in C. They are a type level feature.
     | ClosureT of CudaTy * CudaTy // For now since I am compiling only to Cuda, closures will be not be allowed to capture variables.
+    | ModuleT of Env
 
 and Tag = int64
 and TyV = Tag * CudaTy
@@ -72,7 +73,8 @@ and Op =
     | MSet 
 
     | Apply
-    | ApplyClosure
+    | ApplyType
+    | ApplyModule
     | MethodMemoize
     | StructCreate
     | VVIndex
@@ -92,12 +94,15 @@ and Op =
     // UnOps
     | Neg
     | TypeError
+    | ModuleOpen
     
     | Log
     | Exp
     | Tanh
 
     // Constants
+    | ModuleCreate
+
     | Syncthreads
     | ThreadIdxX | ThreadIdxY | ThreadIdxZ
     | BlockIdxX | BlockIdxY | BlockIdxZ
@@ -206,8 +211,9 @@ let (|Array|_|) = function
 
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
-    | StructT _ | FunctionT _ -> false
-    | ClosureT _ | PrimT _ -> true
+    | ModuleT _ | StructT _ | FunctionT _ -> false
+    | ClosureT (a,b) -> is_returnable' a && is_returnable' b
+    | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -225,9 +231,10 @@ let is_primt' = function
     | _ -> false
 let is_primt a = is_primt' (get_type a)
 
-let is_comparable' = function
-    | PrimT _ | VVT _ -> true
-    | ClosureT _ | StructT _ | FunctionT _ -> false
+let rec is_comparable' = function
+    | PrimT _ -> true
+    | VVT (x,_) -> List.forall is_comparable' x
+    | ModuleT _ | ClosureT _ | StructT _ | FunctionT _ -> false
 
 let is_float' = function
     | PrimT x -> 
@@ -281,10 +288,14 @@ let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = Op(Apply,[x;y])
 let l v b e = ap (inl v e) b
-let ap_closure x y = Op(ApplyClosure,[inl (S " ") (ap x (V " ")); y])
+let ap_mod x y = Op(ApplyModule,[x;y])
+let ap_closure x y = Op(ApplyType,[inl (S " ") (ap x (V " ")); y])
     
 let methr name x y = inlr name x <| Op(MethodMemoize, [y])
 let meth x y = methr "" x y
+
+let module_create = Op(ModuleCreate,[])
+let module_open a b = Op(ModuleOpen,[a;b])
 
 let E = S ""
 let B = VV ([], "")
@@ -659,6 +670,11 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let apply_tev d expr args = apply tev d (tev d expr) (tev d args |> destructure_deep d) apply_fail
 
+    let apply_module a b = 
+        match tev d a |> get_type with
+        | ModuleT env -> v (fun () -> failwithf "Cannot find a function named %s inside the module." b) b
+        | x -> failwithf "Expected a module as the left argument. Got: %A" x
+
     let method_tag d =
         let tag = !d.method_tag
         d.method_tag := tag + 1L
@@ -702,7 +718,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         let a,b,c,ret_ty = eval_renaming env_free_variables eval_method d x
         TyMemoizedExpr(MemoClosure,a,b,c,ClosureT(arg_ty,ret_ty))
     
-    let apply_closure d expr args =
+    let apply_type d expr args =
         let expr = tev d expr
         let args = 
             expr_typecheck_with_empty_seq d args
@@ -715,7 +731,10 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             env_free_variables on_method_call_typechecking_pass env
         let tev = memoize_closure env_free_variables (get_type args)
 
-        apply tev d expr args apply_fail (make_tyv_and_push d)
+        match get_type expr with
+        | FunctionT x -> apply_functiont tev d x args apply_fail id
+        | x -> failwithf "Expected a function type in apply_type. Got: %A" x
+        
 
     let if_ d cond tr fl =
         let cond = tev d cond
@@ -794,6 +813,13 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             if lar = largs then TyOp(ArrayIndex,[ar;args],typ)
             else failwithf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
         | _ -> failwithf "Array index needs the Array.Got: %A" ar
+
+    let module_open a b =
+        match tev d a |> get_type with
+        | ModuleT x -> 
+            let env = Map.fold (fun s k v -> Map.add k v s) d.env x
+            tev {d with env = env} b
+        | x -> failwithf "The open expected a module type as input. Got: %A" x
            
     match exp with
     | Lit value -> TyLit value
@@ -806,7 +832,10 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     | Op(If,[cond;tr;fl]) -> if_ d cond tr fl
     | Op(Apply,[a;b]) -> apply_tev d a b id
     | Op(MethodMemoize,[a]) -> memoize_method d a
-    | Op(ApplyClosure,[a;b]) -> apply_closure d a b
+    | Op(ApplyType,[a;b]) -> apply_type d a b
+    | Op(ApplyModule,[a; V b]) -> apply_module a b
+    | Op(ModuleOpen,[a;b]) -> module_open a b
+        
     // Primitive operations on expressions.
     | Op(Add,[a;b]) -> prim_arith_op d a b Add
     | Op(Sub,[a;b]) -> prim_arith_op d a b Sub
@@ -859,6 +888,8 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     | Op((ThreadIdxX | ThreadIdxY 
            | ThreadIdxZ | BlockIdxX | BlockIdxY 
            | BlockIdxZ as constant),[]) -> TyOp(constant,[],PrimT UInt64T)
+
+    | Op(ModuleCreate,[]) -> TyType(ModuleT d.env)
 
     | Op _ -> failwith "Missing Op case."
 
