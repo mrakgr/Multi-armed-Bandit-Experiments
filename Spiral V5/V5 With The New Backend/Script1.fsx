@@ -377,28 +377,36 @@ let data_empty (gridDim,blockDim) =
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
 
-let rec expr_free_variables e =
-    let f e = expr_free_variables e
+let on_memo_true (free_var_set: Set<_> ref) f = 
+    if free_var_set.Value.IsEmpty = false then !free_var_set else f()
+let on_memo_false _ f = f()
+
+let rec expr_free_variables_template on_memo e =
+    let f e = expr_free_variables_template on_memo e
     match e with
     | V n -> Set.singleton n
     | Op(_,l) | VV(l,_) -> vars_union f l
     | Function((name,l),free_var_set) ->
-        let rec pat_template on_name on_expr p = 
-            let g p = pat_template on_name on_expr p
-            match p with
-            | F (pat,var) | A (pat,var) -> on_expr (g pat) var
-            | N (_,pat) | A' (pat,_) -> g pat
-            | S x | S' x -> on_name x
-            | R (l,Some o) -> vars_union' (g o) g l
-            | R (l,None) -> vars_union g l
+        on_memo free_var_set <| fun _ ->
+            let rec pat_template on_name on_expr p = 
+                let g p = pat_template on_name on_expr p
+                match p with
+                | F (pat,var) | A (pat,var) -> on_expr (g pat) var
+                | N (_,pat) | A' (pat,_) -> g pat
+                | S x | S' x -> on_name x
+                | R (l,Some o) -> vars_union' (g o) g l
+                | R (l,None) -> vars_union g l
 
-        let pat_vars p = pat_template (fun _ -> Set.empty) (fun s var -> Set.add var s) p
-        let pat_names p = pat_template Set.singleton (fun s _ -> s) p
+            let pat_vars p = pat_template (fun _ -> Set.empty) (fun s var -> Set.add var s) p
+            let pat_names p = pat_template Set.singleton (fun s _ -> s) p
 
-        let fv = vars_union (fun (pat,body) -> pat_vars pat + (f body - pat_names pat |> Set.remove name)) l
-        free_var_set := fv
-        fv
+            let fv = vars_union (fun (pat,body) -> pat_vars pat + (f body - pat_names pat |> Set.remove name)) l
+            free_var_set := fv
+            fv
     | Lit _ -> Set.empty
+
+let expr_free_variables x = expr_free_variables_template on_memo_false x // TODO: Remove this. It is crap.
+let expr_free_variables_memoizing x = expr_free_variables_template on_memo_true x |> ignore // For syntax desugaring inside the typechecker.
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
 let renamer_apply_pool r s = Set.map (fun (tag,ty) -> Map.find tag r, ty) s
