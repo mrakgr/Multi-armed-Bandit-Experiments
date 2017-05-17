@@ -207,12 +207,10 @@ let indentations statements expressions (s: CharStream<_>) =
 let application expr (s: CharStream<_>) =
     let i = s.Column
     let expr_up expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
-    let clo_cr = grave >>. expr |>> flip ap_closure |> expr_up
-    let ap_mod = dot >>. expr |>> flip ap_mod |> expr_up
     let ap_cr = expr |>> flip ap |> expr_up
     
     let f a l = List.fold (fun s x -> x s) a l
-    pipe2 expr (many (clo_cr <|> ap_cr)) f s
+    pipe2 expr (many ap_cr) f s
 
 let tuple expr i (s: CharStream<_>) =
     let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s

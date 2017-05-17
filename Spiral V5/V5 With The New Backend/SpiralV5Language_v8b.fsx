@@ -118,6 +118,7 @@ and Op =
 
 and CudaExpr = 
     | V of string
+    | T of TypedCudaExpr
     | Lit of Value
     | Function of FunctionCore * Set<string> ref
     | VV of CudaExpr list * string // named tuple
@@ -290,10 +291,9 @@ let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = Op(Apply,[x;y])
 let l v b e = ap (inl v e) b
-let ap_mod x y = ap x (Op(ApplyModule,[y]))
-let ap_closure x y = ap (inl (S " ") (ap x (V " "))) (Op(ApplyType,[y]))
     
-let methr name x y = inlr name x <| Op(MethodMemoize, [y])
+let meth_memo y = Op(MethodMemoize, [y])
+let methr name x y = inlr name x (meth_memo y) 
 let meth x y = methr "" x y
 
 let module_create = Op(ModuleCreate,[])
@@ -398,7 +398,7 @@ let rec expr_free_variables e =
         let fv = vars_union (fun (pat,body) -> pat_vars pat + (f body - pat_names pat |> Set.remove name)) l
         free_var_set := fv
         fv
-    | Lit _ -> Set.empty
+    | T _ | Lit _ -> Set.empty
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
 let renamer_apply_pool r s = Set.map (fun (tag,ty) -> Map.find tag r, ty) s
@@ -675,9 +675,9 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     and apply tev d la ra on_fail ret =
         match get_type la, get_type ra with
-        | FunctionT x, ForApplyT t -> apply_type d x t
+        | FunctionT x, ForApplyT t -> apply_type d x t on_fail ret
         | x, ForApplyT t -> failwithf "Expected a function type in type application. Got: %A" x
-        | ModuleT x, ForModuleT n -> apply_module x n
+        | ModuleT x, ForModuleT n -> apply_module x n |> ret
         | x, ForModuleT n -> failwithf "Expected a module in module application. Got: %A" x
         | FunctionT x,_ -> apply_functiont tev d x ra on_fail ret
         | ClosureT(a,r),_ -> apply_closuret la (a,r) ra |> ret
@@ -724,21 +724,16 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     and memoize_closure env_free_variables arg_ty d x = 
         let a,b,c,ret_ty = eval_renaming env_free_variables eval_method d x
         TyMemoizedExpr(MemoClosure,a,b,c,ClosureT(arg_ty,ret_ty))
-    
-    and apply_type d fun_key args_ty =
-        let args = 
-            make_tyv_and_push_inv d (TyType args_ty)
-            |> destructure_deep_inv d
-            |> function
-                | TyVV(l,t) -> TyVV(List.map (make_tyv_and_push_inv d) l,t)
-                | x -> make_tyv_and_push_inv d x
 
-        let env_free_variables on_method_call_typechecking_pass env = 
-            if env_num_args env > 1 then failwithf "The number of arguments to closure must not exceed one. Got: %A" env
-            env_free_variables on_method_call_typechecking_pass env
-        let tev d x = memoize_closure env_free_variables (get_type args) d x
-
-        apply_functiont tev d fun_key args apply_fail id
+    and apply_type d (env,core as fun_key) args_ty on_fail ret =
+        let args =
+            let f x = TyType x |> make_tyv_and_push_inv d
+            match args_ty with
+            | VVT(l,n) -> TyVV(List.map f l, args_ty)
+            | x -> f x
+        let f = FunctionT fun_key |> TyType |> T
+        let g = FunctionT(env,("",[S " ",meth_memo (ap f (V " "))])) |> TyType
+        apply tev d g args on_fail ret
 
     let apply_tev d expr args = apply tev d (tev d expr) (tev d args |> destructure_deep d) apply_fail
 
@@ -829,6 +824,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
            
     match exp with
     | Lit value -> TyLit value
+    | T x -> x
     | V x -> v (fun () -> failwithf "Variable %A not bound." x) x
     | Function (core, free_var_set) -> 
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
