@@ -25,8 +25,8 @@ type CudaTy =
     | StructT of TypedCudaExpr // Structs here are pretty much the opposite of what they are in C. They are a type level feature.
     | ClosureT of CudaTy * CudaTy // For now since I am compiling only to Cuda, closures will be not be allowed to capture variables.
     | ModuleT of Env
-    | ForApplyT of CudaTy // For apply_type
-    | ForModuleT of string // For apply_module
+    | ForApplyT of CudaTy 
+    | ForModuleT of string
 
 and Tag = int64
 and TyV = Tag * CudaTy
@@ -290,6 +290,8 @@ let fun_ name pat = Function((name,pat),ref Set.empty)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
 let ap x y = Op(Apply,[x;y])
+let ap_ty x = Op(ApplyType,[x])
+let ap_mod x = Op(ApplyModule,[V x])
 let l v b e = ap (inl v e) b
     
 let meth_memo y = Op(MethodMemoize, [y])
@@ -584,14 +586,14 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     let struct_create d ty_exp = TyOp(StructCreate, [ty_exp], StructT ty_exp) |> make_tyv_and_push d
 
-    let v on_fail x = 
-        match Map.tryFind x d.env with
+    let v env on_fail x = 
+        match Map.tryFind x env with
         | Some v -> v
         | None -> on_fail()
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let destructure_deep_template make_tyv_and_push d r = 
+    let destructure_deep d r = 
         let rec destructure_deep r = 
             let destructure_tuple r =
                 match get_type r with
@@ -608,8 +610,42 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
         destructure_deep r
 
-    let destructure_deep d r = destructure_deep_template make_tyv_and_push d r
-    let destructure_deep_inv d r = destructure_deep_template make_tyv_and_push_inv d r
+    let eval_method d expr =
+        let key_args = d.env, expr
+        match d.memoized_methods.TryGetValue key_args with
+        | false, _ ->
+            let tag = method_tag d
+
+            d.memoized_methods.[key_args] <- (MethodInEvaluation(None), tag, ref Set.empty)
+            let typed_expr = expr_typecheck_with_empty_seq d expr
+            d.memoized_methods.[key_args] <- (MethodDone(typed_expr), tag, ref Set.empty)
+            typed_expr, tag
+        | true, (MethodInEvaluation None, tag, args) ->
+            let typed_expr = get_body_from d.recursive_methods_stack
+            d.memoized_methods.[key_args] <- (MethodInEvaluation (Some typed_expr), tag, args)
+            typed_expr, tag
+        | true, (MethodInEvaluation (Some typed_expr), tag, _) -> typed_expr, tag
+        | true, (MethodDone typed_expr, tag, _) -> typed_expr, tag
+
+    let eval_renaming d expr = 
+        let env = d.env
+
+        let fv = env_free_variables on_method_call_typechecking_pass env
+        let renamer = renamer_make fv
+        let renamed_env = renamer_apply_env renamer env
+
+        let typed_expr, tag = eval_method {d with env=renamed_env; let_tag=int64 renamer.Count} expr
+        let typed_expr_ty = get_type typed_expr
+
+        if is_returnable' typed_expr_ty = false then failwithf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
+
+        (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
+
+    let memoize_method d x = let a,b,c,d = eval_renaming d x in TyMemoizedExpr(MemoMethod,a,b,c,d)
+    let memoize_closure arg_ty d x =
+        let a,b,c,ret_ty = eval_renaming d x 
+        TyMemoizedExpr(MemoClosure,a,b,c,ClosureT(arg_ty,ret_ty))
+        |> make_tyv_and_push d
 
     let apply_fail x = failwithf "Pattern matching cases failed to match.\n%A" x
 
@@ -619,7 +655,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
     let inline match_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
 
-    let apply_module env b = v (fun () -> failwithf "Cannot find a function named %s inside the module." b) b
+    let apply_module env b = v env (fun () -> failwithf "Cannot find a function named %s inside the module." b) b
     
     let rec match_a d annot = match_a' (tev d (V annot) |> get_type) 
 
@@ -673,6 +709,11 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body |> ret)
 
+    and apply_named_tuple tev d name ra on_fail ret =
+        let oname = "overload_ap_" + name
+        let la = v d.env (fun () -> failwithf "Cannot find an application overload for the tuple %s. %s is not in scope." name oname) oname
+        apply tev d la ra on_fail ret
+
     and apply tev d la ra on_fail ret =
         match get_type la, get_type ra with
         | FunctionT x, ForApplyT t -> apply_type d x t on_fail ret
@@ -681,58 +722,19 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
         | x, ForModuleT n -> failwithf "Expected a module in module application. Got: %A" x
         | FunctionT x,_ -> apply_functiont tev d x ra on_fail ret
         | ClosureT(a,r),_ -> apply_closuret la (a,r) ra |> ret
-        | (VVT(_,name) | StructT(TyVV(_,VVT(_,name)))),_ ->
-            let oname = "overload_ap_" + name
-            let la = v (fun () -> failwithf "Cannot find an application overload for the tuple %s. %s is not in scope." name oname) oname
-            apply tev d la ra on_fail ret
+        | (VVT(_,name) | StructT(TyVV(_,VVT(_,name)))),_ -> apply_named_tuple tev d name ra on_fail ret
         | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
 
-    and eval_method d expr =
-        let key_args = d.env, expr
-        match d.memoized_methods.TryGetValue key_args with
-        | false, _ ->
-            let tag = method_tag d
-
-            d.memoized_methods.[key_args] <- (MethodInEvaluation(None), tag, ref Set.empty)
-            let typed_expr = expr_typecheck_with_empty_seq d expr
-            d.memoized_methods.[key_args] <- (MethodDone(typed_expr), tag, ref Set.empty)
-            typed_expr, tag
-        | true, (MethodInEvaluation None, tag, args) ->
-            let typed_expr = get_body_from d.recursive_methods_stack
-            d.memoized_methods.[key_args] <- (MethodInEvaluation (Some typed_expr), tag, args)
-            typed_expr, tag
-        | true, (MethodInEvaluation (Some typed_expr), tag, _) -> typed_expr, tag
-        | true, (MethodDone typed_expr, tag, _) -> typed_expr, tag
-
-    and eval_renaming env_free_variables eval d expr = 
-        let env = d.env
-
-        let fv = env_free_variables on_method_call_typechecking_pass env
-        let renamer = renamer_make fv
-        let renamed_env = renamer_apply_env renamer env
-
-        let typed_expr, tag = eval {d with env=renamed_env; let_tag=int64 renamer.Count} expr
-        let typed_expr_ty = get_type typed_expr
-
-        if is_returnable' typed_expr_ty = false then failwithf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-
-        (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
-
-    and memo_make ex (a,b,c,d) = TyMemoizedExpr(ex,a,b,c,d)
-
-    and memoize_method d x = eval_renaming env_free_variables eval_method d x |> memo_make MemoMethod
-    and memoize_closure env_free_variables arg_ty d x = 
-        let a,b,c,ret_ty = eval_renaming env_free_variables eval_method d x
-        TyMemoizedExpr(MemoClosure,a,b,c,ClosureT(arg_ty,ret_ty))
-
     and apply_type d (env,core as fun_key) args_ty on_fail ret =
+        if env_num_args env > 0 then failwithf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
         let args =
             let f x = TyType x |> make_tyv_and_push_inv d
             match args_ty with
             | VVT(l,n) -> TyVV(List.map f l, args_ty)
             | x -> f x
         let f = FunctionT fun_key |> TyType |> T
-        let g = FunctionT(env,("",[S " ",meth_memo (ap f (V " "))])) |> TyType
+        let g = FunctionT(env,("",[S " ",ap f (V " ")])) |> TyType
+        let tev d x = memoize_closure (get_type args) d x
         apply tev d g args on_fail ret
 
     let apply_tev d expr args = apply tev d (tev d expr) (tev d args |> destructure_deep d) apply_fail
@@ -825,7 +827,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     match exp with
     | Lit value -> TyLit value
     | T x -> x
-    | V x -> v (fun () -> failwithf "Variable %A not bound." x) x
+    | V x -> v d.env (fun () -> failwithf "Variable %A not bound." x) x
     | Function (core, free_var_set) -> 
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
         TyType(FunctionT(env,core))
@@ -891,7 +893,6 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
            | BlockIdxZ as constant),[]) -> TyOp(constant,[],PrimT UInt64T)
 
     | Op(ModuleCreate,[]) -> TyType(ModuleT d.env)
-
     | Op _ -> failwith "Missing Op case."
 
 let spiral_typecheck dims body = 

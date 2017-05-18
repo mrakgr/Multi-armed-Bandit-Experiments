@@ -302,7 +302,6 @@ let print_method_dictionary (imemo: MemoDict) =
     try
         """#include "cub/cub.cuh" """ |> state
         """extern "C" {""" |> state
-
         
         enter' <| fun _ ->
             with_channel CodegenChannels.Code <| fun _ ->
@@ -365,17 +364,6 @@ inl fib n =
 fib 2
     """
 
-let clo2 =
-    """
-inl add () = 2 + 2
-fun t() =
-    inl f = 
-        inl r = ()
-        add `r
-    f (), f()
-t()
-    """
-
 let clo1 =
     """
 inl add (x,y),_ = x+y
@@ -396,9 +384,9 @@ inl transpose l on_fail succ =
     
     """
 
-let tuple_fold =
+let tuple_libary =
     """
-fun top _ =
+inl tuple =
     inl rec tuple_foldl f s l =
         typecase l with
         | x :: xs -> tuple_foldl f (f s x) xs
@@ -431,12 +419,24 @@ fun top _ =
             typecase f x with
             | .True() -> x :: s
             | .False() -> s
-            ) [] l
+            ) () l
         |> tuple_rev
-    tuple_forall id (.True(),.True(),.True())
+    module
+
+fun top() =    
+    tuple .tuple_forall id (.True(),.True(),.True())
 top ()
     """
 
-let r = spiral_codegen default_dims tuple_fold
+let op =
+    """
+fun top () =
+    a ()
+    |> 
+    tuple_rev
+top ()
+    """
+
+let r = spiral_codegen default_dims op
 
 printfn "%A" r

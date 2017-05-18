@@ -162,9 +162,13 @@ let case_typecase expr (s: CharStream<_>) =
 
 let case_module expr = module_ |>> fun _ -> module_create
 
+let case_apply_type expr = grave >>. expr |>> ap_ty
+let case_apply_module expr = dot >>. var_name |>> ap_mod
+
 let expressions expr =
     [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
-     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_module]
+     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_module
+     case_apply_type; case_apply_module]
     |> List.map (fun x -> x expr |> attempt)
     |> choice
  
@@ -233,7 +237,7 @@ let mset expr i (s: CharStream<_>) =
 let expr: CharStream<unit> -> _ =
     let opp = new OperatorPrecedenceParser<_,_,_>()
 
-    opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> Op(Neg,[x])))
+    //opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> Op(Neg,[x])))
 
     let add_infix_operator assoc str prec op = opp.AddOperator(InfixOperator(str, spaces, prec, assoc, fun x y -> op x y))
     let binop op a b = Op(op,[a;b])
@@ -263,7 +267,8 @@ let expr: CharStream<unit> -> _ =
         f "::" 50 VVCons
 
     let operators expr i =
-        opp.TermParser <- fun (s: CharStream<_>) -> if i <= s.Column then expr s else pzero s
+        opp.TermParser <- fun (s: CharStream<_>) ->
+            if i <= s.Column then expr s else pzero s
         opp.ExpressionParser
 
     let rec expr s = indentations (statements expr) (mset (tuple (operators (application (expressions expr))))) s
