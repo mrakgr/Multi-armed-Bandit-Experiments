@@ -763,7 +763,11 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
                 | None -> tev' fl (fun _ -> tr)
 
             let type_tr, type_fl = get_type tr, get_type fl
-            if type_tr = type_fl then TyOp(If,[cond;tr;fl],type_tr)
+            if type_tr = type_fl then 
+                match cond with
+                | TyLit(LitBool true) -> tr
+                | TyLit(LitBool false) -> fl
+                | _ -> TyOp(If,[cond;tr;fl],type_tr)
             else failwithf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
     let mset d a b =
