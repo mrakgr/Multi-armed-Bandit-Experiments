@@ -237,7 +237,7 @@ let mset expr i (s: CharStream<_>) =
 let expr: CharStream<unit> -> _ =
     let opp = new OperatorPrecedenceParser<_,_,_>()
 
-    //opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> Op(Neg,[x])))
+    opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> Op(Neg,[x])))
 
     let add_infix_operator assoc str prec op = opp.AddOperator(InfixOperator(str, spaces, prec, assoc, fun x y -> op x y))
     let binop op a b = Op(op,[a;b])
@@ -266,10 +266,12 @@ let expr: CharStream<unit> -> _ =
         f "&&" 30 Or
         f "::" 50 VVCons
 
-    let operators expr i =
-        opp.TermParser <- fun (s: CharStream<_>) ->
-            if i <= s.Column then expr s else pzero s
-        opp.ExpressionParser
+    let operators expr i (s: CharStream<_>) =
+        let f (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+        opp.TermParser <- f
+        let r = opp.ExpressionParser s
+        opp.TermParser <- f
+        r
 
     let rec expr s = indentations (statements expr) (mset (tuple (operators (application (expressions expr))))) s
 
