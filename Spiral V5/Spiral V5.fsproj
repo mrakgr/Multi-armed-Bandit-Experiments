@@ -59,6 +59,7 @@
     <Content Include="packages.config" />
     <Compile Include="SpiralV5CudaTypechecker_v7d.fs" />
     <Compile Include="SpiralV5Parser_v1e.fs" />
+    <None Include="V5 With The New Backend\Dual Eq Abandonware\SpiralV5Parser_v2a%27.fsx" />
     <None Include="V5 With The New Backend\Dual Eq Abandonware\Typechecker_v7a.fsx" />
     <None Include="V5 With The New Backend\Dual Eq Abandonware\Codegen_v3b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaTypechecker_v6e.fsx" />
@@ -101,8 +102,6 @@
     <None Include="V5 With The New Backend\SpiralV5Language_v8b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Parser_v2a.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3c.fsx" />
-    <None Include="V5 With The New Backend\precedence_parser_v0.fsx" />
-    <None Include="V5 With The New Backend\cps_test.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />

@@ -1,4 +1,6 @@
-﻿#load "SpiralV5Language_v8b.fsx"
+﻿// Nope, doing it like this will not work. I need to write my own parser.
+
+#load "SpiralV5Language_v8b.fsx"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
 
@@ -105,11 +107,11 @@ let lit = (pbool <|> pnumber) |>> Lit .>> notFollowedBy asciiLetter .>> spaces
 let var = var_name |>> V
 let if_then_else expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    let indent_expr expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
     pipe3
         (skipString "if" >>. spaces1 >>. expr)
-        (expr_indent (skipString "then" >>. spaces1 >>. expr))
-        (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
+        (indent_expr (skipString "then" >>. spaces1 >>. expr))
+        (opt (indent_expr (skipString "else" >>. spaces1 >>. expr)))
         (fun cond tr fl -> 
             let fl = match fl with Some x -> x | None -> B
             Op(If,[cond;tr;fl]))
@@ -148,11 +150,11 @@ let case_var expr = var
 
 let case_typecase expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
-    let pat_body = expr_indent patterns .>> expr_indent lam
-    let pat_first = expr_indent (optional bar) >>. pat_body
-    let pat = expr_indent bar >>. pat_body
-    let body = expr_indent expr
+    let indent_expr expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    let pat_body = indent_expr patterns .>> indent_expr lam
+    let pat_first = indent_expr (optional bar) >>. pat_body
+    let pat = indent_expr bar >>. pat_body
+    let body = indent_expr expr
     let case_case pat = pipe2 pat body (fun a b -> a,b)
     pipe3 (typecase >>. expr .>> with_)
         (case_case pat_first)
@@ -196,16 +198,31 @@ let process_parser_exprs exprs =
     | _ :: _ -> process_parser_exprs exprs
     | _ -> preturn B
 
+// The 2a version of the parser dealt with indentation in a far smarter fashion, but the precedence parser is simply too
+// rigid to accomodate that kind of style. If this parser was written in Spiral it would essentially attain the optimal
+// performance, on par with a handwritten C parser. In F# it is is just a long nest of object creation and function calls
+// anyway so I won't complain about perfomance of the indent_new function. 
+
+// But in general it is a lot poorer style. The userstate acts like global mutable state here and will make the code harder to
+// reason about, and the indent_new function would actually be significantly harder to optimize away than simply passing 
+// indentation via an argument like I did in the previous version. 
+let indent_new expr (s: CharStream<_>) = 
+    let t = s.UserState
+    s.UserState <- s.Column
+    let r = expr s
+    s.UserState <- t
+    r
+
+let indent_expr op expr (s: CharStream<_>) = if op s.UserState s.Column then expr s else pzero s
+
 let indentations statements expressions (s: CharStream<_>) =
-    let i = s.Column
-    let inline if_ op tr (s: CharStream<_>) = if op i s.Column then tr s else pzero s
-    let expr_indent expr =
+    let indent_expr expr =
         let mutable op = (=)
         let set_op op' x = op <- op'; x
-        let semicolon s = if_ (<) (semicolon |>> set_op (<=)) s
-        let expr s = if_ op (expr |>> set_op (=)) s
+        let semicolon s = indent_expr (<) (semicolon |>> set_op (<=)) s
+        let expr s = indent_expr op (expr |>> set_op (=)) s
         many1 (expr .>> optional semicolon)
-    expr_indent ((statements |>> ParserStatement) <|> (expressions i |>> ParserExpr)) >>= process_parser_exprs <| s
+    indent_expr ((statements |>> ParserStatement) <|> (indent_new expressions |>> ParserExpr)) >>= process_parser_exprs <| s
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
@@ -215,9 +232,9 @@ let application expr (s: CharStream<_>) =
     let f a l = List.fold (fun s x -> x s) a l
     pipe2 expr (many ap_cr) f s
 
-let tuple expr i (s: CharStream<_>) =
-    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
-    sepBy1 (expr_indent (expr i)) (expr_indent comma)
+let tuple expr (s: CharStream<_>) =
+    let indent_expr expr s = indent_expr (<=) expr s
+    sepBy1 (indent_expr (indent_new expr)) (indent_expr comma)
     |>> function
         | _ :: _ :: _ as l -> vv l
         | x :: _ -> x
@@ -225,10 +242,10 @@ let tuple expr i (s: CharStream<_>) =
     <| s
 
 
-let mset expr i (s: CharStream<_>) = 
-    let expr_indent expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
-    pipe2 (expr i)
-        (opt (expr_indent set_me >>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
+let mset expr (s: CharStream<_>) = 
+    let indent_expr expr (s: CharStream<_>) = indent_expr (<) expr s
+    pipe2 (indent_new expr)
+        (opt (indent_expr set_me >>. indent_expr (indent_new expr)))
         (fun l -> function
             | Some r -> Op(MSet,[l;r])
             | None -> l) s
