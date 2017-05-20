@@ -3,4 +3,24 @@
 
 open FParsec
  
-// TODO: Give the TDOP parser a try tomorrow.
+type Token =
+| Num of int
+| Add
+| Sub
+| Mult
+| Div
+
+
+let prec = function
+    | Num x -> 1
+    | Add -> 50
+    | Sub -> 50
+    | Mult -> 60
+    | Div -> 60
+
+let is_nub = function
+    | Num _ -> true
+    | _ -> false
+
+let test = [|Num 1; Add; Num 2; Mult; Num 3|]
+
