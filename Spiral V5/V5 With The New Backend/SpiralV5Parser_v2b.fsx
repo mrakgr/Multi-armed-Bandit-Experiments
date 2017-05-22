@@ -37,6 +37,8 @@ type ParserState =
     {
     default_int : string -> Value
     default_float : string -> Value
+    mutable token_idx: int64
+    tokens: Token[]
     }
 
 module Tokenizer =
@@ -158,5 +160,45 @@ fib 2
 
 Tokenizer.run_lex fib_acc_y
 
-let parser (default_int,default_float) =
-    ()
+
+module Parser =
+    let s0 x = 
+        {
+        default_int = fun x -> LitInt64 (int64 x)
+        default_float = fun x -> LitFloat32 (float32 x)
+        token_idx=0L
+        tokens=x
+        }
+
+    let array_idx (i: int64) (x : 'a []) = x.GetValue(i) :?> 'a
+    let idx (s: ParserState) = s.token_idx
+    let set x (s: ParserState) = s.token_idx <- x
+    let modify f (s: ParserState) = s.token_idx <- f s.token_idx
+    
+    let peek (s: ParserState) = array_idx (idx s) s.tokens
+    let advance (s: ParserState) = s.token_idx <- s.token_idx + 1L
+        
+    /// Returns the token and advances the index.
+    let token (s: ParserState) = 
+        let t = peek s
+        advance s
+        t
+
+    let merge_error x y = if y <> "" then sprintf "%s, %s" x y else x
+    let attempt f (s: ParserState) on_fail ret = 
+        let t = idx s
+        f s (fun er -> 
+            set t s
+            on_fail er)
+            ret
+
+    let choice l s on_fail ret =
+        let rec loop l on_fail =
+            match l with
+            | x :: xs -> x s (fun er -> loop xs (merge_error er)) ret
+            | [] -> on_fail ""
+        loop l on_fail
+    //let pattern_identifier 
+
+    let parser (builtin_ops: string -> Op) (default_int,default_float) s =
+        ()
