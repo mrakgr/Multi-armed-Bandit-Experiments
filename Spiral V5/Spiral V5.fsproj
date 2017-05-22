@@ -71,6 +71,7 @@
     <None Include="V5 With The New Backend\probability.fsx" />
     <None Include="V5 With The New Backend\Top Down Operator Parsers\tdop_v1a.fsx" />
     <None Include="V5 With The New Backend\Top Down Operator Parsers\tdop_v1b.fsx" />
+    <None Include="V5 With The New Backend\Top Down Operator Parsers\tdop_v1c.fsx" />
     <None Include="V5 With The New Backend\tuple_zip.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v2.fsx" />
     <None Include="V5 With The New Backend\tuple_zip_v3.fsx" />
