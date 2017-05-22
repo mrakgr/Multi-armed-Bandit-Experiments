@@ -186,6 +186,11 @@ let get_type = function
     | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyOp(_,_,t) | TyType t -> t
 
+let for_apply_unwrap x = 
+    match get_type x with
+    | ForApplyT x -> x
+    | x -> x
+
 /// Returns an empty string if not a tuple.
 let tuple_name = function
     | TyVV(_,VVT (_,name)) -> name
