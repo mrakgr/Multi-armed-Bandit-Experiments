@@ -160,8 +160,9 @@ fib 2
 
 Tokenizer.run_lex fib_acc_y
 
-
 module Parser =
+    type ParserError = int64 * int64 * string
+    let no_er = 0L,0L,""
     let s0 x = 
         {
         default_int = fun x -> LitInt64 (int64 x)
@@ -184,7 +185,8 @@ module Parser =
         advance s
         t
 
-    let merge_error x y = if y <> "" then sprintf "%s, %s" x y else x
+    let merge_error (_,_,y_er as y) x = 
+        if y_er <> "" then y :: x else x
     let attempt f (s: ParserState) on_fail ret = 
         let t = idx s
         f s (fun er -> 
@@ -196,9 +198,48 @@ module Parser =
         let rec loop l on_fail =
             match l with
             | x :: xs -> x s (fun er -> loop xs (merge_error er)) ret
-            | [] -> on_fail ""
+            | [] -> on_fail []
         loop l on_fail
-    //let pattern_identifier 
 
-    let parser (builtin_ops: string -> Op) (default_int,default_float) s =
+    let many p s on_fail ret =
+        let t = idx s
+        let rec loop acc =
+            p s (fun _ -> List.rev acc |> ret)
+                (fun r -> 
+                    let t' = idx s
+                    if t = t' then failwith "A parser succeeds without changing state in many.\n(It would have gone into an infinite loop had an exception not been raised.)"
+                    else loop (r :: acc))
+        loop []
+
+    let one_of p s on_fail ret =
+        p s on_fail (fun r ->
+            if List.isEmpty r then on_fail "one of _"
+            else ret r)
+
+    let many1 p s on_fail ret = one_of (many p) s on_fail ret
+
+    let (.>>) a b s on_fail ret =
+        a s on_fail (fun r -> b s on_fail (fun _ -> ret r))
+
+    let (>>.) a b s on_fail ret =
+        a s on_fail (fun _ -> b s on_fail ret)
+
+    let sepBy p sep s on_fail ret =
+        let t = idx s
+        let on_fail acc _ = List.rev acc |> ret
+        p s (on_fail [])
+            (fun r ->
+            let rec loop acc =
+                (sep >>. p) s (on_fail acc)
+                    (fun r -> 
+                        let t' = idx s
+                        if t = t' then failwith "A parser succeeds without changing state in sepBy.\n(It would have gone into an infinite loop had an exception not been raised.)"
+                        else loop (r :: acc))
+            loop [r]
+            )
+
+    let sepBy1 p sep s on_fail ret =
+        one_of (sepBy p sep) s on_fail ret
+
+    let parser (builtin_ops: string -> Op) s on_fail ret =
         ()
