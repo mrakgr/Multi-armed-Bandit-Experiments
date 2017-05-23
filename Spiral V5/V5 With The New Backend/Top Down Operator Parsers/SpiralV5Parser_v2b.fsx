@@ -1,6 +1,27 @@
-﻿#load "SpiralV5Language_v8b.fsx"
-#r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
-#r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
+﻿// 5/23/2017:
+
+// I intended for this to replace the 2a version of the parser, but it would be too much work
+// to make the error messages as good as what Fparsec already has. What I will do is pull out
+// the number parser into 2a and make a top down Pratt operator parser in 2a to replace the
+// current broken one that comes with FParsec.
+
+// At some point it might be good to write my own completely from scratch, maybe even in Spiral
+// itself so I will leave this here.
+
+// Right now I want to get back to work on the typechecker. I want to rewrite in CPS so I can
+// get much better active patterns, and I want to put in some partial evaluation as well.
+
+// When I am done with the typechecker's core functionality, eventually I am going to have to deal 
+// with the horrible state of error messages in it and it will be time to focus more on the user 
+// experience. That is when I will pick up from where I left off here.
+
+// I am going to have to study how Fparsec library deals with propagating errors specifically.
+
+
+
+#load "../SpiralV5Language_v8b.fsx"
+#r "../../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
+#r "../../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
 
 open SpiralV5Language_v8b
 

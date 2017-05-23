@@ -45,9 +45,13 @@ and CudaPattern =
     | N of string * CudaPattern // matches a tuple name and proceeds onto the pattern on a hit.
 
 and Value = 
+    | LitUInt8 of uint8
+    | LitUInt16 of uint16
     | LitUInt32 of uint32
     | LitUInt64 of uint64
-    | LitInt32 of int
+    | LitInt8 of int8
+    | LitInt16 of int16
+    | LitInt32 of int32
     | LitInt64 of int64
     | LitFloat32 of float32
     | LitFloat64 of float
@@ -172,8 +176,12 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 let flip f a b = f b a
 
 let get_type_of_value = function
+    | LitUInt8 _ -> PrimT UInt8T
+    | LitUInt16 _ -> PrimT UInt16T
     | LitUInt32 _ -> PrimT UInt32T
     | LitUInt64 _ -> PrimT UInt64T
+    | LitInt8 _ -> PrimT Int8T
+    | LitInt16 _ -> PrimT Int16T
     | LitInt32 _ -> PrimT Int32T
     | LitInt64 _ -> PrimT Int64T
     | LitFloat32 _ -> PrimT Float64T

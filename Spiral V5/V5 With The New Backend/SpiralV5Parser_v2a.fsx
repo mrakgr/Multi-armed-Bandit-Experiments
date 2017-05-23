@@ -28,8 +28,14 @@ let module_ = skipString "module" >>. spaces
 let with_ = skipString "with" >>. spaces
 let open_ = skipString "open" >>. spaces
 
+let isAsciiIdStart c =
+    isAsciiLetter c || c = '_'
+
+let isAsciiIdContinue c =
+    isAsciiLetter c || isDigit c || c = '_' || c = '''
+
 let var_name = 
-    many1Satisfy2L isAsciiLower (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "identifier" .>> spaces
+    many1Satisfy2L isAsciiLower isAsciiIdContinue "identifier" .>> spaces
     >>=? function
         | "open" | "module" | "typecase" | "with" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
             Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
@@ -45,7 +51,7 @@ let quares p = between_brackets '[' p ']'
 let pattern_identifier = 
     choice
         [
-        underscore |>> fun _ -> S ""
+        underscore >>% (S "")
         skipChar '*' >>. var_name |>> S'
         var_name |>> S
         ]
@@ -83,29 +89,62 @@ let rec patterns s =
 
 let pattern_list = many1 patterns
     
-let pbool = (skipString "false" |>> fun _ -> LitBool false) <|> (skipString "true" |>> fun _ -> LitBool true)
+let pbool = (skipString "false" >>% (LitBool false)) <|> (skipString "true" >>% (LitBool true))
+let pnumber : Parser<_,_> =
+    let numberFormat =  NumberLiteralOptions.AllowMinusSign
+                        ||| NumberLiteralOptions.AllowFraction
+                        ||| NumberLiteralOptions.AllowExponent
+                        ||| NumberLiteralOptions.AllowHexadecimal
+                        ||| NumberLiteralOptions.AllowBinary
+                        ||| NumberLiteralOptions.AllowInfinity
+                        ||| NumberLiteralOptions.AllowNaN
 
-// FParsec has inbuilt parsers for ints and floats, but they will scan + and - which will wreak havoc with other parts
-// of the library hence the custom number parsers.
-let pnumber = 
-    let pnumber = many1Satisfy isDigit
-    pnumber >>= fun a ->
-        choice [
-            skipChar 'u' |>> (fun _ -> uint32 a |> LitUInt32)
-            skipString "UL" |>> (fun _ -> uint64 a |> LitUInt64)
-            skipString "L" |>> (fun _ -> int64 a |> LitInt64)
-            skipChar '.' >>. pnumber >>= fun b ->
-                let cfloat f = sprintf "%s.%s" a b |> f
-                skipChar 'f' |>> fun _ -> cfloat float32 |> LitFloat32
-                <|> fun _ -> Reply(cfloat float |> LitFloat64)
-            fun _ -> Reply(int a |> LitInt32)
+    let parser = numberLiteral numberFormat "number"
+
+    let default_int x _ = int64 x |> LitInt64 |> Reply
+    let default_float x _ = float32 x |> LitFloat32 |> Reply
+
+    let followedBySuffix x default_ =
+        let f str f = followedBy (skipString str) |>> fun _ -> f x
+        choice
+            [
+            f "i8" (int8 >> LitInt8)
+            f "i16" (int16 >> LitInt16)
+            f "i32" (int32 >> LitInt32)
+            f "i64" (int64 >> LitInt64)
+
+            f "u8" (uint8 >> LitUInt8)
+            f "u16" (uint16 >> LitUInt16)
+            f "u32" (uint32 >> LitUInt32)
+            f "u64" (uint64 >> LitUInt64)
+
+            f "f32" (float32 >> LitFloat32)
+            f "f64" (float >> LitFloat64)
+            default_ x
             ]
 
-let lit = (pbool <|> pnumber) |>> Lit .>> notFollowedBy asciiLetter .>> spaces
+    fun s ->
+        let reply = parser s
+        if reply.Status = Ok then
+            let nl = reply.Result // the parsed NumberLiteral
+            try 
+                if nl.IsInteger then followedBySuffix nl.String default_int s
+                else followedBySuffix nl.String default_float s
+            with
+            | :? System.OverflowException as e ->
+                s.Skip(-nl.String.Length)
+                Reply(FatalError, messageError e.Message)
+        else // reconstruct error reply
+            Reply(reply.Status, reply.Error)
+
+
+let lit = (pbool <|> pnumber) |>> Lit .>> notFollowedBy (satisfy (fun c -> isDigit c || isAsciiIdStart c)) .>> spaces
 let var = var_name |>> V
+
+let expr_indent i op expr (s: CharStream<_>) = if op i s.Column then expr s else pzero s
 let if_then_else expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     pipe3
         (skipString "if" >>. spaces1 >>. expr)
         (expr_indent (skipString "then" >>. spaces1 >>. expr))
@@ -148,7 +187,7 @@ let case_var expr = var
 
 let case_typecase expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     let pat_body = expr_indent patterns .>> expr_indent lam
     let pat_first = expr_indent (optional bar) >>. pat_body
     let pat = expr_indent bar >>. pat_body
@@ -159,7 +198,7 @@ let case_typecase expr (s: CharStream<_>) =
         (many (case_case pat))
         (fun e x xs -> match_ e (x :: xs)) s
 
-let case_module expr = module_ |>> fun _ -> module_create
+let case_module expr = module_ >>% module_create
 
 let case_apply_type expr = grave >>. expr |>> ap_ty
 let case_apply_module expr = dot >>. var_name |>> ap_mod
@@ -198,7 +237,7 @@ let process_parser_exprs exprs =
 
 let indentations statements expressions (s: CharStream<_>) =
     let i = s.Column
-    let inline if_ op tr (s: CharStream<_>) = if op i s.Column then tr s else pzero s
+    let inline if_ op tr (s: CharStream<_>) = expr_indent i op tr s
     let expr_indent expr =
         let mutable op = (=)
         let set_op op' x = op <- op'; x
@@ -209,14 +248,14 @@ let indentations statements expressions (s: CharStream<_>) =
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_up expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
+    let expr_up expr (s: CharStream<_>) = expr_indent i (<) expr s
     let ap_cr = expr |>> flip ap |> expr_up
     
     let f a l = List.fold (fun s x -> x s) a l
     pipe2 expr (many ap_cr) f s
 
 let tuple expr i (s: CharStream<_>) =
-    let expr_indent expr (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
+    let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     sepBy1 (expr_indent (expr i)) (expr_indent comma)
     |>> function
         | _ :: _ :: _ as l -> vv l
@@ -226,19 +265,17 @@ let tuple expr i (s: CharStream<_>) =
 
 
 let mset expr i (s: CharStream<_>) = 
-    let expr_indent expr (s: CharStream<_>) = if i < s.Column then expr s else pzero s
+    let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
     pipe2 (expr i)
         (opt (expr_indent set_me >>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
         (fun l -> function
             | Some r -> Op(MSet,[l;r])
             | None -> l) s
 
-let expr: CharStream<unit> -> _ =
-    let opp = new OperatorPrecedenceParser<_,_,_>()
+let expr: Parser<_,unit> =
+    let dict_operator = d0()
+    let add_infix_operator assoc str prec op = dict_operator.Add(str, (prec, assoc, fun x y -> op x y))
 
-    opp.AddOperator(PrefixOperator("-", spaces, 100, true, fun x -> Op(Neg,[x])))
-
-    let add_infix_operator assoc str prec op = opp.AddOperator(InfixOperator(str, spaces, prec, assoc, fun x y -> op x y))
     let binop op a b = Op(op,[a;b])
 
     let left_assoc_ops = 
@@ -265,12 +302,33 @@ let expr: CharStream<unit> -> _ =
         f "&&" 30 Or
         f "::" 50 VVCons
 
+    let poperator: Parser<_,_> =
+        let f c = isAsciiIdContinue c || isAnyOf [|' ';'\t';'\n';'\"';'(';')'|] c |> not
+        many1Satisfy f .>> spaces
+        >>= fun token ->
+            match dict_operator.TryGetValue token with
+            | true, x -> preturn x
+            | false, _ -> fail "uknown operator"
+
+    let rec led poperator term left (prec,asoc,m) =
+        match asoc with
+        | Associativity.Left | Associativity.None -> tdop poperator term prec |>> m left
+        | Associativity.Right -> tdop poperator term (prec-1) |>> m left
+        | _ -> failwith "impossible"
+
+    and tdop poperator term rbp =
+        let rec f left =
+            poperator >>= fun (prec,asoc,m as v) ->
+                if rbp < prec then led poperator term left v >>= loop
+                else pzero
+        and loop left = attempt (f left) <|>% left
+        term >>= loop
+
     let operators expr i (s: CharStream<_>) =
-        let f (s: CharStream<_>) = if i <= s.Column then expr s else pzero s
-        opp.TermParser <- f
-        let r = opp.ExpressionParser s
-        opp.TermParser <- f
-        r
+        let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+        let op s = expr_indent poperator s
+        let term s = expr_indent expr s
+        tdop op term 0 s
 
     let rec expr s = indentations (statements expr) (mset (tuple (operators (application (expressions expr))))) s
 
