@@ -367,16 +367,16 @@ let tuple_map =
             E, type_error "tuple .Map failed to match."
             ])
 
-let tuple_library =
-    function_
-        [
-        N("Map", S "x"), ap tuple_map (V "x")
-//        N("ZipReg", S "x"), UnOp(VVZipReg, V "x")
-//        N("ZipIrreg", S "x"), UnOp(VVZipIrreg, V "x")
-//        N("UnzipReg", S "x"), UnOp(VVUnzipReg, V "x")
-//        N("UnzipIrreg", S "x"), UnOp(VVUnzipIrreg, V "x")
-        E, type_error "Call to non-existent case in the tuple function."
-        ]
+//let tuple_library =
+//    function_
+//        [
+//        N("Map", S "x"), ap tuple_map (V "x")
+////        N("ZipReg", S "x"), UnOp(VVZipReg, V "x")
+////        N("ZipIrreg", S "x"), UnOp(VVZipIrreg, V "x")
+////        N("UnzipReg", S "x"), UnOp(VVUnzipReg, V "x")
+////        N("UnzipIrreg", S "x"), UnOp(VVUnzipIrreg, V "x")
+//        E, type_error "Call to non-existent case in the tuple function."
+//        ]
 
 let data_empty (gridDim,blockDim) = 
     {memoized_methods=d0()
@@ -396,6 +396,7 @@ let rec expr_free_variables e =
     let f e = expr_free_variables e
     match e with
     | V n -> Set.singleton n
+    | Op(ApplyModule,_) -> Set.empty
     | Op(_,l) | VV(l,_) -> vars_union f l
     | Function((name,l),free_var_set) ->
         let rec pat_template on_name on_expr p = 
@@ -668,7 +669,8 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
     let inline match_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
 
-    let apply_module env b = v env (fun () -> failwithf "Cannot find a function named %s inside the module." b) b
+    let apply_module env b = 
+        v env (fun () -> failwithf "Cannot find a function named %s inside the module." b) b
     
     let rec match_a d annot = match_a' (tev d (V annot) |> get_type) 
 

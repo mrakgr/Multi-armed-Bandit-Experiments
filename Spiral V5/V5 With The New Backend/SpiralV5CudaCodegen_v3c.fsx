@@ -384,7 +384,7 @@ inl transpose l on_fail succ =
     
     """
 
-let tuple_libary =
+let tuple_library =
     """
 inl tuple =
     inl rec tuple_foldl f s l =
@@ -424,19 +424,11 @@ inl tuple =
     module
 
 fun top() =    
-    tuple .tuple_forall id (.True(),.True(),.True())
+    (tuple.tuple_forall) (tuple.id) (.True(),.True(),.True())
 top ()
     """
 
-let op =
-    """
-fun top () =
-    a ()
-    |> 
-    tuple_rev
-top ()
-    """
-
-let r = spiral_codegen default_dims op
+let r = spiral_codegen default_dims tuple_library
 
 printfn "%A" r
+

@@ -89,10 +89,9 @@ let rec patterns s =
 
 let pattern_list = many1 patterns
     
-let pbool = (skipString "false" >>% (LitBool false)) <|> (skipString "true" >>% (LitBool true))
+let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
 let pnumber : Parser<_,_> =
-    let numberFormat =  NumberLiteralOptions.AllowMinusSign
-                        ||| NumberLiteralOptions.AllowFraction
+    let numberFormat =  NumberLiteralOptions.AllowFraction
                         ||| NumberLiteralOptions.AllowExponent
                         ||| NumberLiteralOptions.AllowHexadecimal
                         ||| NumberLiteralOptions.AllowBinary
@@ -298,17 +297,17 @@ let expr: Parser<_,unit> =
 
     let right_associative_ops =
         let f str prec op = add_infix_operator Associativity.Right str prec (binop op)
-        f "||" 20 And
-        f "&&" 30 Or
+        f "||" 20 Or
+        f "&&" 30 And
         f "::" 50 VVCons
 
     let poperator: Parser<_,_> =
-        let f c = isAsciiIdContinue c || isAnyOf [|' ';'\t';'\n';'\"';'(';')'|] c |> not
-        many1Satisfy f .>> spaces
+        let f c = (isAsciiIdContinue c || isAnyOf [|' ';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
+        (many1Satisfy f .>> spaces)
         >>= fun token ->
             match dict_operator.TryGetValue token with
             | true, x -> preturn x
-            | false, _ -> fail "uknown operator"
+            | false, _ -> fail "unknown operator"
 
     let rec led poperator term left (prec,asoc,m) =
         match asoc with
