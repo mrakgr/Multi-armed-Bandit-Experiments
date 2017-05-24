@@ -392,33 +392,39 @@ let data_empty (gridDim,blockDim) =
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
 
-let rec expr_free_variables_cps e ret =
-    let f e ret = expr_free_variables_cps e ret
-    ()
+let expr_free_variables e = 
+    let rec expr_free_variables vars_for_module e =
+        let f e = expr_free_variables vars_for_module e
+        let f' bound_vars e = expr_free_variables bound_vars e
+        match e with
+        | Op(ModuleCreate,[]) -> vars_for_module
+        | Op(ApplyModule,_) -> Set.empty
+    
+        | V n -> Set.singleton n
+        | Op(_,l) | VV(l,_) -> vars_union f l
+        | Function((name,l),free_var_set) ->
+            let rec pat_template on_name on_expr p = 
+                let g p = pat_template on_name on_expr p
+                match p with
+                | F (pat,var) | A (pat,var) -> on_expr (g pat) var
+                | N (_,pat) | A' (pat,_) -> g pat
+                | S x | S' x -> on_name x
+                | R (l,Some o) -> vars_union' (g o) g l
+                | R (l,None) -> vars_union g l
 
-let rec expr_free_variables e =
-    let f e = expr_free_variables e
-    match e with
-    | V n -> Set.singleton n
-    | Op(ApplyModule,_) -> Set.empty
-    | Op(_,l) | VV(l,_) -> vars_union f l
-    | Function((name,l),free_var_set) ->
-        let rec pat_template on_name on_expr p = 
-            let g p = pat_template on_name on_expr p
-            match p with
-            | F (pat,var) | A (pat,var) -> on_expr (g pat) var
-            | N (_,pat) | A' (pat,_) -> g pat
-            | S x | S' x -> on_name x
-            | R (l,Some o) -> vars_union' (g o) g l
-            | R (l,None) -> vars_union g l
+            let pat_free_vars p = pat_template (fun _ -> Set.empty) (fun s var -> Set.add var s) p
+            let pat_bound_vars p = pat_template Set.singleton (fun s _ -> s) p
 
-        let pat_vars p = pat_template (fun _ -> Set.empty) (fun s var -> Set.add var s) p
-        let pat_names p = pat_template Set.singleton (fun s _ -> s) p
+            let fv = vars_union (fun (pat,body) -> 
+                let bound_vars = pat_bound_vars pat
+                let vars_for_module = vars_for_module + bound_vars |> Set.add name
+                pat_free_vars pat + (f' vars_for_module body - bound_vars |> Set.remove name)) l
+            free_var_set := fv |> Set.remove ""
+            fv
+        | T _ | Lit _ -> Set.empty
 
-        let fv = vars_union (fun (pat,body) -> pat_vars pat + (f body - pat_names pat |> Set.remove name)) l
-        free_var_set := fv
-        fv
-    | T _ | Lit _ -> Set.empty
+    expr_free_variables Set.empty e
+
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
 let renamer_apply_pool r s = Set.map (fun (tag,ty) -> Map.find tag r, ty) s
