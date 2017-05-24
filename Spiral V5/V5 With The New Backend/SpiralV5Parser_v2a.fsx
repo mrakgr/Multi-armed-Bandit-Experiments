@@ -302,7 +302,7 @@ let expr: Parser<_,unit> =
         f "::" 50 VVCons
 
     let poperator: Parser<_,_> =
-        let f c = (isAsciiIdContinue c || isAnyOf [|' ';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
+        let f c = (isAsciiIdContinue c || isAnyOf [|'.';' ';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
         (many1Satisfy f .>> spaces)
         >>= fun token ->
             match dict_operator.TryGetValue token with

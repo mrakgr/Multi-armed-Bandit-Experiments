@@ -392,6 +392,10 @@ let data_empty (gridDim,blockDim) =
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
 
+let rec expr_free_variables_cps e ret =
+    let f e ret = expr_free_variables_cps e ret
+    ()
+
 let rec expr_free_variables e =
     let f e = expr_free_variables e
     match e with
@@ -676,7 +680,7 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
 
     and match_single d (acc: Env) l r on_fail ret =
         let rec recurse acc l r ret = 
-            match l,r with 
+            match l,r with
             | A (pattern,annot), _ -> match_a d annot r on_fail (fun _ -> recurse acc pattern r ret) 
             | A' (pattern,annot), _ -> match_a' annot r on_fail (fun _ -> recurse acc pattern r ret) 
             | F (pattern, meth), args -> match_f d acc pattern args meth on_fail ret
