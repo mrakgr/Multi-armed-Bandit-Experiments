@@ -524,12 +524,12 @@ let rec expr_typecheck' (gridDim, blockDim as dims) memoized_methods d expr ret 
                         |> fun x -> ret (d,x)
                     else on_type_er d <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
-                let d =
-                    on_rec_with (fun _ (d,ret) ->
-                        tev d fl (fun (d,fl) ->
-                            ret (d,fl,fun (d,tr) -> fin (d, (tr,fl)))
-                            )
-                        ) d
+//                let d =
+//                    on_rec_with (fun (d, ret) ->
+//                        tev d fl (fun (d,fl) ->
+//                            ret (d,fl,fun (d, tr) -> fin (restore d, (tr,fl)))
+//                            )
+//                        ) d
 
                 tev d tr (fun (d,tr) ->
                     tev (restore d) fl (fun (d,fl) ->
