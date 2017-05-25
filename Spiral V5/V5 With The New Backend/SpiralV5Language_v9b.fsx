@@ -468,29 +468,27 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) =
     let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
     typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo)
 
-let rec expr_typecheck' (gridDim, blockDim as dims) memoized_methods d expr ret =
-    let tev d expr ret = expr_typecheck' dims memoized_methods d expr ret
+type LangEnv<'a,'c,'d,'q,'e,'r> =
+    {
+    ltag : int64 ref
+    seq : (TypedExpr -> TypedExpr) ref
+    env : Map<string,TypedExpr>
+    on_match_break : 'a -> 'q
+    on_type_er : 'c -> 'e
+    on_rec : 'd -> 'r
+    }
 
-    let mtag (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = mtag
-    let mtag_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (f mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er)
-    let ltag (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = ltag
-    let ltag_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) =
-        (mtag,f ltag,seq,env,on_rec,on_match_fail,on_type_er)
-    let seq (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = seq
-    let seq_with_empty (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,id,env,on_rec,on_match_fail,on_type_er)
-    let env (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = env
-    let env_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,seq,f env,on_rec,on_match_fail,on_type_er)
-    let on_rec (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = on_rec
-    let on_rec_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,seq,env,f on_rec,on_match_fail,on_type_er)
-    let on_match_fail (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = on_match_fail
-    let on_match_fail_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,seq,env,on_rec,f on_match_fail,on_type_er)
-    let on_type_er (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = on_type_er
-    
+let rec expr_typecheck' (gridDim, blockDim as dims) method_tag (memoized_methods: Dictionary<_,_>) 
+        (d : LangEnv<_,_,_,_,_,_>) (expr: Expr) ret =
+    let inline tev d expr ret = expr_typecheck' dims method_tag memoized_methods d expr ret
+    let inline apply_seq d ret x = ret (!d.seq x)
+    let inline tev_if d expr on_rec ret = 
+        let d = {d with seq=ref id; on_rec=on_rec}
+        tev d expr (apply_seq d ret)
+    let inline tev_method d expr ret =
+        let d = {d with ltag=ref 0L; seq=ref id}
+        tev d expr (apply_seq d ret)
+
     let v env x on_fail ret = 
         match Map.tryFind x env with
         | Some v -> ret v
@@ -499,69 +497,243 @@ let rec expr_typecheck' (gridDim, blockDim as dims) memoized_methods d expr ret 
     let rec vars_map d l ret =
         match l with
         | x :: xs ->
-            tev d x (fun (d,x) ->
-                vars_map d xs (fun (d,x') -> ret (d, x :: x'))
+            tev d x (fun x ->
+                vars_map d xs (fun x' -> ret (x :: x'))
                 )
-        | [] -> ret (d,[])
+        | [] -> ret []
 
     let if_ d cond tr fl ret =
-        tev d cond <| fun (d,cond) ->
+        tev d cond <| fun cond ->
             if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else
-                let on_rec' = on_rec d
-                let env' = env d
-                let restore d = 
-                    on_rec_with (fun _ -> on_rec') d
-                    |> env_with (fun _ -> env')
-
-                let fin (d,(tr,fl)) =
+                let fin (tr,fl) =
                     let type_tr, type_fl = get_type tr, get_type fl
                     if type_tr = type_fl then 
                         match cond with
                         | TyLit(LitBool true) -> tr
                         | TyLit(LitBool false) -> fl
                         | _ -> TyOp(If,[cond;tr;fl],type_tr)
-                        |> fun x -> ret (d,x)
-                    else on_type_er d <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+                        |> ret
+                    else d.on_type_er <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
-//                let d =
-//                    on_rec_with (fun (d, ret) ->
-//                        tev d fl (fun (d,fl) ->
-//                            ret (d,fl,fun (d, tr) -> fin (restore d, (tr,fl)))
-//                            )
-//                        ) d
-
-                tev d tr (fun (d,tr) ->
-                    tev (restore d) fl (fun (d,fl) ->
-                        fin (d,(tr,fl))  
+                let mutable fl' = None
+                tev_if d tr 
+                    (fun ret' ->
+                        tev_if d fl 
+                            d.on_rec
+                            (fun fl -> 
+                                fl' <- Some fl
+                                ret' (get_type fl))
                         )
-                    ) 
+                    (fun tr ->
+                        match fl' with
+                        | Some fl -> fin (tr,fl)
+                        | None ->
+                            tev_if d fl 
+                                (fun ret' -> ret' (get_type tr))
+                                (fun fl -> fin (tr,fl))
+                        )
 
+    let get_tag d = 
+        let t = !d.ltag
+        d.ltag := t + 1L
+        t
+
+    let make_tyv d ty_exp = get_tag d, get_type ty_exp
+
+    let make_tyv_and_push' le d ty_exp =
+        let v = make_tyv d ty_exp
+        let seq = !d.seq
+        d.seq := fun rest -> let rest = seq rest in TyLet(le,v,ty_exp,rest,get_type rest)
+        v
+
+    let make_tyv_and_push d ty_exp = make_tyv_and_push' LetStd d ty_exp |> TyV
+    let make_tyv_and_push_inv d ty_exp = make_tyv_and_push' LetInvisible d ty_exp |> TyV
+
+    let struct_create d ty_exp = TyOp(StructCreate, [ty_exp], StructT ty_exp) |> make_tyv_and_push d
+
+    // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
+    // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
+    let destructure_deep d r = 
+        let rec destructure_deep r = 
+            let destructure_tuple r =
+                match get_type r with
+                | VVT (tuple_types, name) -> 
+                    let indexed_tuple_args = List.mapi (fun i typ -> 
+                        destructure_deep <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
+                    TyVV(indexed_tuple_args, VVT (tuple_types, name))
+                | _ -> r
+            match r with
+            | TyType _ | TyLit _ -> r
+            | TyOp(ArrayIndex,[Array(_,[],_);_],_)
+            | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
+            | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
+            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
+        destructure_deep r
+
+    let method_tag () =
+        let tag = !method_tag
+        method_tag := tag + 1L
+        tag
+
+    let eval_method d expr ret =
+        let key_args = d.env, expr
+        match memoized_methods.TryGetValue key_args with
+        | false, _ ->
+            let tag = method_tag ()
+
+            memoized_methods.[key_args] <- (MethodInEvaluation(None), tag, ref Set.empty)
+            tev_method d expr <| fun typed_expr ->
+                memoized_methods.[key_args] <- (MethodDone(typed_expr), tag, ref Set.empty)
+                ret (typed_expr, tag)
+        | true, (MethodInEvaluation None, tag, args) ->
+            d.on_rec <| fun ty ->
+                let typed_expr = TyType ty
+                memoized_methods.[key_args] <- (MethodInEvaluation (Some typed_expr), tag, args)
+                ret (typed_expr, tag)
+        | true, (MethodInEvaluation (Some typed_expr), tag, _) -> ret (typed_expr, tag)
+        | true, (MethodDone typed_expr, tag, _) -> ret (typed_expr, tag)
+
+    let eval_renaming d expr ret = 
+        let env = d.env
+
+        let fv = env_free_variables on_method_call_typechecking_pass env
+        let renamer = renamer_make fv
+        let renamed_env = renamer_apply_env renamer env
+
+        eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
+            let typed_expr_ty = get_type typed_expr
+            if is_returnable' typed_expr_ty = false then failwithf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
+            ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
+
+    let memoize_method d x ret = eval_renaming d x <| fun (a,b,c,d) -> ret (TyMemoizedExpr(MemoMethod,a,b,c,d))
+    let memoize_closure arg_ty d x ret =
+        eval_renaming d x <| fun (a,b,c,ret_ty) ->
+            TyMemoizedExpr(MemoClosure,a,b,c,ClosureT(arg_ty,ret_ty))
+            |> make_tyv_and_push d
+            |> ret
+
+    let inline match_bind acc arg_name x = if is_full_name arg_name then Map.add arg_name x acc else acc
+    let inline match_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
+        recurse acc l r <| fun x_acc ->
+            recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
+    let inline match_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
+
+    let apply_module env b ret = 
+        v env b (fun () -> d.on_type_er <| sprintf "Cannot find a function named %s inside the module." b) ret
+    
+    let rec match_a d annot = 
+        tev d (V annot) <| fun r ->
+            match_a' (get_type r)
+
+    and match_single d (acc: Env) l r on_fail ret =
+        let rec recurse acc l r ret = 
+            match l,r with
+            | A (pattern,annot), _ -> match_a d annot r on_fail (fun _ -> recurse acc pattern r ret) 
+            | A' (pattern,annot), _ -> match_a' annot r on_fail (fun _ -> recurse acc pattern r ret) 
+//            | F (pattern, meth), args -> match_f d acc pattern args meth on_fail ret
+            | R([],None), TyVV([], _) -> match_bind acc "" r |> ret
+            | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
+            | S' x, _ | S x, _ -> match_bind acc x r |> ret
+            | R([],Some ls), TyVV _ -> recurse acc ls r ret
+            | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts, "")) -> match_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
+            //| R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts, _)) -> on_fail() // <| "Expecting an unnamed argument."
+            | R([],None), TyVV(_, _) -> on_fail () // <| sprintf "More arguments than can be matched in R."
+            | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
+            | N (name, next), TyVV(x, VVT(t, name')) ->
+                if name = name' then recurse acc next (TyVV(x,VVT (t, ""))) ret
+                else on_fail() // <| sprintf "Cannot pattern match %s against %s" name name'
+            | N _, _ -> on_fail() // "Cannot match name against a non-named argument."
+        recurse acc l r ret
+
+    and match_all d (env: Env) l (args: TypedExpr) on_fail ret =
+        let rec loop = function
+            | (pattern: CudaPattern, body: Expr) :: xs ->
+                match_single d env pattern args
+                    (fun _ -> loop xs)
+                    (fun acc -> ret (acc, body))
+            | [] -> on_fail (l,args) //"All patterns in the matcher failed to match."
+        loop l
+
+//    and match_f d acc (pattern: CudaPattern) args meth on_fail ret =
+//        let d = {d with on_match_break=on_fail}
+//        tev d (V meth) <| fun r ->
+//            apply tev d r args
+//                (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
+//                (fun r -> 
+//                    match_single d acc pattern (destructure_deep d r) 
+//                        (fun _ -> failwith "The function call subpattern in the matcher failed to match.")
+//                        ret)
+
+    and apply_closuret clo (clo_arg_ty,clo_ret_ty) arg =
+        let arg_ty = get_type arg
+        if arg_ty <> clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
+        TyOp(Apply,[clo;arg],clo_ret_ty)
+
+    and apply_functiont tev d (initial_env,(name,l) as fun_key) args on_fail ret =
+        match_all d initial_env l args
+            on_fail
+            (fun (env, body) ->
+                let fv = TyType (FunctionT fun_key)
+                let d = {d with env = if name <> "" then Map.add name fv env else env}
+                tev d body ret)
+
+    and apply_named_tuple tev d name ra on_fail ret =
+        let oname = "overload_ap_" + name
+        v d.env oname (fun () -> d.on_type_er <| sprintf "Cannot find an application overload for the tuple %s. %s is not in scope." name oname) <| fun la ->
+            apply tev d la ra on_fail ret
+
+    and apply tev d la ra on_fail ret =
+        match get_type la, get_type ra with
+//        | FunctionT x, ForApplyT t -> apply_type d x t on_fail ret
+        | x, ForApplyT t -> failwithf "Expected a function type in type application. Got: %A" x
+        | ModuleT x, ForModuleT n -> apply_module x n ret
+        | x, ForModuleT n -> failwithf "Expected a module in module application. Got: %A" x
+        | FunctionT x,_ -> apply_functiont tev d x ra on_fail ret
+        | ClosureT(a,r),_ -> apply_closuret la (a,r) ra |> ret
+        | (VVT(_,name) | StructT(TyVV(_,VVT(_,name)))),_ -> apply_named_tuple tev d name ra on_fail ret
+        | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
+
+//    and apply_type d (env,core as fun_key) args_ty on_fail ret =
+//        if env_num_args env > 0 then failwithf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
+//        let args =
+//            let f x = TyType x |> make_tyv_and_push_inv d
+//            match args_ty with
+//            | VVT(l,n) -> TyVV(List.map f l, args_ty)
+//            | x -> f x
+//        let f = FunctionT fun_key |> TyType |> T
+//        let g = FunctionT(env,("",[S " ",ap f (V " ")])) |> TyType
+//        let tev d x = memoize_closure (get_type args) d x
+//        apply tev d g args on_fail ret
+//
+//    let apply_tev d expr args = apply tev d (tev d expr) (tev d args |> destructure_deep d) apply_fail
 
     match expr with
-    | Lit value -> (d,TyLit value) |> ret
-    | T x -> (d,x) |> ret
-    | V x -> v (env d) x (fun () -> on_type_er d <| sprintf "Variable %A not bound." x) (fun r -> ret (d,r))
+    | Lit value -> TyLit value |> ret
+    | T x -> x |> ret
+    | V x -> v d.env x (fun () -> d.on_type_er <| sprintf "Variable %A not bound." x) ret
     | Function (core, free_var_set) -> 
-        let env = Map.filter (fun k _ -> Set.contains k !free_var_set) (env d)
-        (d,TyType(FunctionT(env,core))) |> ret
-    | VV(vars,name) ->
-        vars_map d vars (fun (d,vv) -> (d, TyVV(vv, VVT(List.map get_type vv, name))) |> ret)
+        let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
+        TyType(FunctionT(env,core)) |> ret
+    | VV(vars,name) -> vars_map d vars (fun vv -> TyVV(vv, VVT(List.map get_type vv, name)) |> ret)
+    | Op(If,[cond;tr;fl]) -> if_ d cond tr fl ret
+//    | Op(Apply,[a;b]) -> apply_tev d a b id
+//    | Op(MethodMemoize,[a]) -> memoize_method d a
+
 
 
 /// Reasonable default for the dims.
 let default_dims = dim3(256), dim3(20)
 
-//(mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er as d) 
-
-let data_empty () = 
-    let on_rec _ = Fail "The method is divergent"
+let data_empty() =
+    let on_match_break _ = Fail "The match broke to the top level."
     let on_match_fail _ = Fail "All the match cases were exhausted."
     let on_type_er x = Fail x
+    let on_rec _ = Fail "The method is divergent"
+    {ltag=ref 0L;seq=ref id;env=Map.empty;on_match_break=on_match_break
+     on_type_er=on_type_er;on_rec=on_rec}
     
-    0L,0L,id,Map.empty,on_rec,on_match_fail,on_type_er
-    
-let ret (_,x) = Succ x
-        
-let t = expr_typecheck' default_dims (d0()) (data_empty()) (V "") ret
+let ret x = Succ x
+       
+let t = expr_typecheck' default_dims (ref 0L) (d0()) (data_empty()) (V "") ret
 
