@@ -476,6 +476,9 @@ let rec expr_typecheck' (gridDim, blockDim as dims) mtag memoized_methods
     let inline tev' state expr read ret = expr_typecheck' dims mtag memoized_methods state expr read ret
     let inline tev state expr ret = tev' state expr read ret
     let inline tev_if expr on_rec ret = tev' id expr (ltag,env,on_rec,on_match_break,on_match_fail,on_type_er) (fun (seq,x) -> ret (seq x))
+
+    let ltag (ltag,env,on_rec,on_match_break,on_match_fail,on_type_er as read) = ltag
+    let env (ltag,env,on_rec,on_match_break,on_match_fail,on_type_er as read) = env
     
     let v env x on_fail ret = 
         match Map.tryFind x env with
@@ -522,6 +525,42 @@ let rec expr_typecheck' (gridDim, blockDim as dims) mtag memoized_methods
                                 (fun fl -> fin (tr,fl))
                         )
 
+    let get_tag read = 
+        let ltag = ltag read
+        let t = !ltag
+        ltag := !ltag + 1L
+        t
+
+    let make_tyv read ty_exp = get_tag read, get_type ty_exp
+
+    let make_tyv_and_push' le seq read ty_exp =
+        let v = make_tyv read ty_exp
+        let seq = fun rest -> let rest = seq rest in TyLet(le,v,ty_exp,rest,get_type rest)
+        seq, v
+
+    let m2 f (a,b) = (a,f b)
+
+    let make_tyv_and_push d read ty_exp = make_tyv_and_push' LetStd d read ty_exp |> m2 TyV
+    let make_tyv_and_push_inv d read ty_exp = make_tyv_and_push' LetInvisible d read ty_exp |> m2 TyV
+
+    let struct_create d read ty_exp = TyOp(StructCreate, [ty_exp], StructT ty_exp) |> make_tyv_and_push d read
+
+    let destructure_deep read (d,r) = 
+        let rec destructure_deep (d,r) = 
+            let destructure_tuple (d,r) =
+                match get_type r with
+                | VVT (tuple_types, name) -> 
+                    let indexed_tuple_args = List.mapi (fun i typ -> 
+                        destructure_deep (d,TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ))) tuple_types
+                    TyVV(indexed_tuple_args, VVT (tuple_types, name))
+                | _ -> r
+            match r with
+            | TyType _ | TyLit _ -> r
+            | TyOp(ArrayIndex,[Array(_,[],_);_],_)
+            | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple (d,r)
+            | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
+            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d read r |> destructure_deep
+        destructure_deep r
 
     match expr with
     | Lit value -> (d,TyLit value) |> ret
