@@ -468,28 +468,14 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) =
     let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
     typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo)
 
-let rec expr_typecheck' (gridDim, blockDim as dims) memoized_methods d expr ret =
-    let tev d expr ret = expr_typecheck' dims memoized_methods d expr ret
-
-    let mtag (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = mtag
-    let mtag_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (f mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er)
-    let ltag (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = ltag
-    let ltag_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) =
-        (mtag,f ltag,seq,env,on_rec,on_match_fail,on_type_er)
-    let seq (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = seq
-    let seq_with_empty (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,id,env,on_rec,on_match_fail,on_type_er)
-    let env (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = env
-    let env_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,seq,f env,on_rec,on_match_fail,on_type_er)
-    let on_rec (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = on_rec
-    let on_rec_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,seq,env,f on_rec,on_match_fail,on_type_er)
-    let on_match_fail (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = on_match_fail
-    let on_match_fail_with f (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = 
-        (mtag,ltag,seq,env,on_rec,f on_match_fail,on_type_er)
-    let on_type_er (mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er) = on_type_er
+let rec expr_typecheck' (gridDim, blockDim as dims) mtag memoized_methods 
+        (seq as d) // state
+        expr 
+        (ltag,env,on_rec,on_match_break,on_match_fail,on_type_er as read) // read
+        ret =
+    let inline tev' state expr read ret = expr_typecheck' dims mtag memoized_methods state expr read ret
+    let inline tev state expr ret = tev' state expr read ret
+    let inline tev_if expr on_rec ret = tev' id expr (ltag,env,on_rec,on_match_break,on_match_fail,on_type_er) (fun (seq,x) -> ret (seq x))
     
     let v env x on_fail ret = 
         match Map.tryFind x env with
@@ -504,17 +490,11 @@ let rec expr_typecheck' (gridDim, blockDim as dims) memoized_methods d expr ret 
                 )
         | [] -> ret (d,[])
 
-    let if_ d cond tr fl ret =
+    let if_ d cond tr fl (ltag,env,on_rec,on_match_break,on_match_fail,on_type_er as read) ret =
         tev d cond <| fun (d,cond) ->
             if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else
-                let on_rec' = on_rec d
-                let env' = env d
-                let restore d = 
-                    on_rec_with (fun _ -> on_rec') d
-                    |> env_with (fun _ -> env')
-
-                let fin (d,(tr,fl)) =
+                let fin (tr,fl) =
                     let type_tr, type_fl = get_type tr, get_type fl
                     if type_tr = type_fl then 
                         match cond with
@@ -522,31 +502,41 @@ let rec expr_typecheck' (gridDim, blockDim as dims) memoized_methods d expr ret 
                         | TyLit(LitBool false) -> fl
                         | _ -> TyOp(If,[cond;tr;fl],type_tr)
                         |> fun x -> ret (d,x)
-                    else on_type_er d <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+                    else on_type_er <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
-                let d =
-                    on_rec_with (fun _ (d,ret) ->
-                        tev d fl (fun (d,fl) ->
-                            ret (d,fl,fun (d,tr) -> fin (d, (tr,fl)))
-                            )
-                        ) d
-
-                tev d tr (fun (d,tr) ->
-                    tev (restore d) fl (fun (d,fl) ->
-                        fin (d,(tr,fl))  
+                let mutable fl' = None
+                tev_if tr 
+                    (fun ret' ->
+                        tev_if fl 
+                            on_rec
+                            (fun fl -> 
+                                fl' <- Some fl
+                                ret' (get_type fl))
                         )
-                    ) 
+                    (fun tr ->
+                        match fl' with
+                        | Some fl -> fin (tr,fl)
+                        | None ->
+                            tev_if fl 
+                                (fun ret' -> ret' (get_type tr))
+                                (fun fl -> fin (tr,fl))
+                        )
 
 
     match expr with
     | Lit value -> (d,TyLit value) |> ret
     | T x -> (d,x) |> ret
-    | V x -> v (env d) x (fun () -> on_type_er d <| sprintf "Variable %A not bound." x) (fun r -> ret (d,r))
+    | V x -> v env x (fun () -> on_type_er <| sprintf "Variable %A not bound." x) (fun r -> ret (d,r))
     | Function (core, free_var_set) -> 
-        let env = Map.filter (fun k _ -> Set.contains k !free_var_set) (env d)
+        let env = Map.filter (fun k _ -> Set.contains k !free_var_set) env
         (d,TyType(FunctionT(env,core))) |> ret
     | VV(vars,name) ->
         vars_map d vars (fun (d,vv) -> (d, TyVV(vv, VVT(List.map get_type vv, name))) |> ret)
+    | Op(If,[cond;tr;fl]) -> 
+        if_ d cond tr fl read ret
+    | Op(Apply,[a;b]) -> apply_tev d a b id
+    | Op(MethodMemoize,[a]) -> memoize_method d a
+
 
 
 /// Reasonable default for the dims.
@@ -554,14 +544,17 @@ let default_dims = dim3(256), dim3(20)
 
 //(mtag,ltag,seq,env,on_rec,on_match_fail,on_type_er as d) 
 
-let data_empty () = 
+let state_data_empty () = id
+
+let read_data_empty () = 
+    let on_match_break _ = Fail "The match broke to the top level."
     let on_rec _ = Fail "The method is divergent"
     let on_match_fail _ = Fail "All the match cases were exhausted."
     let on_type_er x = Fail x
     
-    0L,0L,id,Map.empty,on_rec,on_match_fail,on_type_er
+    ref 0L,Map.empty,on_rec,on_match_break,on_match_fail,on_type_er
     
 let ret (_,x) = Succ x
-        
-let t = expr_typecheck' default_dims (d0()) (data_empty()) (V "") ret
+       
+let t = expr_typecheck' default_dims (ref 0L) (d0()) (state_data_empty()) (V "") (read_data_empty()) ret
 
