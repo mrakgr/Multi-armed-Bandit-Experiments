@@ -43,6 +43,11 @@
 // Revisiting old code is a good habit. The only reason why I looked at this again was because I forgot
 // how the thing worked and had to explain it to myself again.
 
+// 5/25/2017: No change here, but it is possible to rewrite this example in CPS style which would get
+// rid of the need to deal with stacks for recusive methods directly. For an example of how this is possible,
+// check out `SpiralV5Language_v9a.fsx` which a rewrite of the Spiral typechecker in CPS style. Of special
+// interest should be the `if_` and the `eval_method` functions.
+
 open System.Collections.Generic
 
 type Expr = 

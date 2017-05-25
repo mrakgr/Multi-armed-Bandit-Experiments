@@ -478,15 +478,18 @@ type LangEnv<'a,'c,'d,'q,'e,'r> =
     on_rec : 'd -> 'r
     }
 
-let rec expr_typecheck' (gridDim, blockDim as dims) method_tag (memoized_methods: Dictionary<_,_>) 
+let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoized_methods: Dictionary<_,_>) 
         (d : LangEnv<_,_,_,_,_,_>) (expr: Expr) ret =
-    let inline tev d expr ret = expr_typecheck' dims method_tag memoized_methods d expr ret
+    let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
     let inline apply_seq d ret x = ret (!d.seq x)
     let inline tev_if d expr on_rec ret = 
         let d = {d with seq=ref id; on_rec=on_rec}
         tev d expr (apply_seq d ret)
     let inline tev_method d expr ret =
         let d = {d with ltag=ref 0L; seq=ref id}
+        tev d expr (apply_seq d ret)
+    let inline tev_for_apply_type d expr ret =
+        let d = {d with seq=ref id}
         tev d expr (apply_seq d ret)
 
     let v env x on_fail ret = 
@@ -544,7 +547,7 @@ let rec expr_typecheck' (gridDim, blockDim as dims) method_tag (memoized_methods
     let make_tyv_and_push' le d ty_exp =
         let v = make_tyv d ty_exp
         let seq = !d.seq
-        d.seq := fun rest -> let rest = seq rest in TyLet(le,v,ty_exp,rest,get_type rest)
+        d.seq := fun rest -> TyLet(le,v,ty_exp,rest,get_type rest) |> seq
         v
 
     let make_tyv_and_push d ty_exp = make_tyv_and_push' LetStd d ty_exp |> TyV
@@ -716,6 +719,129 @@ let rec expr_typecheck' (gridDim, blockDim as dims) method_tag (memoized_methods
                 let args = destructure_deep d args
                 apply tev d expr args apply_fail ret
 
+    let inline tev2 d a b ret =
+        tev d a <| fun l ->
+            tev d b <| fun r ->
+                ret l r
+
+    let mset d a b ret =
+        tev2 d a b <| fun l r ->
+            let r = destructure_deep d r
+            match l, r with
+            | TyOp(ArrayIndex,[_;_],lt), r when lt = get_type r -> make_tyv_and_push d (TyOp(MSet,[l;r],BVVT)) |> ret
+            | _ -> d.on_type_er <| sprintf "Error in mset. Expected: TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
+
+    let vv_index d v i ret =
+        tev2 d v i <| fun v i ->
+            match v, i with
+            | v, TyLit (LitInt32 i as i') ->
+                match get_type v with
+                | VVT (ts,"") -> 
+                    if i >= 0 || i < List.length ts then TyOp(VVIndex,[v;TyLit i'],ts.[i]) |> ret
+                    else d.on_type_er "(i >= 0 || i < List.length ts) = false in IndexVT"
+                | VVT (ts, name) -> d.on_type_er <| sprintf "Named tuples (%s) can't be indexed directly. They must be pattern matched on the name first." name
+                | x -> d.on_type_er <| sprintf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
+            | v, i ->
+                d.on_type_er <| sprintf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
+    
+    let vv_cons d a b ret =
+        tev2 d a b <| fun a b ->
+            let b = destructure_deep d b
+            match b with
+            | TyVV(b, VVT (bt, "")) -> TyVV(a::b, VVT (get_type a :: bt, "")) |> ret
+            | TyVV(_, VVT (_, name)) -> d.on_type_er <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
+            | _ -> d.on_type_er "Expected a tuple on the right is in VVCons."
+
+    let guard_is_int d args ret = 
+        if List.forall is_int args = false then d.on_type_er <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" args
+        else ret()
+
+    let array_create d name size typeof_expr ret =
+        tev2 d size typeof_expr <| fun size typ ->
+            destructure_deep d size
+            |> fun x -> 
+                guard_is_int d (tuple_field x) <| fun () ->
+                    let l = [size; TyType(get_type typ)]
+                    TyVV (l, VVT (List.map get_type l, name))
+                    |> struct_create d
+                    |> ret
+
+    let array_index d ar args ret =
+        tev2 d ar args <| fun ar args ->
+            let fargs = tuple_field args
+            guard_is_int d fargs <| fun () ->
+                match get_type ar with
+                | StructT (Array(_,size,typ)) ->
+                    let lar, largs = size.Length, fargs.Length
+                    if lar = largs then TyOp(ArrayIndex,[ar;args],typ) |> ret
+                    else d.on_type_er <| sprintf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
+                | _ -> d.on_type_er <| sprintf "Array index needs the Array.Got: %A" ar
+
+    let module_open d a b ret =
+        tev d a <| fun a ->
+            match get_type a with
+            | ModuleT x -> 
+                let env = Map.fold (fun s k v -> Map.add k v s) d.env x
+                tev {d with env = env} b ret
+            | x -> d.on_type_er <| sprintf "The open expected a module type as input. Got: %A" x
+
+    let prim_bin_op_template d check_error is_check k a b t ret =
+        let constraint_both_eq_numeric f =
+            tev2 d a b <| fun a b ->
+                if is_check a b then k t a b |> ret
+                else f (check_error a b)
+
+        constraint_both_eq_numeric d.on_type_er
+
+    let prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
+    let prim_un_op_helper t a = TyOp(t,[a],get_type a)
+    let bool_helper t a b = TyOp(t,[a;b],PrimT BoolT)
+
+    let prim_arith_op d = 
+        let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
+        let check a b = is_numeric a && get_type a = get_type b
+        prim_bin_op_template d er check prim_bin_op_helper
+
+    let prim_comp_op d = 
+        let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
+        let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
+        prim_bin_op_template d er check bool_helper
+
+    let prim_bool_op d = 
+        let er = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A"
+        let check a b = is_bool a && get_type a = get_type b
+        prim_bin_op_template d er check bool_helper
+
+    let prim_shift_op d =
+        let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
+        let check a b = is_int a && is_int b
+        prim_bin_op_template d er check prim_bin_op_helper
+
+    let prim_shuffle_op d =
+        let er = sprintf "`is_int b` is false.\na=%A, b=%A"
+        let check a b = is_int b
+        prim_bin_op_template d er check prim_bin_op_helper
+
+    let prim_un_op_template d check_error is_check k a t ret =
+        let constraint_numeric f =
+            tev d a <| fun a ->
+                if is_check a then k t a |> ret
+                else f (check_error a)
+
+        constraint_numeric d.on_type_er
+
+    let prim_un_floating d = 
+        let er = sprintf "`is_float a` is false.\na=%A"
+        let check a = is_float a
+        prim_un_op_template d er check prim_un_op_helper
+
+    let prim_un_numeric d = 
+        let er = sprintf "`is_numeric a` is false.\na=%A"
+        let check a = is_numeric a
+        prim_un_op_template d er check prim_un_op_helper
+
+    let for_apply_type d x ret =
+        tev_for_apply_type d x (get_type >> ForApplyT >> TyType >> ret)
 
     match expr with
     | Lit value -> TyLit value |> ret
@@ -728,7 +854,66 @@ let rec expr_typecheck' (gridDim, blockDim as dims) method_tag (memoized_methods
     | Op(If,[cond;tr;fl]) -> if_ d cond tr fl ret
     | Op(Apply,[a;b]) -> apply_tev d a b (fun _ -> Fail "All the match cases were exhausted.") ret
     | Op(MethodMemoize,[a]) -> memoize_method d a ret
+    | Op(ApplyType,[x]) -> for_apply_type d x ret
+        
+    | Op(ApplyModule,[V x]) -> x |> ForModuleT |> TyType |> ret
+    | Op(ModuleOpen,[a;b]) -> module_open d a b ret
 
+    // Primitive operations on expressions.
+    | Op(Add,[a;b]) -> prim_arith_op d a b Add ret
+    | Op(Sub,[a;b]) -> prim_arith_op d a b Sub ret 
+    | Op(Mult,[a;b]) -> prim_arith_op d a b Mult ret
+    | Op(Div,[a;b]) -> prim_arith_op d a b Div ret
+    | Op(Mod,[a;b]) -> prim_arith_op d a b Mod ret
+
+    | Op(LT,[a;b]) -> prim_comp_op d a b LT ret
+    | Op(LTE,[a;b]) -> prim_comp_op d a b LTE ret
+    | Op(EQ,[a;b]) -> prim_comp_op d a b EQ ret
+    | Op(NEQ,[a;b]) -> prim_comp_op d a b NEQ ret 
+    | Op(GT,[a;b]) -> prim_comp_op d a b GT ret
+    | Op(GTE,[a;b]) -> prim_comp_op d a b GTE ret
+    
+    | Op(And,[a;b]) -> prim_bool_op d a b And ret
+    | Op(Or,[a;b]) -> prim_bool_op d a b Or ret
+
+    | Op(ShiftLeft,[a;b]) -> prim_shift_op d a b ShiftLeft ret
+    | Op(ShiftRight,[a;b]) -> prim_shift_op d a b ShiftRight ret
+
+    | Op(ShuffleXor,[a;b]) -> prim_shuffle_op d a b ShuffleXor ret
+    | Op(ShuffleUp,[a;b]) -> prim_shuffle_op d a b ShuffleUp ret
+    | Op(ShuffleDown,[a;b]) -> prim_shuffle_op d a b ShuffleDown ret
+    | Op(ShuffleIndex,[a;b]) -> prim_shuffle_op d a b ShuffleIndex ret
+
+    | Op(VVIndex,[a;b]) -> vv_index d a b ret
+    | Op(VVCons,[a;b]) -> vv_cons d a b ret
+
+    | Op(ArrayCreate,[a;b]) -> array_create d "Array" a b ret
+    | Op(ArrayCreateShared,[a;b]) -> array_create d "ArrayShared" a b ret
+    | Op(ArrayIndex,[a;b]) -> array_index d a b ret
+    | Op(MSet,[a;b]) -> mset d a b ret
+
+    | Op(Neg,[a]) -> prim_un_numeric d a Neg ret
+    | Op(TypeError,[a]) -> d.on_type_er <| sprintf "%A" a
+
+    | Op(Log,[a]) -> prim_un_floating d a Log ret
+    | Op(Exp,[a]) -> prim_un_floating d a Exp ret
+    | Op(Tanh,[a]) -> prim_un_floating d a Tanh ret
+
+    // Constants
+    | Op(BlockDimX,[]) -> uint64 blockDim.x |> LitUInt64 |> TyLit |> ret
+    | Op(BlockDimY,[]) -> uint64 blockDim.y |> LitUInt64 |> TyLit |> ret
+    | Op(BlockDimZ,[]) -> uint64 blockDim.z |> LitUInt64 |> TyLit |> ret
+    | Op(GridDimX,[]) -> uint64 gridDim.x |> LitUInt64 |> TyLit |> ret
+    | Op(GridDimY,[]) -> uint64 gridDim.y |> LitUInt64 |> TyLit |> ret
+    | Op(GridDimZ,[]) -> uint64 gridDim.z |> LitUInt64 |> TyLit |> ret
+
+    | Op(Syncthreads,[]) -> TyOp(Syncthreads,[],BVVT) |> ret
+    | Op((ThreadIdxX | ThreadIdxY 
+           | ThreadIdxZ | BlockIdxX | BlockIdxY 
+           | BlockIdxZ as constant),[]) -> TyOp(constant,[],PrimT UInt64T) |> ret
+
+    | Op(ModuleCreate,[]) -> TyType(ModuleT d.env) |> ret
+    | Op _ -> failwith "Missing Op case."
 
 
 /// Reasonable default for the dims.
@@ -741,7 +926,19 @@ let data_empty() =
     {ltag=ref 0L;seq=ref id;env=Map.empty;on_match_break=on_match_break
      on_type_er=on_type_er;on_rec=on_rec}
     
-let ret x = Succ x
+//let ret x = Succ x
        
-let t = expr_typecheck' default_dims (ref 0L) (d0()) (data_empty()) (V "") ret
+//let t = expr_typecheck default_dims (ref 0L) (d0()) (data_empty()) (V "") ret
 
+let spiral_typecheck dims body = 
+    try
+        let method_tag = ref 0L
+        let memoized_methods = d0()
+        let d = data_empty()
+        let s = expr_free_variables body // Is mutable
+        if s.IsEmpty = false then failwithf "Variables %A are not bound anywhere." s
+        let deforest_tuples x = 
+            typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
+            Succ(x,memoized_methods)
+        expr_typecheck dims method_tag memoized_methods d body deforest_tuples
+    with e -> Fail (sprintf "%s\n%s" e.Message e.StackTrace)

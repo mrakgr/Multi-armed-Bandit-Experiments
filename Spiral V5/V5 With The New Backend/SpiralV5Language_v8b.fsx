@@ -913,8 +913,8 @@ and expr_typecheck (d: LangEnv) exp: TypedCudaExpr =
     | Op(BlockDimY,[]) -> uint64 d.blockDim.y |> LitUInt64 |> TyLit
     | Op(BlockDimZ,[]) -> uint64 d.blockDim.z |> LitUInt64 |> TyLit
     | Op(GridDimX,[]) -> uint64 d.gridDim.x |> LitUInt64 |> TyLit
-    | Op(GridDimY,[]) -> uint64 d.gridDim.x |> LitUInt64 |> TyLit
-    | Op(GridDimZ,[]) -> uint64 d.gridDim.x |> LitUInt64 |> TyLit
+    | Op(GridDimY,[]) -> uint64 d.gridDim.y |> LitUInt64 |> TyLit
+    | Op(GridDimZ,[]) -> uint64 d.gridDim.z |> LitUInt64 |> TyLit
 
     | Op(Syncthreads,[]) ->TyOp(Syncthreads,[],BVVT)
     | Op((ThreadIdxX | ThreadIdxY 
