@@ -9,6 +9,10 @@ type ParserExpr =
 | ParserStatement of (Expr -> Expr)
 | ParserExpr of Expr
 
+let spaces s = 
+    let rec spaces' s: Reply<unit> = (spaces >>. followedByString "//" >>. skipRestOfLine true >>. spaces') s
+    spaces' s
+
 let comma = skipChar ',' .>> spaces
 let dot = skipChar '.' >>. spaces
 let grave = skipChar '`' >>. spaces
@@ -24,6 +28,7 @@ let fun_ = skipString "fun" .>> spaces
 let inl_rec = skipString "inl" .>> spaces .>> skipString "rec" .>> spaces
 let fun_rec = skipString "fun" .>> spaces .>> skipString "rec" .>> spaces
 let typecase = skipString "typecase" >>. spaces
+let typeinl = skipString "typeinl" >>. spaces
 let module_ = skipString "module" >>. spaces
 let with_ = skipString "with" >>. spaces
 let open_ = skipString "open" >>. spaces
@@ -37,7 +42,7 @@ let isAsciiIdContinue c =
 let var_name = 
     many1Satisfy2L isAsciiLower isAsciiIdContinue "identifier" .>> spaces
     >>=? function
-        | "open" | "module" | "typecase" | "with" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
+        | "open" | "module" | "typecase" | "typeinl" | "with" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
             Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 let type_name = 
@@ -56,36 +61,30 @@ let pattern_identifier =
         var_name |>> S
         ]
 
-let pattern_tuple pattern = 
-    sepBy1 pattern comma 
-    |>> function 
-        | _ :: _ :: _ as x -> SS x
-        | x :: _ -> x
-        | _ -> failwith "impossible"
-    
 let pattern_tuple' pattern = 
     let f = function
         | [last] -> preturn last
-        | last :: rest ->
-            match last with
-            | S last -> preturn (SSS (List.rev rest) last)
-            | _ -> fun _ -> Reply(FatalError, expected "standard identifier")
+        | last :: rest -> R(List.rev rest, Some last) |> preturn
         | _ -> failwith "impossible"
     sepBy1 pattern pppp 
     >>= (List.rev >> f)
-let pattern_rounds pattern = rounds (pattern <|>% SS [])
-let pattern_type_name pattern = 
+
+let pattern_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> SS x
+let pattern_tuple_rounds pattern = rounds (sepBy pattern comma) |>> SS
+
+let rec pattern_type_name s = 
     pipe2
         (dot >>. type_name)
-        (pattern_rounds pattern)
-        (fun nam pat -> N(nam,pat))
-let pattern_active pattern = 
+        pattern_rounds
+        (fun nam pat -> N(nam,pat)) s
+and pattern_active s = 
     pipe2 (dot >>. var_name)
-        (rounds pattern <|> pattern_identifier)
-        (fun name pattern -> F(pattern, name))
-let rec patterns s = 
-    let cases s = choice [pattern_identifier; pattern_type_name pattern_identifier; pattern_rounds patterns; pattern_active patterns] s
-    pattern_tuple (pattern_tuple' cases) s
+        (pattern_rounds <|> pattern_identifier)
+        (fun name pattern -> F(pattern, name)) s
+
+and pattern_cases s = choice [pattern_identifier; pattern_type_name; pattern_active; pattern_rounds] s
+and pattern_rounds s = pattern_tuple_rounds (pattern_tuple' pattern_cases) s
+and patterns s = pattern_tuple (pattern_tuple' pattern_cases) s
 
 let pattern_list = many1 patterns
     
@@ -136,8 +135,26 @@ let pnumber : Parser<_,_> =
         else // reconstruct error reply
             Reply(reply.Status, reply.Error)
 
+let quoted_string =
+    let normalChar = satisfy (fun c -> c <> '\\' && c <> '"')
+    let unescape c = match c with
+                     | 'n' -> '\n'
+                     | 'r' -> '\r'
+                     | 't' -> '\t'
+                     | c   -> c
+    let escapedChar = pstring "\\" >>. (anyOf "\\nrt\"" |>> unescape)
+    between (pstring "\"") (pstring "\"")
+            (manyChars (normalChar <|> escapedChar))
+    |>> LitString
 
-let lit = (pbool <|> pnumber) |>> Lit .>> notFollowedBy (satisfy (fun c -> isDigit c || isAsciiIdStart c)) .>> spaces
+let lit = 
+    choice 
+        [|
+        pbool
+        pnumber .>> notFollowedBy (satisfy isAsciiIdContinue)
+        quoted_string
+        |] |>> Lit .>> spaces
+    
 let var = var_name |>> V
 
 let expr_indent i op expr (s: CharStream<_>) = if op i s.Column then expr s else pzero s
@@ -184,27 +201,37 @@ let case_named_tuple expr =
             | args -> VV([args],name))
 let case_var expr = var
 
-let case_typecase expr (s: CharStream<_>) =
-    let i = s.Column
-    let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
-    let pat_body = expr_indent patterns .>> expr_indent lam
-    let pat_first = expr_indent (optional bar) >>. pat_body
-    let pat = expr_indent bar >>. pat_body
-    let body = expr_indent expr
-    let case_case pat = pipe2 pat body (fun a b -> a,b)
-    pipe3 (typecase >>. expr .>> with_)
-        (case_case pat_first)
-        (many (case_case pat))
-        (fun e x xs -> match_ e (x :: xs)) s
+let inline case_typex match_type expr (s: CharStream<_>) =
+    let mutable i = None
+    let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
+    let pat_body = expr_indent (<=) patterns .>> expr_indent (<=) lam
+    let pat_first = expr_indent (<=) (optional bar) >>. pat_body
+    let pat = expr_indent (<=) bar >>. pat_body
+    let case_case pat = pipe2 pat expr (fun a b -> a,b)
+    let set_col (s: CharStream<_>) = i <- Some (s.Column); Reply(())
+    match match_type with
+    | true -> // typeinl
+        pipe2 (typeinl >>. set_col >>. case_case pat_first)
+            (many (case_case pat))
+            (fun x xs -> function_ (x :: xs)) s    
+    | false -> // typecase
+        pipe3 (typecase >>. expr .>> with_ .>> set_col)
+            (case_case pat_first)
+            (many (case_case pat))
+            (fun e x xs -> match_ e (x :: xs)) s
+
+let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
+let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
 let case_module expr = module_ >>% module_create
 
 let case_apply_type expr = grave >>. expr |>> ap_ty
 let case_apply_module expr = dot >>. var_name |>> ap_mod
 
+
 let expressions expr =
     [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
-     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_module
+     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_typeinl; case_module
      case_apply_type; case_apply_module]
     |> List.map (fun x -> x expr |> attempt)
     |> choice

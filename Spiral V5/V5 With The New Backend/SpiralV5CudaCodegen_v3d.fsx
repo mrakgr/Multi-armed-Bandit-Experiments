@@ -108,6 +108,7 @@ let print_method_dictionary (imemo: MemoDict) =
         | StructT(Array(_,_,t)) -> array_case t
         | StructT _ -> failwith "Can't struct types directly."
         | FunctionT _ -> failwith "Can't function types directly."
+        | ModuleT _ | ForModuleT _ | ForApplyT _ -> failwith "Can't print this."
 
     let print_simple_type = print_type (fun t -> sprintf "%s *" (print_type case_array_in_array t))
     let print_array_type = print_type case_array_in_array
@@ -117,8 +118,12 @@ let print_method_dictionary (imemo: MemoDict) =
     let print_method tag = sprintf "method_%i" tag
 
     let print_value = function
+        | LitUInt8 x -> string x 
+        | LitUInt16 x -> string x 
         | LitUInt32 x -> string x 
         | LitUInt64 x -> string x 
+        | LitInt8 x -> string x
+        | LitInt16 x -> string x
         | LitInt32 x -> string x
         | LitInt64 x -> string x
         | LitFloat32 x -> string x
@@ -202,6 +207,8 @@ let print_method_dictionary (imemo: MemoDict) =
             let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
+        | TyMemoizedExpr(MemoClosure,_,_,_,_) ->
+            failwith "Should not occur in isolation."
         | TyVV(l,(VVT (t, _))) -> 
             List.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
             |> String.concat ", "
@@ -384,6 +391,23 @@ inl transpose l on_fail succ =
     
     """
 
+let rec1 =
+    """
+fun rec meth () =
+    if false then
+        if false then
+            if true then
+                meth()
+            else
+                meth()
+        else
+            88
+    else
+        meth()
+fun top() = meth()
+top()
+    """
+
 let tuple_library =
     """
 inl tuple =
@@ -421,31 +445,75 @@ inl tuple =
             | .False() -> s
             ) () l
         |> tuple_rev
+    inl tuple_is_empty = typeinl
+        | () -> .True()
+        | _ -> .False()
+    inl tuple_zip, tuple_zip_irreg, tuple_unzip, tuple_unzip_irreg =
+        inl vv x = x :: ()
+        inl transpose l on_fail on_succ =
+            inl is_all_vv_empty = tuple_forall (typeinl () -> .True() | _ -> .False())
+            inl rec loop acc_total acc_head acc_tail = typeinl
+                | () :: ys ->
+                    typecase acc_head with
+                    | () ->
+                        typecase is_all_vv_empty ys with
+                        | .True() -> errortype "Empty inputs in the inner dimension to transpose are invalid."
+                        | .False() -> tuple_rev acc_total |> on_succ
+                    | _ ->
+                        on_fail()
+                | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
+                | _ :: _ -> on_fail ()
+                | () -> 
+                    typecase acc_tail with
+                    | _ :: _ -> loop ((tuple_rev acc_head :: ()) :: acc_total) () () (tuple_rev acc_tail)
+                    | _ -> tuple_rev acc_total |> on_succ
+            loop () () () l
+        inl zip_template on_ireg l = 
+            inl rec zip l = 
+                typecase l with
+                | _ :: _ -> transpose l (inl _ -> on_ireg l) (tuple_map (typeinl (x) -> zip x | x -> x)) :: ()
+                | _ -> errortype "Empty input to zip is invalid."
+            zip l
+
+        inl zip_reg_guard l =
+            typecase tuple_forall (typeinl (_) -> .False() | _ -> .True()) l with
+            | .True() -> l
+            | .False() -> errortype "Irregular inputs in zip."
+        inl zip_reg = zip_template zip_reg_guard
+        inl zip_irreg = zip_template id
+
+        inl rec unzip_template on_irreg l = 
+            inl is_all_vv x = tuple_forall (typeinl (_) -> .True() | _ -> .False()) x
+            inl rec unzip l =
+                typecase l with
+                | (x) ->
+                    typecase x with
+                    | _ :: _ ->
+                        typecase is_all_vv x with
+                        | .True() -> 
+                            inl t = tuple_map (unzip >> vv) x
+                            transpose t (inl _ -> on_irreg x) id
+                        | .False() ->
+                            x
+                    | _ -> errortype "Empty inputs to unzip are invalid."
+                | _ -> errortype "Unzip called on a tuple."
+            unzip l
+
+        inl unzip_reg = unzip_template zip_reg_guard
+        inl unzip_irreg = unzip_template id
+
+        zip_reg, zip_irreg, unzip_reg, unzip_irreg
+
     module
 
-fun top() =    
-    (tuple.tuple_forall) (tuple.id) (.True(),.True(),.True())
+open tuple
+
+fun top() = 
+    tuple_zip ((1,2),(3,4))
 top ()
     """
 
-let rec1 =
-    """
-fun rec meth () =
-    if false then
-        if false then
-            if true then
-                meth()
-            else
-                meth()
-        else
-            88
-    else
-        meth()
-fun top() = meth()
-top()
-    """
-
-let r = spiral_codegen default_dims rec1
+let r = spiral_codegen default_dims tuple_library
 
 printfn "%A" r
 

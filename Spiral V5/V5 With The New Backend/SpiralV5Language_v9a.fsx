@@ -99,7 +99,7 @@ and Op =
 
     // UnOps
     | Neg
-    | TypeError
+    | ErrorType
     | ModuleOpen
     
     | Log
@@ -330,7 +330,7 @@ let meth' args body = methr' "" args body
 
 let vv x = VV(x,"")
 
-let type_error x = Op(TypeError, [Lit <| LitString x])
+let error_type x = Op(ErrorType, [x])
 
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
@@ -658,7 +658,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             apply (tev_match_f on_fail) d r args
                 (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
                 (fun r -> 
-                    match_single d acc pattern (destructure_deep d r) 
+                    match_single d acc pattern (destructure_deep d r)
                         (fun _ -> d.on_type_er "The function call subpattern in the matcher failed to match.")
                         ret)
 
@@ -884,7 +884,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     | Op(MSet,[a;b]) -> mset d a b ret
 
     | Op(Neg,[a]) -> prim_un_numeric d a Neg ret
-    | Op(TypeError,[a]) -> d.on_type_er <| sprintf "%A" a
+    | Op(ErrorType,[a]) -> d.on_type_er <| sprintf "%A" a
 
     | Op(Log,[a]) -> prim_un_floating d a Log ret
     | Op(Exp,[a]) -> prim_un_floating d a Exp ret
@@ -916,15 +916,16 @@ let data_empty() =
     let on_rec _ = Fail "The method is divergent"
     {ltag=ref 0L;seq=ref id;env=Map.empty;on_match_break=on_match_break
      on_type_er=on_type_er;on_rec=on_rec}
+
+let core_functions =
+    l (S "errortype") (inl (S "x") (error_type (V "x")))
     
 let spiral_typecheck dims body = 
     let method_tag = ref 0L
     let memoized_methods = d0()
     let d = data_empty()
-    let s = expr_free_variables body // Is mutable
-    if s.IsEmpty = false then d.on_type_er <| sprintf "Variables %A are not bound anywhere." s
-    else
-        let deforest_tuples x = 
-            typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
-            Succ(x,memoized_methods)
-        expr_typecheck dims method_tag memoized_methods d body deforest_tuples
+    expr_free_variables body |> ignore // Is mutable
+    let deforest_tuples x = 
+        typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
+        Succ(x,memoized_methods)
+    expr_typecheck dims method_tag memoized_methods d (core_functions body) deforest_tuples
