@@ -108,6 +108,7 @@
     <None Include="V5 With The New Backend\SpiralV5Language_v9a.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Parser_v2b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3d.fsx" />
+    <None Include="V5 With The New Backend\Script1.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />

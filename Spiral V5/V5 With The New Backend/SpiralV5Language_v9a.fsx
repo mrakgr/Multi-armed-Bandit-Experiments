@@ -271,10 +271,6 @@ let is_full_name = function
     | "" | "_" -> false
     | _ -> true
 
-let get_body_from (stack: Stack<unit -> TypedExpr>) = 
-    if stack.Count > 0 then stack.Pop()()
-    else failwith "The program is divergent."
-
 let is_arg = function TyV _ -> true | _ -> false
 
 let h0() = HashSet(HashIdentity.Structural)
@@ -482,15 +478,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         (d : LangEnv<_,_,_,_,_,_>) (expr: Expr) ret =
     let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
     let inline apply_seq d ret x = ret (!d.seq x)
-    let inline tev_if d expr on_rec ret = 
-        let d = {d with seq=ref id; on_rec=on_rec}
-        tev d expr (apply_seq d ret)
-    let inline tev_method d expr ret =
-        let d = {d with ltag=ref 0L; seq=ref id}
-        tev d expr (apply_seq d ret)
-    let inline tev_for_apply_type d expr ret =
-        let d = {d with seq=ref id}
-        tev d expr (apply_seq d ret)
+    let inline tev_seq d expr ret = tev {d with seq=ref id} expr (apply_seq d ret)
+    let inline tev_if d expr on_rec ret = tev_seq {d with on_rec=on_rec} expr ret
+    let inline tev_method d expr ret = tev_seq {d with ltag=ref 0L} expr ret
+    let inline tev_match_f on_match_break d expr ret = tev_seq {d with on_match_break=on_match_break} expr ret
 
     let v env x on_fail ret = 
         match Map.tryFind x env with
@@ -507,7 +498,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let if_ d cond tr fl ret =
         tev d cond <| fun cond ->
-            if is_bool cond = false then failwithf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+            if is_bool cond = false then d.on_type_er <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else
                 let fin (tr,fl) =
                     let type_tr, type_fl = get_type tr, get_type fl
@@ -606,8 +597,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
         eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
             let typed_expr_ty = get_type typed_expr
-            if is_returnable' typed_expr_ty = false then failwithf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-            ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
+            if is_returnable' typed_expr_ty = false then d.on_type_er <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
+            else ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
 
     let memoize_method d x ret = 
         eval_renaming d x <| fun (a,b,c,d) -> 
@@ -663,19 +654,18 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         loop l
 
     and match_f d acc (pattern: CudaPattern) args meth on_fail ret =
-        let d = {d with on_match_break=on_fail}
         tev d (V meth) <| fun r ->
-            apply tev d r args
+            apply (tev_match_f on_fail) d r args
                 (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
                 (fun r -> 
                     match_single d acc pattern (destructure_deep d r) 
-                        (fun _ -> failwith "The function call subpattern in the matcher failed to match.")
+                        (fun _ -> d.on_type_er "The function call subpattern in the matcher failed to match.")
                         ret)
 
-    and apply_closuret clo (clo_arg_ty,clo_ret_ty) arg =
+    and apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
-        if arg_ty <> clo_arg_ty then failwithf "Cannot apply an argument of type %A to closure %A" arg_ty clo
-        TyOp(Apply,[clo;arg],clo_ret_ty)
+        if arg_ty <> clo_arg_ty then d.on_type_er <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
+        else TyOp(Apply,[clo;arg],clo_ret_ty) |> ret
 
     and apply_functiont tev d (initial_env,(name,l) as fun_key) args on_fail ret =
         match_all d initial_env l args
@@ -693,25 +683,26 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     and apply tev d la ra on_fail ret =
         match get_type la, get_type ra with
         | FunctionT x, ForApplyT t -> apply_type d x t on_fail ret
-        | x, ForApplyT t -> failwithf "Expected a function type in type application. Got: %A" x
+        | x, ForApplyT t -> d.on_type_er <| sprintf "Expected a function type in type application. Got: %A" x
         | ModuleT x, ForModuleT n -> apply_module x n ret
-        | x, ForModuleT n -> failwithf "Expected a module in module application. Got: %A" x
+        | x, ForModuleT n -> d.on_type_er <| sprintf "Expected a module in module application. Got: %A" x
         | FunctionT x,_ -> apply_functiont tev d x ra on_fail ret
-        | ClosureT(a,r),_ -> apply_closuret la (a,r) ra |> ret
+        | ClosureT(a,r),_ -> apply_closuret d la (a,r) ra ret
         | (VVT(_,name) | StructT(TyVV(_,VVT(_,name)))),_ -> apply_named_tuple tev d name ra on_fail ret
-        | _ -> failwith "Trying to apply a type other than InlineableT or MethodT."
+        | _ -> d.on_type_er "Trying to apply a type other than InlineableT or MethodT."
 
     and apply_type d (env,core as fun_key) args_ty on_fail ret =
-        if env_num_args env > 0 then failwithf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
-        let args =
-            let f x = TyType x |> make_tyv_and_push_inv d
-            match args_ty with
-            | VVT(l,n) -> TyVV(List.map f l, args_ty)
-            | x -> f x
-        let f = FunctionT fun_key |> TyType |> T
-        let g = FunctionT(env,("",[S " ",ap f (V " ")])) |> TyType
-        let tev d x = memoize_closure (get_type args) d x
-        apply tev d g args on_fail ret
+        if env_num_args env > 0 then d.on_type_er <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
+        else
+            let args =
+                let f x = TyType x |> make_tyv_and_push_inv d
+                match args_ty with
+                | VVT(l,n) -> TyVV(List.map f l, args_ty)
+                | x -> f x
+            let f = FunctionT fun_key |> TyType |> T
+            let g = FunctionT(env,("",[S " ",ap f (V " ")])) |> TyType
+            let tev d x = memoize_closure (get_type args) d x
+            apply tev d g args on_fail ret
 
     let apply_tev d expr args apply_fail ret = 
         tev d expr <| fun expr ->
@@ -841,7 +832,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         prim_un_op_template d er check prim_un_op_helper
 
     let for_apply_type d x ret =
-        tev_for_apply_type d x (get_type >> ForApplyT >> TyType >> ret)
+        tev_seq d x (get_type >> ForApplyT >> TyType >> ret)
 
     match expr with
     | Lit value -> TyLit value |> ret
@@ -926,19 +917,14 @@ let data_empty() =
     {ltag=ref 0L;seq=ref id;env=Map.empty;on_match_break=on_match_break
      on_type_er=on_type_er;on_rec=on_rec}
     
-//let ret x = Succ x
-       
-//let t = expr_typecheck default_dims (ref 0L) (d0()) (data_empty()) (V "") ret
-
 let spiral_typecheck dims body = 
-    try
-        let method_tag = ref 0L
-        let memoized_methods = d0()
-        let d = data_empty()
-        let s = expr_free_variables body // Is mutable
-        if s.IsEmpty = false then failwithf "Variables %A are not bound anywhere." s
+    let method_tag = ref 0L
+    let memoized_methods = d0()
+    let d = data_empty()
+    let s = expr_free_variables body // Is mutable
+    if s.IsEmpty = false then d.on_type_er <| sprintf "Variables %A are not bound anywhere." s
+    else
         let deforest_tuples x = 
             typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
             Succ(x,memoized_methods)
         expr_typecheck dims method_tag memoized_methods d body deforest_tuples
-    with e -> Fail (sprintf "%s\n%s" e.Message e.StackTrace)

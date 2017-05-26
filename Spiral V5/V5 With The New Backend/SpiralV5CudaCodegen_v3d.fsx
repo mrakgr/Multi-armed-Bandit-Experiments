@@ -438,14 +438,14 @@ fun rec meth () =
             else
                 meth()
         else
-            meth()
+            88
     else
-        5.5
+        meth()
 fun top() = meth()
 top()
     """
 
-let r = spiral_codegen default_dims tuple_library
+let r = spiral_codegen default_dims rec1
 
 printfn "%A" r
 
