@@ -257,7 +257,7 @@ let process_parser_exprs exprs =
     let process_parser_expr a b on_fail on_succ =
         match a,b with
         | ParserStatement a, ParserExpr b -> a b |> ParserExpr |> on_succ
-        | ParserExpr a, ParserExpr b -> l E a b |> ParserExpr |> on_succ
+        | ParserExpr a, ParserExpr b -> l E (error_non_unit a) b |> ParserExpr |> on_succ
         | _, ParserStatement _ -> on_fail error_statement_in_last_pos
 
     let process_parser_exprs l =

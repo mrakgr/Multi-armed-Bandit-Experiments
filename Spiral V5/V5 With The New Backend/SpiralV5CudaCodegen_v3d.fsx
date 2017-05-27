@@ -505,7 +505,14 @@ inl tuple =
 
 open tuple
 
-fun top() = tuple_zip ((1,2,5.5),(3,4,6.6),(11i8,22i8,33i8)) |> tuple_unzip
+fun top() = 
+    inl j = 2,3.3
+    inl k = 4.4,55
+    inl l = 66,77
+    inl m = 88,99
+    inl n = 123,456
+    ignore 12
+    tuple_zip ((j,k),(l,m),n) |> tuple_unzip
 top ()
     """
 

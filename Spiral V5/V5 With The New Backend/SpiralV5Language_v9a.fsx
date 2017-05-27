@@ -59,8 +59,6 @@ and Value =
     | LitString of string
 
 and Op =
-    | StaticPrint
-
     // TriOps
     | If
 
@@ -99,11 +97,15 @@ and Op =
     | ShuffleDown
     | ShuffleIndex
 
-    // UnOps
-    | Neg
+    // Static unary operations
+    | StaticPrint
+    | ErrorNonUnit
     | ErrorType
     | ModuleOpen
-    
+    | Ignore
+
+    // UnOps
+    | Neg
     | Log
     | Exp
     | Tanh
@@ -116,11 +118,6 @@ and Op =
     | BlockIdxX | BlockIdxY | BlockIdxZ
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
-
-//    | VVZipReg
-//    | VVZipIrreg
-//    | VVUnzipReg
-//    | VVUnzipIrreg
 
 and Expr = 
     | V of string
@@ -333,6 +330,9 @@ let meth' args body = methr' "" args body
 let vv x = VV(x,"")
 
 let error_type x = Op(ErrorType, [x])
+let static_print x = Op(StaticPrint,[x])
+let ignore_ x = Op(Ignore,[x])
+let error_non_unit x = Op(ErrorNonUnit, [x])
 
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
@@ -836,6 +836,13 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let for_apply_type d x ret =
         tev_seq d x (get_type >> ForApplyT >> TyType >> ret)
 
+    let error_non_unit d a ret =
+        tev d a <| fun x ->
+            if get_type x <> BVVT then
+                d.on_type_er <| sprintf "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such. %A" x
+            else
+                ret x
+
     match expr with
     | Lit value -> TyLit value |> ret
     | T x -> x |> ret
@@ -888,6 +895,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     | Op(Neg,[a]) -> prim_un_numeric d a Neg ret
     | Op(ErrorType,[a]) -> tev d a <| fun a -> d.on_type_er <| sprintf "%A" a
+    | Op(Ignore,[a]) -> tev d a <| fun a -> destructure_deep d a |> ignore; ret TyB
+    | Op(ErrorNonUnit,[a]) -> error_non_unit d a ret
 
     | Op(Log,[a]) -> prim_un_floating d a Log ret
     | Op(Exp,[a]) -> prim_un_floating d a Exp ret
@@ -921,12 +930,13 @@ let data_empty() =
      on_type_er=on_type_er;on_rec=on_rec}
 
 let core_functions =
+    let p f = inl (S "x") (f (V "x"))
     s   [
-        l (S "errortype") (inl (S "x") (error_type (V "x")))
-        l (S "static_print") (inl (S "x") (Op(StaticPrint,[V "x"])))
+        l (S "errortype") (p error_type)
+        l (S "static_print") (p static_print)
+        l (S "ignore") (p ignore_)
         ]
-     
-    
+   
 let spiral_typecheck dims body = 
     let method_tag = ref 0L
     let memoized_methods = d0()
