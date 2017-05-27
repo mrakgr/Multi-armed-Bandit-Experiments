@@ -10,7 +10,7 @@ type ParserExpr =
 | ParserExpr of Expr
 
 let spaces s = 
-    let rec spaces' s: Reply<unit> = (spaces >>. followedByString "//" >>. skipRestOfLine true >>. spaces') s
+    let rec spaces' s: Reply<unit> = (spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces')) s
     spaces' s
 
 let comma = skipChar ',' .>> spaces
@@ -70,21 +70,26 @@ let pattern_tuple' pattern =
     >>= (List.rev >> f)
 
 let pattern_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> SS x
-let pattern_tuple_rounds pattern = rounds (sepBy pattern comma) |>> SS
+let pattern_tuple_rounds pattern = rounds (sepBy pattern comma) |>> function [x] -> x | x -> SS x
+let pattern_tuple_rounds' pattern = rounds (sepBy pattern comma) |>> SS
 
 let rec pattern_type_name s = 
     pipe2
         (dot >>. type_name)
-        pattern_rounds
+        pattern_rounds'
         (fun nam pat -> N(nam,pat)) s
+
 and pattern_active s = 
     pipe2 (dot >>. var_name)
         (pattern_rounds <|> pattern_identifier)
         (fun name pattern -> F(pattern, name)) s
 
 and pattern_cases s = choice [pattern_identifier; pattern_type_name; pattern_active; pattern_rounds] s
-and pattern_rounds s = pattern_tuple_rounds (pattern_tuple' pattern_cases) s
-and patterns s = pattern_tuple (pattern_tuple' pattern_cases) s
+and pattern_template pattern_tuple s = pattern_tuple (pattern_tuple' pattern_cases) s
+and pattern_rounds s = pattern_template pattern_tuple_rounds s
+and pattern_rounds' s = pattern_template pattern_tuple_rounds' s
+
+let patterns s = pattern_template pattern_tuple s
 
 let pattern_list = many1 patterns
     
@@ -103,23 +108,34 @@ let pnumber : Parser<_,_> =
     let default_float x _ = float32 x |> LitFloat32 |> Reply
 
     let followedBySuffix x default_ =
-        let f str f = followedBy (skipString str) |>> fun _ -> f x
+        let f c l = 
+            let l = Array.map (fun (k,m) -> skipString k |>> fun _ -> m x) l
+            skipChar c >>. choice l
         choice
-            [
-            f "i8" (int8 >> LitInt8)
-            f "i16" (int16 >> LitInt16)
-            f "i32" (int32 >> LitInt32)
-            f "i64" (int64 >> LitInt64)
+            [|
+            f 'i'
+                [|
+                "8", int8 >> LitInt8
+                "16", int16 >> LitInt16
+                "32", int32 >> LitInt32
+                "64", int64 >> LitInt64
+                |]
 
-            f "u8" (uint8 >> LitUInt8)
-            f "u16" (uint16 >> LitUInt16)
-            f "u32" (uint32 >> LitUInt32)
-            f "u64" (uint64 >> LitUInt64)
+            f 'u'
+                [|
+                "8", uint8 >> LitUInt8
+                "16", uint16 >> LitUInt16
+                "32", uint32 >> LitUInt32
+                "64", uint64 >> LitUInt64
+                |]
 
-            f "f32" (float32 >> LitFloat32)
-            f "f64" (float >> LitFloat64)
+            f 'f'
+                [|
+                "32", float32 >> LitFloat32
+                "64", float >> LitFloat64
+                |]
             default_ x
-            ]
+            |]
 
     fun s ->
         let reply = parser s

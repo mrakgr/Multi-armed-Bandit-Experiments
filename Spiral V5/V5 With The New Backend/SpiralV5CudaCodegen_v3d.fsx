@@ -452,51 +452,48 @@ inl tuple =
         inl vv x = x :: ()
         inl transpose l on_fail on_succ =
             inl is_all_vv_empty = tuple_forall (typeinl () -> .True() | _ -> .False())
-            inl rec loop acc_total acc_head acc_tail = typeinl
+            inl rec loop acc_total acc_head acc_tail l = 
+                typecase l with
                 | () :: ys ->
                     typecase acc_head with
                     | () ->
                         typecase is_all_vv_empty ys with
-                        | .True() -> errortype "Empty inputs in the inner dimension to transpose are invalid."
-                        | .False() -> tuple_rev acc_total |> on_succ
-                    | _ ->
-                        on_fail()
+                        | .True() -> 
+                            typecase acc_total with
+                            | () -> errortype "Empty inputs in the inner dimension to transpose are invalid."
+                            | _ -> tuple_rev acc_total |> on_succ
+                        | .False() -> on_fail()
+                    | _ -> on_fail()
                 | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
                 | _ :: _ -> on_fail ()
                 | () -> 
                     typecase acc_tail with
-                    | _ :: _ -> loop ((tuple_rev acc_head :: ()) :: acc_total) () () (tuple_rev acc_tail)
+                    | _ :: _ -> loop (tuple_rev acc_head :: acc_total) () () (tuple_rev acc_tail)
                     | _ -> tuple_rev acc_total |> on_succ
             loop () () () l
         inl zip_template on_ireg l = 
             inl rec zip l = 
                 typecase l with
-                | _ :: _ -> transpose l (inl _ -> on_ireg l) (tuple_map (typeinl (x) -> zip x | x -> x)) :: ()
+                | _ :: _ -> transpose l (inl _ -> on_ireg l) (tuple_map (typeinl x :: () -> zip x | x -> x))
                 | _ -> errortype "Empty input to zip is invalid."
             zip l
 
         inl zip_reg_guard l =
-            typecase tuple_forall (typeinl (_) -> .False() | _ -> .True()) l with
+            typecase tuple_forall (typeinl _ :: _ -> .False() | _ -> .True()) l with
             | .True() -> l
             | .False() -> errortype "Irregular inputs in zip."
         inl zip_reg = zip_template zip_reg_guard
         inl zip_irreg = zip_template id
 
         inl rec unzip_template on_irreg l = 
-            inl is_all_vv x = tuple_forall (typeinl (_) -> .True() | _ -> .False()) x
+            inl is_all_vv x = tuple_forall (typeinl _ :: _ -> .True() | _ -> .False()) x
             inl rec unzip l =
                 typecase l with
-                | (x) ->
-                    typecase x with
-                    | _ :: _ ->
-                        typecase is_all_vv x with
-                        | .True() -> 
-                            inl t = tuple_map (unzip >> vv) x
-                            transpose t (inl _ -> on_irreg x) id
-                        | .False() ->
-                            x
-                    | _ -> errortype "Empty inputs to unzip are invalid."
-                | _ -> errortype "Unzip called on a tuple."
+                | _ :: _ ->
+                    typecase is_all_vv l with
+                    | .True() -> transpose (tuple_map unzip l) (inl _ -> on_irreg l) id
+                    | .False() -> l
+                | x -> errortype "Unzip called on a non-tuple."
             unzip l
 
         inl unzip_reg = unzip_template zip_reg_guard
@@ -508,8 +505,7 @@ inl tuple =
 
 open tuple
 
-fun top() = 
-    tuple_zip ((1,2),(3,4))
+fun top() = tuple_zip ((1,2,5.5),(3,4,6.6),(11i8,22i8,33i8)) |> tuple_unzip
 top ()
     """
 

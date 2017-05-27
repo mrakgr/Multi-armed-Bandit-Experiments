@@ -59,6 +59,8 @@ and Value =
     | LitString of string
 
 and Op =
+    | StaticPrint
+
     // TriOps
     | If
 
@@ -170,8 +172,8 @@ let get_type_of_value = function
     | LitInt16 _ -> PrimT Int16T
     | LitInt32 _ -> PrimT Int32T
     | LitInt64 _ -> PrimT Int64T
-    | LitFloat32 _ -> PrimT Float64T
-    | LitFloat64 _ -> PrimT Float32T   
+    | LitFloat32 _ -> PrimT Float32T
+    | LitFloat64 _ -> PrimT Float64T   
     | LitBool _ -> PrimT BoolT
     | LitString _ -> PrimT StringT
 
@@ -849,6 +851,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         
     | Op(ApplyModule,[V x]) -> x |> ForModuleT |> TyType |> ret
     | Op(ModuleOpen,[a;b]) -> module_open d a b ret
+    | Op(StaticPrint,[a]) -> tev d a <| fun r -> printfn "%A" r; ret TyB
 
     // Primitive operations on expressions.
     | Op(Add,[a;b]) -> prim_arith_op d a b Add ret
@@ -884,7 +887,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     | Op(MSet,[a;b]) -> mset d a b ret
 
     | Op(Neg,[a]) -> prim_un_numeric d a Neg ret
-    | Op(ErrorType,[a]) -> d.on_type_er <| sprintf "%A" a
+    | Op(ErrorType,[a]) -> tev d a <| fun a -> d.on_type_er <| sprintf "%A" a
 
     | Op(Log,[a]) -> prim_un_floating d a Log ret
     | Op(Exp,[a]) -> prim_un_floating d a Exp ret
@@ -918,14 +921,19 @@ let data_empty() =
      on_type_er=on_type_er;on_rec=on_rec}
 
 let core_functions =
-    l (S "errortype") (inl (S "x") (error_type (V "x")))
+    s   [
+        l (S "errortype") (inl (S "x") (error_type (V "x")))
+        l (S "static_print") (inl (S "x") (Op(StaticPrint,[V "x"])))
+        ]
+     
     
 let spiral_typecheck dims body = 
     let method_tag = ref 0L
     let memoized_methods = d0()
     let d = data_empty()
-    expr_free_variables body |> ignore // Is mutable
+    let input = core_functions body
+    expr_free_variables input |> ignore // Is mutable
     let deforest_tuples x = 
         typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
         Succ(x,memoized_methods)
-    expr_typecheck dims method_tag memoized_methods d (core_functions body) deforest_tuples
+    expr_typecheck dims method_tag memoized_methods d input deforest_tuples
