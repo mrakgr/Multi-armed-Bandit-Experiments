@@ -687,10 +687,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | FunctionT x, ForApplyT t -> apply_type d x t on_fail ret
         | x, ForApplyT t -> d.on_type_er <| sprintf "Expected a function type in type application. Got: %A" x
         | ModuleT x, ForModuleT n -> apply_module x n ret
-        | x, ForModuleT n -> d.on_type_er <| sprintf "Expected a module in module application. Got: %A" x
+        | x, ForModuleT n -> d.on_type_er <| sprintf "Expected a module type in module application. Got: %A" x
         | FunctionT x,_ -> apply_functiont tev d x ra on_fail ret
         | ClosureT(a,r),_ -> apply_closuret d la (a,r) ra ret
-        | (VVT(_,name) | StructT(TyVV(_,VVT(_,name)))),_ -> apply_named_tuple tev d name ra on_fail ret
+        | (VVT(_,name) | StructT(TyVV(_,VVT(_,name)))),_ when name <> "" -> apply_named_tuple tev d name ra on_fail ret
         | _ -> d.on_type_er "Trying to apply a type other than InlineableT or MethodT."
 
     and apply_type d (env,core as fun_key) args_ty on_fail ret =
