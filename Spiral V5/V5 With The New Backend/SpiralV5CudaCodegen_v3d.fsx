@@ -408,8 +408,10 @@ fun top() = meth()
 top()
     """
 
-let tuple_library =
+let core_library =
     """
+inl ignore _ = ()
+inl id x = x
 inl tuple =
     inl rec tuple_foldl f s l =
         typecase l with
@@ -420,7 +422,6 @@ inl tuple =
         | x :: xs -> f x (tuple_foldr f s xs)
         | () -> s
     
-    inl id x = x
     inl tuple_rev, tuple_map =
         inl tuple_map' f l = tuple_foldl (inl s x -> f x :: s) () l
         inl tuple_rev l = tuple_map' id l
@@ -511,12 +512,13 @@ fun top() =
     inl l = 66,77
     inl m = 88,99
     inl n = 123,456
+    
     ignore 12
     tuple_zip ((j,k),(l,m),n) |> tuple_unzip
 top ()
     """
 
-let r = spiral_codegen default_dims tuple_library
+let r = spiral_codegen default_dims core_library
 
 printfn "%A" r
 

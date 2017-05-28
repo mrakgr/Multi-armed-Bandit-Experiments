@@ -31,18 +31,18 @@ type CudaTy =
 and Tag = int64
 and TyV = Tag * CudaTy
 and Env = Map<string, TypedExpr>
-and FunctionCore = string * (CudaPattern * Expr) list
+and FunctionCore = string * (Pattern * Expr) list
 and FunctionKey = Env * FunctionCore
 and MemoKey = Env * Expr
 
-and CudaPattern =
-    | A of CudaPattern * string // Type annotation case
-    | A' of CudaPattern * CudaTy
+and Pattern =
+    | A of Pattern * string // Type annotation case
+    | A' of Pattern * CudaTy
     | S of string
     | S' of string // match if not tuple
-    | R of CudaPattern list * CudaPattern option // Tuple
-    | F of CudaPattern * string // Functiona application with retracing.
-    | N of string * CudaPattern // matches a tuple name and proceeds onto the pattern on a hit.
+    | R of Pattern list * Pattern option // Tuple
+    | F of Pattern * string // Functiona application with retracing.
+    | N of string * Pattern // matches a tuple name and proceeds onto the pattern on a hit.
 
 and Value = 
     | LitUInt8 of uint8
@@ -102,7 +102,6 @@ and Op =
     | ErrorNonUnit
     | ErrorType
     | ModuleOpen
-    | Ignore
 
     // UnOps
     | Neg
@@ -331,7 +330,6 @@ let vv x = VV(x,"")
 
 let error_type x = Op(ErrorType, [x])
 let static_print x = Op(StaticPrint,[x])
-let ignore_ x = Op(Ignore,[x])
 let error_non_unit x = Op(ErrorNonUnit, [x])
 
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
@@ -648,14 +646,14 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     and match_all d (env: Env) l (args: TypedExpr) on_fail ret =
         let rec loop = function
-            | (pattern: CudaPattern, body: Expr) :: xs ->
+            | (pattern: Pattern, body: Expr) :: xs ->
                 match_single d env pattern args
                     (fun _ -> loop xs)
                     (fun acc -> ret (acc, body))
             | [] -> on_fail (l,args) //"All patterns in the matcher failed to match."
         loop l
 
-    and match_f d acc (pattern: CudaPattern) args meth on_fail ret =
+    and match_f d acc (pattern: Pattern) args meth on_fail ret =
         tev d (V meth) <| fun r ->
             apply (tev_match_f on_fail) d r args
                 (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
@@ -895,7 +893,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     | Op(Neg,[a]) -> prim_un_numeric d a Neg ret
     | Op(ErrorType,[a]) -> tev d a <| fun a -> d.on_type_er <| sprintf "%A" a
-    | Op(Ignore,[a]) -> tev d a <| fun a -> destructure_deep d a |> ignore; ret TyB
     | Op(ErrorNonUnit,[a]) -> error_non_unit d a ret
 
     | Op(Log,[a]) -> prim_un_floating d a Log ret
@@ -934,7 +931,6 @@ let core_functions =
     s   [
         l (S "errortype") (p error_type)
         l (S "static_print") (p static_print)
-        l (S "ignore") (p ignore_)
         ]
    
 let spiral_typecheck dims body = 
