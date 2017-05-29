@@ -163,19 +163,26 @@ let quoted_string =
             (manyChars (normalChar <|> escapedChar))
     |>> LitString
 
-let lit = 
+let pos (s: CharStream<_>) = Some (s.Line, s.Column)
+let pos_lit pos x = Lit(x,pos)
+
+let lit s = 
     choice 
         [|
         pbool
         pnumber .>> notFollowedBy (satisfy isAsciiIdContinue)
         quoted_string
-        |] |>> Lit .>> spaces
+        |] |>> pos_lit (pos s)  .>> spaces
+    <| s
     
-let var = var_name |>> V
+let pos_var pos x = V(x,pos)
+let var s = var_name |>> pos_var (pos s) <| s
 
+let pos_op x v s = Op(x,v,pos s) |> Reply
 let expr_indent i op expr (s: CharStream<_>) = if op i s.Column then expr s else pzero s
 let if_then_else expr (s: CharStream<_>) =
     let i = s.Column
+    let pos = pos s
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     pipe3
         (skipString "if" >>. spaces1 >>. expr)
@@ -183,17 +190,17 @@ let if_then_else expr (s: CharStream<_>) =
         (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
         (fun cond tr fl -> 
             let fl = match fl with Some x -> x | None -> B
-            Op(If,[cond;tr;fl]))
+            Op(If,[cond;tr;fl],pos))
         s
 
 let name = var_name
 
-let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body)
-let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (inlr' "" pattern body))
-let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (inlr' name pattern body))
-let case_fun_name_pat_list_statement expr = pipe3 (fun_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (methr' "" pattern body))
-let case_fun_rec_name_pat_list_statement expr = pipe3 (fun_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (methr' name pattern body))
-let case_open expr = open_ >>. expr |>> module_open
+let case_inl_pat_statement expr s = let p = pos s in pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body p) s
+let case_inl_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (inlr' "" pattern body p) p) s
+let case_inl_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (inlr' name pattern body p) p) s
+let case_fun_name_pat_list_statement expr s = let p = pos s in pipe3 (fun_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (methr' "" pattern body p) p) s
+let case_fun_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (fun_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S name) (methr' name pattern body p) p) s
+let case_open expr s = let p = pos s in (open_ >>. expr |>> module_open p) s
 
 let statements expr = 
     [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
@@ -201,24 +208,26 @@ let statements expr =
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
-let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list) (lam >>. expr) (fun pattern body -> inl' pattern body)
-let case_fun_pat_list_expr expr = pipe2 (fun_ >>. pattern_list) (lam >>. expr) (fun pattern body -> meth' pattern body)
-let case_inl_rec_name_pat_list_expr expr = pipe3 (inl_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> inlr' name pattern body)
-let case_fun_rec_name_pat_list_expr expr = pipe3 (fun_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> methr' name pattern body)
+let case_inl_pat_list_expr expr s = let p = pos s in pipe2 (inl_ >>. pattern_list) (lam >>. expr) (fun pattern body -> inl' pattern body p) s
+let case_fun_pat_list_expr expr s = let p = pos s in pipe2 (fun_ >>. pattern_list) (lam >>. expr) (fun pattern body -> meth' pattern body p) s
+let case_inl_rec_name_pat_list_expr expr s = let p = pos s in pipe3 (inl_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> inlr' name pattern body p) s
+let case_fun_rec_name_pat_list_expr expr s = let p = pos s in pipe3 (fun_rec >>. name) pattern_list (lam >>. expr) (fun name pattern body -> methr' name pattern body p) s
 
 let case_lit expr = lit
 let case_if_then_else expr = if_then_else expr 
 let case_rounds expr = rounds (expr <|>% B)
-let case_named_tuple expr = 
+let case_named_tuple expr s = 
+    let p = pos s
     pipe2 (dot >>. type_name)
         (case_rounds expr)
         (fun name -> function
-            | VV (args, "") -> VV(args,name)
-            | args -> VV([args],name))
+            | VV (args, "", p) -> VV(args,name,p)
+            | args -> VV([args],name,p)) s
 let case_var expr = var
 
 let inline case_typex match_type expr (s: CharStream<_>) =
     let mutable i = None
+    let p = pos s
     let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
     let pat_body = expr_indent (<=) patterns .>> expr_indent (<=) lam
     let pat_first = expr_indent (<=) (optional bar) >>. pat_body
@@ -229,20 +238,20 @@ let inline case_typex match_type expr (s: CharStream<_>) =
     | true -> // typeinl
         pipe2 (typeinl >>. set_col >>. case_case pat_first)
             (many (case_case pat))
-            (fun x xs -> function_ (x :: xs)) s    
+            (fun x xs -> function_ (x :: xs) p) s    
     | false -> // typecase
         pipe3 (typecase >>. expr .>> with_ .>> set_col)
             (case_case pat_first)
             (many (case_case pat))
-            (fun e x xs -> match_ e (x :: xs)) s
+            (fun e x xs -> match_ e (x :: xs) p) s
 
 let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
 let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
-let case_module expr = module_ >>% module_create
+let case_module expr s = let p = pos s in (module_ >>% module_create p) s
 
-let case_apply_type expr = grave >>. expr |>> ap_ty
-let case_apply_module expr = dot >>. var_name |>> ap_mod
+let case_apply_type expr s = let p = pos s in (grave >>. expr |>> ap_ty p) s
+let case_apply_module expr s = let p = pos s in (dot >>. var_name |>> ap_mod p) s
 
 
 let expressions expr =
@@ -257,7 +266,7 @@ let process_parser_exprs exprs =
     let process_parser_expr a b on_fail on_succ =
         match a,b with
         | ParserStatement a, ParserExpr b -> a b |> ParserExpr |> on_succ
-        | ParserExpr a, ParserExpr b -> l E (error_non_unit a) b |> ParserExpr |> on_succ
+        | ParserExpr a, ParserExpr b -> l E (error_non_unit a) (get_pos a) b |> ParserExpr |> on_succ
         | _, ParserStatement _ -> on_fail error_statement_in_last_pos
 
     let process_parser_exprs l =
@@ -288,10 +297,12 @@ let indentations statements expressions (s: CharStream<_>) =
         many1 (expr .>> optional semicolon)
     expr_indent ((statements |>> ParserStatement) <|> (expressions i |>> ParserExpr)) >>= process_parser_exprs <| s
 
+let ppos s = Reply(pos s)
+
 let application expr (s: CharStream<_>) =
     let i = s.Column
     let expr_up expr (s: CharStream<_>) = expr_indent i (<) expr s
-    let ap_cr = expr |>> flip ap |> expr_up
+    let ap_cr = pipe2 ppos expr (fun pos x y -> ap pos y x) |> expr_up
     
     let f a l = List.fold (fun s x -> x s) a l
     pipe2 expr (many ap_cr) f s
@@ -300,7 +311,7 @@ let tuple expr i (s: CharStream<_>) =
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     sepBy1 (expr_indent (expr i)) (expr_indent comma)
     |>> function
-        | _ :: _ :: _ as l -> vv l
+        | x :: _ :: _ as l -> vv (get_pos x) l
         | x :: _ -> x
         | _ -> failwith "impossible"
     <| s
@@ -308,17 +319,18 @@ let tuple expr i (s: CharStream<_>) =
 
 let mset expr i (s: CharStream<_>) = 
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
+    let p = pos s
     pipe2 (expr i)
         (opt (expr_indent set_me >>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
         (fun l -> function
-            | Some r -> Op(MSet,[l;r])
+            | Some r -> Op(MSet,[l;r],p)
             | None -> l) s
 
 let expr: Parser<_,unit> =
     let dict_operator = d0()
     let add_infix_operator assoc str prec op = dict_operator.Add(str, (prec, assoc, fun x y -> op x y))
 
-    let binop op a b = Op(op,[a;b])
+    let binop op a b pos = Op(op,[a;b],pos)
 
     let left_assoc_ops = 
         let f = add_infix_operator Associativity.Left
@@ -330,7 +342,7 @@ let expr: Parser<_,unit> =
 
         f "<|" 10 apply
         f "|>" 10 (flip apply)
-        let compose a b = inl (S "x") (apply a (apply b (V "x")))
+        let compose a b pos = inl (S "x") (apply a (apply b (V ("x",pos)) pos) pos) pos
         f "<<" 10 compose
         f ">>" 10 (flip compose)
 
@@ -344,13 +356,15 @@ let expr: Parser<_,unit> =
         f "&&" 30 And
         f "::" 50 VVCons
 
-    let poperator: Parser<_,_> =
+    let poperator s =
         let f c = (isAsciiIdContinue c || isAnyOf [|'.';' ';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
+        let p = pos s
         (many1Satisfy f .>> spaces)
         >>= fun token ->
             match dict_operator.TryGetValue token with
-            | true, x -> preturn x
+            | true, (prec,asoc,m) -> preturn (prec,asoc,fun a b -> m a b p)
             | false, _ -> fail "unknown operator"
+        <| s
 
     let rec led poperator term left (prec,asoc,m) =
         match asoc with

@@ -118,13 +118,16 @@ and Op =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
 
+and PosKey = int64 * int64
+and Pos = PosKey option
+
 and Expr = 
-    | V of string
-    | T of TypedExpr
-    | Lit of Value
-    | Function of FunctionCore * Set<string> ref
-    | VV of Expr list * string // named tuple
-    | Op of Op * Expr list
+    | V of string * Pos
+    | T of TypedExpr * Pos
+    | Lit of Value * Pos
+    | Function of FunctionCore * Set<string> ref * Pos
+    | VV of Expr list * string * Pos // named tuple
+    | Op of Op * Expr list * Pos
 
 and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
@@ -274,23 +277,23 @@ let is_arg = function TyV _ -> true | _ -> false
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
-let fun_ name pat = Function((name,pat),ref Set.empty)
+let fun_ name pat pos = Function((name,pat),ref Set.empty,pos)
 let inlr name x y = fun_ name [x,y]
 let inl x y = inlr "" x y
-let ap x y = Op(Apply,[x;y])
-let ap_ty x = Op(ApplyType,[x])
-let ap_mod x = Op(ApplyModule,[V x])
-let l v b e = ap (inl v e) b
+let ap pos x y = Op(Apply,[x;y],pos)
+let ap_ty pos x = Op(ApplyType,[x],pos)
+let ap_mod pos x = Op(ApplyModule,[V (x, pos)], pos)
+let l v b pos e = ap pos (inl v e pos) b
     
-let meth_memo y = Op(MethodMemoize, [y])
-let methr name x y = inlr name x (meth_memo y) 
+let meth_memo y = Op(MethodMemoize,[y],None)
+let methr name x y pos = inlr name x (meth_memo y) pos
 let meth x y = methr "" x y
 
-let module_create = Op(ModuleCreate,[])
-let module_open a b = Op(ModuleOpen,[a;b])
+let module_create pos = Op(ModuleCreate,[],pos)
+let module_open pos a b = Op(ModuleOpen,[a;b],pos)
 
 let E = S ""
-let B = VV ([], "")
+let B = VV ([], "", None)
 let BVVT = VVT ([], "")
 let TyB = TyVV([], BVVT)
 /// Matches tuples without a tail.
@@ -300,37 +303,45 @@ let SS' x = R ([], Some (S x))
 /// Matches tuples with a tail.
 let SSS a b = R(a, Some (S b)) 
 
-let cons a b = Op(VVCons,[a;b])
+let t x = T(x,None)
+let v x = V(x,None)
+
+let cons a b pos = Op(VVCons,[a;b],pos)
 
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let rec ap' f = function
-    | x :: xs -> ap' (ap f x) xs
+let rec ap' f l pos =
+    match l with
+    | x :: xs -> ap' (ap pos f x) xs pos
     | [] -> f
 
-let match_ x pat = ap (fun_ "" pat) x
+let match_ x pat pos = ap pos (fun_ "" pat pos) x
 let function_ pat = fun_ "" pat
 
-let rec inlr' name args body = 
+let rec inlr' name args body pos =
     match args with
-    | x :: xs -> inlr name x (inlr' "" xs body)
+    | x :: xs -> inlr name x (inlr' "" xs body None) pos
     | [] -> body
 
 let rec inl' args body = inlr' "" args body
 
-let rec methr' name args body = 
+let rec methr' name args body pos =
     match args with
-    | [x] -> methr name x body
-    | x :: xs -> inlr name x (methr' "" xs body)
+    | [x] -> methr name x body pos
+    | x :: xs -> inlr name x (methr' "" xs body None) pos
     | [] -> body
 
 let meth' args body = methr' "" args body
 
-let vv x = VV(x,"")
+let vv pos x = VV(x,"",pos)
 
-let error_type x = Op(ErrorType, [x])
-let static_print x = Op(StaticPrint,[x])
-let error_non_unit x = Op(ErrorNonUnit, [x])
+let error_type x = Op(ErrorType, [x], None)
+let static_print x = Op(StaticPrint,[x], None)
+
+let get_pos = function
+    | Lit(_,pos) | T(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,_,pos) | Op(_,_,pos) -> pos
+
+let error_non_unit x = Op(ErrorNonUnit, [x], get_pos x)
 
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
@@ -340,12 +351,12 @@ let expr_free_variables e =
         let f e = expr_free_variables vars_for_module e
         let f' bound_vars e = expr_free_variables bound_vars e
         match e with
-        | Op(ModuleCreate,[]) -> vars_for_module
-        | Op(ApplyModule,_) -> Set.empty
+        | Op(ModuleCreate,[],_) -> vars_for_module
+        | Op(ApplyModule,_,_) -> Set.empty
     
-        | V n -> Set.singleton n
-        | Op(_,l) | VV(l,_) -> vars_union f l
-        | Function((name,l),free_var_set) ->
+        | V (n,_) -> Set.singleton n
+        | Op(_,l,_) | VV(l,_,_) -> vars_union f l
+        | Function((name,l),free_var_set,_) ->
             let rec pat_template on_name on_expr p = 
                 let g p = pat_template on_name on_expr p
                 match p with
@@ -464,13 +475,16 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) =
     let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
     typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo)
 
+type Trace = PosKey list
+
 type LangEnv<'a,'c,'d,'q,'e,'r> =
     {
     ltag : int64 ref
     seq : (TypedExpr -> TypedExpr) ref
     env : Map<string,TypedExpr>
+    trace : Trace
     on_match_break : 'a -> 'q
-    on_type_er : 'c -> 'e
+    on_type_er : Trace -> 'c -> 'e
     on_rec : 'd -> 'r
     }
 
@@ -483,7 +497,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let inline tev_method d expr ret = tev_seq {d with ltag=ref 0L} expr ret
     let inline tev_match_f on_match_break d expr ret = tev_seq {d with on_match_break=on_match_break} expr ret
 
-    let v env x on_fail ret = 
+    let v_find env x on_fail ret = 
         match Map.tryFind x env with
         | Some v -> ret v
         | None -> on_fail()
@@ -498,7 +512,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let if_ d cond tr fl ret =
         tev d cond <| fun cond ->
-            if is_bool cond = false then d.on_type_er <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+            if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else
                 let fin (tr,fl) =
                     let type_tr, type_fl = get_type tr, get_type fl
@@ -508,7 +522,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                         | TyLit(LitBool false) -> fl
                         | _ -> TyOp(If,[cond;tr;fl],type_tr)
                         |> ret
-                    else d.on_type_er <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+                    else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
                 let mutable fl' = None
                 tev_if d tr 
@@ -597,7 +611,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
         eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
             let typed_expr_ty = get_type typed_expr
-            if is_returnable' typed_expr_ty = false then d.on_type_er <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
+            if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
 
     let memoize_method d x ret = 
@@ -617,11 +631,11 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
     let inline match_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
 
-    let apply_module env b ret = 
-        v env b (fun () -> d.on_type_er <| sprintf "Cannot find a function named %s inside the module." b) ret
+    let apply_module d module_ b ret = 
+        v_find module_ b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
     
     let rec match_a d annot args on_fail ret = 
-        tev d (V annot) <| fun r ->
+        tev d (V (annot,None)) <| fun r ->
             match_a' (get_type r) args on_fail ret
 
     and match_single d (acc: Env) l r on_fail ret =
@@ -654,17 +668,17 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         loop l
 
     and match_f d acc (pattern: Pattern) args meth on_fail ret =
-        tev d (V meth) <| fun r ->
+        tev d (v meth) <| fun r ->
             apply (tev_match_f on_fail) d r args
                 (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
                 (fun r -> 
                     match_single d acc pattern (destructure_deep d r)
-                        (fun _ -> d.on_type_er "The function call subpattern in the matcher failed to match.")
+                        (fun _ -> d.on_type_er d.trace "The function call subpattern in the matcher failed to match.")
                         ret)
 
     and apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
-        if arg_ty <> clo_arg_ty then d.on_type_er <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
+        if arg_ty <> clo_arg_ty then d.on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         else TyOp(Apply,[clo;arg],clo_ret_ty) |> ret
 
     and apply_functiont tev d (initial_env,(name,l) as fun_key) args on_fail ret =
@@ -677,30 +691,30 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     and apply_named_tuple tev d name ra on_fail ret =
         let oname = "overload_ap_" + name
-        v d.env oname (fun () -> d.on_type_er <| sprintf "Cannot find an application overload for the tuple %s. %s is not in scope." name oname) <| fun la ->
+        v_find d.env oname (fun () -> d.on_type_er d.trace <| sprintf "Cannot find an application overload for the tuple %s. %s is not in scope." name oname) <| fun la ->
             apply tev d la ra on_fail ret
 
     and apply tev d la ra on_fail ret =
         match get_type la, get_type ra with
         | FunctionT x, ForApplyT t -> apply_type d x t on_fail ret
-        | x, ForApplyT t -> d.on_type_er <| sprintf "Expected a function type in type application. Got: %A" x
-        | ModuleT x, ForModuleT n -> apply_module x n ret
-        | x, ForModuleT n -> d.on_type_er <| sprintf "Expected a module type in module application. Got: %A" x
+        | x, ForApplyT t -> d.on_type_er d.trace <| sprintf "Expected a function type in type application. Got: %A" x
+        | ModuleT x, ForModuleT n -> apply_module d x n ret
+        | x, ForModuleT n -> d.on_type_er d.trace <| sprintf "Expected a module type in module application. Got: %A" x
         | FunctionT x,_ -> apply_functiont tev d x ra on_fail ret
         | ClosureT(a,r),_ -> apply_closuret d la (a,r) ra ret
         | (VVT(_,name) | StructT(TyVV(_,VVT(_,name)))),_ when name <> "" -> apply_named_tuple tev d name ra on_fail ret
-        | _ -> d.on_type_er "Trying to apply a type other than InlineableT or MethodT."
+        | _ -> d.on_type_er d.trace "Trying to apply a type other than InlineableT or MethodT."
 
     and apply_type d (env,core as fun_key) args_ty on_fail ret =
-        if env_num_args env > 0 then d.on_type_er <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
+        if env_num_args env > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
         else
             let args =
                 let f x = TyType x |> make_tyv_and_push_inv d
                 match args_ty with
                 | VVT(l,n) -> TyVV(List.map f l, args_ty)
                 | x -> f x
-            let f = FunctionT fun_key |> TyType |> T
-            let g = FunctionT(env,("",[S " ",ap f (V " ")])) |> TyType
+            let f = FunctionT fun_key |> TyType |> t
+            let g = FunctionT(env,("",[S " ",ap None f (v " ")])) |> TyType
             let tev d x = memoize_closure (get_type args) d x
             apply tev d g args on_fail ret
 
@@ -720,7 +734,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             let r = destructure_deep d r
             match l, r with
             | TyOp(ArrayIndex,[_;_],lt), r when lt = get_type r -> make_tyv_and_push d (TyOp(MSet,[l;r],BVVT)) |> ret
-            | _ -> d.on_type_er <| sprintf "Error in mset. Expected: TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
+            | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
 
     let vv_index d v i ret =
         tev2 d v i <| fun v i ->
@@ -729,22 +743,21 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 match get_type v with
                 | VVT (ts,"") -> 
                     if i >= 0 || i < List.length ts then TyOp(VVIndex,[v;TyLit i'],ts.[i]) |> ret
-                    else d.on_type_er "(i >= 0 || i < List.length ts) = false in IndexVT"
-                | VVT (ts, name) -> d.on_type_er <| sprintf "Named tuples (%s) can't be indexed directly. They must be pattern matched on the name first." name
-                | x -> d.on_type_er <| sprintf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
-            | v, i ->
-                d.on_type_er <| sprintf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
+                    else d.on_type_er d.trace "(i >= 0 || i < List.length ts) = false in IndexVT"
+                | VVT (ts, name) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be indexed directly. They must be pattern matched on the name first." name
+                | x -> d.on_type_er d.trace <| sprintf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
+            | v, i -> d.on_type_er d.trace <| sprintf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
     
     let vv_cons d a b ret =
         tev2 d a b <| fun a b ->
             let b = destructure_deep d b
             match b with
             | TyVV(b, VVT (bt, "")) -> TyVV(a::b, VVT (get_type a :: bt, "")) |> ret
-            | TyVV(_, VVT (_, name)) -> d.on_type_er <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
-            | _ -> d.on_type_er "Expected a tuple on the right is in VVCons."
+            | TyVV(_, VVT (_, name)) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
+            | _ -> d.on_type_er d.trace "Expected a tuple on the right is in VVCons."
 
     let guard_is_int d args ret = 
-        if List.forall is_int args = false then d.on_type_er <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" args
+        if List.forall is_int args = false then d.on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" args
         else ret()
 
     let array_create d name size typeof_expr ret =
@@ -765,8 +778,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 | StructT (Array(_,size,typ)) ->
                     let lar, largs = size.Length, fargs.Length
                     if lar = largs then TyOp(ArrayIndex,[ar;args],typ) |> ret
-                    else d.on_type_er <| sprintf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
-                | _ -> d.on_type_er <| sprintf "Array index needs the Array.Got: %A" ar
+                    else d.on_type_er d.trace <| sprintf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
+                | _ -> d.on_type_er d.trace <| sprintf "Array index needs the Array.Got: %A" ar
 
     let module_open d a b ret =
         tev d a <| fun a ->
@@ -774,15 +787,12 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             | ModuleT x -> 
                 let env = Map.fold (fun s k v -> Map.add k v s) d.env x
                 tev {d with env = env} b ret
-            | x -> d.on_type_er <| sprintf "The open expected a module type as input. Got: %A" x
+            | x -> d.on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
 
     let prim_bin_op_template d check_error is_check k a b t ret =
-        let constraint_both_eq_numeric f =
-            tev2 d a b <| fun a b ->
-                if is_check a b then k t a b |> ret
-                else f (check_error a b)
-
-        constraint_both_eq_numeric d.on_type_er
+        tev2 d a b <| fun a b ->
+            if is_check a b then k t a b |> ret
+            else d.on_type_er d.trace (check_error a b)
 
     let prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
     let prim_un_op_helper t a = TyOp(t,[a],get_type a)
@@ -814,12 +824,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         prim_bin_op_template d er check prim_bin_op_helper
 
     let prim_un_op_template d check_error is_check k a t ret =
-        let constraint_numeric f =
-            tev d a <| fun a ->
-                if is_check a then k t a |> ret
-                else f (check_error a)
-
-        constraint_numeric d.on_type_er
+        tev d a <| fun a ->
+            if is_check a then k t a |> ret
+            else d.on_type_er d.trace (check_error a)
 
     let prim_un_floating d = 
         let er = sprintf "`is_float a` is false.\na=%A"
@@ -837,106 +844,132 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let error_non_unit d a ret =
         tev d a <| fun x ->
             if get_type x <> BVVT then
-                d.on_type_er <| sprintf "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such. %A" x
+                d.on_type_er d.trace <| sprintf "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such. %A" x
             else
                 ret x
 
+    let add_trace d pos = 
+        match pos with
+        | Some x -> {d with trace = x :: d.trace}
+        | None -> d
+        
     match expr with
-    | Lit value -> TyLit value |> ret
-    | T x -> x |> ret
-    | V x -> v d.env x (fun () -> d.on_type_er <| sprintf "Variable %A not bound." x) ret
-    | Function (core, free_var_set) -> 
+    | Lit (value,_) -> TyLit value |> ret
+    | T (x, _) -> x |> ret
+    | V (x, pos) -> v_find d.env x (fun () -> d.on_type_er (add_trace d pos).trace <| sprintf "Variable %A not bound." x) ret
+    | Function (core, free_var_set, _) -> 
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
         TyType(FunctionT(env,core)) |> ret
-    | VV(vars,name) -> vars_map d vars (fun vv -> TyVV(vv, VVT(List.map get_type vv, name)) |> ret)
-    | Op(If,[cond;tr;fl]) -> if_ d cond tr fl ret
-    | Op(Apply,[a;b]) -> apply_tev d a b (fun _ -> Fail "All the match cases were exhausted.") ret
-    | Op(MethodMemoize,[a]) -> memoize_method d a ret
-    | Op(ApplyType,[x]) -> for_apply_type d x ret
+    | VV(vars,name, pos) -> vars_map (add_trace d pos) vars (fun vv -> TyVV(vv, VVT(List.map get_type vv, name)) |> ret)
+
+    | Op(op,vars,pos) ->
+        let d = add_trace d pos
+        match op, vars with
+        | If,[cond;tr;fl] -> if_ d cond tr fl ret
+        | Apply,[a;b] -> apply_tev d a b (fun _ -> d.on_type_er d.trace "All the match cases were exhausted.") ret
+        | MethodMemoize,[a] -> memoize_method d a ret
+        | ApplyType,[x] -> for_apply_type d x ret
         
-    | Op(ApplyModule,[V x]) -> x |> ForModuleT |> TyType |> ret
-    | Op(ModuleOpen,[a;b]) -> module_open d a b ret
-    | Op(StaticPrint,[a]) -> tev d a <| fun r -> printfn "%A" r; ret TyB
+        | ApplyModule,[V (x,_)] -> x |> ForModuleT |> TyType |> ret
+        | ModuleOpen,[a;b] -> module_open d a b ret
+        | StaticPrint,[a] -> tev d a <| fun r -> printfn "%A" r; ret TyB
 
-    // Primitive operations on expressions.
-    | Op(Add,[a;b]) -> prim_arith_op d a b Add ret
-    | Op(Sub,[a;b]) -> prim_arith_op d a b Sub ret 
-    | Op(Mult,[a;b]) -> prim_arith_op d a b Mult ret
-    | Op(Div,[a;b]) -> prim_arith_op d a b Div ret
-    | Op(Mod,[a;b]) -> prim_arith_op d a b Mod ret
+        // Primitive operations on expressions.
+        | Add,[a;b] -> prim_arith_op d a b Add ret
+        | Sub,[a;b] -> prim_arith_op d a b Sub ret 
+        | Mult,[a;b] -> prim_arith_op d a b Mult ret
+        | Div,[a;b] -> prim_arith_op d a b Div ret
+        | Mod,[a;b] -> prim_arith_op d a b Mod ret
 
-    | Op(LT,[a;b]) -> prim_comp_op d a b LT ret
-    | Op(LTE,[a;b]) -> prim_comp_op d a b LTE ret
-    | Op(EQ,[a;b]) -> prim_comp_op d a b EQ ret
-    | Op(NEQ,[a;b]) -> prim_comp_op d a b NEQ ret 
-    | Op(GT,[a;b]) -> prim_comp_op d a b GT ret
-    | Op(GTE,[a;b]) -> prim_comp_op d a b GTE ret
+        | LT,[a;b] -> prim_comp_op d a b LT ret
+        | LTE,[a;b] -> prim_comp_op d a b LTE ret
+        | EQ,[a;b] -> prim_comp_op d a b EQ ret
+        | NEQ,[a;b] -> prim_comp_op d a b NEQ ret 
+        | GT,[a;b] -> prim_comp_op d a b GT ret
+        | GTE,[a;b] -> prim_comp_op d a b GTE ret
     
-    | Op(And,[a;b]) -> prim_bool_op d a b And ret
-    | Op(Or,[a;b]) -> prim_bool_op d a b Or ret
+        | And,[a;b] -> prim_bool_op d a b And ret
+        | Or,[a;b] -> prim_bool_op d a b Or ret
 
-    | Op(ShiftLeft,[a;b]) -> prim_shift_op d a b ShiftLeft ret
-    | Op(ShiftRight,[a;b]) -> prim_shift_op d a b ShiftRight ret
+        | ShiftLeft,[a;b] -> prim_shift_op d a b ShiftLeft ret
+        | ShiftRight,[a;b] -> prim_shift_op d a b ShiftRight ret
 
-    | Op(ShuffleXor,[a;b]) -> prim_shuffle_op d a b ShuffleXor ret
-    | Op(ShuffleUp,[a;b]) -> prim_shuffle_op d a b ShuffleUp ret
-    | Op(ShuffleDown,[a;b]) -> prim_shuffle_op d a b ShuffleDown ret
-    | Op(ShuffleIndex,[a;b]) -> prim_shuffle_op d a b ShuffleIndex ret
+        | ShuffleXor,[a;b] -> prim_shuffle_op d a b ShuffleXor ret
+        | ShuffleUp,[a;b] -> prim_shuffle_op d a b ShuffleUp ret
+        | ShuffleDown,[a;b] -> prim_shuffle_op d a b ShuffleDown ret
+        | ShuffleIndex,[a;b] -> prim_shuffle_op d a b ShuffleIndex ret
 
-    | Op(VVIndex,[a;b]) -> vv_index d a b ret
-    | Op(VVCons,[a;b]) -> vv_cons d a b ret
+        | VVIndex,[a;b] -> vv_index d a b ret
+        | VVCons,[a;b] -> vv_cons d a b ret
 
-    | Op(ArrayCreate,[a;b]) -> array_create d "Array" a b ret
-    | Op(ArrayCreateShared,[a;b]) -> array_create d "ArrayShared" a b ret
-    | Op(ArrayIndex,[a;b]) -> array_index d a b ret
-    | Op(MSet,[a;b]) -> mset d a b ret
+        | ArrayCreate,[a;b] -> array_create d "Array" a b ret
+        | ArrayCreateShared,[a;b] -> array_create d "ArrayShared" a b ret
+        | ArrayIndex,[a;b] -> array_index d a b ret
+        | MSet,[a;b] -> mset d a b ret
 
-    | Op(Neg,[a]) -> prim_un_numeric d a Neg ret
-    | Op(ErrorType,[a]) -> tev d a <| fun a -> d.on_type_er <| sprintf "%A" a
-    | Op(ErrorNonUnit,[a]) -> error_non_unit d a ret
+        | Neg,[a] -> prim_un_numeric d a Neg ret
+        | ErrorType,[a] -> tev d a <| fun a -> d.on_type_er d.trace <| sprintf "%A" a
+        | ErrorNonUnit,[a] -> error_non_unit d a ret
 
-    | Op(Log,[a]) -> prim_un_floating d a Log ret
-    | Op(Exp,[a]) -> prim_un_floating d a Exp ret
-    | Op(Tanh,[a]) -> prim_un_floating d a Tanh ret
+        | Log,[a] -> prim_un_floating d a Log ret
+        | Exp,[a] -> prim_un_floating d a Exp ret
+        | Tanh,[a] -> prim_un_floating d a Tanh ret
 
-    // Constants
-    | Op(BlockDimX,[]) -> uint64 blockDim.x |> LitUInt64 |> TyLit |> ret
-    | Op(BlockDimY,[]) -> uint64 blockDim.y |> LitUInt64 |> TyLit |> ret
-    | Op(BlockDimZ,[]) -> uint64 blockDim.z |> LitUInt64 |> TyLit |> ret
-    | Op(GridDimX,[]) -> uint64 gridDim.x |> LitUInt64 |> TyLit |> ret
-    | Op(GridDimY,[]) -> uint64 gridDim.y |> LitUInt64 |> TyLit |> ret
-    | Op(GridDimZ,[]) -> uint64 gridDim.z |> LitUInt64 |> TyLit |> ret
+        // Constants
+        | BlockDimX,[] -> uint64 blockDim.x |> LitUInt64 |> TyLit |> ret
+        | BlockDimY,[] -> uint64 blockDim.y |> LitUInt64 |> TyLit |> ret
+        | BlockDimZ,[] -> uint64 blockDim.z |> LitUInt64 |> TyLit |> ret
+        | GridDimX,[] -> uint64 gridDim.x |> LitUInt64 |> TyLit |> ret
+        | GridDimY,[] -> uint64 gridDim.y |> LitUInt64 |> TyLit |> ret
+        | GridDimZ,[] -> uint64 gridDim.z |> LitUInt64 |> TyLit |> ret
 
-    | Op(Syncthreads,[]) -> TyOp(Syncthreads,[],BVVT) |> ret
-    | Op((ThreadIdxX | ThreadIdxY 
-           | ThreadIdxZ | BlockIdxX | BlockIdxY 
-           | BlockIdxZ as constant),[]) -> TyOp(constant,[],PrimT UInt64T) |> ret
+        | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
+        | (ThreadIdxX | ThreadIdxY 
+               | ThreadIdxZ | BlockIdxX | BlockIdxY 
+               | BlockIdxZ as constant),[] -> TyOp(constant,[],PrimT UInt64T) |> ret
 
-    | Op(ModuleCreate,[]) -> TyType(ModuleT d.env) |> ret
-    | Op _ -> failwith "Missing Op case."
+        | ModuleCreate,[] -> TyType(ModuleT d.env) |> ret
+        | _ -> failwith "Missing Op case."
 
 
 /// Reasonable default for the dims.
 let default_dims = dim3(256), dim3(20)
 
-let data_empty() =
+let print_type_error (code: string) (trace: Trace) message = 
+    let code = code.Split [|'\n'|]
+    let error = System.Text.StringBuilder(1024)
+    error.AppendLine message |> ignore
+    let rec loop prev_line = function
+        | (line: int64, col: int64) :: xs ->
+            if prev_line <> line then
+                let er_code = code.[int line - 1]
+                error.AppendLine <| sprintf "Error trace on line: %i, column: %i" line col |> ignore
+                error.AppendLine er_code |> ignore
+                let col = int (col - 1L)
+                for i=1 to col do error.Append(' ') |> ignore
+                error.AppendLine "^" |> ignore
+            loop line xs
+        | [] -> error.ToString()
+    loop -1L trace
+
+let data_empty code =
     let on_match_break _ = Fail "The match broke to the top level."
-    let on_type_er x = Fail x
+    let on_type_er trace message = Fail <| print_type_error code trace message
     let on_rec _ = Fail "The method is divergent"
-    {ltag=ref 0L;seq=ref id;env=Map.empty;on_match_break=on_match_break
-     on_type_er=on_type_er;on_rec=on_rec}
+    {ltag=ref 0L;seq=ref id;trace=[];env=Map.empty;
+     on_match_break=on_match_break;on_type_er=on_type_er;on_rec=on_rec}
 
 let core_functions =
-    let p f = inl (S "x") (f (V "x"))
+    let p f = inl (S "x") (f (v "x")) None
     s   [
-        l (S "errortype") (p error_type)
-        l (S "static_print") (p static_print)
+        l (S "errortype") (p error_type) None
+        l (S "static_print") (p static_print) None
         ]
    
-let spiral_typecheck dims body = 
+let spiral_typecheck code dims body = 
     let method_tag = ref 0L
     let memoized_methods = d0()
-    let d = data_empty()
+    let d = data_empty code
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
     let deforest_tuples x = 

@@ -332,10 +332,10 @@ let print_method_dictionary (imemo: MemoDict) =
 open SpiralV5Parser_v2b
 open FParsec
 
-let spiral_codegen dims body = 
-    match spiral_parse body with
+let spiral_codegen dims code = 
+    match spiral_parse code with
     | Success(r,_,_) ->
-        match spiral_typecheck dims r with
+        match spiral_typecheck code dims r with
         | Succ(_,memo) -> print_method_dictionary memo
         | Fail er -> Fail (er,"")
     | Failure(er,_,_) -> 
@@ -378,17 +378,6 @@ fun t() =
     inl f = add `((3*2,4/3),(5-1,5))
     f ((1,1),(2,2)), f((2,2),(2,2))
 t()
-    """
-
-let zip =
-    """
-inl rec tuple_fold f s l =
-    typecase l with
-    | x :: xs -> tuple_fold f (f s x) xs
-    | _ -> s
-
-inl transpose l on_fail succ =
-    
     """
 
 let rec1 =
@@ -513,12 +502,19 @@ fun top() =
     inl m = 88,99
     inl n = 123,456
     
-    ignore 12
     tuple_zip ((j,k),(l,m),n) |> tuple_unzip
 top ()
     """
 
-let r = spiral_codegen default_dims core_library
+let fib_acc_er =
+    """
+inl fib n =
+    fun rec fib n a b = if n >= 0 then fib (n-1) b (a+b) else a + 8.8
+    fib n 0 1
+fib 2
+    """
+
+let r = spiral_codegen default_dims fib_acc_er
 
 printfn "%A" r
 
