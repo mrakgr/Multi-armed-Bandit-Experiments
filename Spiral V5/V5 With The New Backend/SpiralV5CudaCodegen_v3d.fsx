@@ -332,8 +332,8 @@ let print_method_dictionary (imemo: MemoDict) =
 open SpiralV5Parser_v2b
 open FParsec
 
-let spiral_codegen dims code = 
-    match spiral_parse code with
+let spiral_codegen dims (name, code as n) = 
+    match spiral_parse n with
     | Success(r,_,_) ->
         match spiral_typecheck code dims r with
         | Succ(_,memo) -> print_method_dictionary memo
@@ -507,6 +507,7 @@ top ()
     """
 
 let fib_acc_er =
+    "fibonacci_acc_er",
     """
 inl fib n =
     fun rec fib n a b = if n >= 0 then fib (n-1) b (a+b) else a + 8.8

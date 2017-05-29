@@ -118,7 +118,7 @@ and Op =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
 
-and PosKey = int64 * int64
+and PosKey = string * int64 * int64
 and Pos = PosKey option
 
 and Expr = 
@@ -939,18 +939,19 @@ let print_type_error (code: string) (trace: Trace) message =
     let code = code.Split [|'\n'|]
     let error = System.Text.StringBuilder(1024)
     error.AppendLine message |> ignore
-    let rec loop prev_line = function
-        | (line: int64, col: int64) :: xs ->
-            if prev_line <> line then
+    let rec loop prev_file prev_line = function
+        | (file, line: int64, col: int64) :: xs ->
+            if prev_file <> file || prev_line <> line then
                 let er_code = code.[int line - 1]
-                error.AppendLine <| sprintf "Error trace on line: %i, column: %i" line col |> ignore
+                let er_file = if file <> "" then sprintf " in file \"%s\"." file else file
+                error.AppendLine <| sprintf "Error trace on line: %i, column: %i%s" line col er_file |> ignore
                 error.AppendLine er_code |> ignore
                 let col = int (col - 1L)
                 for i=1 to col do error.Append(' ') |> ignore
                 error.AppendLine "^" |> ignore
-            loop line xs
+            loop file line xs
         | [] -> error.ToString()
-    loop -1L trace
+    loop "" -1L trace
 
 let data_empty code =
     let on_match_break _ = Fail "The match broke to the top level."

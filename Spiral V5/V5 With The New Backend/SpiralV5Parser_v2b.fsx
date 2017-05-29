@@ -163,7 +163,7 @@ let quoted_string =
             (manyChars (normalChar <|> escapedChar))
     |>> LitString
 
-let pos (s: CharStream<_>) = Some (s.Line, s.Column)
+let pos (s: CharStream<_>) = Some (s.Name, s.Line, s.Column)
 let pos_lit pos x = Lit(x,pos)
 
 let lit s = 
@@ -390,4 +390,4 @@ let expr: Parser<_,unit> =
 
     expr
 
-let spiral_parse x = run (spaces >>. expr .>> eof) x
+let spiral_parse (name, code) = runParserOnString (spaces >>. expr .>> eof) () name code
