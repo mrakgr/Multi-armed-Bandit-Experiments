@@ -590,6 +590,8 @@ fun cuda_mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
 module
     """
 
+// Will continue later.
+
 let r = spiral_codegen default_dims fib_acc_er
 
 printfn "%A" r
