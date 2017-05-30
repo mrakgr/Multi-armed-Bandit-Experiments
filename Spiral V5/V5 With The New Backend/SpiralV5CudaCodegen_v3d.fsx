@@ -403,115 +403,6 @@ fun top() = meth()
 top()
     """
 
-let core_library =
-    """
-inl ignore _ = ()
-inl id x = x
-inl tuple =
-    inl rec tuple_foldl f s l =
-        typecase l with
-        | x :: xs -> tuple_foldl f (f s x) xs
-        | () -> s
-    inl rec tuple_foldr f s l =
-        typecase l with
-        | x :: xs -> f x (tuple_foldr f s xs)
-        | () -> s
-    
-    inl tuple_rev, tuple_map =
-        inl tuple_map' f l = tuple_foldl (inl s x -> f x :: s) () l
-        inl tuple_rev l = tuple_map' id l
-        inl tuple_map f = tuple_map' f >> tuple_rev
-        tuple_rev, tuple_map
-    inl tuple_forall f l = 
-        tuple_foldl (inl con x l ->
-            typecase f x with
-            | .True() -> con l
-            | .False() -> .False()
-            ) id l .True()
-    inl tuple_exists f l =
-        tuple_foldl (inl con x l ->
-            typecase f x with
-            | .False() -> con l
-            | .True() -> .True()
-            ) id l .False()
-    inl tuple_filter f l =
-        tuple_foldl (inl s x ->
-            typecase f x with
-            | .True() -> x :: s
-            | .False() -> s
-            ) () l
-        |> tuple_rev
-    inl tuple_is_empty = typeinl
-        | () -> .True()
-        | _ -> .False()
-    inl tuple_zip, tuple_zip_irreg, tuple_unzip, tuple_unzip_irreg =
-        inl vv x = x :: ()
-        inl transpose l on_fail on_succ =
-            inl is_all_vv_empty = tuple_forall (typeinl () -> .True() | _ -> .False())
-            inl rec loop acc_total acc_head acc_tail l = 
-                typecase l with
-                | () :: ys ->
-                    typecase acc_head with
-                    | () ->
-                        typecase is_all_vv_empty ys with
-                        | .True() -> 
-                            typecase acc_total with
-                            | () -> errortype "Empty inputs in the inner dimension to transpose are invalid."
-                            | _ -> tuple_rev acc_total |> on_succ
-                        | .False() -> on_fail()
-                    | _ -> on_fail()
-                | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
-                | _ :: _ -> on_fail ()
-                | () -> 
-                    typecase acc_tail with
-                    | _ :: _ -> loop (tuple_rev acc_head :: acc_total) () () (tuple_rev acc_tail)
-                    | _ -> tuple_rev acc_total |> on_succ
-            loop () () () l
-        inl zip_template on_ireg l = 
-            inl rec zip l = 
-                typecase l with
-                | _ :: _ -> transpose l (inl _ -> on_ireg l) (tuple_map (typeinl x :: () -> zip x | x -> x))
-                | _ -> errortype "Empty input to zip is invalid."
-            zip l
-
-        inl zip_reg_guard l =
-            typecase tuple_forall (typeinl _ :: _ -> .False() | _ -> .True()) l with
-            | .True() -> l
-            | .False() -> errortype "Irregular inputs in zip."
-        inl zip_reg = zip_template zip_reg_guard
-        inl zip_irreg = zip_template id
-
-        inl rec unzip_template on_irreg l = 
-            inl is_all_vv x = tuple_forall (typeinl _ :: _ -> .True() | _ -> .False()) x
-            inl rec unzip l =
-                typecase l with
-                | _ :: _ ->
-                    typecase is_all_vv l with
-                    | .True() -> transpose (tuple_map unzip l) (inl _ -> on_irreg l) id
-                    | .False() -> l
-                | x -> errortype "Unzip called on a non-tuple."
-            unzip l
-
-        inl unzip_reg = unzip_template zip_reg_guard
-        inl unzip_irreg = unzip_template id
-
-        zip_reg, zip_irreg, unzip_reg, unzip_irreg
-
-    module
-
-open tuple
-
-fun top() = 
-    inl j = 2,3.3
-    inl k = 4.4,55
-    inl l = 66,77
-    inl m = 88,99
-    inl n = 123,456
-    
-    tuple_zip ((j,k),(l,m),n) |> tuple_unzip
-top ()
-    """
-
 let fib_acc_er =
     "fibonacci_acc_er",
     """
@@ -519,6 +410,184 @@ inl fib n =
     fun rec fib n a b = if n >= 0 then fib (n-1) b (a+b) else a + 8.8
     fib n 0 1
 fib 2
+    """
+
+let tuple_library =
+    "Tuple",
+    """
+inl ignore _ = ()
+inl id x = x
+
+inl rec tuple_foldl f s l =
+    typecase l with
+    | x :: xs -> tuple_foldl f (f s x) xs
+    | () -> s
+inl rec tuple_foldr f s l =
+    typecase l with
+    | x :: xs -> f x (tuple_foldr f s xs)
+    | () -> s
+    
+inl tuple_rev, tuple_map =
+    inl tuple_map' f l = tuple_foldl (inl s x -> f x :: s) () l
+    inl tuple_rev l = tuple_map' id l
+    inl tuple_map f = tuple_map' f >> tuple_rev
+    tuple_rev, tuple_map
+inl tuple_forall f l = 
+    tuple_foldl (inl con x l ->
+        typecase f x with
+        | .True() -> con l
+        | .False() -> .False()
+        ) id l .True()
+inl tuple_exists f l =
+    tuple_foldl (inl con x l ->
+        typecase f x with
+        | .False() -> con l
+        | .True() -> .True()
+        ) id l .False()
+inl tuple_filter f l =
+    tuple_foldl (inl s x ->
+        typecase f x with
+        | .True() -> x :: s
+        | .False() -> s
+        ) () l
+    |> tuple_rev
+inl tuple_is_empty = typeinl
+    | () -> .True()
+    | _ -> .False()
+inl tuple_zip, tuple_zip_irreg, tuple_unzip, tuple_unzip_irreg =
+    inl vv x = x :: ()
+    inl transpose l on_fail on_succ =
+        inl is_all_vv_empty = tuple_forall (typeinl () -> .True() | _ -> .False())
+        inl rec loop acc_total acc_head acc_tail l = 
+            typecase l with
+            | () :: ys ->
+                typecase acc_head with
+                | () ->
+                    typecase is_all_vv_empty ys with
+                    | .True() -> 
+                        typecase acc_total with
+                        | () -> errortype "Empty inputs in the inner dimension to transpose are invalid."
+                        | _ -> tuple_rev acc_total |> on_succ
+                    | .False() -> on_fail()
+                | _ -> on_fail()
+            | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
+            | _ :: _ -> on_fail ()
+            | () -> 
+                typecase acc_tail with
+                | _ :: _ -> loop (tuple_rev acc_head :: acc_total) () () (tuple_rev acc_tail)
+                | _ -> tuple_rev acc_total |> on_succ
+        loop () () () l
+    inl zip_template on_ireg l = 
+        inl rec zip l = 
+            typecase l with
+            | _ :: _ -> transpose l (inl _ -> on_ireg l) (tuple_map (typeinl x :: () -> zip x | x -> x))
+            | _ -> errortype "Empty input to zip is invalid."
+        zip l
+
+    inl zip_reg_guard l =
+        typecase tuple_forall (typeinl _ :: _ -> .False() | _ -> .True()) l with
+        | .True() -> l
+        | .False() -> errortype "Irregular inputs in zip."
+    inl zip_reg = zip_template zip_reg_guard
+    inl zip_irreg = zip_template id
+
+    inl rec unzip_template on_irreg l = 
+        inl is_all_vv x = tuple_forall (typeinl _ :: _ -> .True() | _ -> .False()) x
+        inl rec unzip l =
+            typecase l with
+            | _ :: _ ->
+                typecase is_all_vv l with
+                | .True() -> transpose (tuple_map unzip l) (inl _ -> on_irreg l) id
+                | .False() -> l
+            | x -> errortype "Unzip called on a non-tuple."
+        unzip l
+
+    inl unzip_reg = unzip_template zip_reg_guard
+    inl unzip_irreg = unzip_template id
+
+    zip_reg, zip_irreg, unzip_reg, unzip_irreg
+
+module
+    """
+
+let map_forward_setter = "inl i (*result, *out) -> out i <- result"
+let map_backward_setter = "inl i (*result, *out) -> out i <- out i + result"
+
+let cuda_kernels =
+    "CudaKernels",
+    """
+import Tuple
+
+inl uncurry2 f (a,b) = f a b
+
+inl index_if_array i *in =
+    typecase in with
+    | .Array(in,size) -> in i
+    | .Array(in,()) -> in ()
+
+inl map_load_op ins map_op i = tuple_map (index_if_array i) ins |> map_op i
+
+fun cuda_map (setter, map_op, *n, ins, outs) =
+    inl stride = gridDimX * blockDimX
+    inl map_load_op = map_load_op ins map_op
+        
+    fun rec loop i =
+        if i < n then
+            tuple_zip (outs,map_load_op i) |> tuple_map (setter i)
+            loop (i+stride)
+    loop (blockIdxX * blockDimX + threadIdxX)
+
+fun cuda_map_redo (map_op,(neutral_elem,reduce_op),*n,ins,outs) =
+    inl stride = gridDimX * blockDimX
+    inl map_load_op = map_load_op ins map_op
+
+    fun rec loop (i, value) =
+        if i < n then loop (i + stride, reduce_op value (map_load_op i))
+        else value
+    
+    inl results = 
+        inl i,n = blockIdxX * blockDimX + threadIdxX, neutral_elem
+        cubBlockReduce(loop (i, n), uncurry2 reduce_op `(n,n))
+
+    if threadIdxX = 0 then 
+        tuple_zip(outs,results)
+        |> tuple_map (inl (*out,*result) -> out blockIdxX <- result)
+        ()
+
+fun cuda_map_redocol_map (map_op,(neutral_elem,reduce_op),map_store_op,(*num_cols,*num_rows),ins,outs) =
+    inl map_load_op = map_load_op ins map_op
+
+    fun rec loop_col col =
+        let rec loop_row (row, value) = 
+            if row < num_rows then loop_row (row + blockDimX, reduce_op value (map_load_op (col,row)))
+            else value
+
+        if col < num_cols then 
+            inl n = neutral_elem
+            inl results = cubBlockReduce(loop_row (threadIdxX, n), uncurry2 reduce_op `(n,n))
+                    
+            if threadIdxX = 0 then 
+                tuple_zip(outs, map_store_op results)
+                |> tuple_map (inl (*out,*result) -> out col <- result)
+                ()        
+            loop_col (col + gridDimX)
+    loop_col blockIdxX
+
+fun cuda_mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
+    inl map_load_op = map_load_op ins map_op
+
+    fun rec loop_col col =
+        let rec loop_row ins row = 
+            if row < num_rows then 
+                tuple_zip (outs, ins) |> tuple_map (setter (col,row))
+                loop_row (row + blockDimX)
+
+        if col < num_cols then 
+            loop_row (map_load_op col) threadIdxX
+            loop_col (col + gridDimX)
+
+    loop_col blockIdxX
+module
     """
 
 let r = spiral_codegen default_dims fib_acc_er

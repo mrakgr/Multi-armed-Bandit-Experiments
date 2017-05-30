@@ -966,11 +966,26 @@ let array_index op a b = Op(op,[a;b],None)
 let core_functions =
     let p f = inl (S "x") (f (v "x")) None
     let p2 f = inl' [S "x"; S "y"] (f (v "x") (v "y")) None
-    s   [
-        l (S "errortype") (p error_type) None
-        l (S "static_print") (p static_print) None
-        l (S "overload_ap_Array") (p2 (array_index ArrayIndex)) None
-        l (S "unsafe_index") (p2 (array_index ArrayUnsafeIndex)) None
+    let con x = Op(x,[],None)
+    let l a b = l a b None
+    s  [l (S "errortype") (p error_type)
+        l (S "static_print") (p static_print)
+        l (S "overload_ap_Array") (p2 (array_index ArrayIndex))
+        l (S "unsafe_index") (p2 (array_index ArrayUnsafeIndex))
+
+        l (S "threadIdxX") (con ThreadIdxX)
+        l (S "threadIdxY") (con ThreadIdxY)
+        l (S "threadIdxZ") (con ThreadIdxZ)
+        l (S "blockIdxX") (con BlockIdxX)
+        l (S "blockIdxY") (con BlockIdxY)
+        l (S "blockIdxZ") (con BlockIdxZ)
+
+        l (S "blockDimX") (con BlockDimX)
+        l (S "blockDimY") (con BlockDimY)
+        l (S "blockDimZ") (con BlockDimZ)
+        l (S "gridDimX") (con GridDimX)
+        l (S "gridDimY") (con GridDimY)
+        l (S "gridDimZ") (con GridDimZ)
         ]
    
 let spiral_typecheck code dims body = 
