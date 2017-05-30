@@ -89,6 +89,7 @@ and Op =
     | ArrayCreate
     | ArrayCreateShared
     | ArrayIndex
+    | ArrayUnsafeIndex
    
     | ShiftLeft
     | ShiftRight
@@ -573,7 +574,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 | _ -> r
             match r with
             | TyType _ | TyLit _ -> r
-            | TyOp(ArrayIndex,[Array(_,[],_);_],_)
+            | TyOp((ArrayUnsafeIndex | ArrayIndex),[Array(_,[],_);_],_)
             | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
@@ -733,8 +734,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         tev2 d a b <| fun l r ->
             let r = destructure_deep d r
             match l, r with
-            | TyOp(ArrayIndex,[_;_],lt), r when lt = get_type r -> make_tyv_and_push d (TyOp(MSet,[l;r],BVVT)) |> ret
-            | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp(ArrayIndex,_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
+            | TyOp((ArrayUnsafeIndex | ArrayIndex),[_;_],lt), r when lt = get_type r -> make_tyv_and_push d (TyOp(MSet,[l;r],BVVT)) |> ret
+            | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp((ArrayUnsafeIndex | ArrayIndex),_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
 
     let vv_index d v i ret =
         tev2 d v i <| fun v i ->
@@ -770,15 +771,15 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                     |> struct_create d
                     |> ret
 
-    let array_index d ar args ret =
+    let array_index d safe_or_not ar args ret =
         tev2 d ar args <| fun ar args ->
             let fargs = tuple_field args
             guard_is_int d fargs <| fun () ->
                 match get_type ar with
                 | StructT (Array(_,size,typ)) ->
                     let lar, largs = size.Length, fargs.Length
-                    if lar = largs then TyOp(ArrayIndex,[ar;args],typ) |> ret
-                    else d.on_type_er d.trace <| sprintf "The index lengths in ArrayIndex do not match. %i <> %i" lar largs
+                    if lar = largs then TyOp(safe_or_not,[ar;args],typ) |> ret
+                    else d.on_type_er d.trace <| sprintf "The index lengths in %A do not match. %i <> %i" safe_or_not lar largs
                 | _ -> d.on_type_er d.trace <| sprintf "Array index needs the Array.Got: %A" ar
 
     let module_open d a b ret =
@@ -904,7 +905,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
         | ArrayCreate,[a;b] -> array_create d "Array" a b ret
         | ArrayCreateShared,[a;b] -> array_create d "ArrayShared" a b ret
-        | ArrayIndex,[a;b] -> array_index d a b ret
+        | (ArrayUnsafeIndex | ArrayIndex),[a;b] -> array_index d op a b ret
         | MSet,[a;b] -> mset d a b ret
 
         | Neg,[a] -> prim_un_numeric d a Neg ret
@@ -960,11 +961,16 @@ let data_empty code =
     {ltag=ref 0L;seq=ref id;trace=[];env=Map.empty;
      on_match_break=on_match_break;on_type_er=on_type_er;on_rec=on_rec}
 
+let array_index op a b = Op(op,[a;b],None)
+
 let core_functions =
     let p f = inl (S "x") (f (v "x")) None
+    let p2 f = inl' [S "x"; S "y"] (f (v "x") (v "y")) None
     s   [
         l (S "errortype") (p error_type) None
         l (S "static_print") (p static_print) None
+        l (S "overload_ap_Array") (p2 (array_index ArrayIndex)) None
+        l (S "unsafe_index") (p2 (array_index ArrayUnsafeIndex)) None
         ]
    
 let spiral_typecheck code dims body = 

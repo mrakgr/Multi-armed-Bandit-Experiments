@@ -131,26 +131,30 @@ let print_method_dictionary (imemo: MemoDict) =
         | LitBool x -> if x then "1" else "0"
         | LitString x -> sprintf "\"%s\"" x
 
-    let rec print_array a b =
+    let rec print_array is_print_assertion a b =
         let ar_sizes =
             match a with
-            | Array(_,sizes,_) -> sizes
+            | Array(_,sizes,_) -> List.map codegen sizes
             | _ -> failwith "impossible"
 
-        let i = tuple_field b
+        let i = tuple_field b |> List.map codegen
+
+        if is_print_assertion then
+            List.map2 (fun size i -> sprintf "%s >= 0 && %s < %s" i i size) ar_sizes i
+            |> String.concat " + "
+            |> state
 
         // Array cases
         let index = 
-            let rec loop x =
-                match x with
+            let rec loop = function
                 | None, s :: sx, i :: ix ->
-                    loop (Some(sprintf "(%s) * %s" (codegen i) (codegen s)),sx,ix)
+                    loop (Some(sprintf "(%s) * %s" i s),sx,ix)
                 | None, [], [i] ->
-                    codegen i
+                    i
                 | Some p, s :: sx, i :: ix ->
-                    loop (Some(sprintf "(%s + (%s)) * %s" p (codegen i) (codegen s)),sx,ix)
+                    loop (Some(sprintf "(%s + (%s)) * %s" p i s),sx,ix)
                 | Some p, [], [i] ->
-                    sprintf "%s + (%s)" p (codegen i)
+                    sprintf "%s + (%s)" p i
                 | _ -> failwith "invalid state"
             if i.IsEmpty = false then loop (None,List.tail ar_sizes,i)
             else "0"
@@ -245,7 +249,8 @@ let print_method_dictionary (imemo: MemoDict) =
 
         | TyOp(Neg,[a],t) -> sprintf "(-%s)" (codegen a)
         | TyOp(VVIndex,[a;b],t) -> sprintf "%s.tup%s" (codegen a) (codegen b)
-        | TyOp(ArrayIndex,[a;b],t) -> print_array a b
+        | TyOp(ArrayIndex,[a;b],t) -> print_array true a b
+        | TyOp(ArrayUnsafeIndex,[a;b],t) -> print_array false a b
         | TyOp(Log,[x],_) -> sprintf "log(%s)" (codegen x)
         | TyOp(Exp,[x],_) -> sprintf "exp(%s)" (codegen x)
         | TyOp(Tanh,[x],_) -> sprintf "tanh(%s)" (codegen x)
@@ -308,6 +313,7 @@ let print_method_dictionary (imemo: MemoDict) =
 
     try
         """#include "cub/cub.cuh" """ |> state
+        """#include <assert.h> """ |> state
         """extern "C" {""" |> state
         
         enter' <| fun _ ->
