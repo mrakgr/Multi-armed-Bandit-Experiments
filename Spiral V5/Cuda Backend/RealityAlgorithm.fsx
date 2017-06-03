@@ -1,4 +1,6 @@
-﻿// 3/19/2017:
+﻿// Edit: This algorithm is wrong. Check the last entry for details.
+
+// 3/19/2017:
 
 // The prototype for the recursive typechecker.
 
@@ -47,6 +49,50 @@
 // rid of the need to deal with stacks for recusive methods directly. For an example of how this is possible,
 // check out `SpiralV5Language_v9a.fsx` which a rewrite of the Spiral typechecker in CPS style. Of special
 // interest should be the `if_` and the `eval_method` functions.
+
+// 6/3/2017: No, nevermind, this thing is wrong as will remain here for historical significance.
+
+//let rec_error =
+//    "RecError",
+//    """
+//fun rec loop x =
+//    if true then
+//        loop 1, 2, 3
+//    else 
+//        1, 2, 3
+//    |> inl x,_,_ -> x
+//fun top () = loop 1
+//top ()
+//    """
+//let r = spiral_codegen default_dims rec_error
+//
+//  ("Types in branches of If do not match.
+//Got: VVT
+//  ([VVT ([PrimT Int64T; PrimT Int64T; PrimT Int64T],""); PrimT Int64T;
+//    PrimT Int64T],"") and VVT ([PrimT Int64T; PrimT Int64T; PrimT Int64T],"")
+
+// So close and yet so far away. For the toy language below I might be able to make it work
+// by propagating the types upwards on recursion, but not all ops have straightforward types
+// and it would lead to a massive effort in the real language. I'd be far better of using
+// type annotations.
+
+// Incidentally, this error here only occured to me while I was thinking of how I would type
+// checkeck recursive datatypes. It is hillarious that the above example never occurred
+// to me despite being at this for so long.
+
+// Even though the following algorithm is wrong, it did lead me to quite a few other discoveries
+// with CPS. The main language itself it so well designed that replacing this particular piece
+// with annotations will not be a problem.
+
+// What I will do on recursion is simply switch the typechecker from 'propagation' to 'checking'.
+// Since I am doing inlining and partial evaluation in the Spiral language, I can't just return
+// the type on an annotation the way standard typecheckers would, but returning it only on recursion
+// would work just fine.
+
+// Doing it like this will greatly simplify things once I finally decide to put in recursive datatypes
+// into the language. I will be able to do things like streams and such which are untypable without sealing
+// due to having infinite types.
+
 
 open System.Collections.Generic
 
