@@ -80,8 +80,8 @@ let print_method_dictionary (imemo: MemoDict) =
 
     let closure_type_definitions = d0()
     let closure_type_tag x = def_proc closure_type_definitions x
-    let print_closure_type' tag = sprintf "clo_type_%i" tag
-    let print_closure_type typ = closure_type_tag typ |> print_closure_type'
+    let print_fun_pointer_type' tag = sprintf "fun_pointer_type_%i" tag
+    let print_fun_pointer_type typ = closure_type_tag typ |> print_fun_pointer_type'
 
     let case_array_in_array _ = 
         // The only reason is really because C syntax is such a pain in the ass.
@@ -102,7 +102,7 @@ let print_method_dictionary (imemo: MemoDict) =
             | Float64T -> "double"
             | BoolT -> "int"
             | StringT -> "char *"
-        | ClosureT(a,r) -> print_closure_type (a,r)
+        | ClosureT(a,r) -> print_fun_pointer_type (a,r)
         | VVT ([], _) -> "void"
         | VVT (t, _) -> print_tuple t
         | StructT(Array(_,_,t)) -> array_case t
@@ -269,7 +269,7 @@ let print_method_dictionary (imemo: MemoDict) =
     let print_closure_a a = tuple_field_ty a |> List.map print_simple_type |> String.concat ", "
 
     let print_closure_type_definition (a,r) tag =
-        sprintf "typedef %s(*%s)(%s);" (print_simple_type r) (print_closure_type' tag) (print_closure_a a) |> state
+        sprintf "typedef %s(*%s)(%s);" (print_simple_type r) (print_fun_pointer_type' tag) (print_closure_a a) |> state
 
     let print_tuple_defintion tys tag =
         let tuple_name = print_tuple' tag
@@ -591,6 +591,7 @@ module
     """
 
 // Will continue later.
+// ...
 // ...
 // ...
 // ...

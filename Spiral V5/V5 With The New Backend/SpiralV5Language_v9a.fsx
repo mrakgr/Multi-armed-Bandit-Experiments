@@ -238,7 +238,8 @@ let is_primt a = is_primt' (get_type a)
 let rec is_comparable' = function
     | PrimT _ -> true
     | VVT (x,_) -> List.forall is_comparable' x
-    | ForModuleT _ | ForApplyT _ | ModuleT _ | ClosureT _ | StructT _ | FunctionT _ -> false
+    | ClosureT(a,b) -> is_comparable' a && is_comparable' b
+    | ForModuleT _ | ForApplyT _ | ModuleT _  | StructT _ | FunctionT _ -> false
 
 let is_float' = function
     | PrimT x -> 
