@@ -999,3 +999,5 @@ let spiral_typecheck code dims body =
         typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
         Succ(x,memoized_methods)
     expr_typecheck dims method_tag memoized_methods d input deforest_tuples
+
+
