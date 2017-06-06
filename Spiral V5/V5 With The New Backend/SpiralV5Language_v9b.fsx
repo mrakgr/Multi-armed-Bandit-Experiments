@@ -225,9 +225,9 @@ let (|Array|_|) = function
 
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
-    | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ | FunctionT _ -> false
+    | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
     | ClosureT (a,b) -> is_returnable' a && is_returnable' b
-    | ModuleT x -> Map.forall (fun _ -> get_type >> is_returnable') x
+    | FunctionT (x, _) | ModuleT x -> Map.forall (fun _ -> get_type >> is_returnable') x
     | ForModuleT _ | ForCastT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
