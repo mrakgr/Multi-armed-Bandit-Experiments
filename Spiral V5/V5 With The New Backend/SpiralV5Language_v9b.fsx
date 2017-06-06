@@ -88,6 +88,8 @@ and Op =
     | VVIndex
     | VVCons
     | TypeAnnot
+    | ModuleWith
+    | ModuleWith'
 
     | ArrayCreate
     | ArrayCreateShared

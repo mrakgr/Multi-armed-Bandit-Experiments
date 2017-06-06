@@ -17,6 +17,7 @@ let comma = skipChar ',' .>> spaces
 let dot = skipChar '.' >>. spaces
 let grave = skipChar '`' >>. spaces
 let underscore = skipChar '_' .>> spaces
+let pp = skipChar ':' .>> spaces
 let semicolon = skipChar ';' .>> spaces
 let eq = skipChar '=' .>> spaces
 let bar = skipChar '|' >>. spaces
@@ -31,18 +32,20 @@ let typecase = skipString "typecase" >>. spaces
 let typeinl = skipString "typeinl" >>. spaces
 let module_ = skipString "module" >>. spaces
 let with_ = skipString "with" >>. spaces
+
+let with_for_module = 
+    skipString "with" >>. 
+        ((skipChar '!' >>. spaces >>% ModuleWith)
+        <|> (spaces >>% ModuleWith'))
 let open_ = skipString "open" >>. spaces
 
-let isAsciiIdStart c =
-    isAsciiLetter c || c = '_'
-
-let isAsciiIdContinue c =
-    isAsciiLetter c || isDigit c || c = '_' || c = '''
+let isAsciiIdStart c = isAsciiLetter c || c = '_'
+let isAsciiIdContinue c = isAsciiLetter c || isDigit c || c = '_' || c = '''
 
 let var_name = 
     many1Satisfy2L isAsciiLower isAsciiIdContinue "identifier" .>> spaces
     >>=? function
-        | "open" | "module" | "typecase" | "typeinl" | "with" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
+        | "match" | "function" | "with" | "open" | "module" | "typecase" | "typeinl" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
             Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 let type_name = 
@@ -253,7 +256,6 @@ let case_module expr s = let p = pos s in (module_ >>% module_create p) s
 let case_apply_type expr s = let p = pos s in (grave >>. expr |>> ap_ty p) s
 let case_apply_module expr s = let p = pos s in (dot >>. var_name |>> ap_mod p) s
 
-
 let expressions expr =
     [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
      case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_typeinl; case_module
@@ -261,7 +263,7 @@ let expressions expr =
     |> List.map (fun x -> x expr |> attempt)
     |> choice
  
-let process_parser_exprs exprs = 
+let process_parser_exprs loop_initializer exprs = 
     let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")
     let process_parser_expr a b on_fail on_succ =
         match a,b with
@@ -271,22 +273,19 @@ let process_parser_exprs exprs =
 
     let process_parser_exprs l =
         let rec loop = function
-            | b :: a :: xs ->
-                process_parser_expr a b 
-                    id
-                    (fun r -> loop (r :: xs))
+            | b :: a :: xs -> process_parser_expr a b id (fun r -> loop (r :: xs))
             | x :: xs ->
                 match x with
                 | ParserExpr a -> preturn a 
                 | ParserStatement a -> error_statement_in_last_pos
             | [] -> failwith "impossible"
-        loop (List.rev l)
+        loop (loop_initializer (List.rev l))
 
     match exprs with
     | _ :: _ -> process_parser_exprs exprs
     | _ -> preturn B
 
-let indentations statements expressions (s: CharStream<_>) =
+let indentations statements expressions process_parser_exprs (s: CharStream<_>) =
     let i = s.Column
     let inline if_ op tr (s: CharStream<_>) = expr_indent i op tr s
     let expr_indent expr =
@@ -316,7 +315,6 @@ let tuple expr i (s: CharStream<_>) =
         | _ -> failwith "impossible"
     <| s
 
-
 let mset expr i (s: CharStream<_>) = 
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
     let p = pos s
@@ -325,6 +323,24 @@ let mset expr i (s: CharStream<_>) =
         (fun l -> function
             | Some r -> Op(MSet,[l;r],p)
             | None -> l) s
+
+let annotations expr (s: CharStream<_>) = 
+    let i = s.Column
+    let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+    pipe2 (expr_indent expr) (opt (ppos .>> expr_indent pp .>>. expr_indent expr))
+        (fun a -> function
+            | Some(p,b) -> Op(TypeAnnot,[a;b],p)
+            | None -> a) s
+
+let module_with expr (s: CharStream<_>) = 
+    let i = s.Column
+    let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+    let init_module_create = process_parser_exprs <| fun l -> ParserExpr (module_create None) :: l
+    let init_no = process_parser_exprs id
+    pipe2 (expr_indent (expr init_no)) (opt (tuple3 ppos (expr_indent with_for_module) (expr_indent (expr init_module_create))))
+        (fun a -> function
+            | Some(p,op_with,b) -> Op(op_with,[a;b],p)
+            | None -> a) s
 
 let expr: Parser<_,unit> =
     let dict_operator = d0()
@@ -386,8 +402,7 @@ let expr: Parser<_,unit> =
         let term s = expr_indent expr s
         tdop op term 0 s
 
-    let rec expr s = indentations (statements expr) (mset (tuple (operators (application (expressions expr))))) s
-
+    let rec expr s = annotations (module_with (indentations (statements expr) (mset (tuple (operators (application (expressions expr))))))) s
     expr
 
 let spiral_parse (name, code) = runParserOnString (spaces >>. expr .>> eof) () name code
