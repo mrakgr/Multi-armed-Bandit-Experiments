@@ -25,7 +25,7 @@ type CudaTy =
     | StructT of TypedExpr // Structs here are pretty much the opposite of what they are in C. They are a type level feature.
     | ClosureT of CudaTy * CudaTy // For now since I am compiling only to Cuda, closures will be not be allowed to capture variables.
     | ModuleT of Env
-    | ForApplyT of CudaTy 
+    | ForCastT of CudaTy 
     | ForModuleT of string
 
 and Tag = int64
@@ -182,9 +182,9 @@ let get_type = function
     | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyOp(_,_,t) | TyType t -> t
 
-let for_apply_unwrap x = 
+let get_subtype x = 
     match get_type x with
-    | ForApplyT x -> x
+    | ForCastT x -> x
     | x -> x
 
 /// Returns an empty string if not a tuple.
@@ -215,8 +215,9 @@ let (|Array|_|) = function
 
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
-    | ForModuleT _ | ForApplyT _ | ModuleT _ | StructT _ | FunctionT _ -> false
+    | ForModuleT _ | ForCastT _ | StructT _ | FunctionT _ -> false
     | ClosureT (a,b) -> is_returnable' a && is_returnable' b
+    | ModuleT x -> Map.forall (fun _ -> get_type >> is_returnable') x
     | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
@@ -234,12 +235,6 @@ let is_primt' = function
     | PrimT x -> true
     | _ -> false
 let is_primt a = is_primt' (get_type a)
-
-let rec is_comparable' = function
-    | PrimT _ -> true
-    | VVT (x,_) -> List.forall is_comparable' x
-    | ClosureT(a,b) -> is_comparable' a && is_comparable' b
-    | ForModuleT _ | ForApplyT _ | ModuleT _  | StructT _ | FunctionT _ -> false
 
 let is_float' = function
     | PrimT x -> 
@@ -479,7 +474,7 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) =
 
 type Trace = PosKey list
 
-type LangEnv<'a,'c,'d,'q,'e,'r> =
+type LangEnv<'a,'c,'q,'e> =
     {
     ltag : int64 ref
     seq : (TypedExpr -> TypedExpr) ref
@@ -487,15 +482,13 @@ type LangEnv<'a,'c,'d,'q,'e,'r> =
     trace : Trace
     on_match_break : 'a -> 'q
     on_type_er : Trace -> 'c -> 'e
-    on_rec : 'd -> 'r
     }
 
 let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoized_methods: Dictionary<_,_>) 
-        (d : LangEnv<_,_,_,_,_,_>) (expr: Expr) ret =
+        (d : LangEnv<_,_,_,_>) (expr: Expr) ret =
     let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
     let inline apply_seq d ret x = ret (!d.seq x)
     let inline tev_seq d expr ret = tev {d with seq=ref id} expr (apply_seq d ret)
-    let inline tev_if d expr on_rec ret = tev_seq {d with on_rec=on_rec} expr ret
     let inline tev_method d expr ret = tev_seq {d with ltag=ref 0L} expr ret
     let inline tev_match_f on_match_break d expr ret = tev_seq {d with on_match_break=on_match_break} expr ret
 
@@ -512,11 +505,16 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 )
         | [] -> ret []
 
+    let inline tev2 d a b ret =
+        tev d a <| fun l ->
+            tev d b <| fun r ->
+                ret l r
+
     let if_ d cond tr fl ret =
         tev d cond <| fun cond ->
             if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else
-                let fin (tr,fl) =
+                tev2 d tr fl <| fun tr fl ->
                     let type_tr, type_fl = get_type tr, get_type fl
                     if type_tr = type_fl then 
                         match cond with
@@ -525,24 +523,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                         | _ -> TyOp(If,[cond;tr;fl],type_tr)
                         |> ret
                     else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
-
-                let mutable fl' = None
-                tev_if d tr 
-                    (fun ret' ->
-                        tev_if d fl 
-                            d.on_rec
-                            (fun fl -> 
-                                fl' <- Some fl
-                                ret' (get_type fl))
-                        )
-                    (fun tr ->
-                        match fl' with
-                        | Some fl -> fin (tr,fl)
-                        | None ->
-                            tev_if d fl 
-                                (fun ret' -> ret' (get_type tr))
-                                (fun fl -> fin (tr,fl))
-                        )
 
     let get_tag d = 
         let t = !d.ltag
@@ -725,11 +705,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             tev d args <| fun args ->
                 let args = destructure_deep d args
                 apply tev d expr args apply_fail ret
-
-    let inline tev2 d a b ret =
-        tev d a <| fun l ->
-            tev d b <| fun r ->
-                ret l r
 
     let mset d a b ret =
         tev2 d a b <| fun l r ->
