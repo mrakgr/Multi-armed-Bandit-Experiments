@@ -1,6 +1,6 @@
 ﻿#load "SpiralV5Parser_v2b.fsx"
 
-open SpiralV5Language_v9a
+open SpiralV5Language_v9b
 open System.Collections.Generic
 open System.Text
 
@@ -589,13 +589,6 @@ fun cuda_mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
     loop_col blockIdxX
 module
     """
-
-// Will continue later.
-// ...
-// ...
-// ...
-// ...
-// ...
 
 let r = spiral_codegen default_dims fib_acc_er
 

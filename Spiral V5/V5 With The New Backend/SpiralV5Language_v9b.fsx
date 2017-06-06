@@ -1,13 +1,4 @@
-﻿// 6/6/2017: So the Reality algorithm turned out to be incorrect the way it is implemented.
-// Before removing the code in the if case what I am going to do is back it up here.
-// The reason being is that if I put in something to propagate information upwards, it would be possible
-// to make the thing work, it is just the there is no point to it right now. It is not worth the effort,
-// compared to type annotations.
-
-// Maybe I will revisit the idea at a later date, but it is unlikely, since there will be always more important
-// things to work on.
-
-#load "load-project-release.fsx"
+﻿#load "load-project-release.fsx"
 
 open ManagedCuda.VectorTypes
 open System.Collections.Generic
