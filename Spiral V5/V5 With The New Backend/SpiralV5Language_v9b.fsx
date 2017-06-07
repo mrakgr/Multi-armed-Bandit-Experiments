@@ -225,10 +225,10 @@ let (|Array|_|) = function
 
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
-    | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
+    | FunctionT _ | ModuleT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
     | ClosureT (a,b) -> is_returnable' a && is_returnable' b
-    | FunctionT (x, _) | ModuleT x -> Map.forall (fun _ -> get_type >> is_returnable') x
-    | ForModuleT _ | ForCastT _ | PrimT _ -> true
+    | ForCastT x -> is_returnable' x
+    | ForModuleT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -757,8 +757,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             |> fun x -> 
                 guard_is_int d (tuple_field x) <| fun () ->
                     let l = [size; TyType(get_type typ |> pointer)]
-                    TyVV (l, VVT (List.map get_type l, "Array"))
-                    |> ret
+                    TyVV (l, VVT (List.map get_type l, "Array")) |> ret
 
     let array_index d op_index ar args ret =
         tev2 d ar args <| fun ar args ->
@@ -1014,5 +1013,3 @@ let spiral_typecheck code dims body =
         typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
         Succ(x,memoized_methods)
     expr_typecheck dims method_tag memoized_methods d input deforest_tuples
-
-
