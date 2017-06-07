@@ -60,6 +60,9 @@ and Value =
     | LitBool of bool
     | LitString of string
 
+    | ThreadIdxX | ThreadIdxY | ThreadIdxZ
+    | BlockIdxX | BlockIdxY | BlockIdxZ
+
 and Op =
     // TriOps
     | If
@@ -119,8 +122,6 @@ and Op =
     | ModuleCreate
 
     | Syncthreads
-    | ThreadIdxX | ThreadIdxY | ThreadIdxZ
-    | BlockIdxX | BlockIdxY | BlockIdxZ
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
 
@@ -180,6 +181,8 @@ let get_type_of_value = function
     | LitFloat64 _ -> PrimT Float64T   
     | LitBool _ -> PrimT BoolT
     | LitString _ -> PrimT StringT
+    | ThreadIdxX | ThreadIdxY | ThreadIdxZ 
+    | BlockIdxX | BlockIdxY | BlockIdxZ -> PrimT UInt64T
 
 let get_type = function
     | TyLit x -> get_type_of_value x
@@ -508,7 +511,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let inline apply_seq d ret x = ret (!d.seq x)
     let inline tev_seq d expr ret = tev {d with seq=ref id} expr (apply_seq d ret)
     let inline tev_method d expr ret = tev_seq {d with ltag=ref 0L} expr ret
-    let inline tev_rec d expr ret = tev_method {d with rbeh=AnnotationDive} expr ret
+    let inline tev_rec d expr ret = tev_method {d with rbeh=AnnotationReturn} expr ret
     let inline tev_match_f on_match_break d expr ret = tev_seq {d with on_match_break=on_match_break} expr ret
 
     let v_find env x on_fail ret = 
@@ -593,32 +596,22 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
             memoized_methods.[key_args] <- (MethodInEvaluation, tag, ref Set.empty)
             tev_method d expr <| fun typed_expr ->
-                memoized_methods.[key_args] <- (MethodDone(typed_expr), tag, ref Set.empty)
+                printfn "In eval_method. %A" typed_expr
+                memoized_methods.[key_args] <- (MethodDone typed_expr, tag, ref Set.empty)
                 ret (typed_expr, tag)
         | true, (MethodInEvaluation, tag, args) -> tev_rec d expr <| fun r -> ret (r, tag)
         | true, (MethodDone typed_expr, tag, _) -> ret (typed_expr, tag)
 
-    let env_rename_downwards' env =
+    let eval_renaming d expr ret = 
+        let env = d.env
         let fv = env_free_variables on_method_call_typechecking_pass env
         let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
-        fv, renamer, renamed_env
-
-    let env_rename_downwards env = let _,_,env = env_rename_downwards' env in env
-
-    let eval_renaming d expr ret = 
-        let fv, renamer, renamed_env = env_rename_downwards' d.env
 
         eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
-
-    let rec rename_downwards_if_has_env = function
-        | FunctionT(env,x) -> FunctionT(env_rename_downwards env,x)
-        | ModuleT env -> ModuleT(env_rename_downwards env)
-        | VVT(l,name) -> VVT(List.map rename_downwards_if_has_env l,name)
-        | x -> x
 
     let memoize_method d x ret = 
         eval_renaming d x <| fun (a,b,c,d) -> 
@@ -683,7 +676,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                         ret)
 
     and apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
-        let arg_ty = get_type arg |> rename_downwards_if_has_env
+        let arg_ty = get_type arg
         if arg_ty <> clo_arg_ty then d.on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         else TyOp(Apply,[clo;arg],clo_ret_ty) |> ret
 
@@ -713,8 +706,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     and apply_cast d (env,core as fun_key) args_ty on_fail ret =
         if env_num_args env > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
+        elif is_returnable' args_ty = false then d.on_type_er d.trace <| sprintf "The type of the argument in the cast must be returnable. Got: %A" args_ty
         else
-            let args_ty = rename_downwards_if_has_env args_ty
             let args =
                 let f x = TyType x |> make_tyv_and_push_inv d
                 match args_ty with
@@ -888,7 +881,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
         TyType(FunctionT(env,core)) |> ret
     | VV(vars,name, pos) -> vars_map (add_trace d pos) vars (fun vv -> TyVV(vv, VVT(List.map get_type vv, name)) |> ret)
-
     | Op(op,vars,pos) ->
         let d = add_trace d pos
         match op, vars with
@@ -952,9 +944,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | GridDimZ,[] -> uint64 gridDim.z |> LitUInt64 |> TyLit |> ret
 
         | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
-        | (ThreadIdxX | ThreadIdxY 
-               | ThreadIdxZ | BlockIdxX | BlockIdxY 
-               | BlockIdxZ as constant),[] -> TyOp(constant,[],PrimT UInt64T) |> ret
 
         | ModuleCreate,[] -> TyType(ModuleT d.env) |> ret
         | _ -> failwith "Missing Op case."
@@ -984,8 +973,7 @@ let print_type_error (code: string) (trace: Trace) message =
 let data_empty code =
     let on_match_break _ = Fail "The match broke to the top level."
     let on_type_er trace message = Fail <| print_type_error code trace message
-    let on_rec _ = Fail "The method is divergent"
-    {ltag=ref 0L;seq=ref id;trace=[];env=Map.empty;rbeh=AnnotationReturn
+    {ltag=ref 0L;seq=ref id;trace=[];env=Map.empty;rbeh=AnnotationDive
      on_match_break=on_match_break;on_type_er=on_type_er}
 
 let array_index op a b = Op(op,[a;b],None)
@@ -994,18 +982,19 @@ let core_functions =
     let p f = inl (S "x") (f (v "x")) None
     let p2 f = inl' [S "x"; S "y"] (f (v "x") (v "y")) None
     let con x = Op(x,[],None)
+    let lit x = Lit (x, None)
     let l a b = l a b None
     s  [l (S "errortype") (p error_type)
         l (S "static_print") (p static_print)
         l (S "overload_ap_Array") (p2 (array_index ArrayIndex))
         l (S "unsafe_index") (p2 (array_index ArrayUnsafeIndex))
 
-        l (S "threadIdxX") (con ThreadIdxX)
-        l (S "threadIdxY") (con ThreadIdxY)
-        l (S "threadIdxZ") (con ThreadIdxZ)
-        l (S "blockIdxX") (con BlockIdxX)
-        l (S "blockIdxY") (con BlockIdxY)
-        l (S "blockIdxZ") (con BlockIdxZ)
+        l (S "threadIdxX") (lit ThreadIdxX)
+        l (S "threadIdxY") (lit ThreadIdxY)
+        l (S "threadIdxZ") (lit ThreadIdxZ)
+        l (S "blockIdxX") (lit BlockIdxX)
+        l (S "blockIdxY") (lit BlockIdxY)
+        l (S "blockIdxZ") (lit BlockIdxZ)
 
         l (S "blockDimX") (con BlockDimX)
         l (S "blockDimY") (con BlockDimY)

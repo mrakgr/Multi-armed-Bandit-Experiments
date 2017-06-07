@@ -130,6 +130,12 @@ let print_method_dictionary (imemo: MemoDict) =
         | LitFloat64 x -> string x
         | LitBool x -> if x then "1" else "0"
         | LitString x -> sprintf "\"%s\"" x
+        | ThreadIdxX -> "threadIdx.x"
+        | ThreadIdxY -> "threadIdx.y"
+        | ThreadIdxZ -> "threadIdx.z"
+        | BlockIdxX -> "blockIdx.x"
+        | BlockIdxY -> "blockIdx.y"
+        | BlockIdxZ -> "blockIdx.z"
 
     let rec print_array is_print_assertion a b =
         let ar_sizes =
@@ -185,8 +191,6 @@ let print_method_dictionary (imemo: MemoDict) =
 
     and codegen = function
         | TyVV([],_) -> ""
-        | TyType (FunctionT(env,_) | ModuleT env) ->
-            env |> Map.toArray |> Array.map (snd >> codegen) |> String.concat ", "
         | TyType _ -> ""
         | TyV v -> print_tyv v
         | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
@@ -196,7 +200,7 @@ let print_method_dictionary (imemo: MemoDict) =
             | Local | Global -> print_array_declaration false typ v ar_sizes
             | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
-        | TyLet(_,_,(TyVV([],_)),rest,_) -> codegen rest
+        | TyLet(_,_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
         | TyLet(_,(_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
         | TyLet(_,_,TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
         | TyLet(_,v, TyMemoizedExpr(MemoClosure,_,_,tag,ClosureT(a,r)), rest, _) ->
@@ -255,12 +259,6 @@ let print_method_dictionary (imemo: MemoDict) =
 
         // Cuda kernel constants
         | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
-        | TyOp(ThreadIdxX,[],_) -> "threadIdx.x"
-        | TyOp(ThreadIdxY,[],_) -> "threadIdx.y"
-        | TyOp(ThreadIdxZ,[],_) -> "threadIdx.z"
-        | TyOp(BlockIdxX,[],_) -> "blockIdx.x"
-        | TyOp(BlockIdxY,[],_) -> "blockIdx.y"
-        | TyOp(BlockIdxZ,[],_) -> "blockIdx.z"
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
 
@@ -344,12 +342,6 @@ let spiral_codegen dims (name, code as n) =
         | Fail er -> Fail (er,"")
     | Failure(er,_,_) -> 
         Fail (er,"")
-
-let fib =
-    """
-fun rec fib x = if x <= 0 then 0 else fib (x-1) + fib (x-2)
-fib 5
-    """
 
 let fib_y =
     """
@@ -588,7 +580,23 @@ fun cuda_mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
 module
     """
 
-let r = spiral_codegen default_dims fib_acc_er
+let tes1 =
+    "tes1",
+    """
+fun top () = 3
+top()
+    """
+
+let fib =
+    "Fib",
+    """
+fun rec fib x = 
+    if x <= 0 then 0 else fib (x-1) + fib (x-2)
+    : x
+fib 5
+    """
+
+let r = spiral_codegen default_dims fib
 
 printfn "%A" r
 

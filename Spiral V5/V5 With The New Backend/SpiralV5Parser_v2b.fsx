@@ -194,7 +194,8 @@ let if_then_else expr (s: CharStream<_>) =
         (fun cond tr fl -> 
             let fl = match fl with Some x -> x | None -> B
             let x = Op(If,[cond;tr;fl],pos)
-            ap None (meth (S "") x None) B // Hoists the if statement into its own method and immediatelly applies it.
+            //ap None (meth (S "") x None) B // Hoists the if statement into its own method and immediatelly applies it.
+            x
             )
         s
 
