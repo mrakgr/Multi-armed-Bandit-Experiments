@@ -598,17 +598,27 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | true, (MethodInEvaluation, tag, args) -> tev_rec d expr <| fun r -> ret (r, tag)
         | true, (MethodDone typed_expr, tag, _) -> ret (typed_expr, tag)
 
-    let eval_renaming d expr ret = 
-        let env = d.env
-
+    let env_rename_downwards' env =
         let fv = env_free_variables on_method_call_typechecking_pass env
         let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
+        fv, renamer, renamed_env
+
+    let env_rename_downwards env = let _,_,env = env_rename_downwards' env in env
+
+    let eval_renaming d expr ret = 
+        let fv, renamer, renamed_env = env_rename_downwards' d.env
 
         eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
+
+    let rec rename_downwards_if_has_env = function
+        | FunctionT(env,x) -> FunctionT(env_rename_downwards env,x)
+        | ModuleT env -> ModuleT(env_rename_downwards env)
+        | VVT(l,name) -> VVT(List.map rename_downwards_if_has_env l,name)
+        | x -> x
 
     let memoize_method d x ret = 
         eval_renaming d x <| fun (a,b,c,d) -> 
@@ -673,7 +683,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                         ret)
 
     and apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
-        let arg_ty = get_type arg
+        let arg_ty = get_type arg |> rename_downwards_if_has_env
         if arg_ty <> clo_arg_ty then d.on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         else TyOp(Apply,[clo;arg],clo_ret_ty) |> ret
 
@@ -692,7 +702,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     and apply tev d la ra on_fail ret =
         match get_type la, get_type ra with
-        | FunctionT x, ForCastT t -> apply_type d x t on_fail ret
+        | FunctionT x, ForCastT t -> apply_cast d x t on_fail ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function type in type application. Got: %A" x
         | ModuleT x, ForModuleT n -> apply_module d x n ret
         | x, ForModuleT n -> d.on_type_er d.trace <| sprintf "Expected a module type in module application. Got: %A" x
@@ -701,9 +711,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | VVT(_,name),_ when name <> "" -> apply_named_tuple tev d name ra on_fail ret
         | _ -> d.on_type_er d.trace "Invalid use of apply."
 
-    and apply_type d (env,core as fun_key) args_ty on_fail ret =
+    and apply_cast d (env,core as fun_key) args_ty on_fail ret =
         if env_num_args env > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
         else
+            let args_ty = rename_downwards_if_has_env args_ty
             let args =
                 let f x = TyType x |> make_tyv_and_push_inv d
                 match args_ty with
@@ -757,7 +768,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             |> fun x -> 
                 guard_is_int d (tuple_field x) <| fun () ->
                     let l = [size; TyType(get_type typ |> pointer)]
-                    TyVV (l, VVT (List.map get_type l, "Array")) |> ret
+                    let x = TyVV (l, VVT (List.map get_type l, "Array"))
+                    TyOp(ArrayCreate,[x],get_type x) |> ret
 
     let array_index d op_index ar args ret =
         tev2 d ar args <| fun ar args ->

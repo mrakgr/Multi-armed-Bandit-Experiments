@@ -105,10 +105,10 @@ let print_method_dictionary (imemo: MemoDict) =
         | ClosureT(a,r) -> print_fun_pointer_type (a,r)
         | VVT ([], _) -> "void"
         | VVT (t, _) -> print_tuple t
-        | StructT(Array(_,_,t)) -> array_case t
-        | StructT _ -> failwith "Can't struct types directly."
+        | LocalPointerT x | SharedPointerT x | GlobalPointerT x ->
+            sprintf "%s *" (print_type array_case x)
         | FunctionT _ -> failwith "Can't function types directly."
-        | ModuleT _ | ForModuleT _ | ForApplyT _ -> failwith "Can't print this."
+        | ModuleT _ | ForModuleT _ | ForCastT _ -> failwith "Can't print this."
 
     let print_simple_type = print_type (fun t -> sprintf "%s *" (print_type case_array_in_array t))
     let print_array_type = print_type case_array_in_array
@@ -173,33 +173,30 @@ let print_method_dictionary (imemo: MemoDict) =
         | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
         | false -> sprintf "%s %s[%s];" typ nam dim |> state
 
-    and if_ cond tr fl t =
-        let p, r =
-            match t with
-            | VVT([],_) -> 
-                (fun x -> enter <| fun _ -> sprintf "%s;" (codegen x)), ""
-            | _ -> 
-                let r = get_tag() |> sprintf "if_var_%i"
-                (fun x -> enter <| fun _ -> sprintf "%s = %s;" r (codegen x)), r
-        sprintf "%s %s;" (print_simple_type t) r |> state
+    and if_ cond tr fl =
+        // If statements will aways be hoisted into methods in this language.
         sprintf "if (%s) {" (codegen cond) |> state
-        p tr
-        "} else {" |> state
-        p fl
+        enter <| fun _ -> sprintf "return %s;" (codegen tr)
         "}" |> state
-        r
+        "else {" |> state
+        enter <| fun _ -> sprintf "return %s;" (codegen fl)
+        "}" |> state
+        ""
 
     and codegen = function
-        | TyVV([],_) | TyType _ -> ""
+        | TyVV([],_) -> ""
+        | TyType (FunctionT(env,_) | ModuleT env) ->
+            env |> Map.toArray |> Array.map (snd >> codegen) |> String.concat ", "
+        | TyType _ -> ""
         | TyV v -> print_tyv v
-        | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl t
+        | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
-        | TyLet(_, v, TyOp(StructCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
+        | TyLet(_, v, TyOp(ArrayCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
             match ar_typ with
             | Local | Global -> print_array_declaration false typ v ar_sizes
             | Shared -> print_array_declaration true typ v ar_sizes
             codegen rest
-        | TyLet(_,_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
+        | TyLet(_,_,(TyVV([],_)),rest,_) -> codegen rest
         | TyLet(_,(_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
         | TyLet(_,_,TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
         | TyLet(_,v, TyMemoizedExpr(MemoClosure,_,_,tag,ClosureT(a,r)), rest, _) ->
@@ -219,7 +216,8 @@ let print_method_dictionary (imemo: MemoDict) =
             |> sprintf "make_tuple_%i(%s)" (tuple_tag t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
 
-        | TyOp(Apply,[a;b],t) -> // Apply during codegen is only used for applying closures.
+        | TyOp(Apply,[a;b],t) -> 
+            // Apply during codegen is only used for applying closures.
             // There is one level of flattening in the outer arguments.
             let b = tuple_field b |> List.map codegen |> String.concat ", "
             sprintf "%s(%s)" (codegen a) b
