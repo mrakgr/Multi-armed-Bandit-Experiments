@@ -343,31 +343,50 @@ let spiral_codegen dims (name, code as n) =
     | Failure(er,_,_) -> 
         Fail (er,"")
 
+let fib =
+    "Fib",
+    """
+fun rec fib x = 
+    if x <= 0 then 0 else fib (x-1) + fib (x-2)
+    : x
+fib 5
+    """
+
 let fib_y =
+    "fib_y",
     """
 fun rec y f x = f (y f) x
-inl fib r x = if x <= 0 then 0 else r (x-1) + r (x-2)
+inl fib r x = 
+    if x <= 0 then 0 else r (x-1) + r (x-2)
+    : x
 y fib 5
     """
 
 let fib_acc =
+    "fib_acc",
     """
 inl fib n =
-    fun rec fib n a b = if n >= 0 then fib (n-1) b (a+b) else a
+    fun rec fib n a b = 
+        if n >= 0 then fib (n-1) b (a+b) else a
+        : a
     fib n 0 1
 fib 2
     """
 
 let fib_acc_y = // The Y Combinator needs all the arguments when dealing with methods.
+    "fib_acc_y",
     """
 fun rec y f n a b = f (y f) n a b
 inl fib n =
-    inl fib r n a b = if n >= 0 then r (n-1) b (a+b) else a
+    inl fib r n a b = 
+        if n >= 0 then r (n-1) b (a+b) else a
+        : a
     y fib n 0 1
-fib 2
+fib 5
     """
 
 let clo1 =
+    "clo1",
     """
 inl add (x,y),_ = x+y
 fun t() =
@@ -397,13 +416,15 @@ let fib_acc_er =
     "fibonacci_acc_er",
     """
 inl fib n =
-    fun rec fib n a b = if n >= 0 then fib (n-1) b (a+b) else a + 8.8
+    fun rec fib n a b = 
+        if n >= 0 then fib (n-1) b (a+b) else a + 8.8
+        : b
     fib n 0 1
 fib 2
     """
 
 let tuple_library =
-    "Tuple",
+    "tuple",
     """
 inl ignore _ = ()
 inl id x = x
@@ -504,7 +525,7 @@ let map_forward_setter = "inl i (*result, *out) -> out i <- result"
 let map_backward_setter = "inl i (*result, *out) -> out i <- out i + result"
 
 let cuda_kernels =
-    "CudaKernels",
+    "cuda_kernels",
     """
 import Tuple
 
@@ -580,23 +601,7 @@ fun cuda_mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
 module
     """
 
-let tes1 =
-    "tes1",
-    """
-fun top () = 3
-top()
-    """
-
-let fib =
-    "Fib",
-    """
-fun rec fib x = 
-    if x <= 0 then 0 else fib (x-1) + fib (x-2)
-    : x
-fib 5
-    """
-
-let r = spiral_codegen default_dims fib
+let r = spiral_codegen default_dims fib_acc_y
 
 printfn "%A" r
 

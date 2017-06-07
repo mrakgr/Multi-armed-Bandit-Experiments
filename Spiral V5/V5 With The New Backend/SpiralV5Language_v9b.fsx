@@ -509,9 +509,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         (d : LangEnv<_,_,_,_>) (expr: Expr) ret =
     let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
     let inline apply_seq d ret x = ret (!d.seq x)
-    let inline tev_seq d expr ret = tev {d with seq=ref id} expr (apply_seq d ret)
-    let inline tev_method d expr ret = tev_seq {d with ltag=ref 0L} expr ret
-    let inline tev_rec d expr ret = tev_method {d with rbeh=AnnotationReturn} expr ret
+    let inline tev_seq d expr ret = let d = {d with seq=ref id} in tev d expr (apply_seq d ret)
+    let inline tev_rec d expr ret = tev_seq {d with rbeh=AnnotationReturn} expr ret
     let inline tev_match_f on_match_break d expr ret = tev_seq {d with on_match_break=on_match_break} expr ret
 
     let v_find env x on_fail ret = 
@@ -536,17 +535,18 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         tev d cond <| fun cond ->
             if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else
-                tev2 d tr fl <| fun tr fl ->
-                    let type_tr, type_fl = get_type tr, get_type fl
-                    if type_tr = type_fl then 
-                        if is_returnable' type_tr then
-                            match cond with
-                            | TyLit(LitBool true) -> tr
-                            | TyLit(LitBool false) -> fl
-                            | _ -> TyOp(If,[cond;tr;fl],type_tr)
-                            |> ret
-                        else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Consider using Inlineable instead. Got: %A" type_tr
-                    else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+                tev_seq d tr <| fun tr ->
+                    tev_seq d fl <| fun fl ->
+                        let type_tr, type_fl = get_type tr, get_type fl
+                        if type_tr = type_fl then 
+                            if is_returnable' type_tr then
+                                match cond with
+                                | TyLit(LitBool true) -> tr
+                                | TyLit(LitBool false) -> fl
+                                | _ -> TyOp(If,[cond;tr;fl],type_tr)
+                                |> ret
+                            else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Consider using Inlineable instead. Got: %A" type_tr
+                        else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
     let get_tag d = 
         let t = !d.ltag
@@ -595,8 +595,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             let tag = method_tag ()
 
             memoized_methods.[key_args] <- (MethodInEvaluation, tag, ref Set.empty)
-            tev_method d expr <| fun typed_expr ->
-                printfn "In eval_method. %A" typed_expr
+            tev_seq d expr <| fun typed_expr ->
                 memoized_methods.[key_args] <- (MethodDone typed_expr, tag, ref Set.empty)
                 ret (typed_expr, tag)
         | true, (MethodInEvaluation, tag, args) -> tev_rec d expr <| fun r -> ret (r, tag)
@@ -1003,7 +1002,7 @@ let core_functions =
         l (S "gridDimY") (con GridDimY)
         l (S "gridDimZ") (con GridDimZ)
         ]
-   
+
 let spiral_typecheck code dims body = 
     let method_tag = ref 0L
     let memoized_methods = d0()
