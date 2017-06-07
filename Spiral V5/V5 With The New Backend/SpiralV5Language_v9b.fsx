@@ -857,9 +857,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         let check a = is_numeric a
         prim_un_op_template d er check prim_un_op_helper
 
-    let for_cast d x ret =
-        tev_seq d x (get_type >> ForCastT >> TyType >> ret)
-
+    let for_cast d x ret = tev_seq d x (get_type >> ForCastT >> TyType >> ret)
     let error_non_unit d a ret =
         tev d a <| fun x ->
             if get_type x <> BVVT then

@@ -179,21 +179,27 @@ let print_method_dictionary (imemo: MemoDict) =
         | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
         | false -> sprintf "%s %s[%s];" typ nam dim |> state
 
-    and if_ cond tr fl =
-        // If statements will aways be hoisted into methods in this language.
+    and if_ cond tr fl t =
+        let p, r =
+            match t with
+            | VVT([],_) -> 
+                (fun x -> enter <| fun _ -> sprintf "%s;" (codegen x)), ""
+            | _ -> 
+                let r = get_tag() |> sprintf "if_var_%i"
+                (fun x -> enter <| fun _ -> sprintf "%s = %s;" r (codegen x)), r
+        sprintf "%s %s;" (print_simple_type t) r |> state
         sprintf "if (%s) {" (codegen cond) |> state
-        enter <| fun _ -> sprintf "return %s;" (codegen tr)
+        p tr
+        "} else {" |> state
+        p fl
         "}" |> state
-        "else {" |> state
-        enter <| fun _ -> sprintf "return %s;" (codegen fl)
-        "}" |> state
-        ""
+        r
 
     and codegen = function
         | TyVV([],_) -> ""
         | TyType _ -> ""
         | TyV v -> print_tyv v
-        | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
+        | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl t
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
         | TyLet(_, v, TyOp(ArrayCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
             match ar_typ with
@@ -334,7 +340,10 @@ let print_method_dictionary (imemo: MemoDict) =
 open SpiralV5Parser_v2b
 open FParsec
 
-let spiral_codegen dims (name, code as n) = 
+let spiral_codegen dims aux_modules main_module = 
+    let rec loop = 
+    let f x = Array.map (fun (name,code as n) -> n, spiral_parse n) x
+    let aux_modules, main_module = f aux_modules, f main_module
     match spiral_parse n with
     | Success(r,_,_) ->
         match spiral_typecheck code dims r with
@@ -380,7 +389,7 @@ fun rec y f n a b = f (y f) n a b
 inl fib n =
     inl fib r n a b = 
         if n >= 0 then r (n-1) b (a+b) else a
-        : a
+        : a // The return type is the type of `a`
     y fib n 0 1
 fib 5
     """
@@ -546,6 +555,7 @@ fun cuda_map (setter, map_op, *n, ins, outs) =
         if i < n then
             tuple_zip (outs,map_load_op i) |> tuple_map (setter i)
             loop (i+stride)
+        : () // unit type
     loop (blockIdxX * blockDimX + threadIdxX)
 
 fun cuda_map_redo (map_op,(neutral_elem,reduce_op),*n,ins,outs) =
