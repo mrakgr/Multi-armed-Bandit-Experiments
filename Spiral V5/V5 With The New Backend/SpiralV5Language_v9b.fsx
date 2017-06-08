@@ -755,13 +755,14 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         else ret()
 
     let array_create d pointer size typeof_expr ret =
-        tev2 d size typeof_expr <| fun size typ ->
-            destructure_deep d size
-            |> fun x -> 
-                guard_is_int d (tuple_field x) <| fun () ->
-                    let l = [size; TyType(get_type typ |> pointer)]
-                    let x = TyVV (l, VVT (List.map get_type l, "Array"))
-                    TyOp(ArrayCreate,[x],get_type x) |> ret
+        tev d size <| fun size -> 
+            tev_seq d typeof_expr <| fun typ ->
+                destructure_deep d size
+                |> fun x -> 
+                    guard_is_int d (tuple_field x) <| fun () ->
+                        let l = [size; TyType(get_type typ |> pointer)]
+                        let x = TyVV (l, VVT (List.map get_type l, "Array"))
+                        TyOp(ArrayCreate,[x],get_type x) |> ret
 
     let array_index d op_index ar args ret =
         tev2 d ar args <| fun ar args ->
