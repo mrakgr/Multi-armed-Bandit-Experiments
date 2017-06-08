@@ -949,14 +949,13 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 /// Reasonable default for the dims.
 let default_dims = dim3(256), dim3(20)
 
-let print_type_error (code: string) (trace: Trace) message = 
-    let code = code.Split [|'\n'|]
+let print_type_error (code: Dictionary<string, string []>) (trace: Trace) message = 
     let error = System.Text.StringBuilder(1024)
     error.AppendLine message |> ignore
     let rec loop prev_file prev_line = function
         | (file, line: int64, col: int64) :: xs ->
             if prev_file <> file || prev_line <> line then
-                let er_code = code.[int line - 1]
+                let er_code = code.[file].[int line - 1]
                 let er_file = if file <> "" then sprintf " in file \"%s\"." file else file
                 error.AppendLine <| sprintf "Error trace on line: %i, column: %i%s" line col er_file |> ignore
                 error.AppendLine er_code |> ignore

@@ -107,7 +107,7 @@ let print_method_dictionary (imemo: MemoDict) =
         | VVT (t, _) -> print_tuple t
         | LocalPointerT x | SharedPointerT x | GlobalPointerT x ->
             sprintf "%s *" (print_type array_case x)
-        | FunctionT _ -> failwith "Can't function types directly."
+        | FunctionT _ -> failwith "Can't print function types directly."
         | ModuleT _ | ForModuleT _ | ForCastT _ -> failwith "Can't print this."
 
     let print_simple_type = print_type (fun t -> sprintf "%s *" (print_type case_array_in_array t))
@@ -341,16 +341,32 @@ open SpiralV5Parser_v2b
 open FParsec
 
 let spiral_codegen dims aux_modules main_module = 
-    let rec loop = 
-    let f x = Array.map (fun (name,code as n) -> n, spiral_parse n) x
-    let aux_modules, main_module = f aux_modules, f main_module
-    match spiral_parse n with
-    | Success(r,_,_) ->
-        match spiral_typecheck code dims r with
-        | Succ(_,memo) -> print_method_dictionary memo
-        | Fail er -> Fail (er,"")
-    | Failure(er,_,_) -> 
-        Fail (er,"")
+    let rec parse_modules xs on_fail ret =
+        let p x on_fail ret =
+            match spiral_parse x with
+            | Success(r,_,_) -> ret r
+            | Failure(er,_,_) -> on_fail er
+        match xs with
+        | (name,code as x) :: xs -> 
+            p x on_fail <| fun r -> 
+                parse_modules xs on_fail <| fun rs ->
+                    l (S name) r None rs |> ret
+        | [] -> p main_module on_fail ret
+
+    let code =
+        let d = Dictionary()
+        let f (name,code: string) = d.Add(name, code.Split [|'\n'|])
+        Seq.iter f aux_modules
+        f main_module
+        d
+     
+    parse_modules aux_modules
+        (fun er -> Fail(er,""))
+        (fun r ->
+            match spiral_typecheck code dims r with
+            | Succ(_,memo) -> print_method_dictionary memo
+            | Fail er -> Fail (er,"")
+            )
 
 let fib =
     "Fib",
@@ -611,7 +627,18 @@ fun cuda_mapcol (setter,map_op,(*num_cols,*num_rows),ins,outs) =
 module
     """
 
-let r = spiral_codegen default_dims fib_acc_y
+let tup1 =
+    "tup1",
+    """
+fun tup() = 1,2,3
+fun add x,y,z = x+y+z
+fun top() =
+    inl x = tup()
+    add x
+top()
+    """
+
+let r = spiral_codegen default_dims [] tup1
 
 printfn "%A" r
 
