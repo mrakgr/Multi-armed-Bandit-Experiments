@@ -577,7 +577,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 | _ -> r
             match r with
             | TyType _ | TyLit _ -> r
-            | TyOp((ArrayUnsafeIndex | ArrayIndex),[Array(_,[],_);_],_)
             | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
             | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
@@ -760,7 +759,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 destructure_deep d size
                 |> fun x -> 
                     guard_is_int d (tuple_field x) <| fun () ->
-                        let l = [size; TyType(get_type typ |> pointer)]
+                        let l = [size; get_type typ |> pointer |> make_tyv_and_push_inv d]
                         let x = TyVV (l, VVT (List.map get_type l, "Array"))
                         TyOp(ArrayCreate,[x],get_type x) |> ret
 
