@@ -21,20 +21,22 @@ type SpiralDeviceVarType =
 type Ty =
     | PrimT of SpiralDeviceVarType
     | VVT of Ty list * string
-    | FunctionT of FunctionKey
+    | FunctionT of Env * FunctionCore
+    | ModuleT of Env
+    | SealedFunctionT of SealedEnv * FunctionCore
+    | SealedModuleT of SealedEnv
     | LocalPointerT of Ty
     | SharedPointerT of Ty
     | GlobalPointerT of Ty
     | ClosureT of Ty * Ty // For now since I am compiling only to Cuda, closures will be not be allowed to capture variables.
-    | ModuleT of Env
     | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
     | ForModuleT of string
 
 and Tag = int64
 and TyV = Tag * Ty
 and Env = Map<string, TypedExpr>
+and SealedEnv = Map<string, Ty>
 and FunctionCore = string * (Pattern * Expr) list
-and FunctionKey = Env * FunctionCore
 and MemoKey = Env * Expr
 
 and Pattern =
@@ -93,6 +95,8 @@ and Op =
     | TypeAnnot
     | ModuleWith
     | ModuleWith'
+    | EnvUnseal
+    | EnvSeal
 
     | ArrayCreate
     | ArrayCreateShared
@@ -229,7 +233,7 @@ let (|Array|_|) = function
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
     | FunctionT _ | ModuleT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
-    | ClosureT (a,b) -> is_returnable' a && is_returnable' b
+    | SealedFunctionT _ | SealedModuleT _ | ClosureT _ -> true
     | ForCastT x -> is_returnable' x
     | ForModuleT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
@@ -422,6 +426,7 @@ and renamer_apply_ty r e =
     | LocalPointerT t -> LocalPointerT (f t)
     | SharedPointerT t -> SharedPointerT (f t)
     | GlobalPointerT t -> GlobalPointerT (f t)
+    | SealedFunctionT _ | SealedModuleT _
     | PrimT _ | ForModuleT _ -> e
     | ModuleT e -> ModuleT (renamer_apply_env r e)
     | VVT (l,n) -> VVT (List.map f l, n)
@@ -445,6 +450,7 @@ and ty_free_variables on_method_call x =
     | ClosureT(a,b) -> f a + f b
     | ForCastT t -> f t
     | LocalPointerT t | SharedPointerT t | GlobalPointerT t -> f t
+    | SealedFunctionT _ | SealedModuleT _
     | PrimT _ | ForModuleT _ -> Set.empty
     | VVT (l,n) -> vars_union f l
 
@@ -564,23 +570,59 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let make_tyv_and_push d ty_exp = make_tyv_and_push' LetStd d ty_exp |> TyV
     let make_tyv_and_push_inv d ty_exp = make_tyv_and_push' LetInvisible d ty_exp |> TyV
 
-    // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
-    // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let destructure_deep d r = 
-        let rec destructure_deep r = 
-            let destructure_tuple r =
+    let seal d r =
+        let rec seal r =
+            let rec env_seal x = Map.map seal_type x
+            and seal_type _ r = 
                 match get_type r with
-                | VVT (tuple_types, name) -> 
-                    let indexed_tuple_args = List.mapi (fun i typ -> 
-                        destructure_deep <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
-                    TyVV(indexed_tuple_args, VVT (tuple_types, name))
+                | FunctionT (env, x) -> 
+                    let x = SealedFunctionT (env_seal env, x)
+                    TyOp(EnvSeal,[r], x)
+                | ModuleT env -> SealedModuleT (env_seal env) |> TyType    
+                | _ -> r
+            let seal_var r =
+                match get_type r with
+                //| VVT (tuple_types, name) -> TyVV(index_tuple_args tuple_types, VVT (tuple_types, name))
+                | FunctionT (env, x) -> 
+                    let x = SealedFunctionT (env_seal env, x)
+                    TyOp(EnvSeal,[r], x)
+                | ModuleT env -> SealedModuleT (env_seal env) |> TyType    
                 | _ -> r
             match r with
             | TyType _ | TyLit _ -> r
-            | TyV _ | TyOp (VVIndex,[_;_],_) -> destructure_tuple r
-            | TyVV(l,t) -> TyVV(List.map destructure_deep l,t)
-            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure_deep
-        destructure_deep r
+            | TyV _ -> seal_var r
+            | TyVV(l,VVT (_, name)) ->
+                let x = List.map seal l
+                TyVV(x, VVT (List.map get_type x, name))
+            | TyVV(l,_) -> failwithf "Malformed tuple %A. The type of it must be VVT." r
+            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> seal
+        seal r
+
+    // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
+    // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
+    let destructure d r = 
+        let rec destructure r = 
+            let destructure_var r =
+                let index_tuple_args tuple_types = 
+                    List.mapi (fun i typ -> 
+                        destructure <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
+                let env_unseal x =
+                    let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
+                    Map.map unseal x
+                match get_type r with
+                | VVT (tuple_types, name) -> TyVV(index_tuple_args tuple_types, VVT (tuple_types, name))
+                | SealedFunctionT (env, x) -> FunctionT (env_unseal env, x) |> TyType
+                | SealedModuleT env -> ModuleT (env_unseal env) |> TyType    
+                | _ -> r
+            match r with
+            | TyType _ | TyLit _ -> r
+            | TyV _ -> destructure_var r
+            | TyVV(l,VVT (_, name)) ->
+                let x = List.map destructure l
+                TyVV(x, VVT (List.map get_type x, name))
+            | TyVV(l,_) -> failwithf "Malformed tuple %A. The type of it must be VVT." r
+            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure
+        destructure r
 
     let method_tag () =
         let tag = !method_tag
@@ -669,7 +711,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             apply (tev_match_f on_fail) d r args
                 (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
                 (fun r -> 
-                    match_single d acc pattern (destructure_deep d r)
+                    match_single d acc pattern (destructure d r)
                         (fun _ -> d.on_type_er d.trace "The function call subpattern in the matcher failed to match.")
                         ret)
 
@@ -693,11 +735,11 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     and apply tev d la ra on_fail ret =
         match get_type la, get_type ra with
-        | FunctionT x, ForCastT t -> apply_cast d x t on_fail ret
+        | FunctionT (env,x), ForCastT t -> apply_cast d (env,x) t on_fail ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function type in type application. Got: %A" x
         | ModuleT x, ForModuleT n -> apply_module d x n ret
         | x, ForModuleT n -> d.on_type_er d.trace <| sprintf "Expected a module type in module application. Got: %A" x
-        | FunctionT x,_ -> apply_functiont tev d x ra on_fail ret
+        | FunctionT (env,x),_ -> apply_functiont tev d (env,x) ra on_fail ret
         | ClosureT(a,r),_ -> apply_closuret d la (a,r) ra ret
         | VVT(_,name),_ when name <> "" -> apply_named_tuple tev d name ra on_fail ret
         | _ -> d.on_type_er d.trace "Invalid use of apply."
@@ -719,12 +761,12 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let apply_tev d expr args apply_fail ret = 
         tev d expr <| fun expr ->
             tev d args <| fun args ->
-                let args = destructure_deep d args
+                let args = destructure d args
                 apply tev d expr args apply_fail ret
 
     let mset d a b ret =
         tev2 d a b <| fun l r ->
-            let r = destructure_deep d r
+            let r = destructure d r
             match l, r with
             | TyOp((ArrayUnsafeIndex | ArrayIndex),[_;_],lt), r when lt = get_type r -> make_tyv_and_push d (TyOp(MSet,[l;r],BVVT)) |> ret
             | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp((ArrayUnsafeIndex | ArrayIndex),_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
@@ -743,7 +785,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     
     let vv_cons d a b ret =
         tev2 d a b <| fun a b ->
-            let b = destructure_deep d b
+            let b = destructure d b
             match b with
             | TyVV(b, VVT (bt, "")) -> TyVV(a::b, VVT (get_type a :: bt, "")) |> ret
             | TyVV(_, VVT (_, name)) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
@@ -756,10 +798,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let array_create d pointer size typeof_expr ret =
         tev d size <| fun size -> 
             tev_seq d typeof_expr <| fun typ ->
-                destructure_deep d size
+                destructure d size
                 |> fun x -> 
                     guard_is_int d (tuple_field x) <| fun () ->
-                        let l = [size; get_type typ |> pointer |> make_tyv_and_push_inv d]
+                        let l = [size; get_type typ |> pointer |> TyType |> make_tyv_and_push_inv d]
                         let x = TyVV (l, VVT (List.map get_type l, "Array"))
                         TyOp(ArrayCreate,[x],get_type x) |> ret
 
