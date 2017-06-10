@@ -105,7 +105,9 @@ let print_method_dictionary (imemo: MemoDict) =
             | BoolT -> "int"
             | StringT -> "char *"
         | ClosureT(a,r) -> print_fun_pointer_type (a,r)
-        | SealedFunctionT(env,_) | SealedModuleT env -> print_sealed_env env
+        | SealedFunctionT(env,_) | SealedModuleT env -> 
+            //print_sealed_env env
+            "sealed_env!!!"
         | VVT ([], _) -> "void"
         | VVT (t, _) -> print_tuple t
         | LocalPointerT x | SharedPointerT x | GlobalPointerT x -> sprintf "%s *" (print_type x)
@@ -288,7 +290,7 @@ let print_method_dictionary (imemo: MemoDict) =
         enter <| fun _ -> iter (fun k ty -> 
             match ty with
             | Unit -> ()
-            | _ -> sprintf "mem_%s %s;" (print_type ty) k |> state) tys; ""
+            | _ -> sprintf "%s mem_%s;" (print_type ty) k |> state) tys; ""
         "};" |> state
 
         sprintf "__device__ __forceinline__ %s make_struct_%i(%s){" 
@@ -323,40 +325,39 @@ let print_method_dictionary (imemo: MemoDict) =
             | s -> sprintf "return %s;" s |> state
         "}" |> state
 
-    try
-        """#include "cub/cub.cuh" """ |> state
-        """#include <assert.h> """ |> state
-        """extern "C" {""" |> state
+    """#include "cub/cub.cuh" """ |> state
+    """#include <assert.h> """ |> state
+    """extern "C" {""" |> state
         
-        enter' <| fun _ ->
-            with_channel CodegenChannels.Code <| fun _ ->
-                for x in imemo do print_method (memo_value x.Value)
+    enter' <| fun _ ->
+        with_channel CodegenChannels.Code <| fun _ ->
+            for x in imemo do print_method (memo_value x.Value)
 
-            with_channel CodegenChannels.Definitions <| fun _ ->
-                for x in tuple_definitions do 
-                    let tys, tag = x.Key, x.Value
-                    let tuple_name = print_tuple' tag
-                    let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-                    let iter f l = List.iteri (fun i x -> f (string i) x) l
-                    print_struct_definition iter fold tuple_name tys tag
+        with_channel CodegenChannels.Definitions <| fun _ ->
+            for x in tuple_definitions do 
+                let tys, tag = x.Key, x.Value
+                let tuple_name = print_tuple' tag
+                let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+                let iter f l = List.iteri (fun i x -> f (string i) x) l
+                print_struct_definition iter fold tuple_name tys tag
 
-                for x in sealed_env_definitions do
-                    let tys, tag = x.Key, x.Value
-                    let tuple_name = print_sealed_env' tag
-                    print_struct_definition Map.iter Map.fold tuple_name tys tag
+            for x in sealed_env_definitions do
+                let tys, tag = x.Key, x.Value
+                let tuple_name = print_sealed_env' tag
+                
+                print_struct_definition Map.iter Map.fold tuple_name tys tag
 
-                for x in closure_type_definitions do print_closure_type_definition x.Key x.Value
+            for x in closure_type_definitions do print_closure_type_definition x.Key x.Value
 
-            // I am just swapping the positions so the definitions come first in the printed code.
-            // Unfortunately, getting the definitions requires a pass through the AST first
-            // so I can't just print them at the start.
-            add_channels_a_to_main CodegenChannels.Definitions
-            add_channels_a_to_main CodegenChannels.Code
+        // I am just swapping the positions so the definitions come first in the printed code.
+        // Unfortunately, getting the definitions requires a pass through the AST first
+        // so I can't just print them at the start.
+        add_channels_a_to_main CodegenChannels.Definitions
+        add_channels_a_to_main CodegenChannels.Code
         
-        "}" |> state
+    "}" |> state
         
-        cur_program () |> process_statements |> Succ
-    with e -> Fail (e.Message, e.StackTrace)
+    cur_program () |> process_statements
 
 open SpiralV5Parser_v2b
 open FParsec
@@ -381,13 +382,10 @@ let spiral_codegen dims aux_modules main_module =
         f main_module
         d
      
-    parse_modules aux_modules
-        (fun er -> Fail(er,""))
+    parse_modules aux_modules Fail
         (fun r ->
-            match spiral_typecheck code dims r with
-            | Succ(_,memo) -> print_method_dictionary memo
-            | Fail er -> Fail (er,"")
-            )
+            spiral_typecheck code dims r Fail <| fun (_,memo) ->
+                print_method_dictionary memo |> Succ)
 
 let fib =
     "Fib",
@@ -659,7 +657,46 @@ fun top() =
 top()
     """
 
-let r = spiral_codegen default_dims [] tup1
+let tup2 =
+    "tup2",
+    """
+inl tup () () = 1,2,3
+fun add f = 
+    inl x,y,z = f()
+    x+y+z
+fun top() =
+    inl x = tup()
+    add x
+top()
+    """
+
+let tup3 =
+    "tup3",
+    """
+fun tup x y z = 
+    fun () -> x*2,y*3,z*5
+fun add f = 
+    inl x,y,z = f()
+    x+y+z
+fun top() =
+    inl x = tup 1 2 3
+    add x
+top()
+    """
+
+let fib_acc_alt =
+    "fib_acc_alt",
+    """
+inl fib n =
+    fun rec fib n a b = 
+        fun () ->
+            if n >= 0 then fib (n-1) b (a+b) () else a
+            : a
+    fib n 0 1
+fib 10
+    """
+
+let r = spiral_codegen default_dims [] fib_acc_alt
 
 printfn "%A" r
 

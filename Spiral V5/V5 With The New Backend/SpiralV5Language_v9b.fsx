@@ -508,7 +508,6 @@ type LangEnv<'a,'c,'q,'e> =
     seq : (TypedExpr -> TypedExpr) ref
     env : Map<string,TypedExpr>
     trace : Trace
-    on_match_break : 'a -> 'q
     on_type_er : Trace -> 'c -> 'e
     }
 
@@ -518,7 +517,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let inline apply_seq d x = !d.seq x
     let inline tev_seq d expr ret = let d = {d with seq=ref id} in tev d expr (apply_seq d >> ret)
     let inline tev_rec d expr ret = tev_seq {d with rbeh=AnnotationReturn} expr ret
-    let inline tev_match_f on_match_break d expr ret = tev_seq {d with on_match_break=on_match_break} expr ret
 
     let v_find env x on_fail ret = 
         match Map.tryFind x env with
@@ -625,6 +623,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let eval_method d expr ret =
         let key_args = d.env, expr
+        
         match memoized_methods.TryGetValue key_args with
         | false, _ ->
             let tag = method_tag ()
@@ -633,8 +632,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             tev_seal d expr <| fun typed_expr ->
                 memoized_methods.[key_args] <- (MethodDone typed_expr, tag, ref Set.empty)
                 ret (typed_expr, tag)
-        | true, (MethodInEvaluation, tag, args) -> tev_rec d expr <| fun r -> ret (r, tag)
-        | true, (MethodDone typed_expr, tag, _) -> ret (typed_expr, tag)
+        | true, (MethodInEvaluation, tag, args) -> 
+            tev_rec d expr <| fun r -> ret (r, tag)
+        | true, (MethodDone typed_expr, tag, _) -> 
+            ret (typed_expr, tag)
 
     let eval_renaming d expr ret = 
         let env = d.env
@@ -697,17 +698,14 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 match_single d env pattern args
                     (fun _ -> loop xs)
                     (fun acc -> ret (acc, body))
-            | [] -> on_fail (l,args) //"All patterns in the matcher failed to match."
+            | [] -> on_fail()
         loop l
 
     and match_f d acc (pattern: Pattern) args meth on_fail ret =
         tev d (v meth) <| fun r ->
-            apply (tev_match_f on_fail) d r args
-                (fun _ -> on_fail()) // <| "Function application in pattern matcher failed to match a pattern."
-                (fun r -> 
-                    match_single d acc pattern (destructure d r)
-                        (fun _ -> d.on_type_er d.trace "The function call subpattern in the matcher failed to match.")
-                        ret)
+            apply tev_seq d r args
+                on_fail // <| "Function application in pattern matcher failed to match a pattern."
+                (fun r -> match_single d acc pattern (destructure d r) on_fail ret)
 
     and apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
@@ -747,16 +745,21 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 match args_ty with
                 | VVT(l,n) -> TyVV(List.map f l, args_ty)
                 | x -> f x
-            let f = FunctionT fun_key |> TyType |> t
-            let g = FunctionT(env,("",[S " ",ap None f (v " ")])) |> TyType
-            let tev d x = memoize_closure (get_type args) d x
-            apply tev d g args on_fail ret
+            
+            let closure = 
+                let f = FunctionT fun_key |> TyType |> t
+                FunctionT(env,("",[S " ",ap None f (v " ")])) |> TyType
+
+            let tev d x ret = 
+                memoize_closure (get_type args) d x <| fun r ->
+                    if is_returnable r then ret r
+                    else d.on_type_er d.trace "Closure does not have a returnable type."
+                    
+            apply tev d closure args on_fail ret
 
     let apply_tev d expr args apply_fail ret = 
-        tev d expr <| fun expr ->
-            tev d args <| fun args ->
-                let args = destructure d args
-                apply tev d expr args apply_fail ret
+        tev2 d expr args <| fun expr args ->
+            apply tev d (destructure d expr) (destructure d args) apply_fail ret
 
     let mset d a b ret =
         tev2 d a b <| fun l r ->
@@ -1002,11 +1005,9 @@ let print_type_error (code: Dictionary<string, string []>) (trace: Trace) messag
         | [] -> error.ToString()
     loop "" -1L trace
 
-let data_empty code =
-    let on_match_break _ = Fail "The match broke to the top level."
-    let on_type_er trace message = Fail <| print_type_error code trace message
+let data_empty on_fail code =
     {ltag=ref 0L;seq=ref id;trace=[];env=Map.empty;rbeh=AnnotationDive
-     on_match_break=on_match_break;on_type_er=on_type_er}
+     on_type_er = fun trace message -> on_fail <| print_type_error code trace message}
 
 let array_index op a b = Op(op,[a;b],None)
 
@@ -1036,13 +1037,13 @@ let core_functions =
         l (S "gridDimZ") (con GridDimZ)
         ]
 
-let spiral_typecheck code dims body = 
+let spiral_typecheck code dims body on_fail ret = 
     let method_tag = ref 0L
     let memoized_methods = d0()
-    let d = data_empty code
+    let d = data_empty on_fail code
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
     let deforest_tuples x = 
         typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
-        Succ(x,memoized_methods)
+        ret (x,memoized_methods)
     expr_typecheck dims method_tag memoized_methods d input deforest_tuples
