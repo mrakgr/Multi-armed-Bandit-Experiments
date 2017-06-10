@@ -105,9 +105,7 @@ let print_method_dictionary (imemo: MemoDict) =
             | BoolT -> "int"
             | StringT -> "char *"
         | ClosureT(a,r) -> print_fun_pointer_type (a,r)
-        | SealedFunctionT(env,_) | SealedModuleT env -> 
-            //print_sealed_env env
-            "sealed_env!!!"
+        | SealedFunctionT(env,_) | SealedModuleT env -> print_sealed_env env
         | VVT ([], _) -> "void"
         | VVT (t, _) -> print_tuple t
         | LocalPointerT x | SharedPointerT x | GlobalPointerT x -> sprintf "%s *" (print_type x)
@@ -138,7 +136,10 @@ let print_method_dictionary (imemo: MemoDict) =
         | BlockIdxY -> "blockIdx.y"
         | BlockIdxZ -> "blockIdx.z"
 
-    let (|Unit|_|) = function
+    let (|Unit|_|) l = 
+        match l with
+        | SealedFunctionT (env, _) | SealedModuleT env when env.IsEmpty -> Some ()
+        | FunctionT(env,_) | ModuleT env when env.IsEmpty -> Some ()
         | VVT([],_) -> Some ()
         | _ -> None
 
@@ -215,7 +216,10 @@ let print_method_dictionary (imemo: MemoDict) =
             |> fun ar_typ -> print_array_declaration ar_typ typ v ar_sizes
             codegen rest
         | TyLet(_,_,(TyVV([],_) | TyType _), rest, _) -> codegen rest
-        | TyLet(_,(_,Unit),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
+        | TyLet(_,(_,Unit),b,rest,_) -> 
+            let b = codegen b
+            if b <> "" then sprintf "%s;" b |> state
+            codegen rest
         | TyLet(_,_, TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
         | TyLet(_,tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
@@ -267,9 +271,11 @@ let print_method_dictionary (imemo: MemoDict) =
         | TyOp(TypeSeal,[r],(SealedFunctionT(t,_) | SealedModuleT t)) ->
             match get_type r with
             | FunctionT(env,_) | ModuleT env ->
-                Map.toArray env
-                |> Array.map snd
-                |> make_struct |> sprintf "make_struct_%i(%s)" (sealed_env_tag t)
+                if env.IsEmpty = false then
+                    Map.toArray env
+                    |> Array.map snd
+                    |> make_struct |> sprintf "make_struct_%i(%s)" (sealed_env_tag t)
+                else ""
             | _ -> failwith "impossible"
 
         | TyOp(EnvUnseal,[r; TyLit (LitString k)], Unit) -> ""
@@ -293,19 +299,21 @@ let print_method_dictionary (imemo: MemoDict) =
             | _ -> sprintf "%s mem_%s;" (print_type ty) k |> state) tys; ""
         "};" |> state
 
-        sprintf "__device__ __forceinline__ %s make_struct_%i(%s){" 
-            name
-            tag
-            (fold (fun s k ty -> 
-                match ty with
-                | Unit -> s
-                | _ -> sprintf "%s mem_%s" (print_type ty) k :: s) [] tys
+        let print_args =
+            let args =
+                fold (fun s k ty -> 
+                    match ty with
+                    | Unit -> s
+                    | _ -> sprintf "%s mem_%s" (print_type ty) k :: s) [] tys
                 |> List.rev
-                |> String.concat ", ")
-        |> state
+                |> String.concat ", "
+            sprintf "__device__ __forceinline__ %s make_struct_%i(%s){" name tag args |> state
+            
         enter' <| fun _ ->
             sprintf "%s tmp;" name |> state
-            iter (fun k _ -> sprintf "tmp.mem_%s = mem_%s;" k k |> state) tys
+            iter (fun k -> function
+                | Unit -> ()
+                | _ -> sprintf "tmp.mem_%s = mem_%s;" k k |> state) tys
             "return tmp;" |> state
         "}" |> state
 
@@ -344,7 +352,6 @@ let print_method_dictionary (imemo: MemoDict) =
             for x in sealed_env_definitions do
                 let tys, tag = x.Key, x.Value
                 let tuple_name = print_sealed_env' tag
-                
                 print_struct_definition Map.iter Map.fold tuple_name tys tag
 
             for x in closure_type_definitions do print_closure_type_definition x.Key x.Value
@@ -687,12 +694,16 @@ top()
 let fib_acc_alt =
     "fib_acc_alt",
     """
-inl fib n =
-    fun rec fib n a b = 
-        fun () ->
+fun fib n =
+    fun rec fib n = 
+        fun a b () ->
             if n >= 0 then fib (n-1) b (a+b) () else a
             : a
-    fib n 0 1
+    inl x = fib n
+    inl y = x 0
+    inl z = y 1
+    z
+    //fib n 0 1
 fib 10
     """
 

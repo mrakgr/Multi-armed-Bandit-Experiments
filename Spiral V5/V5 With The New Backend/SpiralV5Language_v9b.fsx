@@ -551,7 +551,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let seal d r =
         let rec seal r =
-            let rec env_seal is_env x = Map.map (fun _ -> get_type >> (seal_var is_env)) x
+            let rec env_seal is_env x = Map.map (fun _ -> seal >> get_type) x
             and seal_var is_env r =
                 match r with
                 | VVT (tuple_types, name) -> VVT(List.map (seal_var is_env) tuple_types, name)
