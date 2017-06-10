@@ -310,7 +310,7 @@ let module_open pos a b = Op(ModuleOpen,[a;b],pos)
 let E = S ""
 let B = VV ([], "", None)
 let BVVT = VVT ([], "")
-let TyB = TyVV([], BVVT)
+let TyB = TyVV ([], BVVT)
 /// Matches tuples without a tail.
 let SS x = R (x, None) 
 /// Opposite of S', matches only a tuple.

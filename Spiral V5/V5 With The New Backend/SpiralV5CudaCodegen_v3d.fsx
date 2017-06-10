@@ -78,16 +78,18 @@ let print_method_dictionary (imemo: MemoDict) =
     let print_tuple' v = sprintf "tuple_%i" v
     let print_tuple t = tuple_tag t |> print_tuple'
 
+    let sealed_env_definitions = d0()
+    let sealed_env_tag x = def_proc sealed_env_definitions x
+    let print_sealed_env' v = sprintf "sealed_env_%i" v
+    let print_sealed_env t = sealed_env_tag t |> print_sealed_env'
+
     let closure_type_definitions = d0()
     let closure_type_tag x = def_proc closure_type_definitions x
     let print_fun_pointer_type' tag = sprintf "fun_pointer_type_%i" tag
     let print_fun_pointer_type typ = closure_type_tag typ |> print_fun_pointer_type'
 
-    let case_array_in_array _ = 
-        // The only reason is really because C syntax is such a pain in the ass.
-        // I do not want to deal with casting void pointers here.
-        failwith "Arrays should not be inside other arrays."
-    let rec print_type array_case = function
+    let rec print_type r = 
+        match r with
         | PrimT x -> 
             match x with
             | UInt8T -> "unsigned char"
@@ -103,18 +105,15 @@ let print_method_dictionary (imemo: MemoDict) =
             | BoolT -> "int"
             | StringT -> "char *"
         | ClosureT(a,r) -> print_fun_pointer_type (a,r)
+        | SealedFunctionT(env,_) | SealedModuleT env -> print_sealed_env env
         | VVT ([], _) -> "void"
         | VVT (t, _) -> print_tuple t
-        | LocalPointerT x | SharedPointerT x | GlobalPointerT x ->
-            sprintf "%s *" (print_type array_case x)
+        | LocalPointerT x | SharedPointerT x | GlobalPointerT x -> sprintf "%s *" (print_type x)
         | FunctionT _ -> failwith "Can't print function types directly."
-        | ModuleT _ | ForModuleT _ | ForCastT _ -> failwith "Can't print this."
-
-    let print_simple_type = print_type (fun t -> sprintf "%s *" (print_type case_array_in_array t))
-    let print_array_type = print_type case_array_in_array
+        | ModuleT _ | ForModuleT _ | ForCastT _ -> failwithf "Can't print the type of %A." r
 
     let print_tyv (tag,_) = sprintf "var_%i" tag
-    let print_tyv_with_type (tag,ty as v) = sprintf "%s %s" (print_simple_type ty) (print_tyv v)
+    let print_tyv_with_type (tag,ty as v) = sprintf "%s %s" (print_type ty) (print_tyv v)
     let print_method tag = sprintf "method_%i" tag
 
     let print_value = function
@@ -136,6 +135,10 @@ let print_method_dictionary (imemo: MemoDict) =
         | BlockIdxX -> "blockIdx.x"
         | BlockIdxY -> "blockIdx.y"
         | BlockIdxZ -> "blockIdx.z"
+
+    let (|Unit|_|) = function
+        | VVT([],_) -> Some ()
+        | _ -> None
 
     let rec print_array is_print_assertion a b =
         let ar_sizes =
@@ -167,7 +170,7 @@ let print_method_dictionary (imemo: MemoDict) =
         sprintf "%s[%s]" (codegen a) index
 
     and print_array_declaration is_shared typ v ar_sizes =   
-        let typ = print_array_type typ
+        let typ = print_type typ
         let nam = print_tyv v
         let dim =
             if List.isEmpty ar_sizes then "1"
@@ -182,18 +185,22 @@ let print_method_dictionary (imemo: MemoDict) =
     and if_ cond tr fl t =
         let p, r =
             match t with
-            | VVT([],_) -> 
+            | Unit -> 
                 (fun x -> enter <| fun _ -> sprintf "%s;" (codegen x)), ""
             | _ -> 
                 let r = get_tag() |> sprintf "if_var_%i"
                 (fun x -> enter <| fun _ -> sprintf "%s = %s;" r (codegen x)), r
-        sprintf "%s %s;" (print_simple_type t) r |> state
+        sprintf "%s %s;" (print_type t) r |> state
         sprintf "if (%s) {" (codegen cond) |> state
         p tr
         "} else {" |> state
         p fl
         "}" |> state
         r
+
+    and make_struct l =
+        Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
+        |> String.concat ", "
 
     and codegen = function
         | TyVV([],_) -> ""
@@ -202,28 +209,20 @@ let print_method_dictionary (imemo: MemoDict) =
         | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl t
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
         | TyLet(_, v, TyOp(ArrayCreate, [Array(ar_typ,ar_sizes,typ)], _), rest, _) ->
-            match ar_typ with
-            | Local | Global -> print_array_declaration false typ v ar_sizes
-            | Shared -> print_array_declaration true typ v ar_sizes
+            match ar_typ with Local | Global -> false | Shared -> true
+            |> fun ar_typ -> print_array_declaration ar_typ typ v ar_sizes
             codegen rest
-        | TyLet(_,_,(TyVV([],_) | TyType _),rest,_) -> codegen rest
-        | TyLet(_,(_,VVT([],_)),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
-        | TyLet(_,_,TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
-        | TyLet(_,v, TyMemoizedExpr(MemoClosure,_,_,tag,ClosureT(a,r)), rest, _) ->
-            sprintf "%s = %s;" (print_tyv_with_type v) (print_method tag) |> state; 
-            codegen rest
+        | TyLet(_,_,(TyVV([],_) | TyType _), rest, _) -> codegen rest
+        | TyLet(_,(_,Unit),b,rest,_) -> sprintf "%s;" (codegen b) |> state; codegen rest
+        | TyLet(_,_, TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
         | TyLet(_,tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
-        | TyMemoizedExpr(MemoMethod,used_vars,_,tag,t) ->
+        | TyMemoizedExpr(MemoMethod,used_vars,_,tag,_) ->
             let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
-        | TyMemoizedExpr(MemoClosure,_,_,_,_) ->
-            failwith "Should not occur in isolation."
-        | TyVV(l,(VVT (t, _))) -> 
-            List.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
-            |> String.concat ", "
-            |> sprintf "make_tuple_%i(%s)" (tuple_tag t)
+        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
+        | TyVV(l,(VVT (t, _))) -> make_struct l |> sprintf "make_struct_%i(%s)" (tuple_tag t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT."
 
         | TyOp(Apply,[a;b],t) -> 
@@ -256,44 +255,55 @@ let print_method_dictionary (imemo: MemoDict) =
         | TyOp(ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
 
         | TyOp(Neg,[a],t) -> sprintf "(-%s)" (codegen a)
-        | TyOp(VVIndex,[a;b],t) -> sprintf "%s.tup%s" (codegen a) (codegen b)
+        | TyOp(VVIndex,[a;b],t) -> sprintf "%s.mem_%s" (codegen a) (codegen b)
         | TyOp(ArrayIndex,[a;b],t) -> print_array true a b
         | TyOp(ArrayUnsafeIndex,[a;b],t) -> print_array false a b
         | TyOp(Log,[x],_) -> sprintf "log(%s)" (codegen x)
         | TyOp(Exp,[x],_) -> sprintf "exp(%s)" (codegen x)
         | TyOp(Tanh,[x],_) -> sprintf "tanh(%s)" (codegen x)
 
+        | TyOp(TypeSeal,[r],(SealedFunctionT(t,_) | SealedModuleT t)) ->
+            match get_type r with
+            | FunctionT(env,_) | ModuleT env ->
+                Map.toArray env
+                |> Array.map snd
+                |> make_struct |> sprintf "make_struct_%i(%s)" (sealed_env_tag t)
+            | _ -> failwith "impossible"
+
+        | TyOp(EnvUnseal,[r; TyLit (LitString k)], Unit) -> ""
+        | TyOp(EnvUnseal,[r; TyLit (LitString k)], _) -> sprintf "%s.mem_%s" (codegen r) k
+
         // Cuda kernel constants
         | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
 
-    let print_closure_a a = tuple_field_ty a |> List.map print_simple_type |> String.concat ", "
+    let print_closure_a a = tuple_field_ty a |> List.map print_type |> String.concat ", "
 
     let print_closure_type_definition (a,r) tag =
-        sprintf "typedef %s(*%s)(%s);" (print_simple_type r) (print_fun_pointer_type' tag) (print_closure_a a) |> state
+        sprintf "typedef %s(*%s)(%s);" (print_type r) (print_fun_pointer_type' tag) (print_closure_a a) |> state
 
-    let print_tuple_defintion tys tag =
-        let tuple_name = print_tuple' tag
-        sprintf "struct %s {" tuple_name |> state
-        enter <| fun _ -> List.iteri (fun i ty -> 
+    let print_struct_definition iter fold name tys tag =
+        sprintf "struct %s {" name |> state
+        enter <| fun _ -> iter (fun k ty -> 
             match ty with
-            | VVT([],_) -> ()
-            | _ -> sprintf "%s tup%i;" (print_simple_type ty) i |> state) tys; ""
+            | Unit -> ()
+            | _ -> sprintf "mem_%s %s;" (print_type ty) k |> state) tys; ""
         "};" |> state
-        sprintf "__device__ __forceinline__ %s make_tuple_%i(%s){" 
-            tuple_name
+
+        sprintf "__device__ __forceinline__ %s make_struct_%i(%s){" 
+            name
             tag
-            (List.mapi (fun i ty -> 
+            (fold (fun s k ty -> 
                 match ty with
-                | VVT([],_) -> ""
-                | _ -> sprintf "%s tup_arg%i" (print_simple_type ty) i) tys
-                |> List.filter ((<>) "") 
+                | Unit -> s
+                | _ -> sprintf "%s mem_%s" (print_type ty) k :: s) [] tys
+                |> List.rev
                 |> String.concat ", ")
         |> state
         enter' <| fun _ ->
-            sprintf "%s tmp;" tuple_name |> state
-            List.iteri (fun i _ -> sprintf "tmp.tup%i = tup_arg%i;" i i |> state) tys
+            sprintf "%s tmp;" name |> state
+            iter (fun k _ -> sprintf "tmp.mem_%s = mem_%s;" k k |> state) tys
             "return tmp;" |> state
         "}" |> state
 
@@ -305,7 +315,7 @@ let print_method_dictionary (imemo: MemoDict) =
             Set.toList !args
             |> List.map print_tyv_with_type
             |> String.concat ", "
-        sprintf "%s %s %s(%s) {" prefix (print_simple_type (get_type body)) method_name args |> state
+        sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state
 
         enter' <| fun _ ->
             match codegen body with
@@ -323,10 +333,21 @@ let print_method_dictionary (imemo: MemoDict) =
                 for x in imemo do print_method (memo_value x.Value)
 
             with_channel CodegenChannels.Definitions <| fun _ ->
-                for x in tuple_definitions do print_tuple_defintion x.Key x.Value
+                for x in tuple_definitions do 
+                    let tys, tag = x.Key, x.Value
+                    let tuple_name = print_tuple' tag
+                    let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+                    let iter f l = List.iteri (fun i x -> f (string i) x) l
+                    print_struct_definition iter fold tuple_name tys tag
+
+                for x in sealed_env_definitions do
+                    let tys, tag = x.Key, x.Value
+                    let tuple_name = print_sealed_env' tag
+                    print_struct_definition Map.iter Map.fold tuple_name tys tag
+
                 for x in closure_type_definitions do print_closure_type_definition x.Key x.Value
 
-            // I am just swapping the positions so the tuple definitions come first in the printed code.
+            // I am just swapping the positions so the definitions come first in the printed code.
             // Unfortunately, getting the definitions requires a pass through the AST first
             // so I can't just print them at the start.
             add_channels_a_to_main CodegenChannels.Definitions
