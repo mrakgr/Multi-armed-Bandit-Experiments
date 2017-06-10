@@ -96,7 +96,7 @@ and Op =
     | ModuleWith
     | ModuleWith'
     | EnvUnseal
-    | EnvSeal
+    | TypeSeal
 
     | ArrayCreate
     | ArrayCreateShared
@@ -233,7 +233,8 @@ let (|Array|_|) = function
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
     | FunctionT _ | ModuleT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
-    | SealedFunctionT _ | SealedModuleT _ | ClosureT _ -> true
+    | SealedFunctionT (env, _) | SealedModuleT env -> Map.forall (fun _ -> is_returnable') env
+    | ClosureT _ -> true
     | ForCastT x -> is_returnable' x
     | ForModuleT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
@@ -514,8 +515,8 @@ type LangEnv<'a,'c,'q,'e> =
 let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoized_methods: Dictionary<_,_>)
         (d : LangEnv<_,_,_,_>) (expr: Expr) ret =
     let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
-    let inline apply_seq d ret x = ret (!d.seq x)
-    let inline tev_seq d expr ret = let d = {d with seq=ref id} in tev d expr (apply_seq d ret)
+    let inline apply_seq d x = !d.seq x
+    let inline tev_seq d expr ret = let d = {d with seq=ref id} in tev d expr (apply_seq d >> ret)
     let inline tev_rec d expr ret = tev_seq {d with rbeh=AnnotationReturn} expr ret
     let inline tev_match_f on_match_break d expr ret = tev_seq {d with on_match_break=on_match_break} expr ret
 
@@ -526,33 +527,13 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let rec vars_map d l ret =
         match l with
-        | x :: xs ->
-            tev d x (fun x ->
-                vars_map d xs (fun x' -> ret (x :: x'))
-                )
+        | x :: xs -> tev d x (fun x -> vars_map d xs (fun x' -> ret (x :: x')))
         | [] -> ret []
 
     let inline tev2 d a b ret =
         tev d a <| fun l ->
             tev d b <| fun r ->
                 ret l r
-
-    let if_ d cond tr fl ret =
-        tev d cond <| fun cond ->
-            if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
-            else
-                tev_seq d tr <| fun tr ->
-                    tev_seq d fl <| fun fl ->
-                        let type_tr, type_fl = get_type tr, get_type fl
-                        if type_tr = type_fl then 
-                            if is_returnable' type_tr then
-                                match cond with
-                                | TyLit(LitBool true) -> tr
-                                | TyLit(LitBool false) -> fl
-                                | _ -> TyOp(If,[cond;tr;fl],type_tr)
-                                |> ret
-                            else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Consider using Inlineable instead. Got: %A" type_tr
-                        else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
     let get_tag d = 
         let t = !d.ltag
@@ -572,31 +553,27 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let seal d r =
         let rec seal r =
-            let rec env_seal x = Map.map seal_type x
-            and seal_type _ r = 
-                match get_type r with
-                | FunctionT (env, x) -> 
-                    let x = SealedFunctionT (env_seal env, x)
-                    TyOp(EnvSeal,[r], x)
-                | ModuleT env -> SealedModuleT (env_seal env) |> TyType    
-                | _ -> r
-            let seal_var r =
-                match get_type r with
-                //| VVT (tuple_types, name) -> TyVV(index_tuple_args tuple_types, VVT (tuple_types, name))
-                | FunctionT (env, x) -> 
-                    let x = SealedFunctionT (env_seal env, x)
-                    TyOp(EnvSeal,[r], x)
-                | ModuleT env -> SealedModuleT (env_seal env) |> TyType    
-                | _ -> r
+            let rec env_seal is_env x = Map.map (fun _ -> get_type >> (seal_var is_env)) x
+            and seal_var is_env r =
+                match r with
+                | VVT (tuple_types, name) -> VVT(List.map (seal_var is_env) tuple_types, name)
+                | FunctionT (env, x) -> is_env := true; SealedFunctionT (env_seal is_env env, x)
+                | ModuleT env -> is_env := true; SealedModuleT (env_seal is_env env)
+                | r -> r
             match r with
-            | TyType _ | TyLit _ -> r
-            | TyV _ -> seal_var r
+            | TyType _ | TyV _ -> 
+                let is_env = ref false
+                let t = seal_var is_env (get_type r)
+                if !is_env then make_tyv_and_push d (TyOp(TypeSeal,[r],t)) else r
+            | TyLit _ -> r
             | TyVV(l,VVT (_, name)) ->
                 let x = List.map seal l
                 TyVV(x, VVT (List.map get_type x, name))
             | TyVV(l,_) -> failwithf "Malformed tuple %A. The type of it must be VVT." r
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> seal
-        seal r
+        apply_seq d (seal r)
+
+    let inline tev_seal d expr ret = let d = {d with seq=ref (seal {d with seq = ref id})} in tev d expr (apply_seq d >> ret)
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
@@ -605,9 +582,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             let destructure_var r =
                 let index_tuple_args tuple_types = 
                     List.mapi (fun i typ -> 
-                        destructure <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
+                        make_tyv_and_push d <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
                 let env_unseal x =
-                    let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
+                    let unseal k v = make_tyv_and_push d <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
                     Map.map unseal x
                 match get_type r with
                 | VVT (tuple_types, name) -> TyVV(index_tuple_args tuple_types, VVT (tuple_types, name))
@@ -624,6 +601,23 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure
         destructure r
 
+    let if_ d cond tr fl ret =
+        tev d cond <| fun cond ->
+            if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+            else
+                tev_seal d tr <| fun tr ->
+                    tev_seal d fl <| fun fl ->
+                        let type_tr, type_fl = get_type tr, get_type fl
+                        if type_tr = type_fl then 
+                            if is_returnable' type_tr then
+                                match cond with
+                                | TyLit(LitBool true) -> tr
+                                | TyLit(LitBool false) -> fl
+                                | _ -> TyOp(If,[cond;tr;fl],type_tr)
+                                |> ret
+                            else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Consider using Inlineable instead. Got: %A" type_tr
+                        else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+
     let method_tag () =
         let tag = !method_tag
         method_tag := tag + 1L
@@ -636,7 +630,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             let tag = method_tag ()
 
             memoized_methods.[key_args] <- (MethodInEvaluation, tag, ref Set.empty)
-            tev_seq d expr <| fun typed_expr ->
+            tev_seal d expr <| fun typed_expr ->
                 memoized_methods.[key_args] <- (MethodDone typed_expr, tag, ref Set.empty)
                 ret (typed_expr, tag)
         | true, (MethodInEvaluation, tag, args) -> tev_rec d expr <| fun r -> ret (r, tag)
