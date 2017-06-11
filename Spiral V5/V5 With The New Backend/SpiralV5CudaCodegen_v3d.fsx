@@ -447,23 +447,6 @@ fun t() =
 t()
     """
 
-let rec1 =
-    """
-fun rec meth () =
-    if false then
-        if false then
-            if true then
-                meth()
-            else
-                meth()
-        else
-            88
-    else
-        meth()
-fun top() = meth()
-top()
-    """
-
 let fib_acc_er =
     "fibonacci_acc_er",
     """
@@ -692,32 +675,43 @@ fun top() =
 top()
     """
 
-let fib_acc_alt =
-    "fib_acc_alt",
-    """
-fun fib n =
-    fun fib n = 
-        fun a b () -> 
-            1,2,3
-            
-    inl x = fib n
-    inl y = x 0
-    inl z = y 1
-    z
-fib 10
-    """
-
 let min1 =
     "min1",
     """
 fun min n =
     fun tes a =
-        fun b c d -> a
-    tes 1 2 3 4
+        fun b -> 
+            fun c ->
+                fun d -> a,b,c
+    tes 1 2 (2.2,3,4.5)
 min 10
     """
 
-let r = spiral_codegen default_dims [] fib
+let fib_acc_alt =
+    "fib_acc_alt",
+    """
+inl fib n =
+    fun rec fib n = 
+        inl a b ->
+            if n >= 0 then fib (n-1) b (a+b) else a
+            : a
+    fib n 0 1 
+fib 10
+    """
+
+let fib_acc_y_alt =
+    "fib_acc_y_alt",
+    """
+fun rec y f n = f (y f) n
+inl fib n =
+    inl fib r n a b = 
+        if n >= 0 then r (n-1) b (a+b) else a
+        : a // The return type is the type of `a`
+    y fib n 0 1
+fib 5
+    """
+
+let r = spiral_codegen default_dims [] clo1
 
 printfn "%A" r
 

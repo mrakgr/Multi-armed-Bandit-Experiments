@@ -555,7 +555,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
 
-        eval_method fv {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
+        eval_method (renamer_apply_pool renamer fv) {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else 
