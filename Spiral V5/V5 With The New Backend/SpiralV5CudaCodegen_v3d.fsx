@@ -230,7 +230,7 @@ let print_method_dictionary (imemo: MemoDict) =
             | TyLet(_,tyv,b,rest,_) -> sprintf "%s = %s;" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
             | TyLit x -> print_value x
             | TyMemoizedExpr(MemoMethod,used_vars,renamer,tag,_) ->
-                let args = Set.toList used_vars |> List.map print_tyv |> String.concat ", "
+                let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
                 let method_name = print_method tag
                 sprintf "%s(%s)" method_name args
             | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
@@ -318,12 +318,12 @@ let print_method_dictionary (imemo: MemoDict) =
             "return tmp;" |> state
         "}" |> state
 
-    let print_method (MethodDone body,tag,args) = 
+    let print_method (body,tag,args) = 
         let is_main = tag = 0L
         let prefix = if is_main then "__global__" else "__device__"
         let method_name = if is_main then "MainKernel" else print_method tag
         let args = 
-            Set.toList args
+            Set.toList !args
             |> List.map print_tyv_with_type
             |> String.concat ", "
         sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state
@@ -340,7 +340,7 @@ let print_method_dictionary (imemo: MemoDict) =
         
     enter' <| fun _ ->
         with_channel CodegenChannels.Code <| fun _ ->
-            for x in imemo do print_method x.Value
+            for x in imemo do print_method (memo_value x.Value)
 
         with_channel CodegenChannels.Definitions <| fun _ ->
             for x in tuple_definitions do 
@@ -675,18 +675,6 @@ fun top() =
 top()
     """
 
-let min1 =
-    "min1",
-    """
-fun min n =
-    fun tes a =
-        fun b -> 
-            fun c ->
-                fun d -> a,b,c
-    tes 1 2 (2.2,3,4.5)
-min 10
-    """
-
 let fib_acc_alt =
     "fib_acc_alt",
     """
@@ -711,7 +699,28 @@ inl fib n =
 fib 5
     """
 
-let r = spiral_codegen default_dims [] clo1
+let min1 =
+    "min1",
+    """
+fun min n =
+    fun tes a =
+        fun b -> 
+            fun c ->
+                fun d -> a,b,c
+    tes 1 2 (2.2,3,4.5)
+min 10
+    """
+
+let opt1 =
+    "opt1",
+    """
+fun top x =
+    inl a,b,c,d = x
+    b
+top (1+0,2+0,3+0,4+0)
+    """
+
+let r = spiral_codegen default_dims [] opt1
 
 printfn "%A" r
 

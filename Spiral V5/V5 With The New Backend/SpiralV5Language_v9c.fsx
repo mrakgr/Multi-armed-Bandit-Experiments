@@ -137,7 +137,7 @@ and Expr =
     | VV of Expr list * string * Pos // named tuple
     | Op of Op * Expr list * Pos
 
-and Arguments = Set<TyV>
+and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
 
 and MemoExprType =
@@ -410,23 +410,59 @@ and renamer_apply_typedexpr r e =
     | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
     | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
         let renamer = renamer_apply_renamer r renamer
-        let used_vars = renamer_apply_pool r used_vars
+        let used_vars = ref <| renamer_apply_pool r !used_vars
         TyMemoizedExpr(typ,used_vars,renamer,tag,t)
     | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
     | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
 
-let rec typed_expr_free_variables e =
-    let inline f e = typed_expr_free_variables e
+let rec typed_expr_free_variables_template on_memo e =
+    let inline f e = typed_expr_free_variables_template on_memo e
     match e with
     | TyV (n,t) -> Set.singleton (n, t)
     | TyType _ | TyLit _ -> Set.empty
     | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
-    | TyEnv(l,_) -> env_free_variables l
-    | TyMemoizedExpr(typ,used_vars,_,tag,_) -> used_vars
+    | TyEnv(l,_) -> env_free_variables_template on_memo l
+    | TyMemoizedExpr(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
     | TyLet(_,x,a,b,_) -> Set.remove x (f b) + f a
 
-and env_free_variables env = 
-    Map.fold (fun s _ v -> typed_expr_free_variables v + s) Set.empty env
+and env_free_variables_template on_memo env = 
+    Map.fold (fun s _ v -> typed_expr_free_variables_template on_memo v + s) Set.empty env
+
+let private typed_expr_std_pass (typ,used_vars,renamer,tag) = !used_vars
+let rec typed_expr_free_variables e = typed_expr_free_variables_template typed_expr_std_pass e
+and env_free_variables env = env_free_variables_template typed_expr_std_pass env
+
+let memo_value = function
+    | MethodDone e, tag, args -> e, tag, args
+    | _ -> failwith "impossible"
+
+/// Optimizes the free variables for the sake of tuple deforestation.
+/// It needs at least two passes to converge properly. And probably exactly two.
+let typed_expr_optimization_pass num_passes (memo: MemoDict) typed_exp =
+    let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (typ, r, renamer, tag) =
+        match typ with
+        | MemoMethod ->
+            let vars,counter = memo.[int tag]
+            let set_vars vars = r := renamer_apply_pool renamer vars; !r
+            if counter < num_passes then
+                let counter = counter + 1
+                memo.[int tag] <- vars, counter
+                let ty_expr, arguments = expr_map.[tag]
+                let vars = typed_expr_free_variables_template (on_method_call_optimization_pass memo expr_map) ty_expr
+                arguments := vars
+                memo.[int tag] <- vars, counter
+                set_vars vars
+            else
+                set_vars vars
+        | MemoClosure -> 
+            let ty_expr, arguments = expr_map.[tag]
+            if Set.isEmpty !r = false && Set.isEmpty !arguments then 
+                arguments := renamer_apply_pool (renamer_reverse renamer) !r
+            !r
+
+    let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
+    typed_expr_free_variables_template (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo) typed_exp
+    |> ignore
 
 let env_to_ty env = Map.map (fun _ -> get_type) env
 let env_num_args env = 
@@ -450,7 +486,7 @@ type LangEnv<'a,'c,'q,'e> =
     on_type_er : Trace -> 'c -> 'e
     }
 
-let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoized_methods: Dictionary<_,_>)
+let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoized_methods: MemoDict)
         (d : LangEnv<_,_,_,_>) (expr: Expr) ret =
     let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
     let inline apply_seq d x = !d.seq x
@@ -555,11 +591,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
 
-        eval_method (renamer_apply_pool renamer fv) {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
+        eval_method (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-            else 
-                ret (fv, renamer, tag, typed_expr_ty)
+            else ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
 
     let memoize_method d x ret = 
         eval_renaming d x <| fun (args,renamer,tag,ret_ty) -> 
@@ -957,6 +992,8 @@ let spiral_typecheck code dims body on_fail ret =
     let d = data_empty on_fail code
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
-    let ret x = ret (x,memoized_methods)
+    let ret x = 
+        typed_expr_optimization_pass 2 memoized_methods x // Is mutable
+        ret (x,memoized_methods)
     expr_typecheck dims method_tag memoized_methods d input ret
 
