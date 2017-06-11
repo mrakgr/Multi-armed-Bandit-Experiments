@@ -137,7 +137,7 @@ and Expr =
     | VV of Expr list * string * Pos // named tuple
     | Op of Op * Expr list * Pos
 
-and Arguments = Set<TyV> option
+and Arguments = Set<TyV>
 and Renamer = Map<Tag,Tag>
 
 and MemoExprType =
@@ -157,7 +157,7 @@ and TypedExpr =
     | TyVV of TypedExpr list * Ty
     | TyEnv of EnvTerm * Ty
     | TyOp of Op * TypedExpr list * Ty
-    | TyMemoizedExpr of MemoExprType * Arguments  * Tag * Ty
+    | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
 
 and MemoCases =
     | MethodInEvaluation
@@ -188,7 +188,7 @@ let get_type_of_value = function
 
 let get_type = function
     | TyLit x -> get_type_of_value x
-    | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,t)
+    | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) | TyType t -> t
 
 let get_subtype x = 
@@ -394,6 +394,7 @@ let expr_free_variables e =
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
 let renamer_apply_pool r s = Set.map (fun (tag,ty) -> Map.find tag r, ty) s
+let renamer_apply_renamer r m = Map.map (fun _ v -> Map.find v r) m
 
 let renamer_reverse r = 
     Map.fold (fun s k v -> Map.add v k s) Map.empty r
@@ -407,7 +408,10 @@ and renamer_apply_typedexpr r e =
     | TyType _ | TyLit _ -> e
     | TyVV(l,t) -> TyVV(List.map f l,t)
     | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
-    | TyMemoizedExpr(typ,used_vars,tag,t) -> TyMemoizedExpr(typ,Option.map (renamer_apply_pool r) used_vars,tag,t)
+    | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
+        let renamer = renamer_apply_renamer r renamer
+        let used_vars = renamer_apply_pool r used_vars
+        TyMemoizedExpr(typ,used_vars,renamer,tag,t)
     | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
     | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
 
@@ -418,7 +422,7 @@ let rec typed_expr_free_variables e =
     | TyType _ | TyLit _ -> Set.empty
     | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
     | TyEnv(l,_) -> env_free_variables l
-    | TyMemoizedExpr(typ,used_vars,tag,_) -> defaultArg used_vars Set.empty
+    | TyMemoizedExpr(typ,used_vars,_,tag,_) -> used_vars
     | TyLet(_,x,a,b,_) -> Set.remove x (f b) + f a
 
 and env_free_variables env = 
@@ -429,10 +433,6 @@ let env_num_args env =
     Map.fold (fun s k v -> 
         let f = typed_expr_free_variables v
         if Set.isEmpty f then s else s+1) 0 env
-
-let memo_value = function
-    | MethodDone e, tag, args -> e, tag, args
-    | _ -> failwith "impossible"
 
 type Trace = PosKey list
 
@@ -533,43 +533,42 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         method_tag := tag + 1L
         tag
 
-    let eval_method d expr ret =
+    let eval_method used_vars d expr ret =
         let key_args = d.env, expr
         
         match memoized_methods.TryGetValue key_args with
         | false, _ ->
             let tag = method_tag ()
-            let used_vars = ref Set.empty
 
             memoized_methods.[key_args] <- (MethodInEvaluation, tag, used_vars)
             tev_seq d expr <| fun typed_expr ->
-                used_vars := typed_expr_free_variables typed_expr
                 memoized_methods.[key_args] <- (MethodDone typed_expr, tag, used_vars)
-                ret (typed_expr, tag, Some !used_vars)
+                ret (typed_expr, tag)
         | true, (MethodInEvaluation, tag, used_vars) -> 
-            tev_rec d expr <| fun r -> ret (r, tag, None)
+            tev_rec d expr <| fun r -> ret (r, tag)
         | true, (MethodDone typed_expr, tag, used_vars) -> 
-            ret (typed_expr, tag, Some !used_vars)
+            ret (typed_expr, tag)
 
-    let eval_renaming d expr ret = 
+    let eval_renaming d expr ret =
         let env = d.env
         let fv = env_free_variables env
         let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
 
-        eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag, used_vars) ->
+        eval_method fv {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-            else ret (Option.map (renamer_apply_pool (renamer_reverse renamer)) used_vars, tag, typed_expr_ty)
+            else 
+                ret (fv, renamer, tag, typed_expr_ty)
 
     let memoize_method d x ret = 
-        eval_renaming d x <| fun (a,b,c) -> 
-            TyMemoizedExpr(MemoMethod,a,b,c)
+        eval_renaming d x <| fun (args,renamer,tag,ret_ty) -> 
+            TyMemoizedExpr(MemoMethod,args,renamer,tag,ret_ty)
             |> ret
 
     let memoize_closure arg_ty d x ret =
-        eval_renaming d x <| fun (a,b,ret_ty) ->
-            TyMemoizedExpr(MemoClosure,a,b,ClosureT(arg_ty,ret_ty))
+        eval_renaming d x <| fun (args,renamer,tag,ret_ty) ->
+            TyMemoizedExpr(MemoClosure,args,renamer,tag,ClosureT(arg_ty,ret_ty))
             |> make_tyv_and_push d
             |> ret
 
@@ -654,7 +653,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     and apply_cast d env_term (env_ty,core as fun_key) args_ty on_fail ret =
         if env_num_args env_term > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
-        elif is_returnable' args_ty = false then d.on_type_er d.trace <| sprintf "The type of the argument in the cast must be returnable. Got: %A" args_ty
         else
             let args =
                 let f x = TyType x |> make_tyv_and_push_inv d
