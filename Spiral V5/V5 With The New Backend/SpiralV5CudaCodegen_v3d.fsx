@@ -695,19 +695,28 @@ let fib_acc_alt =
     "fib_acc_alt",
     """
 fun fib n =
-    fun rec fib n = 
-        fun a b () ->
-            if n >= 0 then fib (n-1) b (a+b) () else a
-            : a
+    fun fib n = 
+        fun a b () -> 
+            1,2,3
+            
     inl x = fib n
     inl y = x 0
     inl z = y 1
     z
-    //fib n 0 1
 fib 10
     """
 
-let r = spiral_codegen default_dims [] fib_acc_alt
+let min1 =
+    "min1",
+    """
+fun min n =
+    fun tes a =
+        fun b c d -> a
+    tes 1 2 3 4
+min 10
+    """
+
+let r = spiral_codegen default_dims [] min1
 
 printfn "%A" r
 

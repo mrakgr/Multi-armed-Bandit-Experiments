@@ -107,6 +107,7 @@
     <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3c.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Language_v9a.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Language_v9b.fsx" />
+    <None Include="V5 With The New Backend\SpiralV5Language_v9c.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Parser_v2b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3d.fsx" />
     <None Include="y-comb.fsx" />
