@@ -16,15 +16,12 @@ type SpiralDeviceVarType =
     | Float32T
     | Float64T
     | BoolT
-    | StringT
 
 type Ty =
     | PrimT of SpiralDeviceVarType
     | VVT of Ty list * string
-    | FunctionT of Env * FunctionCore
-    | ModuleT of Env
-    | SealedFunctionT of SealedEnv * FunctionCore
-    | SealedModuleT of SealedEnv
+    | FunctionT of EnvTy * FunctionCore
+    | ModuleT of EnvTy
     | LocalPointerT of Ty
     | SharedPointerT of Ty
     | GlobalPointerT of Ty
@@ -34,10 +31,10 @@ type Ty =
 
 and Tag = int64
 and TyV = Tag * Ty
-and Env = Map<string, TypedExpr>
-and SealedEnv = Map<string, Ty>
+and EnvTerm = Map<string, TypedExpr>
+and EnvTy = Map<string, Ty>
 and FunctionCore = string * (Pattern * Expr) list
-and MemoKey = Env * Expr
+and MemoKey = EnvTerm * Expr
 
 and Pattern =
     | A of Pattern * string // Type annotation case
@@ -140,7 +137,7 @@ and Expr =
     | VV of Expr list * string * Pos // named tuple
     | Op of Op * Expr list * Pos
 
-and Arguments = Set<TyV> ref
+and Arguments = Set<TyV> option
 and Renamer = Map<Tag,Tag>
 
 and MemoExprType =
@@ -152,14 +149,15 @@ and LetType =
 | LetInvisible
 
 and TypedExpr =
+    | TyType of Ty
     | TyV of TyV
     | TyLet of LetType * TyV * TypedExpr * TypedExpr * Ty
     | TyLit of Value
     
     | TyVV of TypedExpr list * Ty
+    | TyEnv of EnvTerm * Ty
     | TyOp of Op * TypedExpr list * Ty
-    | TyType of Ty
-    | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
+    | TyMemoizedExpr of MemoExprType * Arguments  * Tag * Ty
 
 and MemoCases =
     | MethodInEvaluation
@@ -184,14 +182,14 @@ let get_type_of_value = function
     | LitFloat32 _ -> PrimT Float32T
     | LitFloat64 _ -> PrimT Float64T   
     | LitBool _ -> PrimT BoolT
-    | LitString _ -> PrimT StringT
+    | LitString _ -> LocalPointerT <| PrimT UInt8T
     | ThreadIdxX | ThreadIdxY | ThreadIdxZ 
     | BlockIdxX | BlockIdxY | BlockIdxZ -> PrimT UInt64T
 
 let get_type = function
     | TyLit x -> get_type_of_value x
-    | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
-    | TyVV(_,t) | TyOp(_,_,t) | TyType t -> t
+    | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,t)
+    | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) | TyType t -> t
 
 let get_subtype x = 
     match get_type x with
@@ -232,11 +230,9 @@ let (|Array|_|) = function
 
 let rec is_returnable' = function
     | VVT (x,name) -> List.forall is_returnable' x
-    | FunctionT _ | ModuleT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
-    | SealedFunctionT (env, _) | SealedModuleT env -> Map.forall (fun _ -> is_returnable') env
-    | ClosureT _ -> true
-    | ForCastT x -> is_returnable' x
-    | ForModuleT _ | PrimT _ -> true
+    | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
+    | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
+    | ForCastT _ | ClosureT _ | ForModuleT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -245,7 +241,7 @@ let is_numeric' = function
         | UInt8T | UInt16T | UInt32T | UInt64T 
         | Int8T | Int16T | Int32T | Int64T 
         | Float32T | Float64T -> true
-        | StringT | BoolT -> false
+        | BoolT -> false
     | _ -> false
 let is_numeric a = is_numeric' (get_type a)
 
@@ -406,94 +402,37 @@ let renamer_reverse r =
 let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e
 and renamer_apply_typedexpr r e =
     let f e = renamer_apply_typedexpr r e
-    let g e = renamer_apply_ty r e
     match e with
-    | TyV (n,t) -> TyV (Map.find n r,g t)
-    | TyType t -> TyType (g t)
-    | TyVV(l,t) -> TyVV(List.map f l,g t)
-    | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
-        let renamer = Map.map (fun _ v -> Map.find v r) renamer
-        let used_vars = ref <| renamer_apply_pool r !used_vars
-        TyMemoizedExpr(typ,used_vars,renamer,tag,g t)
-    | TyOp(o,l,t) -> TyOp(o,List.map f l,g t)
-    | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,g t),f a,f b,g t')
-    | TyLit _ -> e
-and renamer_apply_ty r e = 
-    let f e = renamer_apply_ty r e
+    | TyV (n,t) -> TyV (Map.find n r,t)
+    | TyType _ | TyLit _ -> e
+    | TyVV(l,t) -> TyVV(List.map f l,t)
+    | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
+    | TyMemoizedExpr(typ,used_vars,tag,t) -> TyMemoizedExpr(typ,Option.map (renamer_apply_pool r) used_vars,tag,t)
+    | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
+    | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
+
+let rec typed_expr_free_variables e =
+    let inline f e = typed_expr_free_variables e
     match e with
-    | FunctionT(e,t) -> FunctionT(renamer_apply_env r e,t)
-    | ClosureT(a,b) -> ClosureT(f a, f b)
-    | ForCastT t -> ForCastT (f t)
-    | LocalPointerT t -> LocalPointerT (f t)
-    | SharedPointerT t -> SharedPointerT (f t)
-    | GlobalPointerT t -> GlobalPointerT (f t)
-    | SealedFunctionT _ | SealedModuleT _
-    | PrimT _ | ForModuleT _ -> e
-    | ModuleT e -> ModuleT (renamer_apply_env r e)
-    | VVT (l,n) -> VVT (List.map f l, n)
+    | TyV (n,t) -> Set.singleton (n, t)
+    | TyType _ | TyLit _ -> Set.empty
+    | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
+    | TyEnv(l,_) -> env_free_variables l
+    | TyMemoizedExpr(typ,used_vars,tag,_) -> defaultArg used_vars Set.empty
+    | TyLet(_,x,a,b,_) -> Set.remove x (f b) + f a
 
-let rec typed_expr_free_variables on_method_call e =
-    let inline f e = typed_expr_free_variables on_method_call e
-    let inline g e = ty_free_variables on_method_call e
-    match e with
-    | TyV (n,t) -> g t |> Set.add (n,t)
-    | TyType t -> g t
-    | TyOp(_,l,t) -> vars_union f l + g t
-    | TyVV(l,t) -> vars_union f l
-    | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> on_method_call typ used_vars renamer tag + g t
-    | TyLet(_,x,a,b,t) -> Set.remove x (f b) + f a
-    | TyLit _ -> Set.empty
+and env_free_variables env = 
+    Map.fold (fun s _ v -> typed_expr_free_variables v + s) Set.empty env
 
-and ty_free_variables on_method_call x =
-    let f x = ty_free_variables on_method_call x
-    match x with
-    | ModuleT env | FunctionT(env,_) -> env_free_variables on_method_call env
-    | ClosureT(a,b) -> f a + f b
-    | ForCastT t -> f t
-    | LocalPointerT t | SharedPointerT t | GlobalPointerT t -> f t
-    | SealedFunctionT _ | SealedModuleT _
-    | PrimT _ | ForModuleT _ -> Set.empty
-    | VVT (l,n) -> vars_union f l
-
-and env_free_variables on_method_call env = 
-    Map.fold (fun s _ v -> typed_expr_free_variables on_method_call v + s) Set.empty env
-
-let on_method_call_typechecking_pass _ used_vars _ _ = !used_vars
+let env_to_ty env = Map.map (fun _ -> get_type) env
 let env_num_args env = 
     Map.fold (fun s k v -> 
-        let f = typed_expr_free_variables on_method_call_typechecking_pass v
+        let f = typed_expr_free_variables v
         if Set.isEmpty f then s else s+1) 0 env
 
 let memo_value = function
     | MethodDone e, tag, args -> e, tag, args
     | _ -> failwith "impossible"
-
-/// Optimizes the free variables for the sake of tuple deforestation.
-/// It needs at least two passes to converge properly. And probably exactly two.
-let typed_expr_optimization_pass num_passes (memo: MemoDict) =
-    let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) typ r renamer tag =
-        match typ with
-        | MemoMethod ->
-            let vars,counter = memo.[int tag]
-            let set_vars vars = r := renamer_apply_pool renamer vars; !r
-            if counter < num_passes then
-                let counter = counter + 1
-                memo.[int tag] <- vars, counter
-                let ty_expr, arguments = expr_map.[tag]
-                let vars = typed_expr_free_variables (on_method_call_optimization_pass memo expr_map) ty_expr
-                arguments := vars
-                memo.[int tag] <- vars, counter
-                set_vars vars
-            else
-                set_vars vars
-        | MemoClosure -> 
-            let ty_expr, arguments = expr_map.[tag]
-            if Set.isEmpty !r = false && Set.isEmpty !arguments then 
-                arguments := renamer_apply_pool (renamer_reverse renamer) !r
-            !r
-
-    let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
-    typed_expr_free_variables (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo)
 
 type Trace = PosKey list
 
@@ -549,62 +488,35 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let make_tyv_and_push d ty_exp = make_tyv_and_push' LetStd d ty_exp |> TyV
     let make_tyv_and_push_inv d ty_exp = make_tyv_and_push' LetInvisible d ty_exp |> TyV
 
-    let seal d r =
-        let rec seal r =
-            let rec env_seal is_env x = Map.map (fun _ -> seal >> get_type) x
-            and seal_var is_env r =
-                match r with
-                | VVT (tuple_types, name) -> VVT(List.map (seal_var is_env) tuple_types, name)
-                | FunctionT (env, x) -> is_env := true; SealedFunctionT (env_seal is_env env, x)
-                | ModuleT env -> is_env := true; SealedModuleT (env_seal is_env env)
-                | r -> r
-            match r with
-            | TyType _ | TyV _ -> 
-                let is_env = ref false
-                let t = seal_var is_env (get_type r)
-                if !is_env then make_tyv_and_push d (TyOp(TypeSeal,[r],t)) else r
-            | TyLit _ -> r
-            | TyVV(l,VVT (_, name)) ->
-                let x = List.map seal l
-                TyVV(x, VVT (List.map get_type x, name))
-            | TyVV(l,_) -> failwithf "Malformed tuple %A. The type of it must be VVT." r
-            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> seal
-        apply_seq d (seal r)
-
-    let inline tev_seal d expr ret = let d = {d with seq=ref (seal {d with seq = ref id})} in tev d expr (apply_seq d >> ret)
-
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let destructure d r = 
-        let rec destructure r = 
-            let destructure_var r =
-                let index_tuple_args tuple_types = 
-                    List.mapi (fun i typ -> 
-                        make_tyv_and_push d <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
-                let env_unseal x =
-                    let unseal k v = make_tyv_and_push d <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
-                    Map.map unseal x
-                match get_type r with
-                | VVT (tuple_types, name) -> TyVV(index_tuple_args tuple_types, VVT (tuple_types, name))
-                | SealedFunctionT (env, x) -> FunctionT (env_unseal env, x) |> TyType
-                | SealedModuleT env -> ModuleT (env_unseal env) |> TyType    
-                | _ -> r
-            match r with
-            | TyType _ | TyLit _ -> r
-            | TyV _ -> destructure_var r
-            | TyVV(l,VVT (_, name)) ->
-                let x = List.map destructure l
-                TyVV(x, VVT (List.map get_type x, name))
-            | TyVV(l,_) -> failwithf "Malformed tuple %A. The type of it must be VVT." r
-            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure
-        destructure r
+    let rec destructure d r = 
+        let inline destructure r = destructure d r
+        let destructure_var r =
+            let index_tuple_args tuple_types = 
+                List.mapi (fun i typ -> 
+                    destructure <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
+            let env_unseal x =
+                let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
+                Map.map unseal x
+            let r_ty = get_type r
+            match r_ty with
+            | VVT (tuple_types, name) -> TyVV(index_tuple_args tuple_types, r_ty)
+            | ModuleT env | FunctionT (env, _) -> TyEnv(env_unseal env, r_ty)
+            | _ -> r
+        match r with
+        | TyLit _ -> r
+        | TyType _ | TyV _ -> destructure_var r
+        | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
+        | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l,ty)
+        | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure
 
     let if_ d cond tr fl ret =
         tev d cond <| fun cond ->
             if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else
-                tev_seal d tr <| fun tr ->
-                    tev_seal d fl <| fun fl ->
+                tev_seq d tr <| fun tr ->
+                    tev_seq d fl <| fun fl ->
                         let type_tr, type_fl = get_type tr, get_type fl
                         if type_tr = type_fl then 
                             if is_returnable' type_tr then
@@ -627,35 +539,37 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         match memoized_methods.TryGetValue key_args with
         | false, _ ->
             let tag = method_tag ()
+            let used_vars = ref Set.empty
 
-            memoized_methods.[key_args] <- (MethodInEvaluation, tag, ref Set.empty)
-            tev_seal d expr <| fun typed_expr ->
-                memoized_methods.[key_args] <- (MethodDone typed_expr, tag, ref Set.empty)
-                ret (typed_expr, tag)
-        | true, (MethodInEvaluation, tag, args) -> 
-            tev_rec d expr <| fun r -> ret (r, tag)
-        | true, (MethodDone typed_expr, tag, _) -> 
-            ret (typed_expr, tag)
+            memoized_methods.[key_args] <- (MethodInEvaluation, tag, used_vars)
+            tev_seq d expr <| fun typed_expr ->
+                used_vars := typed_expr_free_variables typed_expr
+                memoized_methods.[key_args] <- (MethodDone typed_expr, tag, used_vars)
+                ret (typed_expr, tag, Some !used_vars)
+        | true, (MethodInEvaluation, tag, used_vars) -> 
+            tev_rec d expr <| fun r -> ret (r, tag, None)
+        | true, (MethodDone typed_expr, tag, used_vars) -> 
+            ret (typed_expr, tag, Some !used_vars)
 
     let eval_renaming d expr ret = 
         let env = d.env
-        let fv = env_free_variables on_method_call_typechecking_pass env
+        let fv = env_free_variables env
         let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
 
-        eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag) ->
+        eval_method {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr <| fun (typed_expr, tag, used_vars) ->
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-            else ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
+            else ret (Option.map (renamer_apply_pool (renamer_reverse renamer)) used_vars, tag, typed_expr_ty)
 
     let memoize_method d x ret = 
-        eval_renaming d x <| fun (a,b,c,d) -> 
-            TyMemoizedExpr(MemoMethod,a,b,c,d)
+        eval_renaming d x <| fun (a,b,c) -> 
+            TyMemoizedExpr(MemoMethod,a,b,c)
             |> ret
 
     let memoize_closure arg_ty d x ret =
-        eval_renaming d x <| fun (a,b,c,ret_ty) ->
-            TyMemoizedExpr(MemoClosure,a,b,c,ClosureT(arg_ty,ret_ty))
+        eval_renaming d x <| fun (a,b,ret_ty) ->
+            TyMemoizedExpr(MemoClosure,a,b,ClosureT(arg_ty,ret_ty))
             |> make_tyv_and_push d
             |> ret
 
@@ -665,14 +579,14 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
     let inline match_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
 
-    let apply_module d module_ b ret = 
-        v_find module_ b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
+    let apply_module d env_term b ret = 
+        v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
    
     let rec match_a d annot args on_fail ret = 
         tev d (V (annot,None)) <| fun r ->
             match_a' (get_type r) args on_fail ret
 
-    and match_single d (acc: Env) l r on_fail ret =
+    and match_single d (acc: EnvTerm) l r on_fail ret =
         let rec recurse acc l r ret = 
             match l,r with
             | A (pattern,annot), _ -> match_a d annot r on_fail (fun _ -> recurse acc pattern r ret) 
@@ -692,7 +606,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             | N _, _ -> on_fail() // "Cannot match name against a non-named argument."
         recurse acc l r ret
 
-    and match_all d (env: Env) l (args: TypedExpr) on_fail ret =
+    and match_all d env l (args: TypedExpr) on_fail ret =
         let rec loop = function
             | (pattern: Pattern, body: Expr) :: xs ->
                 match_single d env pattern args
@@ -712,11 +626,11 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         if arg_ty <> clo_arg_ty then d.on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         else TyOp(Apply,[clo;arg],clo_ret_ty) |> ret
 
-    and apply_functiont tev d (initial_env,(name,l) as fun_key) args on_fail ret =
-        match_all d initial_env l args
+    and apply_functiont tev d env_term (env_ty,(name,l) as fun_key) args on_fail ret =
+        match_all d env_term l args
             on_fail
             (fun (env, body) ->
-                let fv = TyType (FunctionT fun_key)
+                let fv = TyEnv (env, FunctionT fun_key)
                 let d = {d with env = if name <> "" then Map.add name fv env else env}
                 tev d body ret)
 
@@ -726,18 +640,20 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             apply tev d la ra on_fail ret
 
     and apply tev d la ra on_fail ret =
-        match get_type la, get_type ra with
-        | FunctionT (env,x), ForCastT t -> apply_cast d (env,x) t on_fail ret
-        | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function type in type application. Got: %A" x
-        | ModuleT x, ForModuleT n -> apply_module d x n ret
-        | x, ForModuleT n -> d.on_type_er d.trace <| sprintf "Expected a module type in module application. Got: %A" x
-        | FunctionT (env,x),_ -> apply_functiont tev d (env,x) ra on_fail ret
-        | ClosureT(a,r),_ -> apply_closuret d la (a,r) ra ret
-        | VVT(_,name),_ when name <> "" -> apply_named_tuple tev d name ra on_fail ret
-        | _ -> d.on_type_er d.trace "Invalid use of apply."
+        match la, get_type ra with
+        | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t on_fail ret
+        | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+        | TyEnv(env_term,ModuleT env_ty), ForModuleT n -> apply_module d env_term n ret
+        | x, ForModuleT n -> d.on_type_er d.trace <| sprintf "Expected a module in module application. Got: %A" x
+        | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra on_fail ret
+        | _ ->
+            match get_type la with
+            | ClosureT(a,r) -> apply_closuret d la (a,r) ra ret
+            | VVT(_,name) when name <> "" -> apply_named_tuple tev d name ra on_fail ret
+            | _ -> d.on_type_er d.trace "Invalid use of apply."
 
-    and apply_cast d (env,core as fun_key) args_ty on_fail ret =
-        if env_num_args env > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env
+    and apply_cast d env_term (env_ty,core as fun_key) args_ty on_fail ret =
+        if env_num_args env_term > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
         elif is_returnable' args_ty = false then d.on_type_er d.trace <| sprintf "The type of the argument in the cast must be returnable. Got: %A" args_ty
         else
             let args =
@@ -747,8 +663,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 | x -> f x
             
             let closure = 
-                let f = FunctionT fun_key |> TyType |> t
-                FunctionT(env,("",[S " ",ap None f (v " ")])) |> TyType
+                let f = TyEnv(env_term, FunctionT fun_key) |> t
+                TyEnv(env_term, FunctionT(env_ty,("",[S " ",ap None f (v " ")])))
 
             let tev d x ret = 
                 memoize_closure (get_type args) d x <| fun r ->
@@ -815,9 +731,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let module_open d a b ret =
         tev d a <| fun a ->
-            match get_type a with
-            | ModuleT x -> 
-                let env = Map.fold (fun s k v -> Map.add k v s) d.env x
+            match a with
+            | TyEnv(env_term, ModuleT env_ty) -> 
+                let env = Map.fold (fun s k v -> Map.add k v s) d.env env_term
                 tev {d with env = env} b ret
             | x -> d.on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
 
@@ -908,14 +824,14 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         match pos with
         | Some x -> {d with trace = x :: d.trace}
         | None -> d
-        
+      
     match expr with
     | Lit (value,_) -> TyLit value |> ret
     | T (x, _) -> x |> ret
     | V (x, pos) -> v_find d.env x (fun () -> d.on_type_er (add_trace d pos).trace <| sprintf "Variable %A not bound." x) ret
     | Function (core, free_var_set, _) -> 
-        let env = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
-        TyType(FunctionT(env,core)) |> ret
+        let env_term = Map.filter (fun k _ -> Set.contains k !free_var_set) d.env
+        TyEnv(env_term, FunctionT(env_to_ty env_term, core)) |> ret
     | VV(vars,name, pos) -> vars_map (add_trace d pos) vars (fun vv -> TyVV(vv, VVT(List.map get_type vv, name)) |> ret)
     | Op(op,vars,pos) ->
         let d = add_trace d pos
@@ -981,7 +897,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
         | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
 
-        | ModuleCreate,[] -> TyType(ModuleT d.env) |> ret
+        | ModuleCreate,[] -> TyEnv(d.env, ModuleT <| env_to_ty d.env) |> ret
         | _ -> failwith "Missing Op case."
 
 
@@ -1043,8 +959,6 @@ let spiral_typecheck code dims body on_fail ret =
     let d = data_empty on_fail code
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
-    let deforest_tuples x = 
-        typed_expr_optimization_pass 2 memoized_methods x |> ignore // Is mutable
-        ret (x,memoized_methods)
-    expr_typecheck dims method_tag memoized_methods d input deforest_tuples
+    let ret x = ret (x,memoized_methods)
+    expr_typecheck dims method_tag memoized_methods d input ret
 
