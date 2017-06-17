@@ -1,7 +1,6 @@
 ﻿type Pattern =
 | Var of Variable
 | Con of Constructor * Pattern list
-| Error
 
 and Variable = string
 and Constructor = string
@@ -12,10 +11,13 @@ let arity = function
 
 let constructors = function
     | "NIL" | "CONS" -> ["NIL"; "CONS"]
+    | x -> failwithf "Constructor %s not found." x
 
 type Expression =
 | Case of Variable * Clause list
 | Fatbar of Expression * Expression
+| Foo
+| Error
 
 and Clause = Clause of Constructor * Variable list * Expression
 
@@ -29,6 +31,7 @@ let rec subst exp to_ from =
     | Case(var,cl_list) -> 
         let g (Clause (con,vl,exp)) = Clause (con, List.map f vl, subst exp)
         Case(f var, List.map g cl_list)
+    | x -> x
 
 type Equation = Pattern list * Expression
 
@@ -86,7 +89,7 @@ and match_con k (u :: us) qs def =
 
 and match_clause c k (u :: us) qs def =
     let k' = arity c
-    let us' = List.init k' (fun i -> make_var (1+i+k'))
+    let us' = List.init k' (fun i -> make_var (1+i+k))
     let ps = 
         List.choose (function
             | Con(c, ps') :: ps, e -> Some (ps' @ ps, e)
@@ -94,3 +97,13 @@ and match_clause c k (u :: us) qs def =
     Clause(c,us',match_ (k'+k) (us' @ us) ps def)
 
 and choose c qs = List.filter (fun q -> get_con q = c) qs
+
+let t1 = 
+    match_ 3
+        ["_u1";"_u2";"_u3"]
+        [
+        [Var "f"; Con ("NIL", []); Var "ys"], Foo
+        [Var "f"; Con ("CONS", [Var "x"; Var "xs"]); Con("NIL",[])], Foo
+        [Var "f"; Con ("CONS", [Var "x"; Var "xs"]); Con ("CONS", [Var "y"; Var "ys"])], Foo
+        ]
+        Error
