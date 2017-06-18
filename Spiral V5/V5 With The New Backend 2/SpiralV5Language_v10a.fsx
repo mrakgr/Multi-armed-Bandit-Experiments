@@ -46,9 +46,10 @@ and Pattern =
     | S' of string // match if not tuple
     | R of Pattern list * Pattern option // Tuple
     | F of Pattern * string // Functiona application with retracing.
-    | N of string * Pattern // matches a tuple name and proceeds onto the pattern on a hit.
+    | N of string * Pattern // Matches a tuple name and proceeds onto the pattern on a hit.
+    | C of string * Pattern // Matches a type constructor name and proceeds onto the pattern on a hit.
+    | Or of Pattern * Pattern
 
-type W =
-| A
-| B of int
-| C of W * W
+let x = function
+    | a :: b :: c :: d -> 1
+    | a -> 2
