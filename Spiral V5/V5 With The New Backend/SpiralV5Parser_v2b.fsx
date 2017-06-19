@@ -34,7 +34,7 @@ let module_ = skipString "module" >>. spaces
 let with_ = skipString "with" >>. spaces
 
 let with_for_module = 
-    skipString "with" >>. 
+    skipString "mwith" >>. 
         ((skipChar '!' >>. spaces >>% ModuleWith)
         <|> (spaces >>% ModuleWith'))
 let open_ = skipString "open" >>. spaces
@@ -45,8 +45,9 @@ let isAsciiIdContinue c = isAsciiLetter c || isDigit c || c = '_' || c = '''
 let var_name = 
     many1Satisfy2L isAsciiLower isAsciiIdContinue "identifier" .>> spaces
     >>=? function
-        | "match" | "function" | "with" | "open" | "module" | "typecase" | "typeinl" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> fun _ -> 
-            Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
+        | "match" | "function" | "mwith" | "with" | "open" | "module" 
+        | "typecase" | "typeinl" | "rec" | "if" | "then" | "else" | "inl" | "fun" as x -> 
+            fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 let type_name = 
     many1Satisfy2L isAsciiUpper (fun x -> isAsciiLetter x || isDigit x || x = ''' || x = '_') "Identifier" .>> spaces
@@ -257,12 +258,12 @@ let case_module expr s = let p = pos s in (module_ >>% module_create p) s
 let case_apply_type expr s = let p = pos s in (grave >>. expr |>> ap_ty p) s
 let case_apply_module expr s = let p = pos s in (dot >>. var_name |>> ap_mod p) s
 
-let expressions expr =
-    [case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
-     case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_typeinl; case_module
-     case_apply_type; case_apply_module]
+let expressions expr (s: CharStream<_>) =
+    ([case_inl_pat_list_expr; case_fun_pat_list_expr; case_inl_rec_name_pat_list_expr; case_fun_rec_name_pat_list_expr
+      case_lit; case_if_then_else; case_rounds; case_var; case_named_tuple; case_typecase; case_typeinl; case_module
+      case_apply_type; case_apply_module]
     |> List.map (fun x -> x expr |> attempt)
-    |> choice
+    |> choice) s
  
 let process_parser_exprs loop_initializer exprs = 
     let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")

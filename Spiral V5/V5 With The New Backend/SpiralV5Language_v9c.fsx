@@ -849,7 +849,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let error_non_unit d a ret =
         tev d a <| fun x ->
             if get_type x <> BVVT then
-                d.on_type_er d.trace <| sprintf "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such. %A" x
+                d.on_type_er d.trace <| "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
             else
                 ret x
 
@@ -863,7 +863,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     | T (x, _) -> x |> ret
     | V (x, pos) -> v_find d.env x (fun () -> d.on_type_er (add_trace d pos).trace <| sprintf "Variable %A not bound." x) ret
     | Function (core, free_var_set, _) -> 
-        let env_term = Set.fold (fun s x -> Map.add x d.env.[x] s) Map.empty !free_var_set
+        let env_term = Set.fold (fun s x -> 
+            match d.env.TryFind x with
+            | Some ex -> Map.add x ex s
+            | None -> s) Map.empty !free_var_set
         TyEnv(env_term, FunctionT(env_to_ty env_term, core)) |> ret
     | VV(vars,name, pos) -> vars_map (add_trace d pos) vars (fun vv -> TyVV(vv, VVT(List.map get_type vv, name)) |> ret)
     | Op(op,vars,pos) ->

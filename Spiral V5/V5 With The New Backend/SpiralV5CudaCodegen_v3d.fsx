@@ -720,12 +720,69 @@ fun top x =
 top (1+0,2+0,3+0,4+0)
     """
 
-let r = spiral_codegen default_dims [] opt1
+let exam1 =
+    "exam1",
+    """
+inl rec tuple_foldl f s l =
+    typecase l with
+    | x :: xs -> tuple_foldl f (f s x) xs
+    | () -> s
+
+fun sum (x :: xs) = tuple_foldl (inl a b -> a + b) x xs
+
+inl a = 0+0 // This is to block the constants from just getting passed directly in the generated functions.
+inl b = 1+1
+inl c = 2+2
+inl d = 3
+
+fun top () = sum (a,b), sum (a,b,c), sum (a,b,c,d)
+top ()
+    """
+
+let exam2 =
+    "exam2",
+    """
+inl f = typeinl
+    | Int32 x -> "This is an int."
+    | Float32 x -> "This is a float."
+    | x -> "..."
+    """
+
+let exam3 =
+    "exam3",
+    """
+fun top f = 
+    inl x = 2.5
+    inl y = 2
+    f x, f y
+top (inl x -> x * x)
+    """
+
+let exam4 =
+    "exam4",
+    """
+inl create_stack_array size typ = ...
+
+inl foo create_object size typ = 
+    inl obj = create_object size typ
+    // operate on obj
+    obj
+
+fun top () =
+    inl x = foo create_stack_array (10,20) (Int32,Int32,Float64)
+    // do something with x
+    ...
+foo ()
+    """
+
+let r = spiral_codegen default_dims [] exam3
 
 printfn "%A" r
 
-// ...
-// ...
-// ... ...
-// ...
-// ...
+let tag =
+    let mutable i = 0
+    fun () ->
+        i <- i+1
+        i
+
+printfn "%i" (tag())
