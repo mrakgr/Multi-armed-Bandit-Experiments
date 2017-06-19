@@ -51,6 +51,7 @@ and Pattern =
     | Or of Pattern * Pattern
     | When of Pattern * Expr
 
+/// Typed patterns cannot be statically evaluated.
 and TypedPattern =
     | PatS of TyV
     | PatR of TypedPattern list * TypedPattern option
