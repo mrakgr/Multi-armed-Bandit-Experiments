@@ -778,11 +778,3 @@ foo ()
 let r = spiral_codegen default_dims [] exam3
 
 printfn "%A" r
-
-let tag =
-    let mutable i = 0
-    fun () ->
-        i <- i+1
-        i
-
-printfn "%i" (tag())

@@ -40,12 +40,13 @@ and FunctionCore = string * (Pattern * Expr) list
 and MemoKey = EnvTerm * Expr
 
 and Pattern =
+    | V of Value
     | A of Pattern * string // Type annotation case
     | A' of Pattern * Ty
     | S of string
     | S' of string // match if not tuple
     | R of Pattern list * Pattern option // Tuple
-    | F of Pattern * string // Functiona application with retracing.
+    | F of Pattern * string // Function application with retracing.
     | N of string * Pattern // Matches a tuple name and proceeds onto the pattern on a hit.
     | C of string * Pattern // Matches a type constructor name and proceeds onto the pattern on a hit.
     | Or of Pattern * Pattern
@@ -53,8 +54,10 @@ and Pattern =
 
 /// Typed patterns cannot be statically evaluated.
 and TypedPattern =
+    | PatV of Value
     | PatS of TyV
-    | PatR of TypedPattern list * TypedPattern option
+    | PatR of string * TypedPattern list * TypedPattern option
+    | PatC of string * TypedPattern list * TypedPattern option
     | PatF of TypedPattern * TypedExpr
     | PatWhen of TypedPattern * TypedExpr
 
