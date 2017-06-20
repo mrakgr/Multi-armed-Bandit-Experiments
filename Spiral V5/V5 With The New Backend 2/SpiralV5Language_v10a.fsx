@@ -52,14 +52,14 @@ and Pattern =
     | Or of Pattern * Pattern
     | When of Pattern * Expr
 
+and Case =
+    | CaseR of string * string list * string option
+    | CaseC of string * string list
+
 /// Typed patterns cannot be statically evaluated.
-and TypedPattern =
-    | PatV of Value
-    | PatS of TyV
-    | PatR of string * TypedPattern list * TypedPattern option
-    | PatC of string * TypedPattern list * TypedPattern option
-    | PatF of TypedPattern * TypedExpr
-    | PatWhen of TypedPattern * TypedExpr
+and TypedCase =
+    | TCaseR of string * TyV list * TyV option
+    | TCaseC of string * TyV list
 
 and Value = 
     | LitUInt8 of uint8
@@ -152,6 +152,7 @@ and Expr =
     | Function of FunctionCore * Set<string> ref * Pos
     | VV of Expr list * string * Pos // named tuple
     | Op of Op * Expr list * Pos
+    | Case of Case * Expr * Expr
 
 and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
@@ -174,7 +175,7 @@ and TypedExpr =
     | TyEnv of EnvTerm * Ty
     | TyOp of Op * TypedExpr list * Ty
     | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
-    | TyMatch of TypedPattern * Ty
+    | TyCase of TypedCase * TypedExpr * TypedExpr * Ty
 
 and MemoCases =
     | MethodInEvaluation
