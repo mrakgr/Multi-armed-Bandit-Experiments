@@ -109,7 +109,6 @@ and Op =
     | ModuleWith
     | ModuleWith'
     | EnvUnseal
-    | TypeSeal
 
     | ArrayCreate
     | ArrayCreateShared
@@ -193,4 +192,4 @@ let flip f a b = f b a
 // Just a small update since I finally figured out how to optimize the pattern matcher.
 // ...
 // ...
-// ... ...
+// ... ... ...
