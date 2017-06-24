@@ -308,7 +308,7 @@ let B = VV ([], "", None)
 let BVVT = VVT ([], "")
 let TyB = TyVV ([], BVVT)
 /// Matches tuples without a tail.
-let SS x = R (x, None) 
+let SS x = R (x, None)
 /// Opposite of S', matches only a tuple.
 let SS' x = R ([], Some (S x)) 
 /// Matches tuples with a tail.
