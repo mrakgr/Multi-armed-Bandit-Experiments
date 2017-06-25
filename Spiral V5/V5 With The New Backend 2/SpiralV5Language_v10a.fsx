@@ -608,9 +608,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let apply_module d env_term b ret = 
         v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
     
-    let apply_type d env_ty ty b ret =
+    let apply_type d env_ty uniont b ret =
         v_find env_ty b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a type named %s inside the type." b)
-            (fun ty -> inl " " (Op(TypeConstruct,[t ty; v " "],None)))
+            (fun ty -> inl " " (Op(TypeConstruct,[t uniont; t ty; v " "],None)))
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
@@ -628,7 +628,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
-        | TyType(UnionT env_ty), NameT n -> apply_type d env_ty n
+        | TyType(UnionT env_ty), NameT n -> apply_type d env_ty ty n
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
         | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
         | _ ->
