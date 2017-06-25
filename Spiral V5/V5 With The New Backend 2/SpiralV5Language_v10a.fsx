@@ -19,8 +19,9 @@ type SpiralDeviceVarType =
 
 type Ty =
     | PrimT of SpiralDeviceVarType
-    | VVT of Ty list * string
+    | VVT of Ty list
     | NameT of string
+    | NamedT of Ty * string
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
     | ModuleT of EnvTy
     | UnionT of EnvTy
@@ -35,7 +36,7 @@ and Tag = int64
 and TyV = Tag * Ty
 and EnvTerm = Map<string, TypedExpr>
 and EnvTy = Map<string, Ty>
-and FunctionCore = string * (string * Expr) list
+and FunctionCore = string * string * Expr
 and MemoKey = EnvTerm * Expr
 
 and Value = 
@@ -126,7 +127,7 @@ and Expr =
     | T of TypedExpr * Pos
     | Lit of Value * Pos
     | Function of FunctionCore * Set<string> ref * Pos
-    | VV of Expr list * string * Pos // named tuple
+    | VV of Expr list * Pos // named tuple
     | Op of Op * Expr list * Pos
 
 and Arguments = Set<TyV> ref
@@ -194,7 +195,7 @@ let get_subtype x =
 
 /// Returns an empty string if not a tuple.
 let tuple_name = function
-    | TyVV(_,VVT (_,name)) -> name
+    | NamedT (VVT _, name) -> name
     | _ -> ""
 
 /// Wraps the argument in a list if not a tuple.
@@ -203,7 +204,7 @@ let tuple_field = function
     | x -> [x]
 
 let tuple_field_ty = function 
-    | VVT(x,_) -> x
+    | VVT x -> x
     | x -> [x]
 
 type ArrayType = Local | Shared | Global
@@ -215,8 +216,13 @@ let get_type_pointer x =
     | GlobalPointerT x -> x, Global
     | _ -> failwith "Expected a pointer"
 
+let (|TupleT|_|) = function
+    | NamedT(VVT l, n) -> Some (l,n)
+    | VVT l -> Some (l, "")
+    | _ -> None
+
 let (|Array|_|) = function
-    | TyVV([size;typ],VVT (_,name)) ->
+    | TyVV([size;typ],NamedT (_,name)) ->
         match name with
         | "Array" -> 
             let typ, array_type = get_type_pointer typ
@@ -225,11 +231,11 @@ let (|Array|_|) = function
     | _ -> None
 
 let rec is_returnable' = function
-    | VVT (x,name) -> List.forall is_returnable' x
+    | VVT x -> List.forall is_returnable' x
     | RecT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
     | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
-    | UnionT _ -> true
-    | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
+    | NamedT(x,_) -> is_returnable' x
+    | UnionT _ | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -285,8 +291,8 @@ let is_arg = function TyV _ -> true | _ -> false
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
-let fun_ name pat pos = Function((name,pat),ref Set.empty,pos)
-let inlr name x y = fun_ name [x,y]
+let fun_ name (pat,body) pos = Function((name,pat,body),ref Set.empty,pos)
+let inlr name x y = fun_ name (x,y)
 let inl x y = inlr "" x y
 let ap pos x y = Op(Apply,[x;y],pos)
 let ap_ty pos x = Op(ApplyType,[x],pos)
@@ -299,8 +305,8 @@ let meth x y = methr "" x y
 let module_create pos = Op(ModuleCreate,[],pos)
 let module_open pos a b = Op(ModuleOpen,[a;b],pos)
 
-let B = VV ([], "", None)
-let BVVT = VVT ([], "")
+let B = VV ([], None)
+let BVVT = VVT []
 let TyB = TyVV ([], BVVT)
 
 let t x = T(x,None)
@@ -333,13 +339,13 @@ let rec methr' name args body pos =
 
 let meth' args body = methr' "" args body
 
-let vv pos x = VV(x,"",pos)
+let vv pos x = VV(x,pos)
 
 let error_type x = Op(ErrorType, [x], None)
 let static_print x = Op(StaticPrint,[x], None)
 
 let get_pos = function
-    | Lit(_,pos) | T(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,_,pos) | Op(_,_,pos) -> pos
+    | Lit(_,pos) | T(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,pos) | Op(_,_,pos) -> pos
 
 let error_non_unit x = Op(ErrorNonUnit, [x], get_pos x)
 
@@ -355,13 +361,13 @@ let expr_free_variables e =
     
         | V (n,_) -> Set.singleton n
         | Op(Apply,[a;b],_) -> f a + f' Set.empty b // This is so modules only capture their current scope, not their entire lexical scope.
-        | Op(_,l,_) | VV(l,_,_) -> vars_union f l
-        | Function((name,l),free_var_set,_) ->
-            let fv = vars_union (fun (pat,body) -> 
+        | Op(_,l,_) | VV(l,_) -> vars_union f l
+        | Function((name,pat,body),free_var_set,_) ->
+            let fv = 
                 let g f x = x |> f name |> f pat
                 let add_name_pat x = g Set.add x
                 let remove_name_pat x = g Set.remove x
-                remove_name_pat (f' (add_name_pat vars_for_module) body)) l
+                remove_name_pat (f' (add_name_pat vars_for_module) body)
             free_var_set := fv
             fv
         | T _ | Lit _ -> Set.empty
@@ -512,15 +518,27 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 Map.map unseal x
             let r_ty = get_type r
             match r_ty with
-            | VVT (tuple_types, name) -> TyVV(index_tuple_args tuple_types, r_ty)
+            | TupleT(tuple_types, _) -> TyVV(index_tuple_args tuple_types, r_ty)
             | ModuleT env | FunctionT (env, _) -> TyEnv(env_unseal env, r_ty)
             | _ -> r
+
+        let destructure_cse = 
+            let rec chase f r = 
+                match Map.tryFind r !d.cse_env with
+                | None -> f r
+                | Some x -> chase id x
+
+            chase (fun r ->
+                let x = make_tyv_and_push d r |> destructure
+                if r <> x then d.cse_env := !d.cse_env |> Map.add r x
+                chase id x)
+            
         match r with
         | TyLit _ -> r
         | TyType _ | TyV _ -> destructure_var r
         | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
         | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l,ty)
-        | TyMemoizedExpr _ | TyLet _ | TyOp _ -> make_tyv_and_push d r |> destructure
+        | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
 
     let if_ d cond tr fl ret =
         tev d cond <| fun cond ->
@@ -551,14 +569,16 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | false, _ ->
             let tag = method_tag ()
 
-            memoized_methods.[key_args] <- (MethodInEvaluation, tag, used_vars)
+            memoized_methods.[key_args] <- (MemoMethodInEvaluation, tag, used_vars)
             tev_seq d expr <| fun typed_expr ->
-                memoized_methods.[key_args] <- (MethodDone typed_expr, tag, used_vars)
+                memoized_methods.[key_args] <- (MemoMethodDone typed_expr, tag, used_vars)
                 ret (typed_expr, tag)
-        | true, (MethodInEvaluation, tag, used_vars) -> 
+        | true, (MemoMethodInEvaluation, tag, used_vars) -> 
             tev_rec d expr <| fun r -> ret (r, tag)
-        | true, (MethodDone typed_expr, tag, used_vars) -> 
+        | true, (MemoMethodDone typed_expr, tag, used_vars) -> 
             ret (typed_expr, tag)
+        | true, (MemoRecursiveType, _, _) ->
+            failwith "Expected a method, not a recursive type."
 
     let eval_renaming d expr ret =
         let env = d.env
@@ -582,108 +602,53 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             |> make_tyv_and_push d
             |> ret
 
-    let inline match_bind acc arg_name x = if is_full_name arg_name then Map.add arg_name x acc else acc
-    let inline match_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret =
-        recurse acc l r <| fun x_acc ->
-            recurse x_acc (R(ls,ls')) (TyVV(rs,VVT (ts, ""))) ret
-    let inline match_a' annot args on_fail ret = if annot = get_type args then ret() else on_fail()
-
     let apply_module d env_term b ret = 
         v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
    
-    let rec match_a d annot args on_fail ret = 
-        tev d (V (annot,None)) <| fun r ->
-            match_a' (get_type r) args on_fail ret
-
-    and match_single d (acc: EnvTerm) l r on_fail ret =
-        let rec recurse acc l r ret = 
-            match l,r with
-            | A (pattern,annot), _ -> match_a d annot r on_fail (fun _ -> recurse acc pattern r ret) 
-            | A' (pattern,annot), _ -> match_a' annot r on_fail (fun _ -> recurse acc pattern r ret) 
-            | F (pattern, meth), args -> match_f d acc pattern args meth on_fail ret
-            | R([],None), TyVV([], _) -> match_bind acc "" r |> ret
-            | S' x, TyVV _ -> on_fail () //<| "S' matched a tuple."
-            | S' x, _ | S x, _ -> match_bind acc x r |> ret
-            | R([],Some ls), TyVV _ -> recurse acc ls r ret
-            | R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts, "")) -> match_r recurse acc (l,ls,ls') (r,rs) (t,ts) ret
-            //| R(l::ls,ls'), TyVV(r :: rs,VVT (t :: ts, _)) -> on_fail() // <| "Expecting an unnamed argument."
-            | R([],None), TyVV(_, _) -> on_fail () // <| sprintf "More arguments than can be matched in R."
-            | R _, _ -> on_fail () //<| sprintf "Cannot destructure %A." r
-            | N (name, next), TyVV(x, VVT(t, name')) ->
-                if name = name' then recurse acc next (TyVV(x,VVT (t, ""))) ret
-                else on_fail() // <| sprintf "Cannot pattern match %s against %s" name name'
-            | N _, _ -> on_fail() // "Cannot match name against a non-named argument."
-        recurse acc l r ret
-
-    and match_all d env l (args: TypedExpr) on_fail ret =
-        let rec loop = function
-            | (pattern: Pattern, body: Expr) :: xs ->
-                match_single d env pattern args
-                    (fun _ -> loop xs)
-                    (fun acc -> ret (acc, body))
-            | [] -> on_fail()
-        loop l
-
-    and match_f d acc (pattern: Pattern) args meth on_fail ret =
-        tev d (v meth) <| fun r ->
-            apply tev_seq d r args
-                on_fail // <| "Function application in pattern matcher failed to match a pattern."
-                (fun r -> match_single d acc pattern (destructure d r) on_fail ret)
-
-    and apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
+    let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
         if arg_ty <> clo_arg_ty then d.on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         else TyOp(Apply,[clo;arg],clo_ret_ty) |> ret
 
-    and apply_functiont tev d env_term (env_ty,(name,l) as fun_key) args on_fail ret =
-        match_all d env_term l args
-            on_fail
-            (fun (env, body) ->
-                let fv = TyEnv (env, FunctionT fun_key)
-                let d = {d with env = if name <> "" then Map.add name fv env else env}
-                tev d body ret)
+    and apply_functiont d env_term (env_ty,(name,pat,body) as fun_key) args ret =
+        let env = Map.add pat args env_term
+        let fv = TyEnv (env, FunctionT fun_key)
+        let d = {d with env = if name <> "" then Map.add name fv env else env}
+        tev d body ret
 
-    and apply_named_tuple tev d name ra on_fail ret =
-        let oname = "overload_ap_" + name
-        v_find d.env oname (fun () -> d.on_type_er d.trace <| sprintf "Cannot find an application overload for the tuple %s. %s is not in scope." name oname) <| fun la ->
-            apply tev d la ra on_fail ret
-
-    and apply tev d la ra on_fail ret =
+    and apply d la ra ret =
         match la, get_type ra with
-        | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t on_fail ret
+        | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
-        | TyEnv(env_term,ModuleT env_ty), ForModuleT n -> apply_module d env_term n ret
-        | x, ForModuleT n -> d.on_type_er d.trace <| sprintf "Expected a module in module application. Got: %A" x
-        | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra on_fail ret
+        | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
+        | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
+        | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont d env_term (env_ty,x) ra ret
         | _ ->
             match get_type la with
             | ClosureT(a,r) -> apply_closuret d la (a,r) ra ret
-            | VVT(_,name) when name <> "" -> apply_named_tuple tev d name ra on_fail ret
             | _ -> d.on_type_er d.trace "Invalid use of apply."
 
-    and apply_cast d env_term (env_ty,core as fun_key) args_ty on_fail ret =
+    and apply_cast d env_term (env_ty,core as fun_key) args_ty ret =
         if env_num_args env_term > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
         else
             let args =
                 let f x = TyType x |> make_tyv_and_push_inv d
                 match args_ty with
-                | VVT(l,n) -> TyVV(List.map f l, args_ty)
+                | TupleT (l, _) -> TyVV(List.map f l, args_ty)
                 | x -> f x
             
-            let closure = 
-                let f = TyEnv(env_term, FunctionT fun_key) |> t
-                TyEnv(env_term, FunctionT(env_ty,("",[S " ",ap None f (v " ")])))
+            let closure = TyEnv(env_term, FunctionT fun_key)
 
             let tev d x ret = 
                 memoize_closure (get_type args) d x <| fun r ->
                     if is_returnable r then ret r
                     else d.on_type_er d.trace "Closure does not have a returnable type."
                     
-            apply tev d closure args on_fail ret
+            apply d closure args ret
 
-    let apply_tev d expr args apply_fail ret = 
+    let apply_tev d expr args ret = 
         tev2 d expr args <| fun expr args ->
-            apply tev d (destructure d expr) (destructure d args) apply_fail ret
+            apply d (destructure d expr) (destructure d args) ret
 
     let mset d a b ret =
         tev2 d a b <| fun l r ->
@@ -697,10 +662,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             match v, i with
             | v, TyLit (LitInt32 i as i') ->
                 match get_type v with
-                | VVT (ts,"") -> 
+                | VVT ts -> 
                     if i >= 0 || i < List.length ts then TyOp(VVIndex,[v;TyLit i'],ts.[i]) |> ret
                     else d.on_type_er d.trace "(i >= 0 || i < List.length ts) = false in IndexVT"
-                | VVT (ts, name) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be indexed directly. They must be pattern matched on the name first." name
+                | NamedT (VVT ts, name) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be indexed directly. They must be pattern matched on the name first." name
                 | x -> d.on_type_er d.trace <| sprintf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
             | v, i -> d.on_type_er d.trace <| sprintf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
     
@@ -708,8 +673,8 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         tev2 d a b <| fun a b ->
             let b = destructure d b
             match b with
-            | TyVV(b, VVT (bt, "")) -> TyVV(a::b, VVT (get_type a :: bt, "")) |> ret
-            | TyVV(_, VVT (_, name)) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
+            | TyVV(b, VVT bt) -> TyVV(a::b, VVT (get_type a :: bt)) |> ret
+            | TyVV(_, NamedT (VVT _, name)) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
             | _ -> d.on_type_er d.trace "Expected a tuple on the right is in VVCons."
 
     let guard_is_int d args ret = 
@@ -723,7 +688,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 |> fun x -> 
                     guard_is_int d (tuple_field x) <| fun () ->
                         let l = [size; get_type typ |> pointer |> TyType |> make_tyv_and_push_inv d]
-                        let x = TyVV (l, VVT (List.map get_type l, "Array"))
+                        let x = TyVV (l, NamedT (VVT (List.map get_type l), "Array"))
                         TyOp(ArrayCreate,[x],get_type x) |> ret
 
     let array_index d op_index ar args ret =
@@ -843,16 +808,15 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             | Some ex -> Map.add x ex s
             | None -> s) Map.empty !free_var_set
         TyEnv(env_term, FunctionT(env_to_ty env_term, core)) |> ret
-    | VV(vars,name, pos) -> vars_map (add_trace d pos) vars (fun vv -> TyVV(vv, VVT(List.map get_type vv, name)) |> ret)
+    | VV(vars, pos) -> vars_map (add_trace d pos) vars (fun vv -> TyVV(vv, VVT(List.map get_type vv)) |> ret)
     | Op(op,vars,pos) ->
         let d = add_trace d pos
         match op, vars with
         | If,[cond;tr;fl] -> if_ d cond tr fl ret
-        | Apply,[a;b] -> apply_tev d a b (fun _ -> d.on_type_er d.trace "All the match cases were exhausted.") ret
+        | Apply,[a;b] -> apply_tev d a b ret
         | MethodMemoize,[a] -> memoize_method d a ret
         | ApplyType,[x] -> for_cast d x ret
         
-        | ApplyModule,[V (x,_)] -> x |> ForModuleT |> TyType |> ret
         | ModuleOpen,[a;b] -> module_open d a b ret
         | StaticPrint,[a] -> tev d a <| fun r -> printfn "%A" r; ret TyB
 
@@ -933,35 +897,37 @@ let print_type_error (code: Dictionary<string, string []>) (trace: Trace) messag
     loop "" -1L trace
 
 let data_empty on_fail code =
-    {ltag=ref 0L;seq=ref id;trace=[];env=Map.empty;rbeh=AnnotationDive
+    {ltag = ref 0L; seq=ref id; trace=[]; rbeh=AnnotationDive
+     env = Map.empty
+     cse_env = ref Map.empty
      on_type_er = fun trace message -> on_fail <| print_type_error code trace message}
 
 let array_index op a b = Op(op,[a;b],None)
 
 let core_functions =
-    let p f = inl (S "x") (f (v "x")) None
-    let p2 f = inl' [S "x"; S "y"] (f (v "x") (v "y")) None
+    let p f = inl "x" (f (v "x")) None
+    let p2 f = inl' ["x"; "y"] (f (v "x") (v "y")) None
     let con x = Op(x,[],None)
     let lit x = Lit (x, None)
     let l a b = l a b None
-    s  [l (S "errortype") (p error_type)
-        l (S "static_print") (p static_print)
-        l (S "overload_ap_Array") (p2 (array_index ArrayIndex))
-        l (S "unsafe_index") (p2 (array_index ArrayUnsafeIndex))
+    s  [l "errortype" (p error_type)
+        l "static_print" (p static_print)
+        l "overload_ap_Array" (p2 (array_index ArrayIndex))
+        l "unsafe_index" (p2 (array_index ArrayUnsafeIndex))
 
-        l (S "threadIdxX") (lit ThreadIdxX)
-        l (S "threadIdxY") (lit ThreadIdxY)
-        l (S "threadIdxZ") (lit ThreadIdxZ)
-        l (S "blockIdxX") (lit BlockIdxX)
-        l (S "blockIdxY") (lit BlockIdxY)
-        l (S "blockIdxZ") (lit BlockIdxZ)
+        l "threadIdxX" (lit ThreadIdxX)
+        l "threadIdxY" (lit ThreadIdxY)
+        l "threadIdxZ" (lit ThreadIdxZ)
+        l "blockIdxX" (lit BlockIdxX)
+        l "blockIdxY" (lit BlockIdxY)
+        l "blockIdxZ" (lit BlockIdxZ)
 
-        l (S "blockDimX") (con BlockDimX)
-        l (S "blockDimY") (con BlockDimY)
-        l (S "blockDimZ") (con BlockDimZ)
-        l (S "gridDimX") (con GridDimX)
-        l (S "gridDimY") (con GridDimY)
-        l (S "gridDimZ") (con GridDimZ)
+        l "blockDimX" (con BlockDimX)
+        l "blockDimY" (con BlockDimY)
+        l "blockDimZ" (con BlockDimZ)
+        l "gridDimX" (con GridDimX)
+        l "gridDimY" (con GridDimY)
+        l "gridDimZ" (con GridDimZ)
         ]
 
 let spiral_typecheck code dims body on_fail ret = 
