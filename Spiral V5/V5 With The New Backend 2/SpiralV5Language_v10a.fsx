@@ -114,6 +114,7 @@ and Op =
 
     // Constants
     | ModuleCreate
+    | TypeCreate
 
     | Syncthreads
     | BlockDimX | BlockDimY | BlockDimZ
@@ -153,12 +154,12 @@ and TypedExpr =
     | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
 
 and MemoCases =
-    | MemoMethodInEvaluation
-    | MemoMethodDone of TypedExpr
-    | MemoRecursiveType
+    | MemoMethodInEvaluation of Tag
+    | MemoMethodDone of TypedExpr * Tag * Arguments
+    | MemoRecursiveType of Tag
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
-and MemoDict = Dictionary<MemoKey, MemoCases * Tag * Arguments>
+and MemoDict = Dictionary<MemoKey, MemoCases>
 and ClosureDict = Dictionary<Tag, TypedExpr> 
 // For Common Subexpression Elimination. I need it not for its own sake, but to enable other PE based optimizations.
 and CSEDict = Map<TypedExpr,TypedExpr> ref
@@ -233,9 +234,9 @@ let (|Array|_|) = function
 let rec is_returnable' = function
     | VVT x -> List.forall is_returnable' x
     | RecT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
-    | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
+    | UnionT env | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
     | NamedT(x,_) -> is_returnable' x
-    | UnionT _ | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
+    | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -416,7 +417,7 @@ let rec typed_expr_free_variables e = typed_expr_free_variables_template typed_e
 and env_free_variables env = env_free_variables_template typed_expr_std_pass env
 
 let memo_value = function
-    | MemoMethodDone e, tag, args -> e, tag, args
+    | MemoMethodDone (e, tag, args) -> e, tag, args
     | _ -> failwith "impossible"
 
 /// Optimizes the free variables for the sake of tuple deforestation.
@@ -570,15 +571,15 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | false, _ ->
             let tag = method_tag ()
 
-            memoized_methods.[key_args] <- (MemoMethodInEvaluation, tag, used_vars)
+            memoized_methods.[key_args] <- MemoMethodInEvaluation tag
             tev_method d expr <| fun typed_expr ->
-                memoized_methods.[key_args] <- (MemoMethodDone typed_expr, tag, used_vars)
+                memoized_methods.[key_args] <- MemoMethodDone (typed_expr, tag, used_vars)
                 ret (typed_expr, tag)
-        | true, (MemoMethodInEvaluation, tag, used_vars) -> 
+        | true, MemoMethodInEvaluation tag -> 
             tev_rec d expr <| fun r -> ret (r, tag)
-        | true, (MemoMethodDone typed_expr, tag, used_vars) -> 
+        | true, MemoMethodDone (typed_expr, tag, used_vars) -> 
             ret (typed_expr, tag)
-        | true, (MemoRecursiveType, _, _) ->
+        | true, MemoRecursiveType tag ->
             failwith "Expected a method, not a recursive type."
 
     let eval_renaming d expr ret =
@@ -606,6 +607,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let apply_module d env_term b ret = 
         v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
+    
+    let apply_type d env_ty ty b ret =
+        v_find env_ty b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a type named %s inside the type." b)
+            (fun ty -> inl " " (Op(TypeConstruct,[t ty; v " "],None)))
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
@@ -623,6 +628,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
+        | TyType(UnionT env_ty), NameT n -> apply_type d env_ty n
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
         | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
         | _ ->
@@ -947,6 +953,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
 
         | ModuleCreate,[] -> TyEnv(d.env, ModuleT <| env_to_ty d.env) |> ret
+        | TypeCreate,[] -> TyType(UnionT <| env_to_ty d.env) |> ret
         | _ -> failwith "Missing Op case."
 
 
