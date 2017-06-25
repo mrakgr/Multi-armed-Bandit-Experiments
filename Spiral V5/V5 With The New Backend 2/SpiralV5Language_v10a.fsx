@@ -471,8 +471,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         (d : LangEnv<_,_,_,_>) (expr: Expr) ret =
     let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
     let inline apply_seq d x = !d.seq x
-    let inline tev_seq d expr ret = let d = {d with seq=ref id} in tev d expr (apply_seq d >> ret)
-    let inline tev_rec d expr ret = tev_seq {d with rbeh=AnnotationReturn} expr ret
+    let inline tev_seq d expr ret = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr (apply_seq d >> ret)
+    let inline tev_method d expr ret = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr (apply_seq d >> ret)
+    let inline tev_rec d expr ret = tev_method {d with rbeh=AnnotationReturn} expr ret
 
     let v_find env x on_fail ret = 
         match Map.tryFind x env with
@@ -570,7 +571,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             let tag = method_tag ()
 
             memoized_methods.[key_args] <- (MemoMethodInEvaluation, tag, used_vars)
-            tev_seq d expr <| fun typed_expr ->
+            tev_method d expr <| fun typed_expr ->
                 memoized_methods.[key_args] <- (MemoMethodDone typed_expr, tag, used_vars)
                 ret (typed_expr, tag)
         | true, (MemoMethodInEvaluation, tag, used_vars) -> 
@@ -594,6 +595,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let memoize_method d x ret = 
         eval_renaming d x <| fun (args,renamer,tag,ret_ty) -> 
             TyMemoizedExpr(MemoMethod,args,renamer,tag,ret_ty)
+            |> make_tyv_and_push d
             |> ret
 
     let memoize_closure arg_ty d x ret =
@@ -610,19 +612,19 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         if arg_ty <> clo_arg_ty then d.on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         else TyOp(Apply,[clo;arg],clo_ret_ty) |> ret
 
-    and apply_functiont d env_term (env_ty,(name,pat,body) as fun_key) args ret =
+    and apply_functiont tev d env_term (env_ty,(name,pat,body) as fun_key) args ret =
         let env = Map.add pat args env_term
         let fv = TyEnv (env, FunctionT fun_key)
         let d = {d with env = if name <> "" then Map.add name fv env else env}
         tev d body ret
 
-    and apply d la ra ret =
+    and apply tev d la ra ret =
         match la, get_type ra with
         | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
-        | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont d env_term (env_ty,x) ra ret
+        | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
         | _ ->
             match get_type la with
             | ClosureT(a,r) -> apply_closuret d la (a,r) ra ret
@@ -644,15 +646,14 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                     if is_returnable r then ret r
                     else d.on_type_er d.trace "Closure does not have a returnable type."
                     
-            apply d closure args ret
+            apply tev d closure args ret
 
     let apply_tev d expr args ret = 
         tev2 d expr args <| fun expr args ->
-            apply d (destructure d expr) (destructure d args) ret
+            apply tev d expr args ret
 
     let mset d a b ret =
         tev2 d a b <| fun l r ->
-            let r = destructure d r
             match l, r with
             | TyOp((ArrayUnsafeIndex | ArrayIndex),[_;_],lt), r when lt = get_type r -> make_tyv_and_push d (TyOp(MSet,[l;r],BVVT)) |> ret
             | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp((ArrayUnsafeIndex | ArrayIndex),_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
@@ -671,7 +672,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     
     let vv_cons d a b ret =
         tev2 d a b <| fun a b ->
-            let b = destructure d b
             match b with
             | TyVV(b, VVT bt) -> TyVV(a::b, VVT (get_type a :: bt)) |> ret
             | TyVV(_, NamedT (VVT _, name)) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
@@ -684,12 +684,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let array_create d pointer size typeof_expr ret =
         tev d size <| fun size -> 
             tev_seq d typeof_expr <| fun typ ->
-                destructure d size
-                |> fun x -> 
-                    guard_is_int d (tuple_field x) <| fun () ->
-                        let l = [size; get_type typ |> pointer |> TyType |> make_tyv_and_push_inv d]
-                        let x = TyVV (l, NamedT (VVT (List.map get_type l), "Array"))
-                        TyOp(ArrayCreate,[x],get_type x) |> ret
+                guard_is_int d (tuple_field size) <| fun () ->
+                    let l = [size; get_type typ |> pointer |> TyType |> make_tyv_and_push_inv d]
+                    let x = TyVV (l, NamedT (VVT (List.map get_type l), "Array"))
+                    TyOp(ArrayCreate,[x],get_type x) |> ret
 
     let array_index d op_index ar args ret =
         tev2 d ar args <| fun ar args ->
@@ -748,17 +746,75 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let prim_arith_op d = 
         let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_numeric a && get_type a = get_type b
-        prim_bin_op_template d er check prim_bin_op_helper
+        prim_bin_op_template d er check (fun t a b ->
+            let inline op_arith a b =
+                match t with
+                | Add -> a + b
+                | Sub -> a - b
+                | Mult -> a * b
+                | Div -> a / b
+                | Mod -> a % b
+                | _ -> failwith "Expected an arithmetic operation."
+            match a, b with
+            | TyLit a', TyLit b' ->
+                match a', b' with
+                | LitInt8 a, LitInt8 b -> op_arith a b |> LitInt8 |> TyLit
+                | LitInt16 a, LitInt16 b -> op_arith a b |> LitInt16 |> TyLit
+                | LitInt32 a, LitInt32 b -> op_arith a b |> LitInt32 |> TyLit
+                | LitInt64 a, LitInt64 b -> op_arith a b |> LitInt64 |> TyLit
+                | LitUInt8 a, LitUInt8 b -> op_arith a b |> LitUInt8 |> TyLit
+                | LitUInt16 a, LitUInt16 b -> op_arith a b |> LitUInt16 |> TyLit
+                | LitUInt32 a, LitUInt32 b -> op_arith a b |> LitUInt32 |> TyLit
+                | LitUInt64 a, LitUInt64 b -> op_arith a b |> LitUInt64 |> TyLit
+                | LitFloat32 a, LitFloat32 b -> op_arith a b |> LitFloat32 |> TyLit
+                | LitFloat64 a, LitFloat64 b -> op_arith a b |> LitFloat64 |> TyLit
+                | _ -> prim_bin_op_helper t a b
+            | _ -> prim_bin_op_helper t a b
+            )
+            
 
     let prim_comp_op d = 
         let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
-        prim_bin_op_template d er check bool_helper
+        prim_bin_op_template d er check (fun t a b ->
+            let inline op a b =
+                match t with
+                | LT -> a < b
+                | LTE -> a <= b
+                | EQ -> a = b
+                | GT -> a > b
+                | GTE -> a >= b 
+                | _ -> failwith "Expected a comparison operation."
+            match a, b with
+            | TyLit a', TyLit b' ->
+                match a', b' with
+                | LitInt8 a, LitInt8 b -> op a b |> LitBool |> TyLit
+                | LitInt16 a, LitInt16 b -> op a b |> LitBool |> TyLit
+                | LitInt32 a, LitInt32 b -> op a b |> LitBool |> TyLit
+                | LitInt64 a, LitInt64 b -> op a b |> LitBool |> TyLit
+                | LitUInt8 a, LitUInt8 b -> op a b |> LitBool |> TyLit
+                | LitUInt16 a, LitUInt16 b -> op a b |> LitBool |> TyLit
+                | LitUInt32 a, LitUInt32 b -> op a b |> LitBool |> TyLit
+                | LitUInt64 a, LitUInt64 b -> op a b |> LitBool |> TyLit
+                | LitFloat32 a, LitFloat32 b -> op a b |> LitBool |> TyLit
+                | LitFloat64 a, LitFloat64 b -> op a b |> LitBool |> TyLit
+                | _ -> bool_helper t a b
+            | _ -> bool_helper t a b
+            )
 
     let prim_bool_op d = 
         let er = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = is_bool a && get_type a = get_type b
-        prim_bin_op_template d er check bool_helper
+        prim_bin_op_template d er check (fun t a b ->
+            let inline op a b =
+                match t with
+                | And -> a && b
+                | Or -> a || b
+                | _ -> failwith "Expected a comparison operation."
+            match a, b with
+            | TyLit (LitBool a), TyLit (LitBool b) -> op a b |> LitBool |> TyLit
+            | _ -> bool_helper t a b            
+            )
 
     let prim_shift_op d =
         let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
@@ -783,7 +839,24 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let prim_un_numeric d =
         let er = sprintf "`is_numeric a` is false.\na=%A"
         let check a = is_numeric a
-        prim_un_op_template d er check prim_un_op_helper
+        prim_un_op_template d er check (fun t a -> 
+            let inline op a = 
+                match t with
+                | Neg -> -a
+                | _ -> failwithf "Unexpected operation %A." t
+
+            match a with
+            | TyLit a' ->
+                match a' with
+                | LitInt8 a -> op a |> LitInt8 |> TyLit
+                | LitInt16 a -> op a |> LitInt16 |> TyLit
+                | LitInt32 a -> op a |> LitInt32 |> TyLit
+                | LitInt64 a -> op a |> LitInt64 |> TyLit
+                | LitFloat32 a -> op a |> LitFloat32 |> TyLit
+                | LitFloat64 a -> op a |> LitFloat64 |> TyLit
+                | _ -> prim_un_op_helper t a
+            | _ -> prim_un_op_helper t a
+            )
 
     let for_cast d x ret = tev_seq d x (get_type >> ForCastT >> TyType >> ret)
     let error_non_unit d a ret =
@@ -798,6 +871,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | Some x -> {d with trace = x :: d.trace}
         | None -> d
       
+    let ret x = destructure d x |> ret
     match expr with
     | Lit (value,_) -> TyLit value |> ret
     | T (x, _) -> x |> ret
