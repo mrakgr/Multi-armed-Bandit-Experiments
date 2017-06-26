@@ -602,11 +602,28 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let apply_module d env_term b ret = 
         v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
+
+//    Ground rules for type application:
+//    1) Nested type constructors are disallowed. If a type constructor is in a type constructor then it is to be stripped. That means that TypeConstructorT can only appear on the outermost level.
+//    2) A tuple is matched directly against the tuple type and returns a tuple. This is straightforward.
+//    3) Union types will always have tuple types returned to them.
+//    4) Primitive types will always be wrapped in a tuple when they are a part of the union to indicate they are statically determined.
+//    5) A variable that has a union type will always mean a sealed union type.
+//    6) Union type can only be destructured via pattern matching.
+//    7) Corollary to #3, the tuple returned from a union apply case will have its type replaced (generalized) into the union's type.
+//    8) The tuple returned from a type constructor will of course not have the type constructor type.
+//    9) Lastly, tuples returned from a recursive type case will have their type replaced with the recursive type much like when returned from a union case.
     
-    let rec apply_type d uniont ra on_fail ret =
+    let rec apply_type d uniont (ra: TypedExpr) on_fail ret =
         match uniont, ra with
-        | VVT x, r -> apply_type_tuple d x r on_fail <| fun v -> TyVV(v,uniont)
-        | UnionT x, r -> apply_type_union d x r on_fail <| fun v -> TyVV(v,uniont)
+        | TypeConstructorT _, _ -> failwith "Type constructors should never be nested."
+        | VVT x, r -> apply_type_tuple d x (tuple_field r) on_fail <| fun v -> TyVV(v,uniont) |> ret
+        | UnionT x, r -> 
+            apply_type_union d x r on_fail <| function 
+                | (TyVV(v,_)) -> TyVV(v,uniont) |> ret
+                | _ -> failwith "Union case should always return a tuple."
+        | RecT _, _ -> failwith "implement later"
+        | x, r -> if x = get_type r then ret r else on_fail()
 
     and apply_type_union d x r on_fail ret =
         let rec loop = function
@@ -623,10 +640,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | [], [] -> ret []
         | _ -> on_fail()
             
-//        let ra_ty = get_type ra
-//        if Set.contains ra_ty (set_field uniont) then TyVV(tuple_field ra,uniont) |> ret
-//        else d.on_type_er d.trace <| sprintf "Trying to apply to a type constructor with a missing type. %A does not intersect %A." uniont ra_ty
-
 //    let type_constructor_create d a b ret =
 //        let f = function
 //            | TypeConstructorT x -> set_field x
@@ -651,7 +664,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
-        //| TyType(TypeConstructorT uniont), _ -> apply_type d uniont ra ret
+        | TyType(TypeConstructorT uniont), ra_ty -> 
+            let er _ = d.on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A" uniont ra_ty
+            apply_type d uniont ra er ret
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
         | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
         | _ ->
