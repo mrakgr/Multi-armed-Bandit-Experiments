@@ -21,7 +21,6 @@ type Ty =
     | PrimT of SpiralDeviceVarType
     | VVT of Ty list
     | NameT of string
-    | NamedT of Ty * string
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
     | ModuleT of EnvTy
     | UnionT of EnvTy
@@ -125,7 +124,6 @@ and Pos = PosKey option
 
 and Expr = 
     | V of string * Pos
-    | T of TypedExpr * Pos
     | Lit of Value * Pos
     | Function of FunctionCore * Set<string> ref * Pos
     | VV of Expr list * Pos // named tuple
@@ -143,7 +141,6 @@ and LetType =
 | LetInvisible
 
 and TypedExpr =
-    | TyType of Ty
     | TyV of TyV
     | TyLet of LetType * TyV * TypedExpr * TypedExpr * Ty
     | TyLit of Value
@@ -187,17 +184,12 @@ let get_type_of_value = function
 let get_type = function
     | TyLit x -> get_type_of_value x
     | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
-    | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) | TyType t -> t
+    | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
 
 let get_subtype x = 
     match get_type x with
     | ForCastT x -> x
     | x -> x
-
-/// Returns an empty string if not a tuple.
-let tuple_name = function
-    | NamedT (VVT _, name) -> name
-    | _ -> ""
 
 /// Wraps the argument in a list if not a tuple.
 let tuple_field = function 
@@ -217,26 +209,21 @@ let get_type_pointer x =
     | GlobalPointerT x -> x, Global
     | _ -> failwith "Expected a pointer"
 
-let (|TupleT|_|) = function
-    | NamedT(VVT l, n) -> Some (l,n)
-    | VVT l -> Some (l, "")
+let (|TyType|_|) = function
+    | TyV(_,x) -> Some x
     | _ -> None
 
 let (|Array|_|) = function
-    | TyVV([size;typ],NamedT (_,name)) ->
-        match name with
-        | "Array" -> 
-            let typ, array_type = get_type_pointer typ
-            Some(array_type,tuple_field size,typ)
-        | _ -> None
+    | TyVV([size;typ;TyType(NameT "Array")],_) ->
+        let typ, array_type = get_type_pointer typ
+        Some(array_type,tuple_field size,typ)
     | _ -> None
 
 let rec is_returnable' = function
     | VVT x -> List.forall is_returnable' x
     | RecT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
     | UnionT env | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
-    | NamedT(x,_) -> is_returnable' x
-    | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
+    | NameT _ | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
 and is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -310,7 +297,6 @@ let B = VV ([], None)
 let BVVT = VVT []
 let TyB = TyVV ([], BVVT)
 
-let t x = T(x,None)
 let v x = V(x,None)
 
 let cons a b pos = Op(VVCons,[a;b],pos)
@@ -346,7 +332,7 @@ let error_type x = Op(ErrorType, [x], None)
 let static_print x = Op(StaticPrint,[x], None)
 
 let get_pos = function
-    | Lit(_,pos) | T(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,pos) | Op(_,_,pos) -> pos
+    | Lit(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,pos) | Op(_,_,pos) -> pos
 
 let error_non_unit x = Op(ErrorNonUnit, [x], get_pos x)
 
@@ -361,7 +347,7 @@ let expr_free_variables e =
         | Op(ModuleCreate,[],_) -> vars_for_module
     
         | V (n,_) -> Set.singleton n
-        | Op(Apply,[a;b],_) -> f a + f' Set.empty b // This is so modules only capture their current scope, not their entire lexical scope.
+        | Op(Apply,[a;b],_) -> f a + f' Set.empty b // This is so modules only capture their local scope, not their entire lexical scope.
         | Op(_,l,_) | VV(l,_) -> vars_union f l
         | Function((name,pat,body),free_var_set,_) ->
             let fv = 
@@ -371,7 +357,7 @@ let expr_free_variables e =
                 remove_name_pat (f' (add_name_pat vars_for_module) body)
             free_var_set := fv
             fv
-        | T _ | Lit _ -> Set.empty
+        | Lit _ -> Set.empty
 
     expr_free_variables Set.empty e
 
@@ -496,16 +482,21 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         d.ltag := t + 1L
         t
 
-    let make_tyv d ty_exp = get_tag d, get_type ty_exp
+    let inline make_tyv_ty d ty = get_tag d, ty
+    let inline make_tyv_typed_expr d ty_exp = make_tyv_ty d (get_type ty_exp)
 
-    let make_tyv_and_push' le d ty_exp =
-        let v = make_tyv d ty_exp
+    let make_tyv_and_push_typed_expr d ty_exp =
+        let v = make_tyv_typed_expr d ty_exp
         let seq = !d.seq
-        d.seq := fun rest -> TyLet(le,v,ty_exp,rest,get_type rest) |> seq
-        v
+        d.seq := fun rest -> TyLet(LetStd,v,ty_exp,rest,get_type rest) |> seq
+        TyV v
 
-    let make_tyv_and_push d ty_exp = make_tyv_and_push' LetStd d ty_exp |> TyV
-    let make_tyv_and_push_inv d ty_exp = make_tyv_and_push' LetInvisible d ty_exp |> TyV
+    let make_tyv_and_push_ty d ty =
+        let v = make_tyv_ty d ty
+        let v' = TyV v
+        let seq = !d.seq
+        d.seq := fun rest -> TyLet(LetInvisible,v,v',rest,get_type rest) |> seq
+        v'
 
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
@@ -520,7 +511,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 Map.map unseal x
             let r_ty = get_type r
             match r_ty with
-            | TupleT(tuple_types, _) -> TyVV(index_tuple_args tuple_types, r_ty)
+            | VVT tuple_types -> TyVV(index_tuple_args tuple_types, r_ty)
             | ModuleT env | FunctionT (env, _) -> TyEnv(env_unseal env, r_ty)
             | _ -> r
 
@@ -531,13 +522,13 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 | Some x -> chase id x
 
             chase (fun r ->
-                let x = make_tyv_and_push d r |> destructure
+                let x = make_tyv_and_push_typed_expr d r |> destructure
                 if r <> x then d.cse_env := !d.cse_env |> Map.add r x
                 chase id x)
             
         match r with
         | TyLit _ -> r
-        | TyType _ | TyV _ -> destructure_var r
+        | TyV _ -> destructure_var r
         | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
         | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l,ty)
         | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
@@ -593,24 +584,21 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             if is_returnable' typed_expr_ty = false then d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else ret (ref fv, renamer_reverse renamer, tag, typed_expr_ty)
 
+    let inline memoize_helper k d x ret = eval_renaming d x (k >> make_tyv_and_push_typed_expr d >> ret)
     let memoize_method d x ret = 
-        eval_renaming d x <| fun (args,renamer,tag,ret_ty) -> 
-            TyMemoizedExpr(MemoMethod,args,renamer,tag,ret_ty)
-            |> make_tyv_and_push d
-            |> ret
+        memoize_helper (fun (args,renamer,tag,ret_ty) -> 
+            TyMemoizedExpr(MemoMethod,args,renamer,tag,ret_ty)) d x ret
 
     let memoize_closure arg_ty d x ret =
-        eval_renaming d x <| fun (args,renamer,tag,ret_ty) ->
-            TyMemoizedExpr(MemoClosure,args,renamer,tag,ClosureT(arg_ty,ret_ty))
-            |> make_tyv_and_push d
-            |> ret
+        memoize_helper (fun (args,renamer,tag,ret_ty) -> 
+            TyMemoizedExpr(MemoClosure,args,renamer,tag,ClosureT(arg_ty,ret_ty))) d x ret
 
     let apply_module d env_term b ret = 
         v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
     
-    let apply_type d env_ty uniont b ret =
-        v_find env_ty b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a type named %s inside the type." b)
-            (fun ty -> inl " " (Op(TypeConstruct,[t uniont; t ty; v " "],None)))
+//    let apply_type d env_ty uniont b ret =
+//        v_find env_ty b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a type named %s inside the type." b)
+//            (fun ty -> inl " " (Op(TypeConstruct,[t uniont; t ty; v " "],None)))
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
@@ -628,7 +616,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
-        | TyType(UnionT env_ty), NameT n -> apply_type d env_ty ty n
+//        | TyType(UnionT env_ty), NameT n -> apply_type d env_ty ty n
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
         | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
         | _ ->
@@ -640,9 +628,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         if env_num_args env_term > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
         else
             let args =
-                let f x = TyType x |> make_tyv_and_push_inv d
+                let f x = make_tyv_and_push_ty d x
                 match args_ty with
-                | TupleT (l, _) -> TyVV(List.map f l, args_ty)
+                | VVT l -> TyVV(List.map f l, args_ty)
                 | x -> f x
             
             let closure = TyEnv(env_term, FunctionT fun_key)
@@ -661,7 +649,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let mset d a b ret =
         tev2 d a b <| fun l r ->
             match l, r with
-            | TyOp((ArrayUnsafeIndex | ArrayIndex),[_;_],lt), r when lt = get_type r -> make_tyv_and_push d (TyOp(MSet,[l;r],BVVT)) |> ret
+            | TyOp((ArrayUnsafeIndex | ArrayIndex),[_;_],lt), r when lt = get_type r -> make_tyv_and_push_typed_expr d (TyOp(MSet,[l;r],BVVT)) |> ret
             | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp((ArrayUnsafeIndex | ArrayIndex),_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
 
     let vv_index d v i ret =
@@ -672,7 +660,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                 | VVT ts -> 
                     if i >= 0 || i < List.length ts then TyOp(VVIndex,[v;TyLit i'],ts.[i]) |> ret
                     else d.on_type_er d.trace "(i >= 0 || i < List.length ts) = false in IndexVT"
-                | NamedT (VVT ts, name) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be indexed directly. They must be pattern matched on the name first." name
                 | x -> d.on_type_er d.trace <| sprintf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
             | v, i -> d.on_type_er d.trace <| sprintf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
     
@@ -680,7 +667,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         tev2 d a b <| fun a b ->
             match b with
             | TyVV(b, VVT bt) -> TyVV(a::b, VVT (get_type a :: bt)) |> ret
-            | TyVV(_, NamedT (VVT _, name)) -> d.on_type_er d.trace <| sprintf "Named tuples (%s) can't be cons'd directly. They must be pattern matched on the name first." name 
             | _ -> d.on_type_er d.trace "Expected a tuple on the right is in VVCons."
 
     let guard_is_int d args ret = 
@@ -691,8 +677,10 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         tev d size <| fun size -> 
             tev_seq d typeof_expr <| fun typ ->
                 guard_is_int d (tuple_field size) <| fun () ->
-                    let l = [size; get_type typ |> pointer |> TyType |> make_tyv_and_push_inv d]
-                    let x = TyVV (l, NamedT (VVT (List.map get_type l), "Array"))
+                    let l = [size
+                             get_type typ |> pointer |> make_tyv_and_push_ty d 
+                             NameT "Array" |> make_tyv_and_push_ty d]
+                    let x = TyVV (l, VVT (List.map get_type l))
                     TyOp(ArrayCreate,[x],get_type x) |> ret
 
     let array_index d op_index ar args ret =
@@ -734,7 +722,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
 
     let type_annot d a b ret =
         match d.rbeh with
-        | AnnotationReturn -> tev d b (get_type >> TyType >> ret)
+        | AnnotationReturn -> tev d b (get_type >> make_tyv_and_push_ty d >> ret)
         | AnnotationDive ->
             tev d a <| fun a -> tev_seq d b <| fun b ->
                 let ta, tb = get_type a, get_type b
@@ -864,7 +852,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             | _ -> prim_un_op_helper t a
             )
 
-    let for_cast d x ret = tev_seq d x (get_type >> ForCastT >> TyType >> ret)
+    let for_cast d x ret = tev_seq d x (get_type >> ForCastT >> make_tyv_and_push_ty d >> ret)
     let error_non_unit d a ret =
         tev d a <| fun x ->
             if get_type x <> BVVT then
@@ -953,7 +941,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
 
         | ModuleCreate,[] -> TyEnv(d.env, ModuleT <| env_to_ty d.env) |> ret
-        | TypeCreate,[] -> TyType(UnionT <| env_to_ty d.env) |> ret
+        | TypeCreate,[] -> env_to_ty d.env |> UnionT |> make_tyv_and_push_ty d |> ret // TODO: Work on this more.
         | _ -> failwith "Missing Op case."
 
 
