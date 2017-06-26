@@ -23,8 +23,9 @@ type Ty =
     | NameT of string
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
     | ModuleT of EnvTy
-    | UnionT of EnvTy
+    | UnionT of Set<Ty>
     | RecT of int
+    | TypeConstructorT of Ty
     | LocalPointerT of Ty
     | SharedPointerT of Ty
     | GlobalPointerT of Ty
@@ -86,6 +87,7 @@ and Op =
     | ModuleWith
     | ModuleWith'
     | EnvUnseal
+    | TypeConstructorCreate
 
     | ArrayCreate
     | ArrayCreateShared
@@ -113,7 +115,6 @@ and Op =
 
     // Constants
     | ModuleCreate
-    | TypeCreate
 
     | Syncthreads
     | BlockDimX | BlockDimY | BlockDimZ
@@ -196,6 +197,10 @@ let tuple_field = function
     | TyVV(args,_) -> args
     | x -> [x]
 
+let set_field = function
+    | UnionT t -> t
+    | t -> Set.singleton t
+
 let tuple_field_ty = function 
     | VVT x -> x
     | x -> [x]
@@ -222,9 +227,11 @@ let (|Array|_|) = function
 let rec is_returnable' = function
     | VVT x -> List.forall is_returnable' x
     | RecT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
-    | UnionT env | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
+    | TypeConstructorT x -> is_returnable' x
+    | UnionT env -> Set.forall is_returnable' env
+    | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
     | NameT _ | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
-and is_returnable a = is_returnable' (get_type a)
+let is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
     | PrimT x -> 
@@ -596,9 +603,37 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let apply_module d env_term b ret = 
         v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
     
-//    let apply_type d env_ty uniont b ret =
-//        v_find env_ty b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a type named %s inside the type." b)
-//            (fun ty -> inl " " (Op(TypeConstruct,[t uniont; t ty; v " "],None)))
+    let rec apply_type d uniont ra on_fail ret =
+        match uniont, ra with
+        | VVT x, r -> apply_type_tuple d x r on_fail <| fun v -> TyVV(v,uniont)
+        | UnionT x, r -> apply_type_union d x r on_fail <| fun v -> TyVV(v,uniont)
+
+    and apply_type_union d x r on_fail ret =
+        let rec loop = function
+            | x :: xs -> apply_type d x r (fun _ -> loop xs) ret
+            | [] -> on_fail()
+        loop (Set.toList x)
+
+    and apply_type_tuple d uniont ra on_fail ret =
+        match uniont, ra with
+        | x :: xs, r :: rs ->
+            apply_type d x r on_fail <| fun v ->
+                apply_type_tuple d xs rs on_fail <| fun vs ->
+                    ret (v :: vs)
+        | [], [] -> ret []
+        | _ -> on_fail()
+            
+//        let ra_ty = get_type ra
+//        if Set.contains ra_ty (set_field uniont) then TyVV(tuple_field ra,uniont) |> ret
+//        else d.on_type_er d.trace <| sprintf "Trying to apply to a type constructor with a missing type. %A does not intersect %A." uniont ra_ty
+
+//    let type_constructor_create d a b ret =
+//        let f = function
+//            | TypeConstructorT x -> set_field x
+//            | x -> set_field x
+//        tev_seq d a <| fun a -> tev_seq d b <| fun b ->
+//            match get_type a, get_type b with
+//            | 
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
@@ -616,7 +651,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
-//        | TyType(UnionT env_ty), NameT n -> apply_type d env_ty ty n
+        //| TyType(TypeConstructorT uniont), _ -> apply_type d uniont ra ret
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
         | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
         | _ ->
@@ -625,14 +660,15 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             | _ -> d.on_type_er d.trace "Invalid use of apply."
 
     and apply_cast d env_term (env_ty,core as fun_key) args_ty ret =
+        let instantiate_type_as_variable d args_ty =
+            let f x = make_tyv_and_push_ty d x
+            match args_ty with
+            | VVT l -> TyVV(List.map f l, args_ty)
+            | x -> f x
+
         if env_num_args env_term > 0 then d.on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
         else
-            let args =
-                let f x = make_tyv_and_push_ty d x
-                match args_ty with
-                | VVT l -> TyVV(List.map f l, args_ty)
-                | x -> f x
-            
+            let args = instantiate_type_as_variable d args_ty
             let closure = TyEnv(env_term, FunctionT fun_key)
 
             let tev d x ret = 
@@ -868,7 +904,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let ret x = destructure d x |> ret
     match expr with
     | Lit (value,_) -> TyLit value |> ret
-    | T (x, _) -> x |> ret
     | V (x, pos) -> v_find d.env x (fun () -> d.on_type_er (add_trace d pos).trace <| sprintf "Variable %A not bound." x) ret
     | Function (core, free_var_set, _) -> 
         let env_term = Set.fold (fun s x -> 
@@ -941,7 +976,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
 
         | ModuleCreate,[] -> TyEnv(d.env, ModuleT <| env_to_ty d.env) |> ret
-        | TypeCreate,[] -> env_to_ty d.env |> UnionT |> make_tyv_and_push_ty d |> ret // TODO: Work on this more.
+        //| TypeCreate,[] -> env_to_ty d.env |> UnionT |> make_tyv_and_push_ty d |> ret // TODO: Work on this more.
         | _ -> failwith "Missing Op case."
 
 
