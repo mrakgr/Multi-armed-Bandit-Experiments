@@ -24,7 +24,7 @@ type Ty =
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
     | ModuleT of EnvTy
     | UnionT of Set<Ty>
-    | RecT of int
+    | RecT of Tag
     | TypeConstructorT of Ty
     | LocalPointerT of Ty
     | SharedPointerT of Ty
@@ -85,9 +85,10 @@ and Op =
     | VVCons
     | TypeAnnot
     | ModuleWith
-    | ModuleWith'
+    | ModuleWithExtend
     | EnvUnseal
     | TypeConstructorCreate
+    | TypeConstructorUnion
 
     | ArrayCreate
     | ArrayCreateShared
@@ -154,7 +155,8 @@ and TypedExpr =
 and MemoCases =
     | MemoMethodInEvaluation of Tag
     | MemoMethodDone of TypedExpr * Tag * Arguments
-    | MemoRecursiveType of Tag
+    | MemoTypeInEvaluation
+    | MemoType of Ty
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
 and MemoDict = Dictionary<MemoKey, MemoCases>
@@ -197,10 +199,12 @@ let tuple_field = function
     | TyVV(args,_) -> args
     | x -> [x]
 
+/// Wraps the argument in a set if not a UnionT.
 let set_field = function
     | UnionT t -> t
     | t -> Set.singleton t
 
+/// Wraps the argument in a list if not a tuple type.
 let tuple_field_ty = function 
     | VVT x -> x
     | x -> [x]
@@ -461,9 +465,9 @@ type LangEnv<'a,'c,'q,'e> =
     on_type_er : Trace -> 'c -> 'e
     }
 
-let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoized_methods: MemoDict)
+let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memoized_methods: MemoDict, type_tag, memoized_types: Dictionary<_,_> as globals)
         (d : LangEnv<_,_,_,_>) (expr: Expr) ret =
-    let inline tev d expr ret = expr_typecheck dims method_tag memoized_methods d expr ret
+    let inline tev d expr ret = expr_typecheck dims globals d expr ret
     let inline apply_seq d x = !d.seq x
     let inline tev_seq d expr ret = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr (apply_seq d >> ret)
     let inline tev_method d expr ret = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr (apply_seq d >> ret)
@@ -557,10 +561,13 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
                             else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Consider using Inlineable instead. Got: %A" type_tr
                         else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
-    let method_tag () =
-        let tag = !method_tag
-        method_tag := tag + 1L
+    let tag r =
+        let tag = !r
+        r := tag + 1L
         tag
+
+    let method_tag () = tag method_tag
+    let type_tag () = tag type_tag
 
     let eval_method used_vars d expr ret =
         let key_args = d.env, expr
@@ -577,7 +584,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             tev_rec d expr <| fun r -> ret (r, tag)
         | true, MemoMethodDone (typed_expr, tag, used_vars) -> 
             ret (typed_expr, tag)
-        | true, MemoRecursiveType tag ->
+        | true, (MemoTypeInEvaluation | MemoType _) ->
             failwith "Expected a method, not a recursive type."
 
     let eval_renaming d expr ret =
@@ -623,9 +630,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let apply_typec d uniont ra ret =
         let rec apply_typec d uniont ra on_fail ret =
             match uniont, ra with
-            | TypeConstructorT _, _ -> failwith "Type constructors should never be nested." // Implements #1
+            | TypeConstructorT _, _ -> failwith "Type constructors should never be nested." // Checks whether #1 is implemented correctly
             | VVT x, r -> apply_typec_tuple d x (tuple_field r) on_fail <| fun v -> TyVV(v,uniont) |> ret // Implements #2
-            | UnionT x, TyVV(_,_) -> 
+            | UnionT x, TyVV(_,_) ->
                 apply_typec_union_tuple d x ra on_fail <| function 
                     | (TyVV(v,_)) -> TyVV(v,uniont) |> ret // Implements #7
                     | _ -> failwith "A tuple should be returned from the union tuple case call." // Implements #3
@@ -653,13 +660,33 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
             | TyVV([x],VVT [t]) when get_type x = t -> ret x // Implements rule #10 here.
             | x -> ret x // Both cases implement #8.
             
-//    let type_constructor_create d a b ret =
-//        let f = function
-//            | TypeConstructorT x -> set_field x
-//            | x -> set_field x
-//        tev_seq d a <| fun a -> tev_seq d b <| fun b ->
-//            match get_type a, get_type b with
-//            | 
+    let typec_union d a b ret =
+        tev2 d a b <| fun a b ->
+            match get_type a, get_type b with
+            | TypeConstructorT a, TypeConstructorT b -> set_field a + set_field b |> UnionT |> TypeConstructorT |> ret
+            | _ -> d.on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors."
+
+    let typec_create d x ret =
+        let key = d.env, x
+        let ret_tyv x = TypeConstructorT x |> make_tyv_and_push_ty d |> ret
+        let add_to_memo_dict x = 
+            memoized_methods.[key] <- MemoType x
+            ret_tyv x
+        let add_to_type_dict x =
+            match memoized_methods.TryGetValue key with
+            | true, MemoType (RecT tag) -> memoized_types.[tag] <- x; RecT tag
+            | _ -> x
+            
+        match memoized_methods.TryGetValue key with
+        | true, MemoType ty -> ret_tyv ty
+        | true, MemoTypeInEvaluation -> type_tag() |> RecT |> add_to_memo_dict
+        | true, _ -> failwith "Expected a type in the dictionary."
+        | false, _ -> 
+            memoized_methods.[key] <- MemoTypeInEvaluation
+            // After the evaluation, if the type is recursive the dictionary should have its key.
+            // If present it will return that instead.
+            tev_seq d x (get_type >> add_to_type_dict >> add_to_memo_dict)
+
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
         let arg_ty = get_type arg
@@ -1061,12 +1088,12 @@ let core_functions =
         ]
 
 let spiral_typecheck code dims body on_fail ret = 
-    let method_tag = ref 0L
-    let memoized_methods = d0()
+    let method_tag, memoized_methods = ref 0L, d0()
+    let type_tag, memoized_type = ref 0L, d0()
     let d = data_empty on_fail code
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
     let ret x = 
         typed_expr_optimization_pass 2 memoized_methods x // Is mutable
         ret (x,memoized_methods)
-    expr_typecheck dims method_tag memoized_methods d input ret
+    expr_typecheck dims (method_tag, memoized_methods, type_tag, memoized_type) d input ret
