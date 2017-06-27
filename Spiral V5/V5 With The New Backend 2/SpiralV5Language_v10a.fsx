@@ -676,6 +676,19 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             match memoized_methods.TryGetValue key with
             | true, MemoType (RecT tag) -> memoized_types.[tag] <- x; RecT tag
             | _ -> x
+        let rec strip_map x = Map.map (fun _ -> typec_strip) x
+        and typec_strip = function // Implements #10.
+            | TypeConstructorT x -> x
+            | VVT l -> VVT (List.map typec_strip l)
+            | PrimT _ | NameT _ | RecT _ as x -> x
+            | FunctionT (e, b) -> FunctionT(strip_map e, b)
+            | ModuleT e -> ModuleT (strip_map e)
+            | LocalPointerT x -> typec_strip x |> LocalPointerT
+            | SharedPointerT x -> typec_strip x |> SharedPointerT
+            | GlobalPointerT x -> typec_strip x |> GlobalPointerT
+            | ForCastT x -> typec_strip x |> ForCastT
+            | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
+            | UnionT s -> UnionT (Set.map typec_strip s)
             
         match memoized_methods.TryGetValue key with
         | true, MemoType ty -> ret_tyv ty
@@ -685,7 +698,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             memoized_methods.[key] <- MemoTypeInEvaluation
             // After the evaluation, if the type is recursive the dictionary should have its key.
             // If present it will return that instead.
-            tev_seq d x (get_type >> add_to_type_dict >> add_to_memo_dict)
+            tev_seq d x (get_type >> typec_strip >> add_to_type_dict >> add_to_memo_dict)
 
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
@@ -1097,3 +1110,4 @@ let spiral_typecheck code dims body on_fail ret =
         typed_expr_optimization_pass 2 memoized_methods x // Is mutable
         ret (x,memoized_methods)
     expr_typecheck dims (method_tag, memoized_methods, type_tag, memoized_type) d input ret
+
