@@ -603,44 +603,56 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
     let apply_module d env_term b ret = 
         v_find env_term b (fun () -> d.on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b) ret
 
-//    Ground rules for type application:
+//    Ground rules for type constructor application:
 //    1) Nested type constructors are disallowed. If a type constructor is in a type constructor then it is to be stripped. That means that TypeConstructorT can only appear on the outermost level.
 //    2) A tuple is matched directly against the tuple type and returns a tuple. This is straightforward.
-//    3) Union types will always have tuple types returned to them.
-//    4) Primitive types will always be wrapped in a tuple when they are a part of the union to indicate they are statically determined.
+//    3) A tuple will always returned from the union case if the input to it is a tuple.
+//    4) Variables will always be wrapped in a tuple when they are a part of the union to indicate they are statically determined.
 //    5) A variable that has a union type will always mean a sealed union type.
 //    6) Union type can only be destructured via pattern matching.
 //    7) Corollary to #3, the tuple returned from a union apply case will have its type replaced (generalized) into the union's type.
 //    8) The tuple returned from a type constructor will of course not have the type constructor type.
 //    9) Lastly, tuples returned from a recursive type case will have their type replaced with the recursive type much like when returned from a union case.
+//    10) Singleton tuples returned from a type constructor case whose item's type is equal to the tuple's outer type, 
+//        meaning the tuple is not a recursive or a union type will get implicitly converted to a variable. 
+//        This so type construction application meshes with type constructor creation.
+
+//    Note: It is intended that the inputs to type constructors be destructured and hence contain no free floating expressions.
+//          The functions should work regardless.
     
-    let rec apply_type d uniont (ra: TypedExpr) on_fail ret =
-        match uniont, ra with
-        | TypeConstructorT _, _ -> failwith "Type constructors should never be nested."
-        | VVT x, r -> apply_type_tuple d x (tuple_field r) on_fail <| fun v -> TyVV(v,uniont) |> ret
-        | UnionT x, r -> 
-            apply_type_union d x r on_fail <| function 
-                | (TyVV(v,_)) -> TyVV(v,uniont) |> ret
-                | _ -> failwith "Union case should always return a tuple."
-        | RecT _, _ -> failwith "implement later"
-        | x, r -> if x = get_type r then ret r else on_fail()
+    let apply_typec d uniont ra ret =
+        let rec apply_typec d uniont ra on_fail ret =
+            match uniont, ra with
+            | TypeConstructorT _, _ -> failwith "Type constructors should never be nested." // Implements #1
+            | VVT x, r -> apply_typec_tuple d x (tuple_field r) on_fail <| fun v -> TyVV(v,uniont) |> ret // Implements #2
+            | UnionT x, TyVV(_,_) -> 
+                apply_typec_union_tuple d x ra on_fail <| function 
+                    | (TyVV(v,_)) -> TyVV(v,uniont) |> ret // Implements #7
+                    | _ -> failwith "A tuple should be returned from the union tuple case call." // Implements #3
+            | UnionT _, _ -> if uniont <> get_type ra then on_fail() else TyVV([ra],uniont) |> ret // Implements #4, #5, #6
+            | RecT _, _ -> failwith "implement later" // Should implement #9
+            | x, r -> if x = get_type r then ret r else on_fail()
 
-    and apply_type_union d x r on_fail ret =
-        let rec loop = function
-            | x :: xs -> apply_type d x r (fun _ -> loop xs) ret
-            | [] -> on_fail()
-        loop (Set.toList x)
+        and apply_typec_union_tuple d x r on_fail ret =
+            let rec loop = function
+                | x :: xs -> apply_typec d x r (fun _ -> loop xs) ret
+                | [] -> on_fail()
+            loop (Set.toList x)
 
-    and apply_type_tuple d uniont ra on_fail ret =
-        match uniont, ra with
-        | x :: xs, r :: rs ->
-            apply_type d x r on_fail <| fun v ->
-                apply_type_tuple d xs rs on_fail <| fun vs ->
-                    ret (v :: vs)
-        | [], [] -> ret []
-        | _ -> on_fail()
+        and apply_typec_tuple d uniont ra on_fail ret =
+            match uniont, ra with
+            | x :: xs, r :: rs ->
+                apply_typec d x r on_fail <| fun v ->
+                    apply_typec_tuple d xs rs on_fail <| fun vs ->
+                        ret (v :: vs)
+            | [], [] -> ret []
+            | _ -> on_fail()
+    
+        let er _ = d.on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." uniont (get_type ra)
+        apply_typec d uniont ra er <| function
+            | TyVV([x],VVT [t]) when get_type x = t -> ret x // Implements rule #10 here.
+            | x -> ret x // Both cases implement #8.
             
-
 //    let type_constructor_create d a b ret =
 //        let f = function
 //            | TypeConstructorT x -> set_field x
@@ -665,9 +677,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) method_tag (memoi
         | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
         | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
-        | TyType(TypeConstructorT uniont), ra_ty -> 
-            let er _ = d.on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A" uniont ra_ty
-            apply_type d uniont ra er ret
+        | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont ra ret
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
         | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
         | _ ->
