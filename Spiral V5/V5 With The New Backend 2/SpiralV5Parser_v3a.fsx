@@ -9,15 +9,18 @@ type ParserExpr =
 | ParserStatement of (Expr -> Expr)
 | ParserExpr of Expr
 
+let pos (s: CharStream<_>) = Some (s.Name, s.Line, s.Column)
+let ppos s = Reply(pos s)
+
 type Pattern =
-| PatVar of string
-| PatTuple of Pattern list
-| PatCons of Pattern list
-| PatType of Pattern * Pattern
-| PatActive of string * Pattern
-| PatOr of Pattern list
-| PatAnd of Pattern list
-| PatClauses of Pattern * Expr
+| PatVar of Pos * string
+| PatTuple of Pos * Pattern list
+| PatCons of Pos * Pattern list
+| PatType of Pos * (Pattern * Pattern)
+| PatActive of Pos * (string * Pattern)
+| PatOr of Pos * Pattern list
+| PatAnd of Pos * Pattern list
+| PatClauses of Pos * (Pattern * Expr)
 
 let spaces s =
     let rec spaces' s: Reply<unit> = (spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces')) s
@@ -47,13 +50,13 @@ let patid_or = patid '|'
 let patid_and = patid '&'
 let pat_tuple' pattern = rounds (many pattern)
 
-let pat_var pattern = var_name |>> PatVar
-let pat_tuple pattern = pat_tuple' pattern |>> PatTuple
-let pat_cons pattern = patid_cons >>. pat_tuple' pattern |>> PatCons
-let pat_type pattern = patid_type >>. tuple2 pattern pattern |>> PatType
-let pat_active pattern = patid_active >>. tuple2 var_name pattern |>> PatActive
-let pat_or pattern = patid_or >>. pat_tuple' pattern |>> PatOr
-let pat_and pattern = patid_and >>. pat_tuple' pattern |>> PatAnd
+let pat_var pattern = tuple2 ppos var_name |>> PatVar
+let pat_tuple pattern = tuple2 ppos (pat_tuple' pattern) |>> PatTuple
+let pat_cons pattern = tuple2 ppos (patid_cons >>. pat_tuple' pattern) |>> PatCons
+let pat_type pattern = tuple2 ppos (patid_type >>. tuple2 pattern pattern) |>> PatType
+let pat_active pattern = tuple2 ppos (patid_active >>. tuple2 var_name pattern) |>> PatActive
+let pat_or pattern = tuple2 ppos (patid_or >>. pat_tuple' pattern) |>> PatOr
+let pat_and pattern = tuple2 ppos (patid_and >>. pat_tuple' pattern) |>> PatAnd
 
 let rec patterns (s: CharStream<_>) =
     [|
@@ -66,4 +69,21 @@ let rec patterns (s: CharStream<_>) =
 
 let pattern_list = patterns
 
+type PatternEnv =
+    {
+    seq : ((Expr -> Expr) -> Expr) ref
+    }
 
+let pattern_compiler (d: PatternEnv) arg pat =
+    let push_statement d a b =
+        let seq = !d.seq
+        d.seq := fun rest -> l a b None |> seq
+
+    match pat with
+    | PatClauses(pos, [pat,body]) ->
+        
+    | PatVar(pos, x) -> push_statement d x (V(arg,pos))
+    | PatTuple(pos, x) ->
+        if_static (and_ (tuple_is arg) (tuple_arity x.Length))
+        
+        B
