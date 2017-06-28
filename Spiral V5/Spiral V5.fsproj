@@ -176,6 +176,7 @@
     <None Include="Scripts\load-project-release.fsx" />
     <None Include="V5 With The New Backend 2\patterns_v0.fsx" />
     <None Include="V5 With The New Backend 2\SpiralV5Language_v10a.fsx" />
+    <None Include="V5 With The New Backend 2\SpiralV5Parser_v3a.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
