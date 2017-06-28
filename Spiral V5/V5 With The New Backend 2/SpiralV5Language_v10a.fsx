@@ -627,17 +627,20 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
 //    Note: It is intended that the inputs to type constructors be destructured and hence contain no free floating expressions.
 //          The functions should work regardless.
     
-    let apply_typec d uniont ra ret =
-        let rec apply_typec d uniont ra on_fail ret =
-            match uniont, ra with
+    let apply_typec d typec ra ret =
+        let rec apply_typec d ty ra on_fail ret =
+            match ty, ra with
             | TypeConstructorT _, _ -> failwith "Type constructors should never be nested." // Checks whether #1 is implemented correctly
-            | VVT x, r -> apply_typec_tuple d x (tuple_field r) on_fail <| fun v -> TyVV(v,uniont) |> ret // Implements #2
+            | VVT x, r -> apply_typec_tuple d x (tuple_field r) on_fail <| fun v -> TyVV(v,ty) |> ret // Implements #2
             | UnionT x, TyVV(_,_) ->
                 apply_typec_union_tuple d x ra on_fail <| function 
-                    | (TyVV(v,_)) -> TyVV(v,uniont) |> ret // Implements #7
+                    | (TyVV(v,_)) -> TyVV(v,ty) |> ret // Implements #7
                     | _ -> failwith "A tuple should be returned from the union tuple case call." // Implements #3
-            | UnionT _, _ -> if uniont <> get_type ra then on_fail() else TyVV([ra],uniont) |> ret // Implements #4, #5, #6
-            | RecT _, _ -> failwith "implement later" // Should implement #9
+            | UnionT _, _ -> if ty <> get_type ra then on_fail() else TyVV([ra],ty) |> ret // Implements #4, #5, #6
+            | RecT tag, _ -> 
+                apply_typec d memoized_types.[tag] ra on_fail <| function // Implements #9
+                    | TyVV(l,_) -> TyVV(l,ty) |> ret
+                    | _ -> failwith "A tuple should be returned from the recursive type case call."
             | x, r -> if x = get_type r then ret r else on_fail()
 
         and apply_typec_union_tuple d x r on_fail ret =
@@ -655,15 +658,15 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             | [], [] -> ret []
             | _ -> on_fail()
     
-        let er _ = d.on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." uniont (get_type ra)
-        apply_typec d uniont ra er <| function
+        let er _ = d.on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." typec (get_type ra)
+        apply_typec d typec ra er <| function
             | TyVV([x],VVT [t]) when get_type x = t -> ret x // Implements rule #10 here.
             | x -> ret x // Both cases implement #8.
             
     let typec_union d a b ret =
         tev2 d a b <| fun a b ->
             match get_type a, get_type b with
-            | TypeConstructorT a, TypeConstructorT b -> set_field a + set_field b |> UnionT |> TypeConstructorT |> ret
+            | TypeConstructorT a, TypeConstructorT b -> set_field a + set_field b |> UnionT |> TypeConstructorT |> make_tyv_and_push_ty d |> ret
             | _ -> d.on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors."
 
     let typec_create d x ret =
@@ -1022,6 +1025,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | (ArrayUnsafeIndex | ArrayIndex),[a;b] -> array_index d op a b ret
         | MSet,[a;b] -> mset d a b ret
         | TypeAnnot,[a;b] -> type_annot d a b ret
+        | TypeConstructorUnion,[a;b] -> typec_union d a b ret
 
         | Neg,[a] -> prim_un_numeric d a Neg ret
         | ErrorType,[a] -> tev d a <| fun a -> d.on_type_er d.trace <| sprintf "%A" a
@@ -1042,7 +1046,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
 
         | ModuleCreate,[] -> TyEnv(d.env, ModuleT <| env_to_ty d.env) |> ret
-        //| TypeCreate,[] -> env_to_ty d.env |> UnionT |> make_tyv_and_push_ty d |> ret // TODO: Work on this more.
+        | TypeConstructorCreate,[a] -> typec_create d a ret
         | _ -> failwith "Missing Op case."
 
 
