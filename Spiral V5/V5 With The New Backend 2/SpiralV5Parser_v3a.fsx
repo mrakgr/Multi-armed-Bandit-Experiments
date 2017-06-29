@@ -9,9 +9,6 @@ type ParserExpr =
 | ParserStatement of (Expr -> Expr)
 | ParserExpr of Expr
 
-let pos (s: CharStream<_>) = Some (s.Name, s.Line, s.Column)
-let ppos s = Reply(pos s)
-
 type Pattern =
 | PatVar of Pos * string
 | PatTuple of Pos * Pattern list
@@ -21,6 +18,9 @@ type Pattern =
 | PatOr of Pos * Pattern list
 | PatAnd of Pos * Pattern list
 | PatClauses of Pos * (Pattern * Expr)
+
+let pos (s: CharStream<_>) = Some (s.Name, s.Line, s.Column)
+let ppos s = Reply(pos s)
 
 let spaces s =
     let rec spaces' s: Reply<unit> = (spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces')) s
@@ -69,25 +69,16 @@ let rec patterns (s: CharStream<_>) =
 
 let pattern_list = patterns
 
-//type PatternEnv =
-//    {
-//    seq : ((Expr -> Expr) -> Expr) ref
-//    }
-
-let rec pattern_compiler arg pat expr def =
-//    let push_statement d a b =
-//        let seq = !d.seq
-//        d.seq := fun rest -> l a b None |> seq
-
+let rec compile_pattern arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
     match pat with
-//    | PatClauses(pos, [pat,body]) ->
-        
-    | PatVar(pos, x) -> //push_statement d x (V(arg,pos))
-        l x (V(arg,pos)) None expr
-    | PatTuple(pos, l) ->
-        if_static (and_ (tuple_is arg) (tuple_arity x.Length))
-            (List.foldBack (fun pat expr ->
-                pattern_compiler
-                ) l expr)
-            def
-
+    | PatVar (pos, x) -> l x arg pos on_succ.Value
+    | PatTuple (pos, l) ->
+        let len = List.length l
+        let on_succ =
+            List.foldBack (fun pat (s, i) -> 
+                let arg = tuple_index arg i pos
+                lazy compile_pattern arg pat on_succ on_fail, i-1
+                ) l (on_succ, len - 1)
+            |> fun (x,_) -> x
+            
+        case_ arg (lit_int len pos) on_succ.Value on_fail.Value pos

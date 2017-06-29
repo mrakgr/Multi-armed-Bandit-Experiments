@@ -57,6 +57,9 @@ and Value =
     | BlockIdxX | BlockIdxY | BlockIdxZ
 
 and Op =
+    // QuadOps
+    | Case
+
     // TriOps
     | If
     | IfStatic
@@ -337,10 +340,15 @@ let rec methr' name args body pos =
 
 let meth' args body = methr' "" args body
 
+let lit_int i pos = Lit (LitInt32 i, pos)
 let vv pos x = VV(x,pos)
+let tuple_index v i pos = Op(VVIndex,[v; lit_int i pos], pos)
 
 let error_type x = Op(ErrorType, [x], None)
 let static_print x = Op(StaticPrint,[x], None)
+
+let case_ arg len on_succ on_fail pos =
+    Op(Case,[arg;len;on_succ;on_fail],pos)
 
 let get_pos = function
     | Lit(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,pos) | Op(_,_,pos) -> pos
@@ -969,7 +977,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         match pos with
         | Some x -> {d with trace = x :: d.trace}
         | None -> d
-      
+     
     let ret x = destructure d x |> ret
     match expr with
     | Lit (value,_) -> TyLit value |> ret
