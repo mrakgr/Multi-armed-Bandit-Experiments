@@ -69,21 +69,24 @@ let rec patterns (s: CharStream<_>) =
 
 let pattern_list = patterns
 
-type PatternEnv =
-    {
-    seq : ((Expr -> Expr) -> Expr) ref
-    }
+//type PatternEnv =
+//    {
+//    seq : ((Expr -> Expr) -> Expr) ref
+//    }
 
-let pattern_compiler (d: PatternEnv) arg pat =
-    let push_statement d a b =
-        let seq = !d.seq
-        d.seq := fun rest -> l a b None |> seq
+let rec pattern_compiler arg pat expr def =
+//    let push_statement d a b =
+//        let seq = !d.seq
+//        d.seq := fun rest -> l a b None |> seq
 
     match pat with
-    | PatClauses(pos, [pat,body]) ->
+//    | PatClauses(pos, [pat,body]) ->
         
-    | PatVar(pos, x) -> push_statement d x (V(arg,pos))
-    | PatTuple(pos, x) ->
+    | PatVar(pos, x) -> //push_statement d x (V(arg,pos))
+        l x (V(arg,pos)) None expr
+    | PatTuple(pos, l) ->
         if_static (and_ (tuple_is arg) (tuple_arity x.Length))
-        
-        B
+            (List.foldBack (fun pat expr ->
+                pattern_compiler
+                ) l expr)
+            def
