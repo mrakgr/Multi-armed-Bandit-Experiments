@@ -225,16 +225,17 @@ let get_type_pointer x =
     | GlobalPointerT x -> x, Global
     | _ -> failwith "Expected a pointer"
 
-let (|TyType|_|) = function
-    | TyV(_,x) -> Some x
+let (|TyType|) x = get_type x
+let (|TypeLit|_|) = function
+    | TyType (LitT x) -> Some x
     | _ -> None
 
 let (|NameT|_|) = function
-    | LitT (LitString x) -> Some x
+    | TypeLit (LitString x) -> Some x
     | _ -> None
 
 let (|Array|_|) = function
-    | TyVV([size;typ;TyType (NameT "Array")],_) ->
+    | TyVV([size; typ; NameT "Array"],_) ->
         let typ, array_type = get_type_pointer typ
         Some(array_type,tuple_field size,typ)
     | _ -> None
@@ -408,7 +409,7 @@ and renamer_apply_typedexpr r e =
     let f e = renamer_apply_typedexpr r e
     match e with
     | TyV (n,t) -> TyV (Map.find n r,t)
-    | TyType _ | TyLit _ -> e
+    | TyLit _ -> e
     | TyVV(l,t) -> TyVV(List.map f l,t)
     | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
     | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
@@ -422,7 +423,7 @@ let rec typed_expr_free_variables_template on_memo e =
     let inline f e = typed_expr_free_variables_template on_memo e
     match e with
     | TyV (n,t) -> Set.singleton (n, t)
-    | TyType _ | TyLit _ -> Set.empty
+    | TyLit _ -> Set.empty
     | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
     | TyEnv(l,_) -> env_free_variables_template on_memo l
     | TyMemoizedExpr(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
@@ -740,9 +741,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         tev d body ret
 
     and apply tev d la ra ret =
-        match la, get_type ra with
-        | TyEnv(env_term,FunctionT(env_ty,x)), ForCastT t -> apply_cast d env_term (env_ty,x) t ret
-        | x, ForCastT t -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+        match la, ra with
+        | TyEnv(env_term,FunctionT(env_ty,x)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t ret
+        | x, TyType (ForCastT t) -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
         | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont ra ret
         | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
@@ -781,16 +782,29 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             | TyOp((ArrayUnsafeIndex | ArrayIndex),[_;_],lt), r when lt = get_type r -> make_tyv_and_push_typed_expr d (TyOp(MSet,[l;r],BVVT)) |> ret
             | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp((ArrayUnsafeIndex | ArrayIndex),_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
 
-    let vv_index d v i ret =
-        let inline f i ts x = 
-            if i >= 0 || i < List.length ts then x () |> ret
-            else d.on_type_er d.trace "Tuple index not within bounds."
+    let (|LitIndex|_|) = function
+        | TyLit (LitInt32 i) -> Some i
+        | TyLit (LitInt64 i) -> Some (int i)
+        | TyLit (LitUInt32 i) -> Some (int i)
+        | TyLit (LitUInt64 i) -> Some (int i)
+        | _ -> None
+
+    let vv_index_template f d v i ret =
         tev2 d v i <| fun v i ->
             match v, i with
-            | TyVV(l,_), TyLit (LitInt32 i as i') -> (fun _ -> l.[i]) |> f i l
-            | v & TyType (VVT ts), TyLit (LitInt32 i as i') -> (fun _ -> TyOp(VVIndex,[v;TyLit i'],ts.[i])) |> f i ts
-            | v, TyLit (LitInt32 i as i') -> d.on_type_er d.trace <| sprintf "Type of a evaluated expression in tuple index is not a tuple.\nGot: %A" v
-            | v, i -> d.on_type_er d.trace <| sprintf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
+            | TyVV(l,VVT ts), LitIndex i ->
+                if i >= 0 || i < List.length ts then f l i |> ret
+                else d.on_type_er d.trace "Tuple index not within bounds."
+            | v & TyType (VVT ts), LitIndex i -> failwith "The tuple should ways be destructured."
+            | v, LitIndex i -> d.on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
+            | v, i -> d.on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
+
+    let vv_index d v i ret = vv_index_template (fun l i -> l.[i]) d v i ret
+    let vv_slice_from d v i ret = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,VVT (List.map get_type l))) d v i ret
+
+    let eq_type d a b ret =
+        let f x = match get_type x with TypeConstructorT x -> x | x -> x
+        tev2 d a b <| fun a b -> LitBool (f a = f b) |> TyLit |> ret
     
     let vv_cons d a b ret =
         tev2 d a b <| fun a b ->
@@ -802,7 +816,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         if List.forall is_int args = false then d.on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" args
         else ret()
 
-    let ty_lit_create' d x = TyOp(TypeLitCreate,[TyLit x],LitT x) |> make_tyv_and_push_typed_expr d
+    let type_lit_create' d x = TyOp(TypeLitCreate,[TyLit x],LitT x) |> make_tyv_and_push_typed_expr d
 
     let array_create d pointer size typeof_expr ret =
         tev d size <| fun size -> 
@@ -810,7 +824,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
                 guard_is_int d (tuple_field size) <| fun () ->
                     let l = [size
                              get_type typ |> pointer |> make_tyv_and_push_ty d 
-                             LitString "Array" |> ty_lit_create' d]
+                             LitString "Array" |> type_lit_create' d]
                     let x = TyVV (l, VVT (List.map get_type l))
                     TyOp(ArrayCreate,[x],get_type x) |> ret
 
@@ -991,6 +1005,11 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             else
                 ret x
 
+    let type_lit_create d a ret =
+        tev d a <| function
+            | TyLit a -> type_lit_create' d a |> ret
+            | _ -> d.on_type_er d.trace "Expected a literal in type literal create."
+
     let add_trace d pos =
         match pos with
         | Some x -> {d with trace = x :: d.trace}
@@ -1015,8 +1034,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | MethodMemoize,[a] -> memoize_method d a ret
         | ApplyType,[x] -> for_cast d x ret
         
-        | ModuleOpen,[a;b] -> module_open d a b ret
         | PrintStatic,[a] -> tev d a <| fun r -> printfn "%A" r; ret TyB
+        | ModuleOpen,[a;b] -> module_open d a b ret
+        | TypeLitCreate,[a] -> type_lit_create d a ret
 
         // Primitive operations on expressions.
         | Add,[a;b] -> prim_arith_op d a b Add ret
@@ -1044,6 +1064,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | ShuffleIndex,[a;b] -> prim_shuffle_op d a b ShuffleIndex ret
 
         | VVIndex,[a;b] -> vv_index d a b ret
+        | VVSliceFrom,[a;b] -> vv_slice_from d a b ret
         | VVCons,[a;b] -> vv_cons d a b ret
 
         | ArrayCreate,[a;b] -> array_create d LocalPointerT a b ret
@@ -1052,6 +1073,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | MSet,[a;b] -> mset d a b ret
         | TypeAnnot,[a;b] -> type_annot d a b ret
         | TypeConstructorUnion,[a;b] -> typec_union d a b ret
+        | EqType,[a;b] -> eq_type d a b ret
 
         | Neg,[a] -> prim_un_numeric d a Neg ret
         | ErrorType,[a] -> tev d a <| fun a -> d.on_type_er d.trace <| sprintf "%A" a
