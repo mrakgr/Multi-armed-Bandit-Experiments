@@ -782,14 +782,14 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             | _ -> d.on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp((ArrayUnsafeIndex | ArrayIndex),_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
 
     let vv_index d v i ret =
+        let inline f i ts x = 
+            if i >= 0 || i < List.length ts then x () |> ret
+            else d.on_type_er d.trace "Tuple index not within bounds."
         tev2 d v i <| fun v i ->
             match v, i with
-            | v, TyLit (LitInt32 i as i') ->
-                match get_type v with
-                | VVT ts -> 
-                    if i >= 0 || i < List.length ts then TyOp(VVIndex,[v;TyLit i'],ts.[i]) |> ret
-                    else d.on_type_er d.trace "(i >= 0 || i < List.length ts) = false in IndexVT"
-                | x -> d.on_type_er d.trace <| sprintf "Type of a evaluated expression in IndexVT is not VTT.\nGot: %A" x
+            | TyVV(l,_), TyLit (LitInt32 i as i') -> (fun _ -> l.[i]) |> f i l
+            | v & TyType (VVT ts), TyLit (LitInt32 i as i') -> (fun _ -> TyOp(VVIndex,[v;TyLit i'],ts.[i])) |> f i ts
+            | v, TyLit (LitInt32 i as i') -> d.on_type_er d.trace <| sprintf "Type of a evaluated expression in tuple index is not a tuple.\nGot: %A" v
             | v, i -> d.on_type_er d.trace <| sprintf "Index into a tuple must be a natural number less than the size of the tuple.\nGot: %A" i
     
     let vv_cons d a b ret =
