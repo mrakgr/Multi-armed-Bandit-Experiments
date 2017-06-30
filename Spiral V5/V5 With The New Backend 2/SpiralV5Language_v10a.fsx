@@ -20,7 +20,7 @@ type SpiralDeviceVarType =
 type Ty =
     | PrimT of SpiralDeviceVarType
     | VVT of Ty list
-    | NameT of string
+    | LitT of Value
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
     | ModuleT of EnvTy
     | UnionT of Set<Ty>
@@ -58,7 +58,8 @@ and Value =
 
 and Op =
     // QuadOps
-    | Case
+    | CaseTuple
+    | CaseCons
 
     // TriOps
     | If
@@ -85,6 +86,7 @@ and Op =
     | MethodMemoize
     | StructCreate
     | VVIndex
+    | VVSliceFrom
     | VVCons
     | TypeAnnot
     | ModuleWith
@@ -92,6 +94,7 @@ and Op =
     | EnvUnseal
     | TypeConstructorCreate
     | TypeConstructorUnion
+    | EqType
 
     | ArrayCreate
     | ArrayCreateShared
@@ -106,10 +109,11 @@ and Op =
     | ShuffleIndex
 
     // Static unary operations
-    | StaticPrint
+    | PrintStatic
     | ErrorNonUnit
     | ErrorType
     | ModuleOpen
+    | TypeLitCreate
 
     // UnOps
     | Neg
@@ -225,8 +229,12 @@ let (|TyType|_|) = function
     | TyV(_,x) -> Some x
     | _ -> None
 
+let (|NameT|_|) = function
+    | LitT (LitString x) -> Some x
+    | _ -> None
+
 let (|Array|_|) = function
-    | TyVV([size;typ;TyType(NameT "Array")],_) ->
+    | TyVV([size;typ;TyType (NameT "Array")],_) ->
         let typ, array_type = get_type_pointer typ
         Some(array_type,tuple_field size,typ)
     | _ -> None
@@ -237,7 +245,7 @@ let rec is_returnable' = function
     | TypeConstructorT x -> is_returnable' x
     | UnionT env -> Set.forall is_returnable' env
     | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
-    | NameT _ | ForCastT _ | ClosureT _ | NameT _ | PrimT _ -> true
+    | LitT _ | ForCastT _ | ClosureT _ | PrimT _ -> true
 let is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
@@ -343,12 +351,18 @@ let meth' args body = methr' "" args body
 let lit_int i pos = Lit (LitInt32 i, pos)
 let vv pos x = VV(x,pos)
 let tuple_index v i pos = Op(VVIndex,[v; lit_int i pos], pos)
+let tuple_slice_from v i pos = Op(VVSliceFrom,[v; lit_int i pos], pos)
 
 let error_type x = Op(ErrorType, [x], None)
-let static_print x = Op(StaticPrint,[x], None)
+let print_static x = Op(PrintStatic,[x], None)
 
-let case_ arg len on_succ on_fail pos =
-    Op(Case,[arg;len;on_succ;on_fail],pos)
+let case_tuple arg len on_succ on_fail pos =
+    Op(CaseTuple,[arg;len;on_succ;on_fail],pos)
+let case_cons arg len on_succ on_fail pos =
+    Op(CaseCons,[arg;len;on_succ;on_fail],pos)
+
+let if_static cond tr fl pos = Op(IfStatic,[cond;tr;fl],pos)
+let eq_type a b pos = Op(EqType,[a;b],pos)
 
 let get_pos = function
     | Lit(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,pos) | Op(_,_,pos) -> pos
@@ -455,6 +469,8 @@ let env_num_args env =
     Map.fold (fun s k v -> 
         let f = typed_expr_free_variables v
         if Set.isEmpty f then s else s+1) 0 env
+
+let ty_lit_create pos x = Op(TypeLitCreate,[Lit (x, pos)],pos)
 
 type Trace = PosKey list
 
@@ -691,7 +707,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         and typec_strip = function // Implements #10.
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
-            | PrimT _ | NameT _ | RecT _ as x -> x
+            | PrimT _ | LitT _ | RecT _ as x -> x
             | FunctionT (e, b) -> FunctionT(strip_map e, b)
             | ModuleT e -> ModuleT (strip_map e)
             | LocalPointerT x -> typec_strip x |> LocalPointerT
@@ -786,13 +802,15 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         if List.forall is_int args = false then d.on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" args
         else ret()
 
+    let ty_lit_create' d x = TyOp(TypeLitCreate,[TyLit x],LitT x) |> make_tyv_and_push_typed_expr d
+
     let array_create d pointer size typeof_expr ret =
         tev d size <| fun size -> 
             tev_seq d typeof_expr <| fun typ ->
                 guard_is_int d (tuple_field size) <| fun () ->
                     let l = [size
                              get_type typ |> pointer |> make_tyv_and_push_ty d 
-                             NameT "Array" |> make_tyv_and_push_ty d]
+                             LitString "Array" |> ty_lit_create' d]
                     let x = TyVV (l, VVT (List.map get_type l))
                     TyOp(ArrayCreate,[x],get_type x) |> ret
 
@@ -998,7 +1016,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | ApplyType,[x] -> for_cast d x ret
         
         | ModuleOpen,[a;b] -> module_open d a b ret
-        | StaticPrint,[a] -> tev d a <| fun r -> printfn "%A" r; ret TyB
+        | PrintStatic,[a] -> tev d a <| fun r -> printfn "%A" r; ret TyB
 
         // Primitive operations on expressions.
         | Add,[a;b] -> prim_arith_op d a b Add ret
@@ -1093,7 +1111,7 @@ let core_functions =
     let lit x = Lit (x, None)
     let l a b = l a b None
     s  [l "errortype" (p error_type)
-        l "static_print" (p static_print)
+        l "print_static" (p print_static)
         l "overload_ap_Array" (p2 (array_index ArrayIndex))
         l "unsafe_index" (p2 (array_index ArrayUnsafeIndex))
 
