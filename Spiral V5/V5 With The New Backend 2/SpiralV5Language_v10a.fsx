@@ -57,6 +57,9 @@ and Value =
     | BlockIdxX | BlockIdxY | BlockIdxZ
 
 and Op =
+    // NOps
+    | Case
+
     // QuadOps
     | CaseTuple
     | CaseCons
@@ -495,6 +498,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
     let inline tev d expr ret = expr_typecheck dims globals d expr ret
     let inline apply_seq d x = !d.seq x
     let inline tev_seq d expr ret = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr (apply_seq d >> ret)
+    let inline tev_assume cse_env d expr ret = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr (apply_seq d >> ret)
     let inline tev_method d expr ret = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr (apply_seq d >> ret)
     let inline tev_rec d expr ret = tev_method {d with rbeh=AnnotationReturn} expr ret
 
@@ -534,6 +538,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         d.seq := fun rest -> TyLet(LetInvisible,v,v',rest,get_type rest) |> seq
         v'
 
+    let cse_add' d r x = let e = !d.cse_env in if r <> x then Map.add r x e else e
+    let cse_add d r x = d.cse_env := cse_add' d r x
+
     // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
     let rec destructure d r = 
@@ -559,7 +566,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
 
             chase (fun r ->
                 let x = make_tyv_and_push_typed_expr d r |> destructure
-                if r <> x then d.cse_env := !d.cse_env |> Map.add r x
+                cse_add d r x
                 chase id x)
             
         match r with
@@ -569,22 +576,34 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l,ty)
         | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
 
-    let if_ d cond tr fl ret =
-        tev d cond <| fun cond ->
-            if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
-            else
-                tev_seq d tr <| fun tr ->
-                    tev_seq d fl <| fun fl ->
-                        let type_tr, type_fl = get_type tr, get_type fl
-                        if type_tr = type_fl then 
-                            if is_returnable' type_tr then
-                                match cond with
-                                | TyLit(LitBool true) -> tr
-                                | TyLit(LitBool false) -> fl
-                                | _ -> TyOp(If,[cond;tr;fl],type_tr)
-                                |> ret
-                            else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Consider using Inlineable instead. Got: %A" type_tr
-                        else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+    let if_is_returnable ret (TyType r & x) =
+        if is_returnable' r then ret x
+        else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" r
+
+    let if_body d cond tr fl ret =
+        tev_seq d tr <| fun tr ->
+            tev_seq d fl <| fun fl ->
+                let type_tr, type_fl = get_type tr, get_type fl
+                if type_tr = type_fl then 
+                    match cond with
+                    | TyLit(LitBool true) -> tr
+                    | TyLit(LitBool false) -> fl
+                    | _ -> TyOp(If,[cond;tr;fl],type_tr)
+                    |> if_is_returnable ret
+                else d.on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+
+    let if_cond d tr fl ret cond =
+        if is_bool cond = false then d.on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+        else if_body d cond tr fl ret
+
+    let if_static d cond tr fl ret =
+        tev d cond <| function
+            | TyLit (LitBool cond) -> 
+                let branch = if cond then tr else fl
+                tev d branch (if_is_returnable ret)
+            | cond -> if_cond d tr fl ret cond
+
+    let if_ d cond tr fl ret = tev d cond (if_cond d tr fl ret)
 
     let tag r =
         let tag = !r
@@ -647,7 +666,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
 //    9) Lastly, tuples returned from a recursive type case will have their type replaced with the recursive type much like when returned from a union case.
 //    10) Singleton tuples returned from a type constructor case whose item's type is equal to the tuple's outer type, 
 //        meaning the tuple is not a recursive or a union type will get implicitly converted to a variable. 
-//        This so type construction application meshes with type constructor creation.
+//        This is so type construction application meshes with type constructor creation.
 
 //    Note: It is intended that the inputs to type constructors be destructured and hence contain no free floating expressions.
 //          The functions should work regardless.
@@ -697,13 +716,16 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
     let typec_create d x ret =
         let key = d.env, x
         let ret_tyv x = TypeConstructorT x |> make_tyv_and_push_ty d |> ret
+
         let add_to_memo_dict x = 
             memoized_methods.[key] <- MemoType x
-            ret_tyv x
+            x
+
         let add_to_type_dict x =
             match memoized_methods.TryGetValue key with
             | true, MemoType (RecT tag) -> memoized_types.[tag] <- x; RecT tag
             | _ -> x
+
         let rec strip_map x = Map.map (fun _ -> typec_strip) x
         and typec_strip = function // Implements #10.
             | TypeConstructorT x -> x
@@ -717,16 +739,23 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             | ForCastT x -> typec_strip x |> ForCastT
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
             | UnionT s -> UnionT (Set.map typec_strip s)
+
+        let rec restrict_malignant = 
+            let rec loop recursive_set = function
+                | RecT tag when Set.contains tag recursive_set -> d.on_type_er d.trace "Trying to construct a self recursive type is forbidden. If an error was not returned, the pevaller would have gone into an infinite loop during the destructuring of this type."
+                | RecT tag -> loop (Set.add tag recursive_set) memoized_types.[tag]
+                | x -> ret_tyv x
+            loop Set.empty
             
         match memoized_methods.TryGetValue key with
         | true, MemoType ty -> ret_tyv ty
-        | true, MemoTypeInEvaluation -> type_tag() |> RecT |> add_to_memo_dict
+        | true, MemoTypeInEvaluation -> type_tag() |> RecT |> add_to_memo_dict |> ret_tyv
         | true, _ -> failwith "Expected a type in the dictionary."
         | false, _ -> 
             memoized_methods.[key] <- MemoTypeInEvaluation
             // After the evaluation, if the type is recursive the dictionary should have its key.
             // If present it will return that instead.
-            tev_seq d x (get_type >> typec_strip >> add_to_type_dict >> add_to_memo_dict)
+            tev_seq d x (get_type >> typec_strip >> add_to_type_dict >> add_to_memo_dict >> restrict_malignant)
 
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg ret =
@@ -1000,16 +1029,57 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
     let for_cast d x ret = tev_seq d x (get_type >> ForCastT >> make_tyv_and_push_ty d >> ret)
     let error_non_unit d a ret =
         tev d a <| fun x ->
-            if get_type x <> BVVT then
-                d.on_type_er d.trace <| "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
-            else
-                ret x
+            if get_type x <> BVVT then d.on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
+            else ret x
 
     let type_lit_create d a ret =
         tev d a <| function
             | TyLit a -> type_lit_create' d a |> ret
             | _ -> d.on_type_er d.trace "Expected a literal in type literal create."
 
+//    1) During peval, if the variable is a union or a recursive type, it will destructure it a level 
+//         without changing its type and branch on all of its cases.
+//    2) If it is a primitive variable it will take the false branch of the case.
+//    3) If it is a tuple it will compare sizes. This rule is independent, but might be lead into from rule #1. 
+//       Corollary to rule #1, tuples that have already been destructured will not be so again.
+//    4) If the tuple sizes match, it will take the true branch of the case.
+//    5) If the sizes do not match, it will take the false branch of the case.
+
+//    Note: The algorithm works by collecting all the branches on #1 into a case construct.
+//          Partial evaluation ensures the matchers are optimized and well typed.
+
+    let case_tuple_template comp d v len tr fl ret =
+        let assume d v x branch ret = tev_assume (cse_add' d v x) d branch ret
+
+        tev2 d v len <| fun v len ->
+            match len with
+            | LitIndex len ->
+                match v with
+                | TyV(_, t & (UnionT _ | RecT _)) ->
+                    let rec instantiate_type_as_variable orig_ty d args_ty =
+                        let f x = make_tyv_and_push_ty d x
+                        match args_ty with
+                        | VVT l -> [TyVV(List.map f l, orig_ty)]
+                        | RecT tag -> instantiate_type_as_variable orig_ty d memoized_types.[tag]
+                        | UnionT l -> Set.toList l |> List.collect (instantiate_type_as_variable orig_ty d) // These two implement rule #1.
+                        | x -> [TyVV([f x], orig_ty)] // orig_ty <> x is always true here. This case will happen as a part of non-recursive union type.
+
+                    let rec map_cases l ret =
+                        match l with
+                        | (x & TyVV(l',_)) :: xs when comp l'.Length len -> assume d v x tr (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs)) // Implements #4.
+                        | x :: xs -> assume d v x fl (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs)) // Implements #5. Both implement #3.
+                        | _ -> []
+                            
+                    map_cases (instantiate_type_as_variable t d t) <| function
+                        | (TyType p, _) :: _ as cases -> 
+                            if List.forall (fun (TyType x,_) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases,p) |> ret
+                            else d.on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
+                        | _ -> failwith "There should always be at least two clauses here."
+                        
+                | TyVV(l,_) when l.Length = len -> tev d tr ret
+                | _ -> tev d fl ret
+            | _ -> failwith "Expecting a index literal in case."
+                   
     let add_trace d pos =
         match pos with
         | Some x -> {d with trace = x :: d.trace}
@@ -1029,6 +1099,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
     | Op(op,vars,pos) ->
         let d = add_trace d pos
         match op, vars with
+        | CaseTuple,[v;len;tr;fl] -> case_tuple_template (=) d v len tr fl ret
+        | CaseCons,[v;len;tr;fl] -> case_tuple_template (<) d v len tr fl ret
+        | IfStatic,[cond;tr;fl] -> if_static d cond tr fl ret
         | If,[cond;tr;fl] -> if_ d cond tr fl ret
         | Apply,[a;b] -> apply_tev d a b ret
         | MethodMemoize,[a] -> memoize_method d a ret
