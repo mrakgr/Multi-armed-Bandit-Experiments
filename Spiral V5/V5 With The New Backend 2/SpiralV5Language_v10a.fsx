@@ -586,8 +586,9 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         else d.on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" r
 
     let if_body d cond tr fl ret =
-        tev_seq d tr <| fun tr ->
-            tev_seq d fl <| fun fl ->
+        let b x = (cse_add' d cond (TyLit(LitBool x)))
+        tev_assume (b true) d tr <| fun tr ->
+            tev_assume (b false) d fl <| fun fl ->
                 let type_tr, type_fl = get_type tr, get_type fl
                 if type_tr = type_fl then 
                     match cond with
