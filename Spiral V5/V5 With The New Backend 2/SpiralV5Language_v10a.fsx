@@ -545,6 +545,13 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
     // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
     let rec destructure d r = 
         let inline destructure r = destructure d r
+
+        let chase_cse on_succ on_fail r = 
+            match Map.tryFind r !d.cse_env with
+            | Some x -> on_succ x
+            | None -> on_fail r
+        let rec chase_recurse r = chase_cse destructure id r
+
         let destructure_var r =
             let index_tuple_args tuple_types = 
                 List.mapi (fun i typ -> 
@@ -556,24 +563,22 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             match r_ty with
             | VVT tuple_types -> TyVV(index_tuple_args tuple_types, r_ty)
             | ModuleT env | FunctionT (env, _) -> TyEnv(env_unseal env, r_ty)
-            | _ -> r
-
-        let destructure_cse = 
-            let rec chase f r = 
-                match Map.tryFind r !d.cse_env with
-                | None -> f r
-                | Some x -> chase id x
-
-            chase (fun r ->
-                let x = make_tyv_and_push_typed_expr d r |> destructure
-                cse_add d r x
-                chase id x)
+            | _ -> chase_recurse r
+           
+        let rec destructure_cse r = 
+            chase_cse 
+                chase_recurse
+                (fun r ->
+                    let x = make_tyv_and_push_typed_expr d r
+                    cse_add d r x
+                    x)
+                r
             
         match r with
         | TyLit _ -> r
         | TyV _ -> destructure_var r
         | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
-        | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l,ty)
+        | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l, ty)
         | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
 
     let if_is_returnable ret (TyType r & x) =
@@ -794,7 +799,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             let args = instantiate_type_as_variable d args_ty
             let closure = TyEnv(env_term, FunctionT fun_key)
 
-            let tev d x ret = 
+            let tev d x ret =
                 memoize_closure (get_type args) d x <| fun r ->
                     if is_returnable r then ret r
                     else d.on_type_er d.trace "Closure does not have a returnable type."
