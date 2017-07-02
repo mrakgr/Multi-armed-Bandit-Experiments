@@ -550,7 +550,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             match Map.tryFind r !d.cse_env with
             | Some x -> on_succ x
             | None -> on_fail r
-        let rec chase_recurse r = chase_cse destructure id r
+        let chase_recurse r = chase_cse destructure id r
 
         let destructure_var r =
             let index_tuple_args tuple_types = 
@@ -565,7 +565,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             | ModuleT env | FunctionT (env, _) -> TyEnv(env_unseal env, r_ty)
             | _ -> chase_recurse r
            
-        let rec destructure_cse r = 
+        let destructure_cse r = 
             chase_cse 
                 chase_recurse
                 (fun r ->
