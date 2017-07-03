@@ -1241,6 +1241,3 @@ let spiral_typecheck code dims body on_fail ret =
         typed_expr_optimization_pass 2 memoized_methods x // Is mutable
         ret (x,memoized_methods)
     expr_typecheck dims (method_tag, memoized_methods, type_tag, memoized_type) d input ret
-
-
-
