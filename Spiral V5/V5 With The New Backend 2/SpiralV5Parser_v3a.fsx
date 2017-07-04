@@ -119,9 +119,8 @@ let pattern_compile arg pat =
             let on_succ = cp arg exp on_succ on_fail
             pattern_compile true arg typ on_succ on_fail
         | PatActive (pos,(a,b)) ->
-            let n = " act"
             let v x = V (x, pos)
-            l n (ap pos (v a) arg) pos (cp' (v n) b on_succ on_fail)
+            cp' (ap pos (v a) arg) b on_succ on_fail
         | PatOr (pos, l) -> pat_or pos l
         | PatAnd (pos, l) -> pat_and pos l
         | PatClauses (pos, l) ->
