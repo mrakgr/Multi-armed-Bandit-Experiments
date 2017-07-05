@@ -1062,12 +1062,12 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             | LitIndex len ->
                 match v with
                 | TyV(_, t & (UnionT _ | RecT _)) ->
-                    let rec instantiate_type_as_variable orig_ty d args_ty =
+                    let rec case_destructure orig_ty d args_ty =
                         let f x = make_tyv_and_push_ty d x
                         match args_ty with
                         | VVT l -> [TyVV(List.map f l, orig_ty)]
-                        | RecT tag -> instantiate_type_as_variable orig_ty d memoized_types.[tag]
-                        | UnionT l -> Set.toList l |> List.collect (instantiate_type_as_variable orig_ty d) // These two implement rule #1.
+                        | RecT tag -> case_destructure orig_ty d memoized_types.[tag]
+                        | UnionT l -> Set.toList l |> List.collect (case_destructure orig_ty d) // These two implement rule #1.
                         | x -> [TyVV([f x], orig_ty)] // orig_ty <> x is always true here. This case will happen as a part of non-recursive union type.
 
                     let rec map_cases l ret =
@@ -1076,7 +1076,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
                         | x :: xs -> assume d v x fl (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs)) // Implements #5. Both implement #3.
                         | _ -> []
                             
-                    map_cases (instantiate_type_as_variable t d t) <| function
+                    map_cases (case_destructure t d t) <| function
                         | (TyType p, _) :: _ as cases -> 
                             if List.forall (fun (TyType x,_) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases,p) |> ret
                             else d.on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
