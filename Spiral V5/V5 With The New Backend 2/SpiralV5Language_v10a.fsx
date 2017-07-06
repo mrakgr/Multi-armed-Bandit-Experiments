@@ -1080,7 +1080,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
                         | (TyType p, _) :: _ as cases -> 
                             if List.forall (fun (TyType x,_) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases,p) |> ret
                             else d.on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
-                        | _ -> failwith "There should always be at least two clauses here."
+                        | _ -> failwith "There should always be at least one clause here."
                         
                 | TyVV(l,_) when l.Length = len -> tev d tr ret
                 | _ -> tev d fl ret

@@ -1,4 +1,6 @@
-﻿type Pattern =
+﻿// Translated from the SPJ 1987 book on implementing functional languages.
+
+type Pattern =
 | Var of Variable
 | Con of Constructor * Pattern list
 
