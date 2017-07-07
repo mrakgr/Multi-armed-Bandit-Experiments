@@ -1240,3 +1240,4 @@ let spiral_typecheck code dims body on_fail ret =
         ret (x,memoized_methods)
     expr_typecheck dims (method_tag, memoized_methods, type_tag, memoized_type) d input ret
 
+
