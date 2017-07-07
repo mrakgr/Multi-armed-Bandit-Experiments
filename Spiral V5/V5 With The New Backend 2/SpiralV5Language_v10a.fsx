@@ -300,8 +300,6 @@ let is_full_name = function
     | "" | "_" -> false
     | _ -> true
 
-let is_arg = function TyV _ -> true | _ -> false
-
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
