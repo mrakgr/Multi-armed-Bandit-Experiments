@@ -17,6 +17,5 @@
 #r "../../packages/System.Reflection.Metadata.1.4.2/lib/portable-net45+win8/System.Reflection.Metadata.dll"
 #r "System.Xml.dll"
 #r "System.Xml.Linq.dll"
-#r "../../../../../../../../Program Files (x86)/Microsoft Visual Studio 14.0/VSSDK/VisualStudioIntegration/Common/Assemblies/v4.0/Microsoft.VisualStudio.Threading.dll"
 #r "../../packages/FSharp.Compiler.Service.13.0.0/lib/net45/FSharp.Compiler.Service.dll"
 #r "../../packages/System.ValueTuple.4.3.1/lib/netstandard1.0/System.ValueTuple.dll"

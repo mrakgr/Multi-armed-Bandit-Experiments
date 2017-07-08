@@ -176,6 +176,7 @@
     <None Include="V5 With The New Backend 2\SpiralV5Language_v10a.fsx" />
     <None Include="V5 With The New Backend 2\SpiralV5Parser_v3a.fsx" />
     <None Include="V5 With The New Backend 2\hosting_v0.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v0.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
@@ -218,7 +219,6 @@
       <HintPath>..\packages\ManagedCuda-75-Standalone.7.5.7\lib\net45\ManagedCuda.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Microsoft.VisualStudio.Threading, Version=14.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a" />
     <Reference Include="mscorlib" />
     <Reference Include="NVRTC">
       <HintPath>..\packages\ManagedCuda-NVRTC.8.0.13\lib\net46\NVRTC.dll</HintPath>
