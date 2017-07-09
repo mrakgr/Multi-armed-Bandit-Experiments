@@ -4,7 +4,7 @@ open ManagedCuda.VectorTypes
 open System.Collections.Generic
 
 /// The dynamic device variable type.
-type SpiralDeviceVarType =
+type PrimitiveType =
     | UInt8T
     | UInt16T
     | UInt32T
@@ -16,9 +16,10 @@ type SpiralDeviceVarType =
     | Float32T
     | Float64T
     | BoolT
+    | StringT
 
 type Ty =
-    | PrimT of SpiralDeviceVarType
+    | PrimT of PrimitiveType
     | VVT of Ty list
     | LitT of Value
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
@@ -26,11 +27,11 @@ type Ty =
     | UnionT of Set<Ty>
     | RecT of Tag
     | TypeConstructorT of Ty
-    | LocalPointerT of Ty
-    | SharedPointerT of Ty
-    | GlobalPointerT of Ty
     | ClosureT of Ty * Ty
     | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
+    | DotNetRuntimeTypeT of Tag // Since Type does not support the Comparable interface, I map it to int.
+    | DotNetTypeInstanceT of Tag
+    | DotNetAssembly of Tag
 
 and Tag = int64
 and TyV = Tag * Ty
@@ -53,10 +54,13 @@ and Value =
     | LitBool of bool
     | LitString of string
 
-    | ThreadIdxX | ThreadIdxY | ThreadIdxZ
-    | BlockIdxX | BlockIdxY | BlockIdxZ
-
 and Op =
+    | DotNetLoadAssembly
+    | DotNetGetTypeFromAssembly
+    | DotNetTypeInstantiateGenericParams
+    | DotNetTypeConstruct
+    | DotNetTypeCallMethod
+
     // NOps
     | Case
 
@@ -174,6 +178,8 @@ and ClosureDict = Dictionary<Tag, TypedExpr>
 // For Common Subexpression Elimination. I need it not for its own sake, but to enable other PE based optimizations.
 and CSEDict = Map<TypedExpr,TypedExpr> ref
 
+
+
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
 let flip f a b = f b a
@@ -190,9 +196,7 @@ let get_type_of_value = function
     | LitFloat32 _ -> PrimT Float32T
     | LitFloat64 _ -> PrimT Float64T   
     | LitBool _ -> PrimT BoolT
-    | LitString _ -> LocalPointerT <| PrimT UInt8T
-    | ThreadIdxX | ThreadIdxY | ThreadIdxZ 
-    | BlockIdxX | BlockIdxY | BlockIdxZ -> PrimT UInt64T
+    | LitString _ -> PrimT StringT
 
 let get_type = function
     | TyLit x -> get_type_of_value x
@@ -219,46 +223,25 @@ let tuple_field_ty = function
     | VVT x -> x
     | x -> [x]
 
-type ArrayType = Local | Shared | Global
-
-let get_type_pointer x =
-    match get_type x with
-    | LocalPointerT x -> x, Local
-    | SharedPointerT x -> x, Shared
-    | GlobalPointerT x -> x, Global
-    | _ -> failwith "Expected a pointer"
-
 let (|TyType|) x = get_type x
 let (|TypeLit|_|) = function
     | TyType (LitT x) -> Some x
+    | _ -> None
+let (|TypeString|_|) = function
+    | TypeLit (LitString x) -> Some x
     | _ -> None
 
 let (|NameT|_|) = function
     | TypeLit (LitString x) -> Some x
     | _ -> None
 
-let (|Array|_|) = function
-    | TyVV([size; typ; NameT "Array"],_) ->
-        let typ, array_type = get_type_pointer typ
-        Some(array_type,tuple_field size,typ)
-    | _ -> None
-
-let rec is_returnable' = function
-    | VVT x -> List.forall is_returnable' x
-    | RecT _ | LocalPointerT _ | SharedPointerT _ | GlobalPointerT _ -> false
-    | TypeConstructorT x -> is_returnable' x
-    | UnionT env -> Set.forall is_returnable' env
-    | FunctionT (env, _) | ModuleT env -> Map.forall (fun _ -> is_returnable') env
-    | LitT _ | ForCastT _ | ClosureT _ | PrimT _ -> true
+let rec is_returnable' _ = true
 let is_returnable a = is_returnable' (get_type a)
 
 let is_numeric' = function
-    | PrimT x -> 
-        match x with
-        | UInt8T | UInt16T | UInt32T | UInt64T 
+    | PrimT (UInt8T | UInt16T | UInt32T | UInt64T 
         | Int8T | Int16T | Int32T | Int64T 
-        | Float32T | Float64T -> true
-        | BoolT -> false
+        | Float32T | Float64T) -> true
     | _ -> false
 let is_numeric a = is_numeric' (get_type a)
 
@@ -268,37 +251,19 @@ let is_primt' = function
 let is_primt a = is_primt' (get_type a)
 
 let is_float' = function
-    | PrimT x -> 
-        match x with
-        | Float32T | Float64T -> true
-        | _ -> false
+    | PrimT (Float32T | Float64T) -> true
     | _ -> false
 let is_float a = is_float' (get_type a)
 
 let rec is_bool' = function
-    | PrimT x -> 
-        match x with
-        | BoolT -> true
-        | _ -> false
+    | PrimT BoolT -> true
     | _ -> false
 let is_bool a = is_bool' (get_type a)
 
 let rec is_int' = function
-    | PrimT x -> 
-        match x with
-        | UInt32T | UInt64T | Int32T | Int64T -> true
-        | _ -> false
+    | PrimT (UInt32T | UInt64T | Int32T | Int64T) -> true
     | _ -> false
 let is_int a = is_int' (get_type a)
-
-let is_vv' = function
-    | VVT _ -> true
-    | _ -> false
-let is_vv a = is_vv' (get_type a)
-
-let is_full_name = function
-    | "" | "_" -> false
-    | _ -> true
 
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
@@ -480,7 +445,7 @@ type RecursiveBehavior =
 | AnnotationDive
 | AnnotationReturn
 
-type LangEnv<'a,'c,'q,'e> =
+type LangEnv<'c,'e> =
     {
     rbeh: RecursiveBehavior
     ltag : int64 ref
@@ -491,14 +456,35 @@ type LangEnv<'a,'c,'q,'e> =
     on_type_er : Trace -> 'c -> 'e
     }
 
-let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memoized_methods: MemoDict, type_tag, memoized_types: Dictionary<_,_> as globals)
-        (d : LangEnv<_,_,_,_>) (expr: Expr) ret =
-    let inline tev d expr ret = expr_typecheck dims globals d expr ret
+type LangGlobals =
+    {
+    method_tag: Tag ref
+    memoized_methods: MemoDict
+    type_tag: Tag ref
+    memoized_types: Dictionary<Tag,Ty>
+    memoized_dotnet_assemblies: Dictionary<System.Reflection.Assembly,Tag> * Dictionary<Tag,System.Reflection.Assembly>
+    memoized_dotnet_types: Dictionary<System.Type,Tag> * Dictionary<Tag,System.Type>
+    }
+
+let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) ret =
+    let inline tev d expr ret = expr_typecheck globals d expr ret
     let inline apply_seq d x = !d.seq x
     let inline tev_seq d expr ret = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr (apply_seq d >> ret)
     let inline tev_assume cse_env d expr ret = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr (apply_seq d >> ret)
     let inline tev_method d expr ret = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr (apply_seq d >> ret)
     let inline tev_rec d expr ret = tev_method {d with rbeh=AnnotationReturn} expr ret
+
+    let map_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x =
+        match d.TryGetValue x with
+        | true, x -> x
+        | false, _ ->
+            let v = d.Count |> int64
+            d.Add(x,v); dr.Add(v,x)
+            v
+
+    let map_rev_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x = dr.[x]
+        
+
 
     let v_find env x on_fail ret = 
         match Map.tryFind x env with
@@ -614,11 +600,12 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         r := tag + 1L
         tag
 
-    let method_tag () = tag method_tag
-    let type_tag () = tag type_tag
+    let method_tag () = tag globals.method_tag
+    let type_tag () = tag globals.type_tag
 
     let eval_method used_vars d expr ret =
         let key_args = d.env, expr
+        let memoized_methods = globals.memoized_methods
         
         match memoized_methods.TryGetValue key_args with
         | false, _ ->
@@ -686,7 +673,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
                     | _ -> failwith "A tuple should be returned from the union tuple case call." // Implements #3
             | UnionT _, _ -> if ty <> get_type ra then on_fail() else TyVV([ra],ty) |> ret // Implements #4, #5, #6
             | RecT tag, _ -> 
-                apply_typec d memoized_types.[tag] ra on_fail <| function // Implements #9
+                apply_typec d globals.memoized_types.[tag] ra on_fail <| function // Implements #9
                     | TyVV(l,_) -> TyVV(l,ty) |> ret
                     | _ -> failwith "A tuple should be returned from the recursive type case call."
             | x, r -> if x = get_type r then ret r else on_fail()
@@ -722,12 +709,12 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         let ret_tyv x = TypeConstructorT x |> make_tyv_and_push_ty d |> ret
 
         let add_to_memo_dict x = 
-            memoized_methods.[key] <- MemoType x
+            globals.memoized_methods.[key] <- MemoType x
             x
 
         let add_to_type_dict x =
-            match memoized_methods.TryGetValue key with
-            | true, MemoType (RecT tag) -> memoized_types.[tag] <- x; RecT tag
+            match globals.memoized_methods.TryGetValue key with
+            | true, MemoType (RecT tag) -> globals.memoized_types.[tag] <- x; RecT tag
             | _ -> x
 
         let rec strip_map x = Map.map (fun _ -> typec_strip) x
@@ -737,9 +724,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
             | PrimT _ | LitT _ | RecT _ as x -> x
             | FunctionT (e, b) -> FunctionT(strip_map e, b)
             | ModuleT e -> ModuleT (strip_map e)
-            | LocalPointerT x -> typec_strip x |> LocalPointerT
-            | SharedPointerT x -> typec_strip x |> SharedPointerT
-            | GlobalPointerT x -> typec_strip x |> GlobalPointerT
             | ForCastT x -> typec_strip x |> ForCastT
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
             | UnionT s -> UnionT (Set.map typec_strip s)
@@ -747,16 +731,16 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         let rec restrict_malignant = 
             let rec loop recursive_set = function
                 | RecT tag when Set.contains tag recursive_set -> d.on_type_er d.trace "Trying to construct a self recursive type is forbidden. If an error was not returned, the pevaller would have gone into an infinite loop during the destructuring of this type."
-                | RecT tag -> loop (Set.add tag recursive_set) memoized_types.[tag]
+                | RecT tag -> loop (Set.add tag recursive_set) globals.memoized_types.[tag]
                 | x -> ret_tyv x
             loop Set.empty
             
-        match memoized_methods.TryGetValue key with
+        match globals.memoized_methods.TryGetValue key with
         | true, MemoType ty -> ret_tyv ty
         | true, MemoTypeInEvaluation -> type_tag() |> RecT |> add_to_memo_dict |> ret_tyv
         | true, _ -> failwith "Expected a type in the dictionary."
         | false, _ -> 
-            memoized_methods.[key] <- MemoTypeInEvaluation
+            globals.memoized_methods.[key] <- MemoTypeInEvaluation
             // After the evaluation, if the type is recursive the dictionary should have its key.
             // If present it will return that instead.
             tev_seq d x (get_type >> typec_strip >> add_to_type_dict >> add_to_memo_dict >> restrict_malignant)
@@ -850,27 +834,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         else ret()
 
     let type_lit_create' d x = TyOp(TypeLitCreate,[TyLit x],LitT x) |> make_tyv_and_push_typed_expr d
-
-    let array_create d pointer size typeof_expr ret =
-        tev d size <| fun size -> 
-            tev_seq d typeof_expr <| fun typ ->
-                guard_is_int d (tuple_field size) <| fun () ->
-                    let l = [size
-                             get_type typ |> pointer |> make_tyv_and_push_ty d 
-                             LitString "Array" |> type_lit_create' d]
-                    let x = TyVV (l, VVT (List.map get_type l))
-                    TyOp(ArrayCreate,[x],get_type x) |> ret
-
-    let array_index d op_index ar args ret =
-        tev2 d ar args <| fun ar args ->
-            let fargs = tuple_field args
-            guard_is_int d fargs <| fun () ->
-                match ar with
-                | Array(_,size,typ) ->
-                    let lar, largs = size.Length, fargs.Length
-                    if lar = largs then TyOp(op_index,[ar;args],typ) |> ret
-                    else d.on_type_er d.trace <| sprintf "The index lengths in %A do not match. %i <> %i" op_index lar largs
-                | _ -> d.on_type_er d.trace <| sprintf "Array index needs the Array.Got: %A" ar
 
     let module_open d a b ret =
         tev d a <| fun a ->
@@ -1064,7 +1027,7 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
                         let f x = make_tyv_and_push_ty d x
                         match args_ty with
                         | VVT l -> [TyVV(List.map f l, orig_ty)]
-                        | RecT tag -> case_destructure orig_ty d memoized_types.[tag]
+                        | RecT tag -> case_destructure orig_ty d globals.memoized_types.[tag]
                         | UnionT l -> Set.toList l |> List.collect (case_destructure orig_ty d) // These two implement rule #1.
                         | x -> [TyVV([f x], orig_ty)] // orig_ty <> x is always true here. This case will happen as a part of non-recursive union type.
 
@@ -1083,12 +1046,38 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
                 | TyVV(l,_) when l.Length = len -> tev d tr ret
                 | _ -> tev d fl ret
             | _ -> failwith "Expecting a index literal in case."
-                   
+
+    let load_assembly d x ret =
+        match x with
+        | TypeString x ->
+            System.Reflection.Assembly.Load(x) |> map_dotnet globals.memoized_dotnet_assemblies 
+            |> DotNetAssembly |> make_tyv_and_push_ty d |> ret
+        | _ -> d.on_type_er d.trace "Expected a type level string."
+
+    let (|TyAssembly|_|) x =
+        match x with
+        | TyType (DotNetAssembly x) -> map_rev_dotnet globals.memoized_dotnet_assemblies x |> Some
+        | _ -> None
+
+    let get_type_from_assembly d x n ret =
+        match x, n with
+        | TyAssembly x, TypeString n -> 
+            match x.GetType(n) with
+            | null -> d.on_type_er d.trace "Loading a type from assembly failed."
+            | x -> x |> map_dotnet globals.memoized_dotnet_types
+                   |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d |> ret
+        | TyAssembly x, _ -> d.on_type_er d.trace "Expected a type level string as the second argument."
+        | _ -> d.on_type_er d.trace "Expected a type level .NET Assembly as the first argument."
+
+    let instantiate_generic_params d x n ret =
+        match x, n with
+        | 
+
     let add_trace d pos =
         match pos with
         | Some x -> {d with trace = x :: d.trace}
         | None -> d
-     
+
     let ret x = destructure d x |> ret
     match expr with
     | Lit (value,_) -> TyLit value |> ret
@@ -1144,9 +1133,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | VVSliceFrom,[a;b] -> vv_slice_from d a b ret
         | VVCons,[a;b] -> vv_cons d a b ret
 
-        | ArrayCreate,[a;b] -> array_create d LocalPointerT a b ret
-        | ArrayCreateShared,[a;b] -> array_create d SharedPointerT a b ret
-        | (ArrayUnsafeIndex | ArrayIndex),[a;b] -> array_index d op a b ret
         | MSet,[a;b] -> mset d a b ret
         | TypeAnnot,[a;b] -> type_annot d a b ret
         | TypeConstructorUnion,[a;b] -> typec_union d a b ret
@@ -1161,15 +1147,6 @@ let rec expr_typecheck (gridDim: dim3, blockDim: dim3 as dims) (method_tag, memo
         | Tanh,[a] -> prim_un_floating d a Tanh ret
 
         // Constants
-        | BlockDimX,[] -> uint64 blockDim.x |> LitUInt64 |> TyLit |> ret
-        | BlockDimY,[] -> uint64 blockDim.y |> LitUInt64 |> TyLit |> ret
-        | BlockDimZ,[] -> uint64 blockDim.z |> LitUInt64 |> TyLit |> ret
-        | GridDimX,[] -> uint64 gridDim.x |> LitUInt64 |> TyLit |> ret
-        | GridDimY,[] -> uint64 gridDim.y |> LitUInt64 |> TyLit |> ret
-        | GridDimZ,[] -> uint64 gridDim.z |> LitUInt64 |> TyLit |> ret
-
-        | Syncthreads,[] -> TyOp(Syncthreads,[],BVVT) |> ret
-
         | ModuleCreate,[] -> TyEnv(d.env, ModuleT <| env_to_ty d.env) |> ret
         | TypeConstructorCreate,[a] -> typec_create d a ret
         | _ -> failwith "Missing Op case."
@@ -1201,6 +1178,16 @@ let data_empty on_fail code =
      cse_env = ref Map.empty
      on_type_er = fun trace message -> on_fail <| print_type_error code trace message}
 
+let globals_empty (): LangGlobals =
+    {
+    method_tag = ref 0L
+    memoized_methods = d0()
+    type_tag = ref 0L
+    memoized_types = d0()
+    memoized_dotnet_assemblies = d0(), d0()
+    memoized_dotnet_types = d0(), d0()
+    }
+
 let array_index op a b = Op(op,[a;b],None)
 
 let core_functions =
@@ -1211,33 +1198,17 @@ let core_functions =
     let l a b = l a b None
     s  [l "errortype" (p error_type)
         l "print_static" (p print_static)
-        l "overload_ap_Array" (p2 (array_index ArrayIndex))
-        l "unsafe_index" (p2 (array_index ArrayUnsafeIndex))
-
-        l "threadIdxX" (lit ThreadIdxX)
-        l "threadIdxY" (lit ThreadIdxY)
-        l "threadIdxZ" (lit ThreadIdxZ)
-        l "blockIdxX" (lit BlockIdxX)
-        l "blockIdxY" (lit BlockIdxY)
-        l "blockIdxZ" (lit BlockIdxZ)
-
-        l "blockDimX" (con BlockDimX)
-        l "blockDimY" (con BlockDimY)
-        l "blockDimZ" (con BlockDimZ)
-        l "gridDimX" (con GridDimX)
-        l "gridDimY" (con GridDimY)
-        l "gridDimZ" (con GridDimZ)
         ]
 
 let spiral_typecheck code dims body on_fail ret = 
-    let method_tag, memoized_methods = ref 0L, d0()
-    let type_tag, memoized_type = ref 0L, d0()
+    let globals = globals_empty()
     let d = data_empty on_fail code
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
     let ret x = 
-        typed_expr_optimization_pass 2 memoized_methods x // Is mutable
-        ret (x,memoized_methods)
-    expr_typecheck dims (method_tag, memoized_methods, type_tag, memoized_type) d input ret
+        typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
+        ret (x,globals.memoized_methods)
+    expr_typecheck globals d input ret
+
 
 
