@@ -28,3 +28,23 @@ let dic' = x.GetType("System.Collections.Generic.Dictionary`2")
 let dic_ins_typ = dic'.MakeGenericType [|typeof<int>;typeof<int>|]
 let dic_ins = Activator.CreateInstance(dic_ins_typ)
 dic_ins_typ.InvokeMember("Add",BindingFlags.InvokeMethod,null,dic_ins,[|0;100|])
+
+let def_proc (d: Dictionary<_,_>) f t = 
+    match d.TryGetValue t with
+    | true, v -> v
+    | false, _ -> f d t
+
+let rev_type_dict' = ResizeArray()
+let map_type: Type -> int = 
+    def_proc (Dictionary()) (fun d t ->
+        let v = d.Count
+        d.Add(t,v)
+        rev_type_dict'.Add t
+        v)
+let rev_map_type i = rev_type_dict'.[i]
+
+open System
+type Ty =
+    | DotNetMappedT of int // Since Type does not support the Comparable interface, I map it to int.
+    | SetT of Set<Ty>
+

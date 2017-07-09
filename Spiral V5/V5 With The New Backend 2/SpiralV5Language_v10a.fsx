@@ -4,7 +4,7 @@ open ManagedCuda.VectorTypes
 open System.Collections.Generic
 
 /// The dynamic device variable type.
-type SpiralDeviceVarType =
+type PrimitiveType =
     | UInt8T
     | UInt16T
     | UInt32T
@@ -18,7 +18,7 @@ type SpiralDeviceVarType =
     | BoolT
 
 type Ty =
-    | PrimT of SpiralDeviceVarType
+    | PrimT of PrimitiveType
     | VVT of Ty list
     | LitT of Value
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
@@ -26,11 +26,9 @@ type Ty =
     | UnionT of Set<Ty>
     | RecT of Tag
     | TypeConstructorT of Ty
-    | LocalPointerT of Ty
-    | SharedPointerT of Ty
-    | GlobalPointerT of Ty
     | ClosureT of Ty * Ty
     | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
+    | DotNetMappedT of int // Since Type does not support the Comparable interface, I map it to int.
 
 and Tag = int64
 and TyV = Tag * Ty
@@ -173,6 +171,8 @@ and MemoDict = Dictionary<MemoKey, MemoCases>
 and ClosureDict = Dictionary<Tag, TypedExpr> 
 // For Common Subexpression Elimination. I need it not for its own sake, but to enable other PE based optimizations.
 and CSEDict = Map<TypedExpr,TypedExpr> ref
+
+
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
