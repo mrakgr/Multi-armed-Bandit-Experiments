@@ -1071,7 +1071,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
 
     let instantiate_generic_params d x n ret =
         match x, n with
-        | 
+        | ...
 
     let add_trace d pos =
         match pos with
