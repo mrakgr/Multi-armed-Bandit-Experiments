@@ -1005,7 +1005,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
             | _ -> d.on_type_er d.trace "Expected a literal in type literal create."
 
 //    1) During peval, if the variable is a union or a recursive type, it will destructure it a level 
-//         without changing its type and branch on all of its cases.
+//       without changing its type and branch on all of its cases.
 //    2) If it is a primitive variable it will take the false branch of the case.
 //    3) If it is a tuple it will compare sizes. This rule is independent, but might be lead into from rule #1. 
 //       Corollary to rule #1, tuples that have already been destructured will not be so again.
@@ -1047,31 +1047,113 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
                 | _ -> tev d fl ret
             | _ -> failwith "Expecting a index literal in case."
 
-    let load_assembly d x ret =
-        match x with
-        | TypeString x ->
-            System.Reflection.Assembly.Load(x) |> map_dotnet globals.memoized_dotnet_assemblies 
-            |> DotNetAssembly |> make_tyv_and_push_ty d |> ret
-        | _ -> d.on_type_er d.trace "Expected a type level string."
+    let inline wrap_exception d f =
+        try f()
+        with e -> d.on_type_er d.trace e.Message
+
+    let dotnet_load_assembly d x ret =
+        tev d x <| fun x ->
+            match x with
+            | TypeString x ->
+                wrap_exception d <| fun _ ->
+                    System.Reflection.Assembly.Load(x) |> map_dotnet globals.memoized_dotnet_assemblies 
+                    |> DotNetAssembly |> make_tyv_and_push_ty d |> ret
+            | _ -> d.on_type_er d.trace "Expected a type level string."
 
     let (|TyAssembly|_|) x =
         match x with
         | TyType (DotNetAssembly x) -> map_rev_dotnet globals.memoized_dotnet_assemblies x |> Some
         | _ -> None
 
-    let get_type_from_assembly d x n ret =
-        match x, n with
-        | TyAssembly x, TypeString n -> 
-            match x.GetType(n) with
-            | null -> d.on_type_er d.trace "Loading a type from assembly failed."
-            | x -> x |> map_dotnet globals.memoized_dotnet_types
-                   |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d |> ret
-        | TyAssembly x, _ -> d.on_type_er d.trace "Expected a type level string as the second argument."
-        | _ -> d.on_type_er d.trace "Expected a type level .NET Assembly as the first argument."
+    let dotnet_get_type_from_assembly d x n ret =
+        tev2 d x n <| fun x n ->
+            match x, n with
+            | TyAssembly x, TypeString n -> 
+                wrap_exception d <| fun _ ->
+                    match x.GetType(n) with
+                    | null -> d.on_type_er d.trace "Loading a type from assembly failed."
+                    | x -> x |> map_dotnet globals.memoized_dotnet_types
+                           |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d |> ret
+            | TyAssembly x, _ -> d.on_type_er d.trace "Expected a type level string as the second argument."
+            | _ -> d.on_type_er d.trace "Expected a type level .NET Assembly as the first argument."
 
-    let instantiate_generic_params d x n ret =
-        match x, n with
-        | ...
+    let dotnet_type_to_ty (x: System.Type) =
+        if x = typeof<int8> then PrimT Int8T
+        elif x = typeof<int16> then PrimT Int16T
+        elif x = typeof<int32> then PrimT Int32T
+        elif x = typeof<int64> then PrimT Int64T
+
+        elif x = typeof<uint8> then PrimT UInt8T
+        elif x = typeof<uint16> then PrimT UInt16T
+        elif x = typeof<uint32> then PrimT UInt32T
+        elif x = typeof<uint64> then PrimT UInt64T
+
+        elif x = typeof<float32> then PrimT Float32T
+        elif x = typeof<float> then PrimT Float64T
+        elif x = typeof<string> then PrimT StringT
+        else map_dotnet globals.memoized_dotnet_types x |> DotNetRuntimeTypeT
+
+    let dotnet_ty_to_type (x: Ty) =
+        match x with
+        | PrimT Int8T -> typeof<int8>
+        | PrimT Int16T -> typeof<int16>
+        | PrimT Int32T -> typeof<int32>
+        | PrimT Int64T -> typeof<int64>
+
+        | PrimT UInt8T -> typeof<uint8>
+        | PrimT UInt16T -> typeof<uint16>
+        | PrimT UInt32T -> typeof<uint32>
+        | PrimT UInt64T -> typeof<uint64>
+
+        | PrimT Float32T -> typeof<float32>
+        | PrimT Float64T -> typeof<float>
+        | PrimT StringT -> typeof<string>
+        | DotNetTypeInstanceT x | DotNetRuntimeTypeT x -> map_rev_dotnet globals.memoized_dotnet_types x
+        | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
+
+    let (|TyDotNetRuntimeType|_|) x =
+        match x with
+        | TyType (DotNetRuntimeTypeT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+        | _ -> None
+
+    let (|TyDotNetTypeInstance|_|) x =
+        match x with
+        | TyType (DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+        | _ -> None
+
+    let dotnet_instantiate_generic_params d x n ret =
+        tev2 d x n <| fun x n ->
+            let n = tuple_field n |> List.toArray |> Array.map (get_type >> dotnet_ty_to_type)
+            match x with
+            | TyDotNetRuntimeType x ->
+                wrap_exception d <| fun _ ->
+                    x.MakeGenericType n |> map_dotnet globals.memoized_dotnet_types
+                    |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d |> ret
+            | _ -> d.on_type_er d.trace "Expected a runtime .NET type."
+
+    let dotnet_type_construct d x' n' ret =
+        tev2 d x' n' <| fun x' n' ->
+            let n = tuple_field n' |> List.toArray |> Array.map (get_type >> dotnet_ty_to_type)
+            match x' with
+            | TyDotNetRuntimeType x ->
+                wrap_exception d <| fun _ ->
+                    match x.GetConstructor n with
+                    | null -> d.on_type_er d.trace "Cannot find a constructor with matching arguments."
+                    | _ -> 
+                        let x = map_dotnet globals.memoized_dotnet_types x |> DotNetTypeInstanceT
+                        TyOp(DotNetTypeConstruct,[x';n'],x) |> ret
+            | _ -> d.on_type_er d.trace "Expected a runtime .NET type."
+
+    let dotnet_type_call_method d x' n' ret =
+        tev2 d x' n' <| fun x' n' ->
+            let n = tuple_field n'
+            match x', n with
+            | TyDotNetTypeInstance x, TypeString method_name :: args ->
+                wrap_exception d <| fun _ ->
+                    match x.GetMethod(method_name,List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)) with
+                    | null -> d.on_type_er d.trace "Cannot find a method with matching arguments."
+                    | meth -> TyOp(DotNetTypeCallMethod,[x';n'],meth.ReturnType |> dotnet_type_to_ty) |> ret
+            | _ -> d.on_type_er d.trace "Expected a .NET type instance."
 
     let add_trace d pos =
         match pos with
@@ -1092,6 +1174,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
     | Op(op,vars,pos) ->
         let d = add_trace d pos
         match op, vars with
+        | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a ret
+        | DotNetGetTypeFromAssembly,[a;b] -> dotnet_get_type_from_assembly d a b ret
+        | DotNetTypeInstantiateGenericParams,[a;b] -> dotnet_instantiate_generic_params d a b ret
+        | DotNetTypeConstruct,[a;b] -> dotnet_type_construct d a b ret
+        | DotNetTypeCallMethod,[a;b] -> dotnet_type_call_method d a b ret
+
         | CaseTuple,[v;len;tr;fl] -> case_tuple_template (=) d v len tr fl ret
         | CaseCons,[v;len;tr;fl] -> case_tuple_template (<) d v len tr fl ret
         | IfStatic,[cond;tr;fl] -> if_static d cond tr fl ret

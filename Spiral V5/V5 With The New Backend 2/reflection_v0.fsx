@@ -25,9 +25,13 @@ strb
 open System.Collections.Generic
 let dic = typeof<Dictionary<int,int>>
 let dic' = x.GetType("System.Collections.Generic.Dictionary`2")
+dic'.GetGenericArguments()
 let dic_ins_typ = dic'.MakeGenericType [|typeof<int>;typeof<int>|]
+let dic_ins' = dic_ins_typ.GetConstructor([|typeof<int>|])
+dic_ins'.Invoke([|10|])
 let dic_ins = Activator.CreateInstance(dic_ins_typ)
 dic_ins_typ.InvokeMember("Add",BindingFlags.InvokeMethod,null,dic_ins,[|0;100|])
+dic_ins_typ.GetMethod("Add",[|typeof<int>;typeof<int>|])
 
 let def_proc (d: Dictionary<_,_>) f t = 
     match d.TryGetValue t with
