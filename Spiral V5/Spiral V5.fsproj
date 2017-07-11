@@ -178,6 +178,8 @@
     <None Include="V5 With The New Backend 2\SpiralV5Language_v10a.fsx" />
     <None Include="V5 With The New Backend 2\SpiralV5Language_v10b.fsx" />
     <None Include="V5 With The New Backend 2\SpiralV5Parser_v3a.fsx" />
+    <None Include="V5 With The New Backend 2\SpiralV5FsharpCodegen_v1a.fsx" />
+    <None Include="V5 With The New Backend 2\Script1.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
