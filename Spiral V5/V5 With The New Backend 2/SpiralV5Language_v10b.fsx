@@ -273,7 +273,6 @@ let inlr name x y = fun_ name (x,y)
 let inl x y = inlr "" x y
 let ap pos x y = Op(Apply,[x;y],pos)
 let ap_ty pos x = Op(ApplyType,[x],pos)
-let l v b pos e = ap pos (inl v e pos) b
     
 let meth_memo y = Op(MethodMemoize,[y],None)
 let methr name x y pos = inlr name x (meth_memo y) pos
@@ -296,9 +295,6 @@ let rec ap' f l pos =
     match l with
     | x :: xs -> ap' (ap pos f x) xs pos
     | [] -> f
-
-let match_ x pat pos = ap pos (fun_ "" pat pos) x
-let function_ pat = fun_ "" pat
 
 let rec inlr' name args body pos =
     match args with
