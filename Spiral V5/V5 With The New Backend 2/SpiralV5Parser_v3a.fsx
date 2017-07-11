@@ -262,7 +262,6 @@ let main_arg = " main_arg" // Note the empty space at the start. This variable n
 
 let pattern_compile_single pattern = inl main_arg (pattern_compile (V(main_arg,None)) pattern) None
 let with_clause pos pattern els = PatClauses(pos,[pattern,els])
-let with_clauses pos l = PatClauses(pos,l)
 
 let l pattern body pos els =
     let v x = V(x,pos)
@@ -270,12 +269,11 @@ let l pattern body pos els =
 let S p name = PatVar(p,name)
 
 let rec inlr' name (args: Pattern list) body pos =
-    let args = List.foldBack (fun arg body -> pattern_compile_single (with_clause pos arg body)) args body
-    inlr name main_arg args pos
+    let body = List.foldBack (fun arg body -> pattern_compile_single (with_clause pos arg body)) args body
+    if name <> "" then ap pos (inlr name "" body pos) B else body
 
 let methr' name args body pos = inlr' name args (meth_memo body) pos
     
-
 let case_inl_pat_statement expr s = let p = pos s in pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body p) s
 let case_inl_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' "" pattern body p) p) s
 let case_inl_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' name pattern body p) p) s
@@ -302,20 +300,30 @@ let inline case_typex match_type expr (s: CharStream<_>) =
     let p = pos s
     let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
     let pat_body = expr_indent (<=) patterns .>> expr_indent (<=) lam
-    let pat = expr_indent (<=) bar >>. pat_body
-    let case_case pat = tuple2 pat expr
+    let pat = 
+        let pat_rec = bar >>. many1 pat_body |>> fun x -> true, x
+        let pat = many1 pat_body |>> fun x -> false, x
+        expr_indent (<=) bar >>. (pat_rec <|> pat)
+            
+    let clause pat = tuple2 pat expr
     let set_col (s: CharStream<_>) = i <- Some (s.Column); Reply(())
 
-    let pat_function l = inlr "" main_arg (pattern_compile_single (with_clauses p l)) p
+    let with_clauses pos l = 
+        List.map (function
+            | (is_rec, x :: xs), body -> x, if is_rec then methr' "" xs body None else inlr' "" xs body None
+            | _ -> failwith "impossible"
+            ) l
+        |> fun l -> PatClauses(pos,l)
+    let pat_function l = pattern_compile_single (with_clauses p l)
     let pat_match x l = ap p (pat_function l) x
 
     match match_type with
     | true -> // function
-        (function_ >>. set_col >>. many (case_case pat)
+        (function_ >>. set_col >>. many1 (clause pat)
         |>> pat_function) s    
     | false -> // match
         pipe2 (match_ >>. expr .>> with_ .>> set_col)
-            (many (case_case pat))
+            (many1 (clause pat))
             pat_match s
 
 let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
