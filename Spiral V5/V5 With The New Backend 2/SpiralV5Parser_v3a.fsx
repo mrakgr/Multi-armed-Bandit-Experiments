@@ -260,18 +260,20 @@ let open_ = keywordString "open"
 
 let main_arg = " main_arg" // Note the empty space at the start. This variable name can only be used by the compiler.
 
-let pattern_compile_single pattern = inl main_arg (pattern_compile (V(main_arg,None)) pattern) None
+let pattern_compile_single name pattern = inlr name main_arg (pattern_compile (V(main_arg,None)) pattern) None
 let with_clause pos pattern els = PatClauses(pos,[pattern,els])
 
 let l pattern body pos els =
     let v x = V(x,pos)
-    ap pos (pattern_compile_single (with_clause pos pattern els)) body
+    ap pos (pattern_compile_single "" (with_clause pos pattern els)) body
 let S p name = PatVar(p,name)
 
 let rec inlr' name (args: Pattern list) body pos =
-    let body = List.foldBack (fun arg body -> pattern_compile_single (with_clause pos arg body)) args body
-    if name <> "" then ap pos (inlr name "" body pos) B else body
-
+    let f arg body = pattern_compile_single name (with_clause pos arg body)
+    match args with
+    | x :: xs -> f x (inlr' "" xs body pos)
+    | [] -> body
+        
 let methr' name args body pos = inlr' name args (meth_memo body) pos
     
 let case_inl_pat_statement expr s = let p = pos s in pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body p) s
@@ -314,7 +316,7 @@ let inline case_typex match_type expr (s: CharStream<_>) =
             | _ -> failwith "impossible"
             ) l
         |> fun l -> PatClauses(pos,l)
-    let pat_function l = pattern_compile_single (with_clauses p l)
+    let pat_function l = pattern_compile_single "" (with_clauses p l)
     let pat_match x l = ap p (pat_function l) x
 
     match match_type with

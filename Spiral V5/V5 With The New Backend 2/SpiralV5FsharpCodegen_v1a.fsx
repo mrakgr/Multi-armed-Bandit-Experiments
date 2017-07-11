@@ -31,18 +31,6 @@ let print_program (imemo: MemoDict) (main: TypedExpr) =
         let mutable i = 0
         fun () -> i <- i+1; i
 
-    let print_main (buffer: Buf) =
-        let state x = buffer.Add <| Statement x
-        let enter' f = 
-            buffer.Add Indent
-            f()
-            buffer.Add Dedent
-        let enter f = 
-            enter' <| fun _ -> 
-                match f() with
-                | "" -> ()
-                | s -> state s
-
     let def_proc (d: Dictionary<_,_>) t = 
         match d.TryGetValue t with
         | true, v -> v
@@ -68,27 +56,38 @@ let print_program (imemo: MemoDict) (main: TypedExpr) =
     let print_fun_pointer_type' tag = sprintf "fun_pointer_type_%i" tag
     let print_fun_pointer_type typ = closure_type_tag typ |> print_fun_pointer_type'
 
-    let rec print_type r = 
-        match r with
-        | Unit -> "void"
-        | PrimT x -> 
-            match x with
-            | UInt8T -> "unsigned char"
-            | UInt16T -> "unsigned short"
-            | UInt32T -> "unsigned int"
-            | UInt64T -> "unsigned long long int"
-            | Int8T -> "char"
-            | Int16T -> "short"
-            | Int32T -> "int"
-            | Int64T -> "long long int"
-            | Float32T -> "float"
-            | Float64T -> "double"
-            | BoolT -> "int"
-        | ClosureT(a,r) -> print_fun_pointer_type (a,r)
-        | ModuleT env | FunctionT(env,_) | ModuleT env -> print_env_ty env
-        | VVT (t, _) -> print_tuple t
-        | LocalPointerT x | SharedPointerT x | GlobalPointerT x -> sprintf "%s *" (print_type x)
-        | ForModuleT _ | ForCastT _ -> failwith "Should be covered by Unit."
+    let print_main (buffer: Buf) =
+        let state x = buffer.Add <| Statement x
+        let enter' f = 
+            buffer.Add Indent
+            f()
+            buffer.Add Dedent
+        let enter f = 
+            enter' <| fun _ -> 
+                match f() with
+                | "" -> ()
+                | s -> state s
+
+        let rec print_type r = 
+            match r with
+            | PrimT x -> 
+                match x with
+                | UInt8T -> "unsigned char"
+                | UInt16T -> "unsigned short"
+                | UInt32T -> "unsigned int"
+                | UInt64T -> "unsigned long long int"
+                | Int8T -> "char"
+                | Int16T -> "short"
+                | Int32T -> "int"
+                | Int64T -> "long long int"
+                | Float32T -> "float"
+                | Float64T -> "double"
+                | BoolT -> "int"
+            | ClosureT(a,r) -> print_fun_pointer_type (a,r)
+            | ModuleT env | FunctionT(env,_) | ModuleT env -> print_env_ty env
+            | VVT t -> print_tuple t
+
+        failwith ""
 
     let inline if_not_unit ty f =
         match ty with
