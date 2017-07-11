@@ -1,8 +1,8 @@
-﻿#load "SpiralV5Language_v10a.fsx"
+﻿#load "SpiralV5Language_v10b.fsx"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
 
-open SpiralV5Language_v10a
+open SpiralV5Language_v10b
 open FParsec
 
 type ParserExpr =
@@ -249,9 +249,9 @@ let bar = keywordChar '|'
 let lam = keywordString "->"
 let set_me = keywordString "<-"
 let inl_ = keywordString "inl"
-let fun_ = keywordString "fun"
+let met_ = keywordString "met"
 let inl_rec = keywordString1 "inl" .>> keywordString "rec"
-let fun_rec = keywordString1 "fun" .>> keywordString "rec"
+let met_rec = keywordString1 "met" .>> keywordString "rec"
 let match_ = keywordString "match"
 let function_ = keywordString "function"
 let module_ = keywordString "module"
@@ -279,18 +279,18 @@ let methr' name args body pos = inlr' name args (meth_memo body) pos
 let case_inl_pat_statement expr s = let p = pos s in pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body p) s
 let case_inl_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' "" pattern body p) p) s
 let case_inl_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' name pattern body p) p) s
-let case_fun_name_pat_list_statement expr s = let p = pos s in pipe3 (fun_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' "" pattern body p) p) s
-let case_fun_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (fun_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' name pattern body p) p) s
+let case_met_name_pat_list_statement expr s = let p = pos s in pipe3 (met_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' "" pattern body p) p) s
+let case_met_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (met_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' name pattern body p) p) s
 let case_open expr s = let p = pos s in (open_ >>. expr |>> module_open p) s
 
 let statements expr = 
     [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
-     case_fun_name_pat_list_statement; case_fun_rec_name_pat_list_statement; case_open]
+     case_met_name_pat_list_statement; case_met_rec_name_pat_list_statement; case_open]
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
 let case_inl_pat_list_expr expr s = let p = pos s in pipe2 (inl_ >>. pattern_list) (lam >>. expr) (fun pattern body -> inlr' "" pattern body p) s
-let case_fun_pat_list_expr expr s = let p = pos s in pipe2 (fun_ >>. pattern_list) (lam >>. expr) (fun pattern body -> methr' "" pattern body p) s
+let case_met_pat_list_expr expr s = let p = pos s in pipe2 (met_ >>. pattern_list) (lam >>. expr) (fun pattern body -> methr' "" pattern body p) s
 
 let case_lit expr = lit
 let case_if_then_else expr = if_then_else expr 
@@ -326,7 +326,7 @@ let case_module expr s = let p = pos s in (module_ >>% module_create p) s
 let case_apply_type expr s = let p = pos s in (grave >>. expr |>> ap_ty p) s
 
 let expressions expr (s: CharStream<_>) =
-    ([case_inl_pat_list_expr; case_fun_pat_list_expr; case_apply_type
+    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type
       case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module
       ]
     |> List.map (fun x -> x expr |> attempt)

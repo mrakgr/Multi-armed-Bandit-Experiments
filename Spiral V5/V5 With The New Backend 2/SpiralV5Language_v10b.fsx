@@ -273,6 +273,7 @@ let inlr name x y = fun_ name (x,y)
 let inl x y = inlr "" x y
 let ap pos x y = Op(Apply,[x;y],pos)
 let ap_ty pos x = Op(ApplyType,[x],pos)
+let l v b pos e = ap pos (inl v e pos) b
     
 let meth_memo y = Op(MethodMemoize,[y],None)
 let methr name x y pos = inlr name x (meth_memo y) pos
@@ -492,10 +493,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
         | x :: xs -> tev d x (fun x -> vars_map d xs (fun x' -> ret (x :: x')))
         | [] -> ret []
 
-    let inline tev2 d a b ret =
-        tev d a <| fun l ->
-            tev d b <| fun r ->
-                ret l r
+    let inline tev2 d a b ret = tev d a <| fun a -> tev d b <| fun b -> ret a b
+    let inline tev3 d a b c ret = tev d a <| fun a -> tev d b <| fun b -> tev d c <| fun c -> ret a b c
 
     let get_tag d = 
         let t = !d.ltag
@@ -715,9 +714,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
 
         let rec strip_map x = Map.map (fun _ -> typec_strip) x
         and typec_strip = function // Implements #10.
+            | DotNetAssembly _ | DotNetRuntimeTypeT _ | DotNetTypeInstanceT _
+            | PrimT _ | LitT _ | RecT _ as x -> x
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
-            | PrimT _ | LitT _ | RecT _ as x -> x
             | FunctionT (e, b) -> FunctionT(strip_map e, b)
             | ModuleT e -> ModuleT (strip_map e)
             | ForCastT x -> typec_strip x |> ForCastT
@@ -839,23 +839,27 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
                 tev {d with env = env} b ret
             | x -> d.on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
 
-    let module_missing_key_error x y ret =
-        let mutable missing_key = None
-        let env = Map.fold (fun s k v ->
-            if Map.containsKey k s = false && missing_key.IsNone then missing_key <- Some k
-            Map.add k v s) x y
-        match missing_key with
-        | Some k -> d.on_type_er d.trace <| sprintf "The key %s cannot be added to a module using `with` as it is not in it originally. Use the extensible `with'` if such behavior is desired." k
-        | _ -> ret env
+    let module_with_f_extend d (module_,module_type) name arg ret =
+        let x = Map.add name arg module_
+        let x_ty = Map.add name (get_type arg) module_type
+        TyEnv(x, ModuleT x_ty) |> ret
 
-    let module_missing_key_ignore x y ret =
-        Map.fold (fun s k v -> Map.add k v s) x y |> ret
+    let module_with_f d (module_,module_type) name arg ret =
+        match Map.tryFind name module_ with
+        | Some arg' ->
+            if get_type arg = get_type arg' then module_with_f_extend d (module_,module_type) name arg ret
+            else d.on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `with` if that is the desired behavior." name
+        | None -> d.on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `with` if that is the desired behavior." name
 
-    let module_with module_missing_key d a b c ret =
-        tev2 d a b <| fun a b ->
-            match get_type a, get_type b with
-            | ModuleT x, ModuleT y -> module_missing_key x y <| fun env -> tev {d with env = env} c ret
-            | _ -> d.on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" (get_type a)
+    let module_with_template f d module_ name arg ret =
+        tev3 d module_ name arg <| fun module_ name arg ->
+            match module_, name with
+            | TyEnv(module_,ModuleT module_type), TypeString name -> f d (module_,module_type) name arg ret
+            | TyEnv(module_,ModuleT module_type),_ -> d.on_type_er d.trace "Expected a type level string as the second argument."
+            | _ -> d.on_type_er d.trace "Expected a module as the first argument."
+
+    let module_with = module_with_template module_with_f
+    let module_with_extend = module_with_template module_with_f_extend
 
     let type_annot d a b ret =
         match d.rbeh with
@@ -1186,6 +1190,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
         
         | PrintStatic,[a] -> tev d a <| fun r -> printfn "%A" r; ret TyB
         | ModuleOpen,[a;b] -> module_open d a b ret
+        | ModuleWith,[a;b;c] -> module_with d a b c ret
+        | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c ret
         | TypeLitCreate,[a] -> type_lit_create d a ret
 
         // Primitive operations on expressions.
@@ -1279,7 +1285,7 @@ let core_functions =
     let p2 f = inl' ["x"; "y"] (f (v "x") (v "y")) None
     let con x = Op(x,[],None)
     let lit x = Lit (x, None)
-    let l a b = l a b None
+    let l v b e = l v b None e
     s  [l "errortype" (p error_type)
         l "print_static" (p print_static)
         ]
