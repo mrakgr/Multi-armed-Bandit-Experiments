@@ -28,8 +28,8 @@ type Buf = ResizeArray<ProgramNode>
 
 let print_program (globals: LangGlobals) (main: TypedExpr) =
     let get_tag =
-        let mutable i = 0
-        fun () -> i <- i+1; i
+        let mutable i = 0L
+        fun () -> i <- i+1L; i
 
     let def_proc (d: Dictionary<_,_>) t = 
         match d.TryGetValue t with
@@ -60,9 +60,9 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
 //    let rec_ty_tag x = def_proc rec_ty_definitions x
     let print_rec_ty v = sprintf "RecTy%i" v
 
-    let print_main (buffer: Buf) =
+    let rec codegen (buffer: Buf) expr =
         let state x = buffer.Add <| Statement x
-        let enter' f = 
+        let enter' f =
             buffer.Add Indent
             f()
             buffer.Add Dedent
@@ -129,101 +129,123 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
                 x.Namespace + x.Name
 
         let print_type = type_filter_unit >> print_type
+        
+        let print_value = function
+            | LitInt8 x -> sprintf "%iy" x
+            | LitInt16 x -> sprintf "%is" x
+            | LitInt32 x -> sprintf "%i" x
+            | LitInt64 x -> sprintf "%iL" x
+            | LitUInt8 x -> sprintf "%iuy" x
+            | LitUInt16 x -> sprintf "%ius" x
+            | LitUInt32 x -> sprintf "%iu" x
+            | LitUInt64 x -> sprintf "%iUL" x
+            | LitFloat32 x -> sprintf "%ff" x
+            | LitFloat64 x -> sprintf "%f" x
+            | LitString x -> sprintf "\"%s\"" x
+            | LitBool x -> if x then "true" else "false"
 
-        failwith ""
+        let codegen x = codegen buffer x
+        
+        let print_tyv (tag,ty) = sprintf "var_%i" tag
+        let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
+        let print_method tag = sprintf "method_%i" tag
+
+        let rec if_ cond tr fl =
+            let print_if () =
+                sprintf "if %s then" (codegen cond) |> state
+                enter <| fun _ -> codegen tr
+                "else" |> state
+                enter <| fun _ -> codegen fl
+
+            match get_type tr with
+            | VVT [] -> print_if (); ""
+            | t ->
+                let if_var = print_tyv_with_type (get_tag(), t)
+                sprintf "let %s =" if_var |> state
+                enter' <| fun _ -> print_if()
+                if_var
+
+        let make_struct l =
+            Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
+            |> String.concat ", "
+
+        let inline if_not_unit ty f =
+            match ty with
+            | VVT [] -> ""
+            | _ -> f()
+
+        match expr with
+        | TyV v -> print_tyv v
+        | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
+        | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
+        | TyLet(_,(_,VVT []),b,rest,_) -> 
+            let b = codegen b
+            if b <> "" then sprintf "%s;" b |> state
+            codegen rest
+//        | TyLet(_,_, TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
+        | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
+        | TyLit x -> print_value x
+        | TyMemoizedExpr(MemoMethod,used_vars,renamer,tag,_) ->
+            let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
+            let method_name = print_method tag
+            sprintf "%s(%s)" method_name args
+//        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
+        | TyVV(l,(VVT t)) -> make_struct l |> sprintf "make_struct_%i(%s)" (tuple_tag t)
+        | TyVV(l,_) -> failwith "The type of TyVT should always be VTT." // TODO: Make creating union types work.
+
+        | TyEnv(env_term,(FunctionT(env_ty,_) | ModuleT env_ty)) ->
+            Map.toArray env_term
+            |> Array.map snd
+            |> make_struct |> sprintf "make_struct_%i(%s)" (env_ty_tag env_ty)
+        | TyEnv(env_term,_) -> failwith "Can't be any other type."
+
+        | TyOp(Apply,[a;b],t) -> 
+            // Apply during codegen is only used for applying closures.
+            // There is one level of flattening in the outer arguments.
+            let b = tuple_field b |> List.map codegen |> String.concat ", "
+            sprintf "%s(%s)" (codegen a) b
+
+        // Primitive operations on expressions.
+        | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
+        | TyOp(Sub,[a;b],t) -> sprintf "(%s - %s)" (codegen a) (codegen b)
+        | TyOp(Mult,[a;b],t) -> sprintf "(%s * %s)" (codegen a) (codegen b)
+        | TyOp(Div,[a;b],t) -> sprintf "(%s / %s)" (codegen a) (codegen b)
+        | TyOp(Mod,[a;b],t) -> sprintf "(%s %% %s)" (codegen a) (codegen b)
+        | TyOp(LT,[a;b],t) -> sprintf "(%s < %s)" (codegen a) (codegen b)
+        | TyOp(LTE,[a;b],t) -> sprintf "(%s <= %s)" (codegen a) (codegen b)
+        | TyOp(EQ,[a;b],t) -> sprintf "(%s == %s)" (codegen a) (codegen b)
+        | TyOp(NEQ,[a;b],t) -> sprintf "(%s != %s)" (codegen a) (codegen b)
+        | TyOp(GT,[a;b],t) -> sprintf "(%s > %s)" (codegen a) (codegen b)
+        | TyOp(GTE,[a;b],t) -> sprintf "(%s >= %s)" (codegen a) (codegen b)
+        | TyOp(And,[a;b],t) -> sprintf "(%s && %s)" (codegen a) (codegen b)
+        | TyOp(Or,[a;b],t) -> sprintf "(%s || %s)" (codegen a) (codegen b)
+
+        | TyOp(ShiftLeft,[x;y],_) -> sprintf "(%s << %s)" (codegen x) (codegen y)
+        | TyOp(ShiftRight,[x;y],_) -> sprintf "(%s >> %s)" (codegen x) (codegen y)
+
+//        | TyOp(ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
+//        | TyOp(ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
+//        | TyOp(ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
+//        | TyOp(ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
+
+        | TyOp(Neg,[a],t) -> sprintf "(-%s)" (codegen a)
+        | TyOp(VVIndex,[a;b],t) -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen a) (codegen b)
+        | TyOp(EnvUnseal,[r; TyLit (LitString k)], t) -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
+//        | TyOp(ArrayIndex,[a;b],t) -> print_array true a b
+//        | TyOp(ArrayUnsafeIndex,[a;b],t) -> print_array false a b
+        | TyOp(Log,[x],_) -> sprintf "log(%s)" (codegen x)
+        | TyOp(Exp,[x],_) -> sprintf "exp(%s)" (codegen x)
+        | TyOp(Tanh,[x],_) -> sprintf "tanh(%s)" (codegen x)
+
+        
+
+        // Cuda kernel constants
+//        | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
+
+        | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
+        
     failwith ""
 
-//        let rec print_type r = 
-//            match r with
-//            | PrimT x -> 
-//                match x with
-//                | UInt8T -> "unsigned char"
-//                | UInt16T -> "unsigned short"
-//                | UInt32T -> "unsigned int"
-//                | UInt64T -> "unsigned long long int"
-//                | Int8T -> "char"
-//                | Int16T -> "short"
-//                | Int32T -> "int"
-//                | Int64T -> "long long int"
-//                | Float32T -> "float"
-//                | Float64T -> "double"
-//                | BoolT -> "int"
-//            | ClosureT(a,r) -> print_fun_pointer_type (a,r)
-//            | ModuleT env | FunctionT(env,_) -> print_env_ty env
-//            | VVT t -> print_tuple t
-//
-//        failwith ""
-//
-//    let inline if_not_unit ty f =
-//        match ty with
-//        | Unit -> ""
-//        | _ -> f()
-//
-//    let print_tyv (tag,ty) = sprintf "var_%i" tag
-//    let print_tyv_with_type (tag,ty as v) = sprintf "%s %s" (print_type ty) (print_tyv v)
-//    let print_method tag = sprintf "method_%i" tag
-//
-//    let print_value = function
-//        | LitUInt8 x -> string x 
-//        | LitUInt16 x -> string x 
-//        | LitUInt32 x -> string x 
-//        | LitUInt64 x -> string x 
-//        | LitInt8 x -> string x
-//        | LitInt16 x -> string x
-//        | LitInt32 x -> string x
-//        | LitInt64 x -> string x
-//        | LitFloat32 x -> string x
-//        | LitFloat64 x -> string x
-//        | LitBool x -> if x then "1" else "0"
-//        | LitString x -> sprintf "\"%s\"" x
-//        | ThreadIdxX -> "threadIdx.x"
-//        | ThreadIdxY -> "threadIdx.y"
-//        | ThreadIdxZ -> "threadIdx.z"
-//        | BlockIdxX -> "blockIdx.x"
-//        | BlockIdxY -> "blockIdx.y"
-//        | BlockIdxZ -> "blockIdx.z"
-//
-//    let rec print_array is_print_assertion a b =
-//        let ar_sizes =
-//            match a with
-//            | Array(_,sizes,_) -> List.map codegen sizes
-//            | _ -> failwith "impossible"
-//
-//        let i = tuple_field b |> List.map codegen
-//
-//        if is_print_assertion then
-//            List.map2 (fun size i -> sprintf "%s >= 0 && %s < %s" i i size) ar_sizes i
-//            |> String.concat " + "
-//            |> state
-//
-//        // Array cases
-//        let index = 
-//            let rec loop = function
-//                | None, s :: sx, i :: ix ->
-//                    loop (Some(sprintf "(%s) * %s" i s),sx,ix)
-//                | None, [], [i] ->
-//                    i
-//                | Some p, s :: sx, i :: ix ->
-//                    loop (Some(sprintf "(%s + (%s)) * %s" p i s),sx,ix)
-//                | Some p, [], [i] ->
-//                    sprintf "%s + (%s)" p i
-//                | _ -> failwith "invalid state"
-//            if i.IsEmpty = false then loop (None,List.tail ar_sizes,i)
-//            else "0"
-//        sprintf "%s[%s]" (codegen a) index
-//
-//    and print_array_declaration is_shared typ v ar_sizes =   
-//        let typ = print_type typ
-//        let nam = print_tyv v
-//        let dim =
-//            if List.isEmpty ar_sizes then "1"
-//            else
-//                List.map (codegen >> sprintf "%s") ar_sizes
-//                |> String.concat " * "
-//        
-//        match is_shared with
-//        | true -> sprintf "__shared__ %s %s[%s];" typ nam dim |> state
-//        | false -> sprintf "%s %s[%s];" typ nam dim |> state
 //
 //    and if_ cond tr fl t =
 //        let p, r =
