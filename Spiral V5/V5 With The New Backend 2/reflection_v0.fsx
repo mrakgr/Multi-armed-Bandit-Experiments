@@ -33,6 +33,19 @@ let dic_ins = Activator.CreateInstance(dic_ins_typ)
 dic_ins_typ.InvokeMember("Add",BindingFlags.InvokeMethod,null,dic_ins,[|0;100|])
 dic_ins_typ.GetMethod("Add",[|typeof<int>;typeof<int>|])
 
+let print_dotnet_instance_type type_printer (x: Type) =
+    if x.GenericTypeArguments.Length > 0 then
+        [|
+        x.Namespace 
+        x.Name.Split '`' |> Array.head
+        "<"
+        Array.map type_printer x.GenericTypeArguments |> String.concat ","
+        ">"
+        |] |> String.concat null
+    else
+        x.Namespace + x.Name
+        
+
 let def_proc (d: Dictionary<_,_>) f t = 
     match d.TryGetValue t with
     | true, v -> v

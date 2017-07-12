@@ -26,7 +26,7 @@ let process_statements (statements: ResizeArray<ProgramNode>) =
 
 type Buf = ResizeArray<ProgramNode>
 
-let print_program (imemo: MemoDict) (main: TypedExpr) =
+let print_program (globals: LangGlobals) (main: TypedExpr) =
     let get_tag =
         let mutable i = 0
         fun () -> i <- i+1; i
@@ -49,13 +49,16 @@ let print_program (imemo: MemoDict) (main: TypedExpr) =
     let env_ty_definitions = d0()
     let env_ty_tag x = def_proc env_ty_definitions x
     let print_env_ty' v = sprintf "EnvTy%i" v
-    let print_env_ty t = if Map.isEmpty t then "unit" else env_ty_tag t |> print_env_ty'
+    let print_env_ty t = env_ty_tag t |> print_env_ty'
 
     let union_ty_definitions = d0()
     let union_ty_tag x = def_proc union_ty_definitions x
     let print_union_ty' v = sprintf "UnionTy%i" v
-    //let print_union_ty set =
-        
+    let print_union_ty set = union_ty_tag set |> print_union_ty'
+
+//    let rec_ty_definitions = d0()
+//    let rec_ty_tag x = def_proc rec_ty_definitions x
+    let print_rec_ty v = sprintf "RecTy%i" v
 
     let print_main (buffer: Buf) =
         let state x = buffer.Add <| Statement x
@@ -70,23 +73,62 @@ let print_program (imemo: MemoDict) (main: TypedExpr) =
                 | s -> state s
 
         let rec type_filter_unit = function
-            | ModuleT env -> Map.filter (fun _ -> type_unit_is) env |> Map.map (fun _ -> type_filter_unit) |> ModuleT
-            | FunctionT(env,t) -> Map.filter (fun _ -> type_unit_is) env |> Map.map (fun _ -> type_filter_unit) |> fun env -> FunctionT(env,t)
-            | VVT t -> List.filter type_unit_is t |> List.map type_filter_unit |> VVT
-            | UnionT t -> Set.filter type_unit_is t |> Set.map type_filter_unit |> UnionT
+            | ModuleT env -> // I'd prefer to use choose here, but Map and Set do not have it.
+                let env = Map.map (fun _ -> type_filter_unit) env |> Map.filter (fun _ -> type_unit_is)
+                if env.IsEmpty then BVVT else ModuleT env
+            | FunctionT(env,t) -> 
+                let env = Map.map (fun _ -> type_filter_unit) env |> Map.filter (fun _ -> type_unit_is) 
+                if env.IsEmpty then BVVT else FunctionT(env,t)
+            | VVT t -> 
+                let t = List.map type_filter_unit t |> List.filter type_unit_is
+                if t.IsEmpty then BVVT else VVT t
+            | UnionT t -> Set.map type_filter_unit t |> UnionT
             | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ as x -> x
-            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> failwith "Should have been filtered first"
+            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> BVVT
 
         and type_unit_is = function
-            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> false
+            | VVT [] -> false
             | _ -> true
 
-        let type_strip' x = if type_unit_is x then type_filter_unit x |> Some else None
+        let rec print_type = function
+            | FunctionT(env,_) | ModuleT env -> print_env_ty env
+            | VVT t -> print_tuple t
+            | UnionT t -> print_union_ty t
+            | RecT t -> print_rec_ty t
+            | DotNetTypeInstanceT t ->
+                globals.memoized_dotnet_types |> snd |> fun x -> x.[t]
+                |> print_dotnet_instance_type
+            | ClosureT(a,b) -> sprintf "%s -> %s" (print_type a) (print_type b)
+            | PrimT x ->
+                match x with
+                | Int8T -> "int8"
+                | Int16T -> "int16"
+                | Int32T -> "int32"
+                | Int64T -> "int64"
+                | UInt8T -> "uint8"
+                | UInt16T -> "uint16"
+                | UInt32T -> "uint32"
+                | UInt64T -> "uint64"
+                | Float32T -> "float32"
+                | Float64T -> "float64"
+                | StringT -> "string"
+                | BoolT -> "bool"
+            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> 
+                failwith "Should have been filtered out. Only VVT [] should be the unit type."
 
-        let print_type_modulet env = print_env_ty env
-        let print_type_functiont env = print_env_ty env
-        let print_type_vvt t = print_tuple t
-            
+        and print_dotnet_instance_type (x: System.Type) =
+            if x.GenericTypeArguments.Length > 0 then
+                [|
+                x.Namespace 
+                x.Name.Split '`' |> Array.head
+                "<"
+                Array.map (dotnet_type_to_ty globals.memoized_dotnet_types >> print_type) x.GenericTypeArguments |> String.concat ","
+                ">"
+                |] |> String.concat null
+            else
+                x.Namespace + x.Name
+
+        let print_type = type_filter_unit >> print_type
 
         failwith ""
     failwith ""

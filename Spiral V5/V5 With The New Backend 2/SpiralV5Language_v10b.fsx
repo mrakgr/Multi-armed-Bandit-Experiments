@@ -436,6 +436,50 @@ let env_num_args env =
 
 let ty_lit_create pos x = Op(TypeLitCreate,[Lit (x, pos)],pos)
 
+let map_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x =
+    match d.TryGetValue x with
+    | true, x -> x
+    | false, _ ->
+        let v = d.Count |> int64
+        d.Add(x,v); dr.Add(v,x)
+        v
+
+let map_rev_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x = dr.[x]
+
+let dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
+    if x = typeof<int8> then PrimT Int8T
+    elif x = typeof<int16> then PrimT Int16T
+    elif x = typeof<int32> then PrimT Int32T
+    elif x = typeof<int64> then PrimT Int64T
+
+    elif x = typeof<uint8> then PrimT UInt8T
+    elif x = typeof<uint16> then PrimT UInt16T
+    elif x = typeof<uint32> then PrimT UInt32T
+    elif x = typeof<uint64> then PrimT UInt64T
+
+    elif x = typeof<float32> then PrimT Float32T
+    elif x = typeof<float> then PrimT Float64T
+    elif x = typeof<string> then PrimT StringT
+    else map_dotnet memoized_dotnet_types x |> DotNetRuntimeTypeT
+
+let dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
+    match x with
+    | PrimT Int8T -> typeof<int8>
+    | PrimT Int16T -> typeof<int16>
+    | PrimT Int32T -> typeof<int32>
+    | PrimT Int64T -> typeof<int64>
+
+    | PrimT UInt8T -> typeof<uint8>
+    | PrimT UInt16T -> typeof<uint16>
+    | PrimT UInt32T -> typeof<uint32>
+    | PrimT UInt64T -> typeof<uint64>
+
+    | PrimT Float32T -> typeof<float32>
+    | PrimT Float64T -> typeof<float>
+    | PrimT StringT -> typeof<string>
+    | DotNetTypeInstanceT x | DotNetRuntimeTypeT x -> map_rev_dotnet memoized_dotnet_types x
+    | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
+
 type Trace = PosKey list
 
 type RecursiveBehavior =
@@ -470,18 +514,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
     let inline tev_assume cse_env d expr ret = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr (apply_seq d >> ret)
     let inline tev_method d expr ret = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr (apply_seq d >> ret)
     let inline tev_rec d expr ret = tev_method {d with rbeh=AnnotationReturn} expr ret
-
-    let map_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x =
-        match d.TryGetValue x with
-        | true, x -> x
-        | false, _ ->
-            let v = d.Count |> int64
-            d.Add(x,v); dr.Add(v,x)
-            v
-
-    let map_rev_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x = dr.[x]
-        
-
 
     let v_find env x on_fail ret = 
         match Map.tryFind x env with
@@ -1077,40 +1109,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
             | TyAssembly x, _ -> d.on_type_er d.trace "Expected a type level string as the second argument."
             | _ -> d.on_type_er d.trace "Expected a type level .NET Assembly as the first argument."
 
-    let dotnet_type_to_ty (x: System.Type) =
-        if x = typeof<int8> then PrimT Int8T
-        elif x = typeof<int16> then PrimT Int16T
-        elif x = typeof<int32> then PrimT Int32T
-        elif x = typeof<int64> then PrimT Int64T
-
-        elif x = typeof<uint8> then PrimT UInt8T
-        elif x = typeof<uint16> then PrimT UInt16T
-        elif x = typeof<uint32> then PrimT UInt32T
-        elif x = typeof<uint64> then PrimT UInt64T
-
-        elif x = typeof<float32> then PrimT Float32T
-        elif x = typeof<float> then PrimT Float64T
-        elif x = typeof<string> then PrimT StringT
-        else map_dotnet globals.memoized_dotnet_types x |> DotNetRuntimeTypeT
-
-    let dotnet_ty_to_type (x: Ty) =
-        match x with
-        | PrimT Int8T -> typeof<int8>
-        | PrimT Int16T -> typeof<int16>
-        | PrimT Int32T -> typeof<int32>
-        | PrimT Int64T -> typeof<int64>
-
-        | PrimT UInt8T -> typeof<uint8>
-        | PrimT UInt16T -> typeof<uint16>
-        | PrimT UInt32T -> typeof<uint32>
-        | PrimT UInt64T -> typeof<uint64>
-
-        | PrimT Float32T -> typeof<float32>
-        | PrimT Float64T -> typeof<float>
-        | PrimT StringT -> typeof<string>
-        | DotNetTypeInstanceT x | DotNetRuntimeTypeT x -> map_rev_dotnet globals.memoized_dotnet_types x
-        | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
-
     let (|TyDotNetRuntimeType|_|) x =
         match x with
         | TyType (DotNetRuntimeTypeT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
@@ -1120,6 +1118,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
         match x with
         | TyType (DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
         | _ -> None
+
+    let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
+    let dotnet_ty_to_type (x: Ty) = dotnet_ty_to_type globals.memoized_dotnet_types x
 
     let dotnet_instantiate_generic_params d x n ret =
         tev2 d x n <| fun x n ->
