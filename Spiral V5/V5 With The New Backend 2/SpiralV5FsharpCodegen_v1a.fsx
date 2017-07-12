@@ -72,25 +72,17 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
                 | "" -> ()
                 | s -> state s
 
-        let rec type_filter_unit = function
-            | ModuleT env -> // I'd prefer to use choose here, but Map and Set do not have it.
-                let env = Map.map (fun _ -> type_filter_unit) env |> Map.filter (fun _ -> type_unit_is)
-                if env.IsEmpty then BVVT else ModuleT env
-            | FunctionT(env,t) -> 
-                let env = Map.map (fun _ -> type_filter_unit) env |> Map.filter (fun _ -> type_unit_is) 
-                if env.IsEmpty then BVVT else FunctionT(env,t)
-            | VVT t -> 
-                let t = List.map type_filter_unit t |> List.filter type_unit_is
-                if t.IsEmpty then BVVT else VVT t
-            | UnionT t -> Set.map type_filter_unit t |> UnionT
-            | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ as x -> x
-            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> BVVT
+        let rec type_unit_is = function
+            | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> false
+            | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> true
+            | ModuleT env | FunctionT(env,_) -> Map.forall (fun _ -> type_unit_is) env
+            | UnionT set -> Set.forall type_unit_is set
+            | VVT t -> List.forall type_unit_is t
 
-        and type_unit_is = function
-            | VVT [] -> false
-            | _ -> true
+        let (|Unit|_|) x = if type_unit_is x then Some () else None
 
         let rec print_type = function
+            | Unit -> "unit"
             | FunctionT(env,_) | ModuleT env -> print_env_ty env
             | VVT t -> print_tuple t
             | UnionT t -> print_union_ty t
@@ -114,7 +106,8 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
                 | StringT -> "string"
                 | BoolT -> "bool"
             | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> 
-                failwith "Should have been filtered out. Only VVT [] should be the unit type."
+                failwith "Should be covered in Unit."
+                
 
         and print_dotnet_instance_type (x: System.Type) =
             if x.GenericTypeArguments.Length > 0 then
@@ -127,9 +120,7 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
                 |] |> String.concat null
             else
                 x.Namespace + x.Name
-
-        let print_type = type_filter_unit >> print_type
-        
+       
         let print_value = function
             | LitInt8 x -> sprintf "%iy" x
             | LitInt16 x -> sprintf "%is" x
@@ -146,7 +137,10 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
 
         let codegen x = codegen buffer x
         
-        let print_tyv (tag,ty) = sprintf "var_%i" tag
+        let print_tyv (tag,ty) = 
+            match ty with
+            | Unit -> failwith "Unit type variables should never be printed."
+            | _ -> sprintf "var_%i" tag
         let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
         let print_method tag = sprintf "method_%i" tag
 
@@ -158,7 +152,7 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
                 enter <| fun _ -> codegen fl
 
             match get_type tr with
-            | VVT [] -> print_if (); ""
+            | Unit -> print_if (); ""
             | t ->
                 let if_var = print_tyv_with_type (get_tag(), t)
                 sprintf "let %s =" if_var |> state
@@ -171,14 +165,15 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
 
         let inline if_not_unit ty f =
             match ty with
-            | VVT [] -> ""
+            | Unit -> ""
             | _ -> f()
 
         match expr with
+        | TyV (_, Unit) -> ""
         | TyV v -> print_tyv v
         | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
-        | TyLet(_,(_,VVT []),b,rest,_) -> 
+        | TyLet(_,(_,Unit),b,rest,_) -> 
             let b = codegen b
             if b <> "" then sprintf "%s;" b |> state
             codegen rest
