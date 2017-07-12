@@ -14,3 +14,26 @@ inl rec print_main buffer =
             | "" -> ()
             | s -> state s
 """
+"""
+inl module_statements buffer =
+    inl state x = buffer.Add <| Statement x
+    inl enter' f =
+        buffer.Add .Indent
+        f()
+        buffer.Add .Dedent
+    inl enter f = 
+        enter' <| inl _ -> 
+            match f() with
+            | "" -> ()
+            | s -> state s
+    module
+"""
+
+[<Struct>]
+type Q =
+    val a: int
+    val b: string
+
+    new (q,w) = {a=q;b=w}
+
+Q(1,"2")
