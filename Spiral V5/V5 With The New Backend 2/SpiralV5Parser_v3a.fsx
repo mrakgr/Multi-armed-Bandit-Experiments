@@ -74,46 +74,37 @@ let pattern_compile arg pat =
         let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
         let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
 
-//        let inline pat_fold_template map_end map_on_succ map_on_fail tuple_start_indexer tuple_index pos l =
-//            let len = List.length l
-//            List.foldBack (fun pat (on_succ, on_fail, indexer, i) -> 
-//                let arg = indexer arg i pos
-//                let on_succ' = map_on_succ arg pat on_succ on_fail
-//                let on_fail' = map_on_fail arg pat on_succ on_fail
-//                on_succ', on_fail', tuple_index, i-1
-//                ) l (on_succ, on_fail, tuple_start_indexer, len - 1)
-//            |> fun (on_succ,on_fail,_,_) ->
-//                map_end on_succ on_fail len
+        let pat_foldbacki f s l =
+            let mutable len = 0
+            let rec loop i l =
+                match l with
+                | x :: xs -> f (x,i) (loop (i+1) xs)
+                | [] -> len <- i; s
+            loop 0 l, len
+            
+        let pat_tuple pos l =
+            pat_foldbacki
+                (fun (pat,i) on_succ ->
+                    let arg = tuple_index arg i pos
+                    cp arg pat on_succ on_fail)
+                on_succ
+                l
+            |> fun (on_succ,len) -> case_tuple arg (lit_int len pos) on_succ.Value on_fail.Value pos
 
-//        let pat_tuple' tuple_start_indexer case_ pos l =
-//            pat_fold_template
-//                (fun on_succ _ len -> case_ arg (lit_int len pos) on_succ.Value on_fail.Value pos)
-//                cp (fun _ _ _ on_fail -> on_fail) // Accumulates the arguments into on_succ
-//                tuple_start_indexer tuple_index pos l
-//        let pat_tuple pos l = pat_tuple' tuple_index case_tuple pos l
-//        let pat_cons pos l = pat_tuple' tuple_slice_from case_cons pos l
-        let pat_tuple pos l = 
-            let len = List.length l
-            List.foldBack (fun x s ->
-                
-                ) l
+        let pat_cons pos l = 
+            pat_foldbacki
+                (fun (pat,i) (on_succ, tuple_index') ->
+                    let arg = tuple_index' arg i pos
+                    cp arg pat on_succ on_fail, tuple_index)
+                (on_succ, tuple_slice_from)
+                l
+            |> fun ((on_succ,_),len) -> case_cons arg (lit_int len pos) on_succ.Value on_fail.Value pos
 
-        let pat_pass map_end map_on_succ map_on_fail pos l =
-            let tuple_pass v _ _ = v
-            pat_fold_template map_end map_on_succ map_on_fail
-                tuple_pass tuple_pass pos l
+        let inline force (x: Lazy<_>) = x.Value
 
-        let pat_or pos l = // The or pattern accumulates the patterns into the on_fail
-            pat_pass
-                (fun _ on_fail _ -> on_fail.Value)
-                (fun _ _ on_succ _ -> on_succ) // id
-                cp pos l
-
-        let pat_and pos l = // The and pattern accumulates the patterns into the on_succ
-            pat_pass
-                (fun on_succ _ _ -> on_succ.Value)
-                cp (fun _ _ _ on_fail -> on_fail) // id
-                pos l
+        let pat_or pos l = List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
+        let pat_and pos l = List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
+        let pat_clauses pos l = List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy exp) on_fail) l on_fail |> force
 
         match pat with
         | E -> on_succ.Value
@@ -130,17 +121,7 @@ let pattern_compile arg pat =
             cp' (ap pos (v a) arg) b on_succ on_fail
         | PatOr (pos, l) -> pat_or pos l
         | PatAnd (pos, l) -> pat_and pos l
-        | PatClauses (pos, l) ->
-            pat_pass
-                (fun on_succ on_fail _ -> 
-                    printfn "I am in PatClauses's map_end. %A %A"  on_succ.Value on_fail.Value
-                    let x = on_succ.Value
-                    printfn "I am exiting PatClauses's map_end."
-                    x
-                    )
-                (fun arg (pat, exp) on_succ on_fail -> cp arg pat (lazy exp) on_fail)
-                (fun arg (pat,exp) on_succ on_fail -> on_succ)
-                pos l
+        | PatClauses (pos, l) -> pat_clauses pos l
         | PatNameT (pos, x) ->
             let x = type_lit_create pos (LitString x)
             if_static (eq_type arg x pos) on_succ.Value on_fail.Value pos
