@@ -180,6 +180,7 @@
     <None Include="V5 With The New Backend 2\SpiralV5Parser_v3a.fsx" />
     <None Include="V5 With The New Backend 2\SpiralV5FsharpCodegen_v1a.fsx" />
     <None Include="V5 With The New Backend 2\Script1.fsx" />
+    <None Include="V5 With The New Backend 2\pm_dump.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

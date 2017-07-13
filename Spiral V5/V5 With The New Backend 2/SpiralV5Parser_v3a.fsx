@@ -74,24 +74,29 @@ let pattern_compile arg pat =
         let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
         let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
 
-        let inline pat_fold_template map_end map_on_succ map_on_fail tuple_start_indexer tuple_index pos l =
-            let len = List.length l
-            List.foldBack (fun pat (on_succ, on_fail, indexer, i) -> 
-                let arg = indexer arg i pos
-                let on_succ' = map_on_succ arg pat on_succ on_fail
-                let on_fail' = map_on_fail arg pat on_succ on_fail
-                on_succ', on_fail', tuple_index, i-1
-                ) l (on_succ, on_fail, tuple_start_indexer, len - 1)
-            |> fun (on_succ,on_fail,_,_) ->
-                map_end on_succ on_fail len
+//        let inline pat_fold_template map_end map_on_succ map_on_fail tuple_start_indexer tuple_index pos l =
+//            let len = List.length l
+//            List.foldBack (fun pat (on_succ, on_fail, indexer, i) -> 
+//                let arg = indexer arg i pos
+//                let on_succ' = map_on_succ arg pat on_succ on_fail
+//                let on_fail' = map_on_fail arg pat on_succ on_fail
+//                on_succ', on_fail', tuple_index, i-1
+//                ) l (on_succ, on_fail, tuple_start_indexer, len - 1)
+//            |> fun (on_succ,on_fail,_,_) ->
+//                map_end on_succ on_fail len
 
-        let pat_tuple' tuple_start_indexer case_ pos l =
-            pat_fold_template
-                (fun on_succ _ len -> case_ arg (lit_int len pos) on_succ.Value on_fail.Value pos)
-                cp (fun _ _ _ on_fail -> on_fail) // Accumulates the arguments into on_succ
-                tuple_start_indexer tuple_index pos l
-        let pat_tuple pos l = pat_tuple' tuple_index case_tuple pos l
-        let pat_cons pos l = pat_tuple' tuple_slice_from case_cons pos l
+//        let pat_tuple' tuple_start_indexer case_ pos l =
+//            pat_fold_template
+//                (fun on_succ _ len -> case_ arg (lit_int len pos) on_succ.Value on_fail.Value pos)
+//                cp (fun _ _ _ on_fail -> on_fail) // Accumulates the arguments into on_succ
+//                tuple_start_indexer tuple_index pos l
+//        let pat_tuple pos l = pat_tuple' tuple_index case_tuple pos l
+//        let pat_cons pos l = pat_tuple' tuple_slice_from case_cons pos l
+        let pat_tuple pos l = 
+            let len = List.length l
+            List.foldBack (fun x s ->
+                
+                ) l
 
         let pat_pass map_end map_on_succ map_on_fail pos l =
             let tuple_pass v _ _ = v
@@ -140,12 +145,8 @@ let pattern_compile arg pat =
             let x = type_lit_create pos (LitString x)
             if_static (eq_type arg x pos) on_succ.Value on_fail.Value pos
 
-    //let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
-    let pattern_compile_def_on_succ = lazy error_type (Lit(LitString "Missing a clause.", None)) // This is a compiler error. Will be removed.
+    let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
     let pattern_compile_def_on_fail = lazy error_type (Lit(LitString "Pattern matching cases are inexhaustive", None))
-
-    printfn "pat=%A" pat
-
     pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
 let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
