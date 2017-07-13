@@ -55,6 +55,7 @@ and Value =
     | LitString of string
 
 and Op =
+    // DotNetOps
     | DotNetLoadAssembly
     | DotNetGetTypeFromAssembly
     | DotNetTypeInstantiateGenericParams
@@ -434,7 +435,7 @@ let env_num_args env =
         let f = typed_expr_free_variables v
         if Set.isEmpty f then s else s+1) 0 env
 
-let ty_lit_create pos x = Op(TypeLitCreate,[Lit (x, pos)],pos)
+let type_lit_create pos x = Op(TypeLitCreate,[Lit (x, pos)],pos)
 
 let map_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x =
     match d.TryGetValue x with
@@ -507,7 +508,7 @@ type LangGlobals =
     memoized_dotnet_types: Dictionary<System.Type,Tag> * Dictionary<Tag,System.Type>
     }
 
-let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) ret =
+let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) (ret: TypedExpr -> 'a) =
     let inline tev d expr ret = expr_typecheck globals d expr ret
     let inline apply_seq d x = !d.seq x
     let inline tev_seq d expr ret = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr (apply_seq d >> ret)
@@ -790,9 +791,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
         | TyEnv(env_term,FunctionT(env_ty,x)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t ret
         | x, TyType (ForCastT t) -> d.on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n ret
-        | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont ra ret
-        | x, NameT n -> d.on_type_er d.trace <| sprintf "Expected a module or a type constructor in application. Got: %A" x
+        | TyEnv(env_term,ModuleT env_ty), _ -> d.on_type_er d.trace "Expected a type level string in module application."
         | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra ret
+        | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont ra ret
         | _ ->
             match get_type la with
             | ClosureT(a,r) -> apply_closuret d la (a,r) ra ret
@@ -861,7 +862,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
         if List.forall is_int args = false then d.on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" args
         else ret()
 
-    let type_lit_create' d x = TyOp(TypeLitCreate,[TyLit x],LitT x) |> make_tyv_and_push_typed_expr d
+    let type_lit_create' d x = LitT x |> make_tyv_and_push_ty d
 
     let module_open d a b ret =
         tev d a <| fun a ->
@@ -1067,7 +1068,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) re
                         match l with
                         | (x & TyVV(l',_)) :: xs when comp l'.Length len -> assume d v x tr (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs)) // Implements #4.
                         | x :: xs -> assume d v x fl (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs)) // Implements #5. Both implement #3.
-                        | _ -> []
+                        | _ -> ret []
                             
                     map_cases (case_destructure t d t) <| function
                         | (TyType p, _) :: _ as cases -> 
@@ -1287,18 +1288,19 @@ let core_functions =
     let con x = Op(x,[],None)
     let lit x = Lit (x, None)
     let l v b e = l v b None e
-    s  [l "errortype" (p error_type)
+    s  [l "error_type" (p error_type)
         l "print_static" (p print_static)
         ]
 
-let spiral_typecheck code dims body on_fail ret = 
+let spiral_typecheck code body on_fail ret = 
     let globals = globals_empty()
     let d = data_empty on_fail code
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
     let ret x = 
+        let x = !d.seq x
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
-        ret (x,globals.memoized_methods)
+        ret (x,globals)
     expr_typecheck globals d input ret
 
 

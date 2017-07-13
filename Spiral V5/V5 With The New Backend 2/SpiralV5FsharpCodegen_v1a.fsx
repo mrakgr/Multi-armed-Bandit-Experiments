@@ -26,7 +26,7 @@ let process_statements (statements: ResizeArray<ProgramNode>) =
 
 type Buf = ResizeArray<ProgramNode>
 
-let print_program (globals: LangGlobals) (main: TypedExpr) =
+let print_program ((main, globals): TypedExpr * LangGlobals) =
     let get_tag =
         let mutable i = 0L
         fun () -> i <- i+1L; i
@@ -72,8 +72,8 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
             | s -> state buffer s
 
     let rec type_unit_is = function
-        | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> false
-        | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> true
+        | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> true
+        | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | ModuleT env | FunctionT(env,_) -> Map.forall (fun _ -> type_unit_is) env
         | UnionT set -> Set.forall type_unit_is set
         | VVT t -> List.forall type_unit_is t
@@ -274,20 +274,21 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
         let enter' = enter' buffer
         let enter = enter buffer
 
-        let prefix = if is_first then "let rec " else "and "
+        let prefix = if is_first then "let rec" else "and"
         let method_name = print_method tag
         let args = 
             Set.toList !args
             |> List.map print_tyv_with_type
             |> String.concat ", "
 
-        sprintf "%s %s: %s(%s) =" prefix (print_type (get_type body)) method_name args |> state
+        sprintf "%s %s(%s): %s =" prefix method_name args (print_type (get_type body)) |> state
         enter <| fun _ -> codegen buffer body
 
     let method_buffer = ResizeArray()
     let definitions_buffer = ResizeArray()
 
     globals.memoized_methods |> Seq.fold (fun is_first x -> print_method method_buffer is_first (memo_value x.Value); false) true |> ignore
+    codegen method_buffer main |> state method_buffer // Can't forget the non-method
 
     for x in tuple_definitions do 
         let tys, tag = x.Key, x.Value
@@ -305,3 +306,73 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
     // actual code while here in the codegen that is done last. Here I just swap the buffers.
     definitions_buffer.AddRange method_buffer
     process_statements definitions_buffer
+
+open FParsec
+
+let spiral_codegen aux_modules main_module = 
+    let rec parse_modules xs on_fail ret =
+        let p x on_fail ret =
+            match SpiralV5Parser_v3a.spiral_parse x with
+            | Success(r,_,_) -> ret r
+            | Failure(er,_,_) -> on_fail er
+        match xs with
+        | (name,code as x) :: xs -> 
+            p x on_fail <| fun r -> 
+                parse_modules xs on_fail <| fun rs ->
+                    l name r None rs |> ret
+        | [] -> p main_module on_fail ret
+
+    let code =
+        let d = Dictionary()
+        let f (name,code: string) = d.Add(name, code.Split [|'\n'|])
+        Seq.iter f aux_modules
+        f main_module
+        d
+     
+    parse_modules aux_modules Fail (fun r -> spiral_typecheck code r Fail (print_program >> Succ))
+
+let test1 =
+    "test1",
+    """
+inl a = 5
+inl b = 10
+a + b
+    """
+
+let test2 =
+    "test2",
+    """
+met a () = 5
+met b () = 10
+a () + b ()
+    """
+
+let test3 =
+    "test3",
+    """
+met a = 5
+met b = 10
+a + b
+    """
+
+let test4 =
+    "test4",
+    """
+met f (a b) (c d) = (a+c,b+d)
+met &(q (a b)) = 1,2
+met &(w (c d)) = 3,4
+f q w
+    """
+
+let test5 =
+    "test5",
+    """
+inl f = function
+    | .Add -> inl x y -> x + y
+    | .Sub -> inl x y -> x - y
+inl a = f .Sub 1 2
+a
+    """
+
+let r = spiral_codegen [] test5
+printfn "%A" r

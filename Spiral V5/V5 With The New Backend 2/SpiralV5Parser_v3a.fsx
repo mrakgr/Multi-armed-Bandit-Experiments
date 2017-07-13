@@ -74,7 +74,7 @@ let pattern_compile arg pat =
         let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
         let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
 
-        let inline pat_fold_template map_end map_on_succ map_on_fail tuple_start_indexer pos l =
+        let inline pat_fold_template map_end map_on_succ map_on_fail tuple_start_indexer tuple_index pos l =
             let len = List.length l
             List.foldBack (fun pat (on_succ, on_fail, indexer, i) -> 
                 let arg = indexer arg i pos
@@ -89,21 +89,26 @@ let pattern_compile arg pat =
             pat_fold_template
                 (fun on_succ _ len -> case_ arg (lit_int len pos) on_succ.Value on_fail.Value pos)
                 cp (fun _ _ _ on_fail -> on_fail) // Accumulates the arguments into on_succ
-                tuple_start_indexer pos l
+                tuple_start_indexer tuple_index pos l
         let pat_tuple pos l = pat_tuple' tuple_index case_tuple pos l
         let pat_cons pos l = pat_tuple' tuple_slice_from case_cons pos l
 
+        let pat_pass map_end map_on_succ map_on_fail pos l =
+            let tuple_pass v _ _ = v
+            pat_fold_template map_end map_on_succ map_on_fail
+                tuple_pass tuple_pass pos l
+
         let pat_or pos l = // The or pattern accumulates the patterns into the on_fail
-            pat_fold_template
+            pat_pass
                 (fun _ on_fail _ -> on_fail.Value)
                 (fun _ _ on_succ _ -> on_succ) // id
-                cp tuple_index pos l
+                cp pos l
 
         let pat_and pos l = // The and pattern accumulates the patterns into the on_succ
-            pat_fold_template
+            pat_pass
                 (fun on_succ _ _ -> on_succ.Value)
                 cp (fun _ _ _ on_fail -> on_fail) // id
-                tuple_index pos l
+                pos l
 
         match pat with
         | E -> on_succ.Value
@@ -121,18 +126,19 @@ let pattern_compile arg pat =
         | PatOr (pos, l) -> pat_or pos l
         | PatAnd (pos, l) -> pat_and pos l
         | PatClauses (pos, l) ->
-            pat_fold_template
+            pat_pass
                 (fun on_succ _ _ -> on_succ.Value)
                 (fun arg (pat, exp) on_succ on_fail -> cp arg pat (lazy exp) on_fail)
                 (fun arg (pat,exp) on_succ on_fail -> on_succ)
-                (fun arg _ _ -> arg) 
                 pos l
         | PatNameT (pos, x) ->
-            let x = ty_lit_create pos (LitString x)
+            let x = type_lit_create pos (LitString x)
             if_static (eq_type arg x pos) on_succ.Value on_fail.Value pos
 
     let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
     let pattern_compile_def_on_fail = lazy error_type (Lit(LitString "Pattern matching cases are inexhaustive", None))
+
+    printfn "pat=%A" pat
 
     pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
@@ -246,6 +252,7 @@ let pp = keywordChar ':'
 let semicolon = keywordChar ';' 
 let eq = keywordChar '=' 
 let bar = keywordChar '|' 
+let barbar = keywordString "||" 
 let lam = keywordString "->"
 let set_me = keywordString "<-"
 let inl_ = keywordString "inl"
@@ -279,13 +286,14 @@ let methr' name args body pos = inlr' name args (meth_memo body) pos
 let case_inl_pat_statement expr s = let p = pos s in pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body p) s
 let case_inl_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' "" pattern body p) p) s
 let case_inl_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' name pattern body p) p) s
+let case_met_pat_statement expr s = let p = pos s in pipe2 (met_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern (meth_memo body) p) s
 let case_met_name_pat_list_statement expr s = let p = pos s in pipe3 (met_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' "" pattern body p) p) s
 let case_met_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (met_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' name pattern body p) p) s
 let case_open expr s = let p = pos s in (open_ >>. expr |>> module_open p) s
 
 let statements expr = 
     [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
-     case_met_name_pat_list_statement; case_met_rec_name_pat_list_statement; case_open]
+     case_met_pat_statement; case_met_name_pat_list_statement; case_met_rec_name_pat_list_statement; case_open]
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
@@ -301,11 +309,11 @@ let inline case_typex match_type expr (s: CharStream<_>) =
     let mutable i = None
     let p = pos s
     let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
-    let pat_body = expr_indent (<=) patterns .>> expr_indent (<=) lam
+    let pat_body = expr_indent (<=) patterns
     let pat = 
-        let pat_rec = bar >>. many1 pat_body |>> fun x -> true, x
-        let pat = many1 pat_body |>> fun x -> false, x
-        expr_indent (<=) bar >>. (pat_rec <|> pat)
+        let pat_rec = barbar >>. many1 pat_body |>> fun x -> true, x
+        let pat = bar >>. many1 pat_body |>> fun x -> false, x
+        expr_indent (<=) (pat_rec <|> pat) .>> lam
             
     let clause pat = tuple2 pat expr
     let set_col (s: CharStream<_>) = i <- Some (s.Column); Reply(())
@@ -332,11 +340,11 @@ let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
 let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
 let case_module expr s = let p = pos s in (module_ >>% module_create p) s
-
 let case_apply_type expr s = let p = pos s in (grave >>. expr |>> ap_ty p) s
+let case_string_ty expr s = let p = pos s in keywordChar '.' >>. var_name |>> (LitString >> type_lit_create p) <| s
 
 let expressions expr (s: CharStream<_>) =
-    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type
+    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type; case_string_ty
       case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module
       ]
     |> List.map (fun x -> x expr |> attempt)
