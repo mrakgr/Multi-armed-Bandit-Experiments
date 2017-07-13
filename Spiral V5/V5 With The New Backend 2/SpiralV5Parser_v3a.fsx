@@ -127,7 +127,12 @@ let pattern_compile arg pat =
         | PatAnd (pos, l) -> pat_and pos l
         | PatClauses (pos, l) ->
             pat_pass
-                (fun on_succ _ _ -> on_succ.Value)
+                (fun on_succ on_fail _ -> 
+                    printfn "I am in PatClauses's map_end. %A %A"  on_succ.Value on_fail.Value
+                    let x = on_succ.Value
+                    printfn "I am exiting PatClauses's map_end."
+                    x
+                    )
                 (fun arg (pat, exp) on_succ on_fail -> cp arg pat (lazy exp) on_fail)
                 (fun arg (pat,exp) on_succ on_fail -> on_succ)
                 pos l
@@ -135,7 +140,8 @@ let pattern_compile arg pat =
             let x = type_lit_create pos (LitString x)
             if_static (eq_type arg x pos) on_succ.Value on_fail.Value pos
 
-    let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
+    //let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
+    let pattern_compile_def_on_succ = lazy error_type (Lit(LitString "Missing a clause.", None)) // This is a compiler error. Will be removed.
     let pattern_compile_def_on_fail = lazy error_type (Lit(LitString "Pattern matching cases are inexhaustive", None))
 
     printfn "pat=%A" pat
