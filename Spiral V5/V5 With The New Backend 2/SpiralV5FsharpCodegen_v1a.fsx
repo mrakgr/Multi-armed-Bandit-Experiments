@@ -120,6 +120,13 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
         else
             x.Namespace + x.Name
 
+    let print_tyv (tag,ty) = 
+        match ty with
+        | Unit -> failwith "Unit type variables should never be printed."
+        | _ -> sprintf "var_%i" tag
+    let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
+    let print_method tag = sprintf "method_%i" tag
+
     let rec codegen (buffer: Buf) expr =
         let state = state buffer
         let enter' = enter' buffer
@@ -141,13 +148,6 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
 
         let codegen x = codegen buffer x
         
-        let print_tyv (tag,ty) = 
-            match ty with
-            | Unit -> failwith "Unit type variables should never be printed."
-            | _ -> sprintf "var_%i" tag
-        let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
-        let print_method tag = sprintf "method_%i" tag
-
         let rec if_ cond tr fl =
             let print_if () =
                 sprintf "if %s then" (codegen cond) |> state
@@ -189,13 +189,13 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
 //        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
-        | TyVV(l,(VVT t)) -> make_struct l |> sprintf "make_struct_%i(%s)" (tuple_tag t)
+        | TyVV(l,(VVT t)) -> make_struct l |> sprintf "%s(%s)" (print_tuple t)
         | TyVV(l,_) -> failwith "The type of TyVT should always be VTT." // TODO: Make creating union types work.
 
         | TyEnv(env_term,(FunctionT(env_ty,_) | ModuleT env_ty)) ->
             Map.toArray env_term
             |> Array.map snd
-            |> make_struct |> sprintf "make_struct_%i(%s)" (env_ty_tag env_ty)
+            |> make_struct |> sprintf "%s(%s)" (print_env_ty env_ty)
         | TyEnv(env_term,_) -> failwith "Can't be any other type."
 
         | TyOp(Apply,[a;b],t) -> 
@@ -242,86 +242,66 @@ let print_program (globals: LangGlobals) (main: TypedExpr) =
 //        | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
-        
+
     let print_struct_definition (buffer: Buf) iter fold name tys tag =
         let state = state buffer
         let enter' = enter' buffer
         let enter = enter buffer
 
-        "[<Struct>]" |> state
-        sprintf "type %s =" name |> state
-        enter <| fun _ -> iter (fun k ty -> 
-            match ty with
-            | Unit -> ()
-            | _ -> sprintf "%s mem_%s" (print_type ty) k |> state) tys; ""
-
-        let args =
+        let args sep f =
             fold (fun s k ty -> 
                 match ty with
                 | Unit -> s
-                | _ -> sprintf "%s arg_mem_%s" (print_type ty) k :: s) [] tys
+                | _ -> f k :: s) [] tys
             |> List.rev
+            |> String.concat sep
+
+        let args_declaration = args ", " <| fun k -> sprintf "arg_mem_%s" k
+        let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
+
+        "[<Struct>]" |> state
+        sprintf "type %s =" name |> state
+        enter <| fun _ -> 
+            iter (fun k ty -> 
+                match ty with
+                | Unit -> ()
+                | _ -> sprintf "mem_%s: %s" k (print_type ty) |> state) tys
+
+            sprintf "new(%s) = {%s}" args_declaration args_mapping
+
+    let print_method (buffer: Buf) is_first (body,tag,args) = 
+        let state = state buffer
+        let enter' = enter' buffer
+        let enter = enter buffer
+
+        let prefix = if is_first then "let rec " else "and "
+        let method_name = print_method tag
+        let args = 
+            Set.toList !args
+            |> List.map print_tyv_with_type
             |> String.concat ", "
 
-        sprintf "new(%s) = {" args |> state
-            //sprintf "__device__ __forceinline__ %s make_struct_%i(%s){" name tag args |> state
-            
-        enter' <| fun _ ->
-            sprintf "%s tmp;" name |> state
-            iter (fun k -> function
-                | Unit -> ()
-                | _ -> sprintf "tmp.mem_%s = mem_%s;" k k |> state) tys
-            "return tmp;" |> state
-        "}" |> state
+        sprintf "%s %s: %s(%s) =" prefix (print_type (get_type body)) method_name args |> state
+        enter <| fun _ -> codegen buffer body
 
-    ()
-//
-//    let print_method (body,tag,args) = 
-//        let is_main = tag = 0L
-//        let prefix = if is_main then "__global__" else "__device__"
-//        let method_name = if is_main then "MainKernel" else print_method tag
-//        let args = 
-//            Set.toList !args
-//            |> List.map print_tyv_with_type
-//            |> String.concat ", "
-//        sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state
-//
-//        enter' <| fun _ ->
-//            match codegen body with
-//            | "" -> ()
-//            | s -> sprintf "return %s;" s |> state
-//        "}" |> state
-//
-//    """#include "cub/cub.cuh" """ |> state
-//    """#include <assert.h> """ |> state
-//    """extern "C" {""" |> state
-//        
-//    enter' <| fun _ ->
-//        with_channel CodegenChannels.Code <| fun _ ->
-//            for x in imemo do print_method (memo_value x.Value)
-//
-//        with_channel CodegenChannels.Definitions <| fun _ ->
-//            for x in tuple_definitions do 
-//                let tys, tag = x.Key, x.Value
-//                let tuple_name = print_tuple' tag
-//                let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-//                let iter f l = List.iteri (fun i x -> f (string i) x) l
-//                print_struct_definition iter fold tuple_name tys tag
-//
-//            for x in env_ty_definitions do
-//                let tys, tag = x.Key, x.Value
-//                let tuple_name = print_env_ty' tag
-//                print_struct_definition Map.iter Map.fold tuple_name tys tag
-//
-//            for x in closure_type_definitions do print_closure_type_definition x.Key x.Value
-//
-//        // I am just swapping the positions so the definitions come first in the printed code.
-//        // Unfortunately, getting the definitions requires a pass through the AST first
-//        // so I can't just print them at the start.
-//        add_channels_a_to_main CodegenChannels.Definitions
-//        add_channels_a_to_main CodegenChannels.Code
-//        
-//    "}" |> state
-//        
-//    cur_program () |> process_statements
-//
+    let method_buffer = ResizeArray()
+    let definitions_buffer = ResizeArray()
+
+    globals.memoized_methods |> Seq.fold (fun is_first x -> print_method method_buffer is_first (memo_value x.Value); false) true |> ignore
+
+    for x in tuple_definitions do 
+        let tys, tag = x.Key, x.Value
+        let tuple_name = print_tuple' tag
+        let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+        let iter f l = List.iteri (fun i x -> f (string i) x) l
+        print_struct_definition definitions_buffer iter fold tuple_name tys tag
+
+    for x in env_ty_definitions do
+        let tys, tag = x.Key, x.Value
+        let tuple_name = print_env_ty' tag
+        print_struct_definition definitions_buffer Map.iter Map.fold tuple_name tys tag
+    
+    // Definitions need a pass through the AST in order to be memoized. Hence they are printed first in 
+    // actual code while here in the codegen that is done last. Here I just swap the buffers.
+    definitions_buffer.AddRange method_buffer
+    process_statements definitions_buffer
