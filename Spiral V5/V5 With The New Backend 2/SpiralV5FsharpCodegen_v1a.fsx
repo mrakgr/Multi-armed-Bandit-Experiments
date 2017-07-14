@@ -73,9 +73,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
     let rec type_unit_is = function
         | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> true
-        | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
+        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | ModuleT env | FunctionT(env,_) -> Map.forall (fun _ -> type_unit_is) env
-        | UnionT set -> Set.forall type_unit_is set
         | VVT t -> List.forall type_unit_is t
 
     let (|Unit|_|) x = if type_unit_is x then Some () else None
@@ -127,6 +126,10 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
     let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
     let print_method tag = sprintf "method_%i" tag
 
+    let print_union_case tag i = sprintf "Union%iCase%i" tag i
+    let print_rec_tuple tag = sprintf "Rec%iTuple" tag
+    let print_rec_case tag i = sprintf "Rec%iCase%i" tag i
+
     let rec codegen (buffer: Buf) expr =
         let state = state buffer
         let enter' = enter' buffer
@@ -163,21 +166,21 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                 enter' <| fun _ -> print_if()
                 if_var
 
-        let make_struct l =
+        let make_struct l on_empty on_rest =
             Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
             |> String.concat ", "
+            |> function
+                | "" -> on_empty()
+                | x -> on_rest x
 
-        let inline if_not_unit ty f =
-            match ty with
-            | Unit -> ""
-            | _ -> f()
+        let if_not_unit ty f = if type_unit_is ty then "" else f()
 
         match expr with
         | TyV (_, Unit) -> ""
         | TyV v -> print_tyv v
         | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
-        | TyLet(_,(_,Unit),b,rest,_) -> 
+        | TyLet(_,(_,Unit),b,rest,_) ->
             let b = codegen b
             if b <> "" then sprintf "%s;" b |> state
             codegen rest
@@ -189,20 +192,40 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
 //        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
-        | TyVV(l,(VVT t)) -> make_struct l |> sprintf "%s(%s)" (print_tuple t)
-        | TyVV(l,_) -> failwith "The type of TyVT should always be VTT." // TODO: Make creating union types work.
-
+        | TyVV(l,VVT t) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_tuple t) args)
+        | TyVV(l,UnionT tys) -> 
+            let l_ty = List.map get_type l |> VVT
+            let tag = union_ty_tag tys
+            let i = Seq.findIndex (fun x -> x = l_ty) tys
+            make_struct l (fun _ -> print_union_case tag i) (fun args -> sprintf "%s(%s)" (print_union_case tag i) args)
+        | TyVV(l,RecT tag) -> 
+            match globals.memoized_types.[tag] with
+            | VVT _ -> 
+                let name = print_rec_tuple tag
+                make_struct l (fun _ -> name) (fun args -> sprintf "%s(%s)" name args)
+            | UnionT tys ->
+                let l_ty = List.map get_type l |> VVT
+                let i = Seq.findIndex (fun x -> x = l_ty) tys
+                make_struct l (fun _ -> print_rec_case tag i) (fun args -> sprintf "%s(%s)" (print_rec_case tag i) args)
+            | _ -> failwith "Only VVT and UnionT are recursive types."
+        | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
         | TyEnv(env_term,(FunctionT(env_ty,_) | ModuleT env_ty)) ->
             Map.toArray env_term
             |> Array.map snd
-            |> make_struct |> sprintf "%s(%s)" (print_env_ty env_ty)
+            |> fun x -> make_struct x (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_env_ty env_ty) args)
         | TyEnv(env_term,_) -> failwith "Can't be any other type."
-
         | TyOp(Apply,[a;b],t) -> 
             // Apply during codegen is only used for applying closures.
             // There is one level of flattening in the outer arguments.
             let b = tuple_field b |> List.map codegen |> String.concat ", "
             sprintf "%s(%s)" (codegen a) b
+
+        | TyOp(Case,v :: cases,_) ->
+            sprintf "match %s with" (codegen v)
+            let rec loop = function
+                | case :: body :: rest ->
+                | [] -> ()
+                | _ -> failwith "The cases should always be in pairs."
 
         // Primitive operations on expressions.
         | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -243,6 +266,37 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
 
+    let print_union_definition (buffer: Buf) tys tag =
+        let state = state buffer
+        let enter' = enter' buffer
+        let enter = enter buffer
+
+        let tys = Set.toList tys
+
+        sprintf "and %s =" (print_union_ty' tag) |> state
+        enter' <| fun _ ->
+            List.iteri (fun i -> function
+                | Unit -> print_union_case tag i |> state
+                | x -> sprintf "%s of %s" (print_union_case tag i) (print_type x) |> state) tys
+
+    let print_rec_definition (buffer: Buf) ty tag =
+        let state = state buffer
+        let enter' = enter' buffer
+        let enter = enter buffer
+
+        sprintf "and %s =" (print_union_ty' tag) |> state
+        match ty with
+        | VVT _ & Unit -> print_rec_tuple tag |> state
+        | VVT _ -> sprintf "%s of %s" (print_rec_tuple tag) (print_type ty) |> state
+        | UnionT tys ->
+            let tys = Set.toList tys
+            enter' <| fun _ ->
+                List.iteri (fun i -> function
+                    | Unit -> print_rec_case tag i |> state
+                    | x -> sprintf "%s of %s" (print_rec_case tag i) (print_type x) |> state) tys
+        | _ -> failwith "Only VVT and UnionT are recursive types."
+
+
     let print_struct_definition (buffer: Buf) iter fold name tys tag =
         let state = state buffer
         let enter' = enter' buffer
@@ -260,7 +314,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
 
         "[<Struct>]" |> state
-        sprintf "type %s =" name |> state
+        sprintf "and %s =" name |> state
         enter <| fun _ -> 
             iter (fun k ty -> 
                 match ty with
