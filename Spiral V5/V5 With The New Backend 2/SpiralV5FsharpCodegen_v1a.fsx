@@ -368,14 +368,41 @@ let test5 =
     "test5",
     """
 inl f = function
-    | .Add x y -> x + y
-    | .Sub x y -> x - y
-    | .Mult x y -> x * y
+    || .Add x y -> x + y
+    || .Sub x y -> x - y
+    || .Mult x y -> x * y
 inl a = f .Add 1 2
 inl b = f .Sub 1 2
 inl c = f .Mult 1 2
 a, b, c
     """
 
-let r = spiral_codegen [] test5
+let fib =
+    "fib",
+    """
+met rec fib x = 
+    if x <= 0 then 0 else 
+        // Without this it crashes now that I've added partial evaluation on arithmetic operations. 
+        // Later, I will add a special op for making static stuff dynamic.
+
+        // Maybe adding if_static as a keyword would not be a bad idea either.
+        met x = x
+        fib (x-1) + fib (x-2)
+    : x
+fib 1
+    """
+
+let test6 =
+    "test6",
+    """
+met min n =
+    met tes a =
+        met b -> 
+            met c ->
+                met d -> a,b,c
+    tes 1 2 (2.2,3,4.5)
+min 10
+    """
+
+let r = spiral_codegen [] test6
 printfn "%A" r
