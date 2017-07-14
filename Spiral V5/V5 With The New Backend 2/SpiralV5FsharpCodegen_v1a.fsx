@@ -403,6 +403,31 @@ met min n =
     tes 1 2 (2.2,3,4.5)
 min 10
     """
+let test7 =
+    "test7",
+    """
+inl f op1 op2 op3 = function
+    | ^op1 (.Some x) -> x
+    | ^op2 (.Some x) -> x
+    | ^op3 (.Some x) -> x
 
-let r = spiral_codegen [] test6
+inl add = function
+    | .Add -> .Some, inl x y -> x + y
+    | _ -> .None
+inl sub = function
+    | .Sub -> .Some, inl x y -> x - y
+    | _ -> .None
+inl mult = function
+    | .Mult -> .Some, inl x y -> x * y
+    | _ -> .None
+
+inl f = f add sub mult
+
+inl a = f .Add 1 2
+inl b = f .Sub 1 2
+inl c = f .Mult 1 2
+a, b, c
+    """
+
+let r = spiral_codegen [] test7
 printfn "%A" r

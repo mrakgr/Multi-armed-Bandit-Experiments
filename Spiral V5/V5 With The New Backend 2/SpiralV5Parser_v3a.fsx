@@ -69,6 +69,10 @@ let rec patterns (s: CharStream<_>) =
 
 let pattern_list = many patterns
 
+let pattern_compile_fresh_var =
+    let mutable i = 0
+    fun () -> i <- i+1; sprintf " pat_var_%i" i
+
 let pattern_compile arg pat =
     let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
         let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
@@ -118,7 +122,9 @@ let pattern_compile arg pat =
             pattern_compile true arg typ on_succ on_fail
         | PatActive (pos,(a,b)) ->
             let v x = V (x, pos)
-            cp' (ap pos (v a) arg) b on_succ on_fail
+            let pat_symb = pattern_compile_fresh_var()
+            l pat_symb (ap pos (v a) arg) pos
+                (cp' (v pat_symb) b on_succ on_fail)
         | PatOr (pos, l) -> pat_or pos l
         | PatAnd (pos, l) -> pat_and pos l
         | PatClauses (pos, l) -> pat_clauses pos l
@@ -127,7 +133,7 @@ let pattern_compile arg pat =
             if_static (eq_type arg x pos) on_succ.Value on_fail.Value pos
 
     let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
-    let pattern_compile_def_on_fail = lazy error_type (Lit(LitString "Pattern matching cases are inexhaustive", None))
+    let pattern_compile_def_on_fail = lazy error_type (Lit(LitString <| "Pattern matching cases are inexhaustive.", None))
     pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
 let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
