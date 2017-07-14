@@ -368,9 +368,13 @@ let test5 =
     "test5",
     """
 inl f = function
-    | .Add -> 2
-    | .Sub -> 2.5
-f .Sub
+    | .Add x y -> x + y
+    | .Sub x y -> x - y
+    | .Mult x y -> x * y
+inl a = f .Add 1 2
+inl b = f .Sub 1 2
+inl c = f .Mult 1 2
+a, b, c
     """
 
 let r = spiral_codegen [] test5
