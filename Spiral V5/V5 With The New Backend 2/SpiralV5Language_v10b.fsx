@@ -1072,7 +1072,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) (r
                             
                     map_cases (case_destructure t d t) <| function
                         | (TyType p, _) :: _ as cases -> 
-                            if List.forall (fun (TyType x,_) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases,p) |> ret
+                            if List.forall (fun (TyType x,_) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> ret
                             else d.on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
                         | _ -> failwith "There should always be at least one clause here."
                         

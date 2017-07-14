@@ -221,11 +221,15 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             sprintf "%s(%s)" (codegen a) b
 
         | TyOp(Case,v :: cases,_) ->
-            sprintf "match %s with" (codegen v)
+            sprintf "match %s with" (codegen v) |> state
             let rec loop = function
-                | case :: body :: rest ->
+                | case :: body :: rest -> 
+                    sprintf "| %s ->" (codegen case) |> state
+                    enter <| fun _ -> codegen body
                 | [] -> ()
                 | _ -> failwith "The cases should always be in pairs."
+            loop cases
+            ""
 
         // Primitive operations on expressions.
         | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
