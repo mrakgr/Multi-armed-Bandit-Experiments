@@ -36,7 +36,7 @@ let var_name =
     many1Satisfy2L isAsciiIdStart isAsciiIdContinue "identifier" .>> spaces
     >>=? function
         | "match" | "function" | "with" | "open" | "module" 
-        | "rec" | "if" | "then" | "else" | "inl" | "met" | "type" as x -> 
+        | "rec" | "if" | "then" | "else" | "inl" | "met" as x -> 
             fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 

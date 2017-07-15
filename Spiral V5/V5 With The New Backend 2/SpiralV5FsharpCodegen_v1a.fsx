@@ -175,6 +175,9 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         let if_not_unit ty f = if type_unit_is ty then "" else f()
 
+        let print_case' t l name = make_struct l (fun _ -> name) (sprintf "%s(%s(%s))" name (print_tuple t))
+        let print_case l name = print_case' (List.map get_type l) l name
+
         match expr with
         | TyV (_, Unit) -> ""
         | TyV v -> print_tyv v
@@ -194,19 +197,20 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 //        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
         | TyVV(l,VVT t) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_tuple t) args)
         | TyVV(l,UnionT tys) -> 
-            let l_ty = List.map get_type l |> VVT
+            let l_tys = List.map get_type l
+            let l_vvt = VVT l_tys
             let tag = union_ty_tag tys
-            let i = Seq.findIndex (fun x -> x = l_ty) tys
-            make_struct l (fun _ -> print_union_case tag i) (fun args -> sprintf "%s(%s)" (print_union_case tag i) args)
+            printfn "l_vvt=%A" l_vvt
+            printfn "tys=%A" tys
+            let i = Seq.findIndex (fun x -> x = l_vvt) tys
+            print_case' l_tys l (print_union_case tag i)
         | TyVV(l,RecT tag) -> 
             match globals.memoized_types.[tag] with
-            | VVT _ -> 
-                let name = print_rec_tuple tag
-                make_struct l (fun _ -> name) (fun args -> sprintf "%s(%s)" name args)
+            | VVT _ -> print_case l (print_rec_tuple tag)
             | UnionT tys ->
                 let l_ty = List.map get_type l |> VVT
                 let i = Seq.findIndex (fun x -> x = l_ty) tys
-                make_struct l (fun _ -> print_rec_case tag i) (fun args -> sprintf "%s(%s)" (print_rec_case tag i) args)
+                print_case l (print_rec_case tag i)
             | _ -> failwith "Only VVT and UnionT are recursive types."
         | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
         | TyEnv(env_term,(FunctionT(env_ty,_) | ModuleT env_ty)) ->
@@ -221,11 +225,13 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             sprintf "%s(%s)" (codegen a) b
 
         | TyOp(Case,v :: cases,_) ->
+            printfn "expr=%A" expr
             sprintf "match %s with" (codegen v) |> state
             let rec loop = function
                 | case :: body :: rest -> 
                     sprintf "| %s ->" (codegen case) |> state
                     enter <| fun _ -> codegen body
+                    loop rest
                 | [] -> ()
                 | _ -> failwith "The cases should always be in pairs."
             loop cases
@@ -270,6 +276,23 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
 
+    let print_rec_definition (buffer: Buf) ty tag =
+        let state = state buffer
+        let enter' = enter' buffer
+        let enter = enter buffer
+
+        sprintf "and %s =" (print_union_ty' tag) |> state
+        match ty with
+        | VVT _ & Unit -> "| " + print_rec_tuple tag |> state
+        | VVT _ -> sprintf "| %s of %s" (print_rec_tuple tag) (print_type ty) |> state
+        | UnionT tys ->
+            let tys = Set.toList tys
+            enter' <| fun _ ->
+                List.iteri (fun i -> function
+                    | Unit -> "| " + print_rec_case tag i |> state
+                    | x -> sprintf "| %s of %s" (print_rec_case tag i) (print_type x) |> state) tys
+        | _ -> failwith "Only VVT and UnionT are recursive types."
+
     let print_union_definition (buffer: Buf) tys tag =
         let state = state buffer
         let enter' = enter' buffer
@@ -280,26 +303,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         sprintf "and %s =" (print_union_ty' tag) |> state
         enter' <| fun _ ->
             List.iteri (fun i -> function
-                | Unit -> print_union_case tag i |> state
-                | x -> sprintf "%s of %s" (print_union_case tag i) (print_type x) |> state) tys
-
-    let print_rec_definition (buffer: Buf) ty tag =
-        let state = state buffer
-        let enter' = enter' buffer
-        let enter = enter buffer
-
-        sprintf "and %s =" (print_union_ty' tag) |> state
-        match ty with
-        | VVT _ & Unit -> print_rec_tuple tag |> state
-        | VVT _ -> sprintf "%s of %s" (print_rec_tuple tag) (print_type ty) |> state
-        | UnionT tys ->
-            let tys = Set.toList tys
-            enter' <| fun _ ->
-                List.iteri (fun i -> function
-                    | Unit -> print_rec_case tag i |> state
-                    | x -> sprintf "%s of %s" (print_rec_case tag i) (print_type x) |> state) tys
-        | _ -> failwith "Only VVT and UnionT are recursive types."
-
+                | Unit -> "| " + print_union_case tag i |> state
+                | x -> sprintf "| %s of %s" (print_union_case tag i) (print_type x) |> state) tys
 
     let print_struct_definition (buffer: Buf) iter fold name tys tag =
         let state = state buffer
@@ -317,15 +322,16 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         let args_declaration = args ", " <| fun k -> sprintf "arg_mem_%s" k
         let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
 
-        "[<Struct>]" |> state
         sprintf "and %s =" name |> state
-        enter <| fun _ -> 
+        enter' <| fun _ -> 
+            "struct" |> state
             iter (fun k ty -> 
                 match ty with
                 | Unit -> ()
-                | _ -> sprintf "mem_%s: %s" k (print_type ty) |> state) tys
-
-            sprintf "new(%s) = {%s}" args_declaration args_mapping
+                | _ -> sprintf "val mem_%s: %s" k (print_type ty) |> state) tys
+            
+            sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
+            "end" |> state
 
     let print_method (buffer: Buf) is_first (body,tag,args) = 
         let state = state buffer
@@ -345,20 +351,32 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
     let method_buffer = ResizeArray()
     let definitions_buffer = ResizeArray()
 
-    globals.memoized_methods |> Seq.fold (fun is_first x -> print_method method_buffer is_first (memo_value x.Value); false) true |> ignore
+    globals.memoized_methods |> Seq.fold (fun is_first x -> 
+        match x.Value with
+        | MemoMethodDone (e, tag, args) -> print_method method_buffer is_first (e, tag, args); false
+        | _ -> is_first) true |> ignore
     codegen method_buffer main |> state method_buffer // Can't forget the non-method
 
-    for x in tuple_definitions do 
-        let tys, tag = x.Key, x.Value
-        let tuple_name = print_tuple' tag
-        let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-        let iter f l = List.iteri (fun i x -> f (string i) x) l
-        print_struct_definition definitions_buffer iter fold tuple_name tys tag
+    "type DefinitionsStarter() = class end" |> state definitions_buffer
+    for x in globals.memoized_types do
+        let tag,ty = x.Key, x.Value
+        print_rec_definition definitions_buffer ty tag
+
+    for x in union_ty_definitions do
+        let tys,tag = x.Key, x.Value
+        print_union_definition definitions_buffer tys tag
 
     for x in env_ty_definitions do
         let tys, tag = x.Key, x.Value
         let tuple_name = print_env_ty' tag
         print_struct_definition definitions_buffer Map.iter Map.fold tuple_name tys tag
+
+    for x in tuple_definitions do
+        let tys, tag = x.Key, x.Value
+        let tuple_name = print_tuple' tag
+        let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+        let iter f l = List.iteri (fun i x -> f (string i) x) l
+        print_struct_definition definitions_buffer iter fold tuple_name tys tag
     
     // Definitions need a pass through the AST in order to be memoized. Hence they are printed first in 
     // actual code while here in the codegen that is done last. Here I just swap the buffers.
@@ -487,5 +505,17 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let r = spiral_codegen [] test7
+let test8 =
+    "test8",
+    """
+met x =
+    inl option_int = type (.Some, 1) |> union (type .None)
+    option_int (.Some, 10)
+match x with
+| (.Some x) -> x
+| (.None) -> 0
+    """
+
+let r = spiral_codegen [] test8
 printfn "%A" r
+

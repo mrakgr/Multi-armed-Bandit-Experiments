@@ -391,7 +391,9 @@ let rec typed_expr_free_variables_template on_memo e =
     | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
     | TyEnv(l,_) -> env_free_variables_template on_memo l
     | TyMemoizedExpr(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
-    | TyLet(_,x,a,b,_) -> Set.remove x (f b) + f a
+    // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
+    // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
+    | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
 
 and env_free_variables_template on_memo env = 
     Map.fold (fun s _ v -> typed_expr_free_variables_template on_memo v + s) Set.empty env
@@ -399,10 +401,6 @@ and env_free_variables_template on_memo env =
 let private typed_expr_std_pass (typ,used_vars,renamer,tag) = !used_vars
 let rec typed_expr_free_variables e = typed_expr_free_variables_template typed_expr_std_pass e
 and env_free_variables env = env_free_variables_template typed_expr_std_pass env
-
-let memo_value = function
-    | MemoMethodDone (e, tag, args) -> e, tag, args
-    | _ -> failwith "impossible"
 
 /// Optimizes the free variables for the sake of tuple deforestation.
 /// It needs at least two passes to converge properly. And probably exactly two.
@@ -425,7 +423,12 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) typed_exp =
         | MemoClosure -> 
             !r
 
-    let memo = Seq.map (memo_value >> (fun (e,tag,args) -> tag,(e,args))) memo.Values |> Map
+    let memo = 
+        Seq.choose (function
+            | MemoMethodDone (e, tag, args) -> Some (tag,(e,args))
+            | MemoType t -> None
+            | _ -> failwith "impossible") memo.Values |> Map
+
     typed_expr_free_variables_template (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo) typed_exp
     |> ignore
 
@@ -838,8 +841,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) (r
     let vv_index_template f d v i ret =
         tev2 d v i <| fun v i ->
             match v, i with
-            | TyVV(l,VVT ts), LitIndex i ->
-                if i >= 0 || i < List.length ts then f l i |> ret
+            | TyVV(l,_), LitIndex i ->
+                if i >= 0 || i < List.length l then f l i |> ret
                 else d.on_type_er d.trace "Tuple index not within bounds."
             | v & TyType (VVT ts), LitIndex i -> failwith "The tuple should ways be destructured."
             | v, LitIndex i -> d.on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
@@ -1071,8 +1074,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) (r
                         | _ -> ret []
                             
                     map_cases (case_destructure t d t) <| function
-                        | (TyType p, _) :: _ as cases -> 
-                            if List.forall (fun (TyType x,_) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> ret
+                        | (_, TyType p) :: _ as cases -> 
+                            if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> ret
                             else d.on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
                         | _ -> failwith "There should always be at least one clause here."
                         
@@ -1281,6 +1284,8 @@ let globals_empty (): LangGlobals =
     }
 
 let array_index op a b = Op(op,[a;b],None)
+let type_create a = Op(TypeConstructorCreate,[a], None)
+let type_union a b = Op(TypeConstructorUnion,[a;b], None)
 
 let core_functions =
     let p f = inl "x" (f (v "x")) None
@@ -1290,6 +1295,8 @@ let core_functions =
     let l v b e = l v b None e
     s  [l "error_type" (p error_type)
         l "print_static" (p print_static)
+        l "type" (p type_create)
+        l "union" (p2 type_union)
         ]
 
 let spiral_typecheck code body on_fail ret = 
