@@ -1040,48 +1040,31 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv<_,_>) (expr: Expr) (r
             | TyLit a -> type_lit_create' d a |> ret
             | _ -> d.on_type_er d.trace "Expected a literal in type literal create."
 
-//    1) During peval, if the variable is a union or a recursive type, it will destructure it a level 
-//       without changing its type and branch on all of its cases.
-//    2) If it is a primitive variable it will take the false branch of the case.
-//    3) If it is a tuple it will compare sizes. This rule is independent, but might be lead into from rule #1. 
-//       Corollary to rule #1, tuples that have already been destructured will not be so again.
-//    4) If the tuple sizes match, it will take the true branch of the case.
-//    5) If the sizes do not match, it will take the false branch of the case.
-
-//    Note: The algorithm works by collecting all the branches on #1 into a case construct.
-//          Partial evaluation ensures the matchers are optimized and well typed.
-
-    let case_tuple_template comp d v len tr fl ret =
+    let case_tuple_template d v case ret =
         let assume d v x branch ret = tev_assume (cse_add' d v x) d branch ret
 
-        tev2 d v len <| fun v len ->
-            match len with
-            | LitIndex len ->
-                match v with
-                | TyV(_, t & (UnionT _ | RecT _)) ->
-                    let rec case_destructure orig_ty d args_ty =
-                        let f x = make_tyv_and_push_ty d x
-                        match args_ty with
-                        | VVT l -> [TyVV(List.map f l, orig_ty)]
-                        | RecT tag -> case_destructure orig_ty d globals.memoized_types.[tag]
-                        | UnionT l -> Set.toList l |> List.collect (case_destructure orig_ty d) // These two implement rule #1.
-                        | x -> [TyVV([f x], orig_ty)] // orig_ty <> x is always true here. This case will happen as a part of non-recursive union type.
+        tev d v <| fun v ->
+            match v with
+            | TyV(_, t & (UnionT _ | RecT _)) ->
+                let rec case_destructure d args_ty =
+                    let f x = make_tyv_and_push_ty d x
+                    match args_ty with
+                    | VVT l -> [TyVV(List.map f l, args_ty)]
+                    | RecT tag -> case_destructure d globals.memoized_types.[tag]
+                    | UnionT l -> Set.toList l |> List.collect (case_destructure d)
+                    | x -> [f x]
 
-                    let rec map_cases l ret =
-                        match l with
-                        | (x & TyVV(l',_)) :: xs when comp l'.Length len -> assume d v x tr (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs)) // Implements #4.
-                        | x :: xs -> assume d v x fl (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs)) // Implements #5. Both implement #3.
-                        | _ -> ret []
+                let rec map_cases l ret =
+                    match l with
+                    | (x & TyVV(l',_)) :: xs -> assume d v x case (fun r -> map_cases xs <| fun rs -> ret ((x,r)::rs))
+                    | _ -> ret []
                             
-                    map_cases (case_destructure t d t) <| function
-                        | (_, TyType p) :: _ as cases -> 
-                            if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> ret
-                            else d.on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
-                        | _ -> failwith "There should always be at least one clause here."
-                        
-                | TyVV(l,_) when l.Length = len -> tev d tr ret
-                | _ -> tev d fl ret
-            | _ -> failwith "Expecting a index literal in case."
+                map_cases (case_destructure d t) <| function
+                    | (_, TyType p) :: _ as cases -> 
+                        if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> ret
+                        else d.on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
+                    | _ -> failwith "There should always be at least one clause here."
+            | _ -> tev d case ret
 
     let inline wrap_exception d f =
         try f()
