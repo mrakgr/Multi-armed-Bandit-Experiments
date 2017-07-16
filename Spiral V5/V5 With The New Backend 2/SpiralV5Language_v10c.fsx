@@ -100,6 +100,7 @@ and Op =
     | EnvUnseal
     | TypeConstructorCreate
     | TypeConstructorUnion
+    | TypeConstructorApply
     | EqType
 
     | ArrayCreate
@@ -672,58 +673,33 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let apply_module d env_term b = 
         v_find env_term b (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b)
 
-//    Ground rules for type constructor application:
-//    1) Nested type constructors are disallowed. If a type constructor is in a type constructor then it is to be stripped. That means that TypeConstructorT can only appear on the outermost level.
-//    2) A tuple is matched directly against the tuple type and returns a tuple. This is straightforward.
-//    3) A tuple will always returned from the union case if the input to it is a tuple.
-//    4) Variables will always be wrapped in a tuple when they are a part of the union to indicate they are statically determined.
-//    5) A variable that has a union type will always mean a sealed union type.
-//    6) Union type can only be destructured via pattern matching.
-//    7) Corollary to #3, the tuple returned from a union apply case will have its type replaced (generalized) into the union's type.
-//    8) The tuple returned from a type constructor will of course not have the type constructor type.
-//    9) Lastly, tuples returned from a recursive type case will have their type replaced with the recursive type much like when returned from a union case.
-//    10) Singleton tuples returned from a type constructor case whose item's type is equal to the tuple's outer type, 
-//        meaning the tuple is not a recursive or a union type will get implicitly converted to a variable. 
-//        This is so type construction application meshes with type constructor creation.
-
-//    Note: It is intended that the inputs to type constructors be destructured and hence contain no free floating expressions.
-//          The functions should work regardless.
-    
     let apply_typec d typec ra =
         let rec apply_typec d ty ra on_fail ret =
+            let substitute_ty = function 
+                | TyVV(l,_) -> TyVV(l,ty) |> ret
+                | x & TyV(_,t) when t <> ty -> TyOp(TypeConstructorApply,[x],ty) |> make_tyv_and_push_typed_expr d
+                | x -> ret x
             match ty, ra with
-            | TypeConstructorT _, _ -> failwith "Type constructors should never be nested." // Checks whether #1 is implemented correctly
-            | VVT x, r -> apply_typec_tuple d x (tuple_field r) on_fail <| fun v -> TyVV(v,ty) |> ret // Implements #2
-            | UnionT x, TyVV(_,_) ->
-                apply_typec_union_tuple d x ra on_fail <| function 
-                    | (TyVV(v,_)) -> TyVV(v,ty) |> ret // Implements #7
-                    | _ -> failwith "A tuple should be returned from the union tuple case call." // Implements #3
-            | UnionT _, _ -> if ty <> get_type ra then on_fail() else TyVV([ra],ty) |> ret // Implements #4, #5, #6
-            | RecT tag, _ -> 
-                apply_typec d globals.memoized_types.[tag] ra on_fail <| function // Implements #9
-                    | TyVV(l,_) -> TyVV(l,ty) |> ret
-                    | _ -> failwith "A tuple should be returned from the recursive type case call."
-            | x, r -> if x = get_type r then ret r else on_fail()
-
-        and apply_typec_union_tuple d x r on_fail ret =
-            let rec loop = function
-                | x :: xs -> apply_typec d x r (fun _ -> loop xs) ret
-                | [] -> on_fail()
-            loop (Set.toList x)
-
-        and apply_typec_tuple d uniont ra on_fail ret =
-            match uniont, ra with
-            | x :: xs, r :: rs ->
-                apply_typec d x r on_fail <| fun v ->
-                    apply_typec_tuple d xs rs on_fail <| fun vs ->
-                        ret (v :: vs)
-            | [], [] -> ret []
+            | TypeConstructorT _, _ -> failwith "Type constructors should never be nested."
+            | x, TyType r when x = r -> ret ra
+            | RecT tag, _ -> apply_typec d globals.memoized_types.[tag] ra on_fail substitute_ty
+            | UnionT tys, _ ->
+                let rec loop = function
+                    | x :: xs -> apply_typec d x ra (fun _ -> loop xs) substitute_ty
+                    | [] -> on_fail()
+                loop (Set.toList tys)
+            | VVT t, TyVV(l,_) ->
+                let rec loop ret = function
+                    | x :: xs, r :: rs ->
+                        apply_typec d x r on_fail <| fun v ->
+                            loop (fun vs -> ret (v :: vs)) (xs, rs)
+                    | [], [] -> ret []
+                    | _ -> on_fail()
+                loop (fun l -> TyVV(l,ty)) (t,l)
             | _ -> on_fail()
-    
+
         let er _ = on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." typec (get_type ra)
-        apply_typec d typec ra er <| function
-            | TyVV([x],VVT [t]) when get_type x = t -> x // Implements rule #10 here.
-            | x -> x // Both cases implement #8.
+        apply_typec d typec ra er id
             
     let typec_union d a b =
         let a, b = tev2 d a b
@@ -756,13 +732,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
             | UnionT s -> UnionT (Set.map typec_strip s)
 
-        let rec restrict_malignant = 
-            let rec loop recursive_set = function
-                | RecT tag when Set.contains tag recursive_set -> on_type_er d.trace "Trying to construct a self recursive type is forbidden. If an error was not returned, the pevaller would have gone into an infinite loop during the destructuring of this type."
-                | RecT tag -> loop (Set.add tag recursive_set) globals.memoized_types.[tag]
-                | x -> ret_tyv x
-            loop Set.empty
-            
         match globals.memoized_methods.TryGetValue key with
         | true, MemoType ty -> ret_tyv ty
         | true, MemoTypeInEvaluation -> type_tag() |> RecT |> add_to_memo_dict |> ret_tyv
@@ -771,7 +740,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             globals.memoized_methods.[key] <- MemoTypeInEvaluation
             // After the evaluation, if the type is recursive the dictionary should have its key.
             // If present it will return that instead.
-            tev_seq d x |> get_type |> typec_strip |> add_to_type_dict |> add_to_memo_dict |> restrict_malignant
+            tev_seq d x |> get_type |> typec_strip |> add_to_type_dict |> add_to_memo_dict |> ret_tyv
 
    
     let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg =
@@ -1054,10 +1023,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyV(_, t & (UnionT _ | RecT _)) as v ->
             let rec case_destructure d args_ty =
                 let f x = make_tyv_and_push_ty d x
+                let union_case = function
+                    | UnionT l -> Set.toList l |> List.collect (case_destructure d)
+                    | _ -> [f args_ty]
                 match args_ty with
-                | RecT tag -> case_destructure d globals.memoized_types.[tag]
-                | UnionT l -> Set.toList l |> List.collect (case_destructure d)
-                | _ -> [f args_ty]
+                | RecT tag -> union_case globals.memoized_types.[tag]
+                | x -> union_case x
 
             let rec map_cases l =
                 match l with

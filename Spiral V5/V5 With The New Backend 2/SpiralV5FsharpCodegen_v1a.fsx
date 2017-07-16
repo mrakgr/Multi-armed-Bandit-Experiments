@@ -27,6 +27,7 @@ let process_statements (statements: ResizeArray<ProgramNode>) =
 type Buf = ResizeArray<ProgramNode>
 
 let print_program ((main, globals): TypedExpr * LangGlobals) =
+    printfn "main=%A" main
     let get_tag =
         let mutable i = 0L
         fun () -> i <- i+1L; i
@@ -175,8 +176,19 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         let if_not_unit ty f = if type_unit_is ty then "" else f()
 
-        let print_case' t l name = make_struct l (fun _ -> name) (sprintf "%s(%s(%s))" name (print_tuple t))
-        let print_case l name = print_case' (List.map get_type l) l name
+        let print_case_tuple' t l name = make_struct l (fun _ -> name) (sprintf "%s(%s(%s))" name (print_tuple t))
+        let print_case_tuple l name = print_case_tuple' (List.map get_type l) l name
+
+        let union_process_tuple f l (tys: Set<_>) =
+            let l_tys = List.map get_type l
+            let l_vvt = VVT l_tys
+            let i = Seq.findIndex ((=) l_vvt) tys
+            print_case_tuple' l_tys l (f i)
+
+        let print_case_var l name = make_struct l (fun _ -> name) (sprintf "%s(%s)" name)
+        let union_process_var f (v, v_ty) (tys: Set<_>) =
+            let i = Seq.findIndex ((=) v_ty) tys
+            print_case_var [v] (f i)
 
         match expr with
         | TyV (_, Unit) -> ""
@@ -185,7 +197,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
         | TyLet(_,(_,Unit),b,rest,_) ->
             let b = codegen b
-            if b <> "" then sprintf "%s;" b |> state
+            if b <> "" then sprintf "%s" b |> state
             codegen rest
 //        | TyLet(_,_, TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
         | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
@@ -195,23 +207,18 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let method_name = print_method tag
             sprintf "%s(%s)" method_name args
 //        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
+        | TyOp(TypeConstructorApply,[x & TyV(_,t)],UnionT tys) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
+        | TyOp(TypeConstructorApply,[x & TyV(_,t)],RecT tag) ->
+            match globals.memoized_types.[tag] with
+            | UnionT tys -> union_process_var (print_rec_case tag) (x,t) tys
+            | _ -> failwith "Only UnionT can be a recursive var type."
         | TyVV(l,VVT t) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_tuple t) args)
-        | TyVV(l,UnionT tys) -> 
-            let l_tys = List.map get_type l
-            let l_vvt = VVT l_tys
-            let tag = union_ty_tag tys
-            printfn "l_vvt=%A" l_vvt
-            printfn "tys=%A" tys
-            let i = Seq.findIndex (fun x -> x = l_vvt) tys
-            print_case' l_tys l (print_union_case tag i)
+        | TyVV(l,UnionT tys) -> union_process_tuple (print_union_case (union_ty_tag tys)) l tys
         | TyVV(l,RecT tag) -> 
             match globals.memoized_types.[tag] with
-            | VVT _ -> print_case l (print_rec_tuple tag)
-            | UnionT tys ->
-                let l_ty = List.map get_type l |> VVT
-                let i = Seq.findIndex (fun x -> x = l_ty) tys
-                print_case l (print_rec_case tag i)
-            | _ -> failwith "Only VVT and UnionT are recursive types."
+            | VVT _ -> print_case_tuple l (print_rec_tuple tag)
+            | UnionT tys -> union_process_tuple (print_rec_case tag) l tys
+            | _ -> failwith "Only VVT and UnionT are recursive tuple types."
         | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
         | TyEnv(env_term,(FunctionT(env_ty,_) | ModuleT env_ty)) ->
             Map.toArray env_term
@@ -359,7 +366,13 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             |> String.concat ", "
 
         sprintf "%s %s(%s): %s =" prefix method_name args (print_type (get_type body)) |> state
-        enter <| fun _ -> codegen buffer body
+        enter' <| fun _ -> 
+            match codegen buffer body with
+            | "" -> ()
+            | x -> state x
+            match get_type body with
+            | Unit -> "()" |> state
+            | _ -> ()
 
     let method_buffer = ResizeArray()
     let definitions_buffer = ResizeArray()
@@ -529,6 +542,17 @@ match x with
 | .None -> 0
     """
 
-let r = spiral_codegen [] test8
+let test9 =
+    "test9",
+    """
+inl ab = type .A |> union (type .B)
+met x = (ab .A, ab .A, ab .A)
+match x with
+| (.A _ _) -> 1
+| (_ .A _) -> 2
+| (_ _ .A) -> 3
+    """
+
+let r = spiral_codegen [] test9
 printfn "%A" r
 
