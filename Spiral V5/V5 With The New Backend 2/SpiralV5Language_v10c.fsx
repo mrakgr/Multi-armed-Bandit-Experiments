@@ -92,6 +92,8 @@ and Op =
     | VVIndex
     | VVSliceFrom
     | VVCons
+    | VVLength
+    | VVIs
     | TypeAnnot
     | ModuleWith
     | ModuleWithExtend
@@ -312,13 +314,19 @@ let meth' args body = methr' "" args body
 let lit_int i pos = Lit (LitInt32 i, pos)
 let vv pos x = VV(x,pos)
 let tuple_index v i pos = Op(VVIndex,[v; lit_int i pos], pos)
+let tuple_length v pos = Op(VVLength,[v],pos)
 let tuple_slice_from v i pos = Op(VVSliceFrom,[v; lit_int i pos], pos)
+let tuple_is v = Op(VVIs,[v],None)
 
 let error_type x = Op(ErrorType, [x], None)
 let print_static x = Op(PrintStatic,[x], None)
 
 let if_static cond tr fl pos = Op(IfStatic,[cond;tr;fl],pos)
-let eq_type a b pos = Op(EqType,[a;b],pos)
+let case arg case = Op(Case,[arg;case],None)
+let private binop op a b pos = Op(op,[a;b],pos)
+let eq_type a b pos = binop EqType a b pos
+let eq a b pos = binop EQ a b pos
+let lt a b pos = binop LT a b pos
 
 let get_pos = function
     | Lit(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,pos) | Op(_,_,pos) -> pos
@@ -839,6 +847,17 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
     let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,VVT (List.map get_type l))) d v i
 
+    let inline vv_unop_template on_succ on_fail d v =
+        match tev d v with
+        | TyVV(l,_) -> on_succ l
+        | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
+        | v -> on_fail()
+
+    let vv_length = 
+        vv_unop_template (fun l -> TyLit (LitInt32 l.Length)) 
+            (fun _ -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v)
+    let vv_is = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false))
+
     let eq_type d a b =
         let f x = match get_type x with TypeConstructorT x -> x | x -> x
         let a, b = tev2 d a b 
@@ -1188,6 +1207,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | ShuffleIndex,[a;b] -> prim_shuffle_op d a b ShuffleIndex
 
         | VVIndex,[a;b] -> vv_index d a b
+        | VVLength,[a] -> vv_length d a
+        | VVIs,[a] -> vv_is d a
         | VVSliceFrom,[a;b] -> vv_slice_from d a b
         | VVCons,[a;b] -> vv_cons d a b
 
@@ -1263,17 +1284,15 @@ let core_functions =
         l "union" (p2 type_union)
         ]
 
-let spiral_typecheck code body on_fail = 
+let spiral_typecheck code body on_fail ret = 
     let globals = globals_empty()
     let d = data_empty()
     let input = core_functions body
     expr_free_variables input |> ignore // Is mutable
-    let ret x = 
-        let x = !d.seq x
-        typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
-        (x,globals)
     try
-        expr_typecheck globals d input
+        let x = !d.seq (expr_typecheck globals d input)
+        typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
+        ret (x,globals)
     with 
     | :? TypeError as e -> 
         let trace, message = e.Data0, e.Data1

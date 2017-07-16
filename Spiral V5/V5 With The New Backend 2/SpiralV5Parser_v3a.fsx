@@ -1,8 +1,8 @@
-﻿#load "SpiralV5Language_v10b.fsx"
+﻿#load "SpiralV5Language_v10c.fsx"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
 
-open SpiralV5Language_v10b
+open SpiralV5Language_v10c
 open FParsec
 
 type ParserExpr =
@@ -93,7 +93,10 @@ let pattern_compile arg pat =
                     cp arg pat on_succ on_fail)
                 on_succ
                 l
-            |> fun (on_succ,len) -> case_tuple arg (lit_int len pos) on_succ.Value on_fail.Value pos
+            |> fun (on_succ,len) -> 
+                if_static (eq (tuple_length arg pos) (lit_int len pos) pos) on_succ.Value on_fail.Value pos
+                |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value pos
+                |> case arg
 
         let pat_cons pos l = 
             pat_foldbacki
@@ -102,7 +105,10 @@ let pattern_compile arg pat =
                     cp arg pat on_succ on_fail, tuple_index)
                 (on_succ, tuple_slice_from)
                 l
-            |> fun ((on_succ,_),len) -> case_cons arg (lit_int len pos) on_succ.Value on_fail.Value pos
+            |> fun ((on_succ,_),len) -> 
+                if_static (lt (lit_int len pos) (tuple_length arg pos) pos) on_succ.Value on_fail.Value pos
+                |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value pos
+                |> case arg
 
         let inline force (x: Lazy<_>) = x.Value
 
@@ -120,6 +126,7 @@ let pattern_compile arg pat =
         | PatType (pos,(typ,exp)) ->
             let on_succ = cp arg exp on_succ on_fail
             pattern_compile true arg typ on_succ on_fail
+            |> case arg
         | PatActive (pos,(a,b)) ->
             let v x = V (x, pos)
             let pat_symb = pattern_compile_fresh_var()
@@ -131,6 +138,7 @@ let pattern_compile arg pat =
         | PatNameT (pos, x) ->
             let x = type_lit_create pos (LitString x)
             if_static (eq_type arg x pos) on_succ.Value on_fail.Value pos
+            |> case arg
 
     let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
     let pattern_compile_def_on_fail = lazy error_type (Lit(LitString <| "Pattern matching cases are inexhaustive.", None))

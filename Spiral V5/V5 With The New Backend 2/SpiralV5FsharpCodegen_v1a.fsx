@@ -1,6 +1,6 @@
 ﻿#load "SpiralV5Parser_v3a.fsx"
 
-open SpiralV5Language_v10b
+open SpiralV5Language_v10c
 open System.Collections.Generic
 open System.Text
 
@@ -513,7 +513,7 @@ met x =
     option_int (.Some, 10)
 match x with
 | (.Some x) -> x
-| (.None) -> 0
+| .None -> 0
     """
 
 let r = spiral_codegen [] test8
