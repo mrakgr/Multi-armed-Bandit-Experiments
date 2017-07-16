@@ -551,8 +551,23 @@ match x with
 | (.A _ _) -> 1
 | (_ .A _) -> 2
 | (_ _ .A) -> 3
+| _ -> 4
     """
 
-let r = spiral_codegen [] test9
+let test10 = // This particular pattern is the worst case for partially evaluated pattern matchers.
+    "test10",
+    """
+inl ab = type .A |> union (type .B)
+met x = (ab .A, ab .A, ab .A, ab .A)
+match x with
+| (.A .A _) -> 1
+| (_ _ .A .A) -> 2
+| (.A .B .A .B) -> 3
+| _ -> 4
+    """
+
+let r = spiral_codegen [] test10
 printfn "%A" r
+
+
 
