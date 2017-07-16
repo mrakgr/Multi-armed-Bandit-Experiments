@@ -1055,10 +1055,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             let rec case_destructure d args_ty =
                 let f x = make_tyv_and_push_ty d x
                 match args_ty with
-                | VVT l -> [TyVV(List.map f l, args_ty)]
                 | RecT tag -> case_destructure d globals.memoized_types.[tag]
                 | UnionT l -> Set.toList l |> List.collect (case_destructure d)
-                | x -> [f x]
+                | _ -> [f args_ty]
 
             let rec map_cases l =
                 match l with

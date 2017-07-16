@@ -224,18 +224,31 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let b = tuple_field b |> List.map codegen |> String.concat ", "
             sprintf "%s(%s)" (codegen a) b
 
-        | TyOp(Case,v :: cases,_) ->
+        | TyOp(Case,v :: cases,t) ->
             printfn "expr=%A" expr
-            sprintf "match %s with" (codegen v) |> state
-            let rec loop = function
-                | case :: body :: rest -> 
-                    sprintf "| %s ->" (codegen case) |> state
-                    enter <| fun _ -> codegen body
-                    loop rest
-                | [] -> ()
-                | _ -> failwith "The cases should always be in pairs."
-            loop cases
-            ""
+
+            let tag = 
+                match get_type v with
+                | RecT tag -> tag
+                | UnionT tys -> union_ty_tag tys
+                | _ -> failwith "impossible"
+
+            let match_var = sprintf "match_var_%i" (get_tag())
+            sprintf "let %s: %s =" match_var (print_type t) |> state
+            enter' <| fun _ ->
+                sprintf "match %s with" (codegen v) |> state
+                let print_case i = function
+                    | case & TyType Unit -> sprintf "| %s ->" (print_union_case tag i) |> state
+                    | case -> sprintf "| %s(%s) ->" (print_union_case tag i) (codegen case) |> state
+                let rec loop i = function
+                    | case :: body :: rest -> 
+                        print_case i case
+                        enter <| fun _ -> codegen body
+                        loop (i+1) rest
+                    | [] -> ()
+                    | _ -> failwith "The cases should always be in pairs."
+                loop 0 cases
+            match_var
 
         // Primitive operations on expressions.
         | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
