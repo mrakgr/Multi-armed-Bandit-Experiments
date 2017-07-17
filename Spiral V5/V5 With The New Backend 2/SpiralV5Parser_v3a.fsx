@@ -36,7 +36,7 @@ let var_name =
     many1Satisfy2L isAsciiIdStart isAsciiIdContinue "identifier" .>> spaces
     >>=? function
         | "match" | "function" | "with" | "open" | "module" 
-        | "rec" | "if" | "then" | "else" | "inl" | "met" as x -> 
+        | "rec" | "if" | "then" | "else" | "inl" | "met" | "type" as x -> 
             fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 
@@ -344,9 +344,10 @@ let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 let case_module expr s = let p = pos s in (module_ >>% module_create p) s
 let case_apply_type expr s = let p = pos s in (grave >>. expr |>> ap_ty p) s
 let case_string_ty expr s = let p = pos s in keywordChar '.' >>. var_name |>> (LitString >> type_lit_create p) <| s
+let case_type expr s = let p = pos s in keywordString "type" >>. expr |>> type_create p <| s
 
 let expressions expr (s: CharStream<_>) =
-    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type; case_string_ty
+    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type; case_string_ty; case_type
       case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module
       ]
     |> List.map (fun x -> x expr |> attempt)

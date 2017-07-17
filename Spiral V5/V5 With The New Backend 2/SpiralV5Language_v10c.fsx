@@ -634,7 +634,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let eval_method used_vars d expr =
         let key_args = d.env, expr
         let memoized_methods = globals.memoized_methods
-        
+
         match memoized_methods.TryGetValue key_args with
         | false, _ ->
             let tag = method_tag ()
@@ -1239,7 +1239,7 @@ let globals_empty (): LangGlobals =
     }
 
 let array_index op a b = Op(op,[a;b],None)
-let type_create a = Op(TypeConstructorCreate,[a], None)
+let type_create pos a = Op(TypeConstructorCreate,[a], pos)
 let type_union a b = Op(TypeConstructorUnion,[a;b], None)
 
 let core_functions =
@@ -1250,7 +1250,6 @@ let core_functions =
     let l v b e = l v b None e
     s  [l "error_type" (p error_type)
         l "print_static" (p print_static)
-        l "type" (p type_create)
         l "union" (p2 type_union)
         ]
 

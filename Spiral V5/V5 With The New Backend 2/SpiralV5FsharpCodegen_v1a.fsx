@@ -27,7 +27,6 @@ let process_statements (statements: ResizeArray<ProgramNode>) =
 type Buf = ResizeArray<ProgramNode>
 
 let print_program ((main, globals): TypedExpr * LangGlobals) =
-    printfn "main=%A" main
     let get_tag =
         let mutable i = 0L
         fun () -> i <- i+1L; i
@@ -232,8 +231,6 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             sprintf "%s(%s)" (codegen a) b
 
         | TyOp(Case,v :: cases,t) ->
-            printfn "expr=%A" expr
-
             let tag = 
                 match get_type v with
                 | RecT tag -> tag
@@ -301,7 +298,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         let enter' = enter' buffer
         let enter = enter buffer
 
-        sprintf "and %s =" (print_union_ty' tag) |> state
+        sprintf "and %s =" (print_rec_ty tag) |> state
         match ty with
         | VVT _ & Unit -> "| " + print_rec_tuple tag |> state
         | VVT _ -> sprintf "| %s of %s" (print_rec_tuple tag) (print_type ty) |> state
@@ -581,13 +578,10 @@ match x with
 let test12 =
     "test12",
     """
-met rec t x =
-    type (.V, x)
-    |> union (type (.Add, t x, t x))
-
-inl v a = t a (.V, a)
-v 5
+met rec t x = type (union (type (.V, x)) (type (.Add, t x, t x)))
+t 1 (.V, 5)
     """
 
 let r = spiral_codegen [] test12
 printfn "%A" r
+
