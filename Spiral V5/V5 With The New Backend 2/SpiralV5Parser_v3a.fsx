@@ -9,18 +9,6 @@ type ParserExpr =
 | ParserStatement of (Expr -> Expr)
 | ParserExpr of Expr
 
-type Pattern =
-| E
-| PatVar of Pos * string
-| PatTuple of Pos * Pattern list
-| PatCons of Pos * Pattern list
-| PatType of Pos * (Pattern * Pattern)
-| PatActive of Pos * (string * Pattern)
-| PatOr of Pos * Pattern list
-| PatAnd of Pos * Pattern list
-| PatClauses of Pos * (Pattern * Expr) list
-| PatNameT of Pos * string
-
 let pos (s: CharStream<_>) = Some (s.Name, s.Line, s.Column)
 let ppos s = Reply(pos s)
 let pos_lit pos x = Lit(x,pos)

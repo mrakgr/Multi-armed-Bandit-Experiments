@@ -37,7 +37,7 @@ and Tag = int64
 and TyV = Tag * Ty
 and EnvTerm = Map<string, TypedExpr>
 and EnvTy = Map<string, Ty>
-and FunctionCore = string * string * Expr
+and FunctionCore = string * Expr
 and MemoKey = EnvTerm * Expr
 
 and Value = 
@@ -85,6 +85,7 @@ and Op =
     | Or 
     | MSet 
 
+    | Fix
     | Apply
     | ApplyType
     | MethodMemoize
@@ -135,15 +136,27 @@ and Op =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
 
-and PosKey = string * int64 * int64
-and Pos = PosKey option
+and Pattern =
+    | E
+    | PatVar of string
+    | PatTuple of Pattern list
+    | PatCons of Pattern list
+    | PatType of Pattern * Pattern
+    | PatActive of string * Pattern
+    | PatOr of Pattern list
+    | PatAnd of Pattern list
+    | PatClauses of (Pattern * Expr) list
+    | PatTypeName of string
 
 and Expr = 
-    | V of string * Pos
-    | Lit of Value * Pos
-    | Function of FunctionCore * Set<string> ref * Pos
-    | VV of Expr list * Pos // named tuple
-    | Op of Op * Expr list * Pos
+    | V of string
+    | Lit of Value
+    | FunctionUncompiled of Pattern
+    | Function of FunctionCore
+    | FunctionOpt of FunctionCore * Set<string> // Function with free variables calculated.
+    | VV of Expr list
+    | Op of Op * Expr list
+    | Pos of string * int64 * int64 * Expr
 
 and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
@@ -177,8 +190,6 @@ and MemoDict = Dictionary<MemoKey, MemoCases>
 and ClosureDict = Dictionary<Tag, TypedExpr> 
 // For Common Subexpression Elimination. I need it not for its own sake, but to enable other PE based optimizations.
 and CSEDict = Map<TypedExpr,TypedExpr> ref
-
-
 
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
@@ -268,71 +279,73 @@ let is_int a = is_int' (get_type a)
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
-let fun_ name (pat,body) pos = Function((name,pat,body),ref Set.empty,pos)
-let inlr name x y = fun_ name (x,y)
-let inl x y = inlr "" x y
-let ap pos x y = Op(Apply,[x;y],pos)
-let ap_ty pos x = Op(ApplyType,[x],pos)
-let l v b pos e = ap pos (inl v e pos) b
+let lit_int i = Lit (LitInt32 i)
+let lit_string x = Lit (LitString x)
+let fix name x =
+    match name with
+    | "" -> x
+    | _ -> Op(Fix,[lit_string name;x])
+let fun_ x y = Function(x,y)
+let inlr name x y = fix name (fun_ x y)
+let inl x y = fun_ x y
+let ap x y = Op(Apply,[x;y])
+let ap_ty x = Op(ApplyType,[x])
+let l v b e = ap (inl v e) b
     
-let meth_memo y = Op(MethodMemoize,[y],None)
-let methr name x y pos = inlr name x (meth_memo y) pos
+let meth_memo y = Op(MethodMemoize,[y])
+let methr name x y = inlr name x (meth_memo y)
 let meth x y = methr "" x y
 
-let module_create pos = Op(ModuleCreate,[],pos)
-let module_open pos a b = Op(ModuleOpen,[a;b],pos)
+let module_create = Op(ModuleCreate,[])
+let module_open a b = Op(ModuleOpen,[a;b])
 
-let B = VV ([], None)
+let B = VV ([])
 let BVVT = VVT []
 let TyB = TyVV ([], BVVT)
 
-let v x = V(x,None)
+let v x = V(x)
 
-let cons a b pos = Op(VVCons,[a;b],pos)
+let cons a b = Op(VVCons,[a;b])
 
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let rec ap' f l pos =
+let rec ap' f l =
     match l with
-    | x :: xs -> ap' (ap pos f x) xs pos
+    | x :: xs -> ap' (ap f x) xs
     | [] -> f
 
-let rec inlr' name args body pos =
+let rec inlr' name args body =
     match args with
-    | x :: xs -> inlr name x (inlr' "" xs body None) pos
+    | x :: xs -> inlr name x (inlr' "" xs body)
     | [] -> body
 
 let rec inl' args body = inlr' "" args body
 
-let rec methr' name args body pos =
+let rec methr' name args body =
     match args with
-    | [x] -> methr name x body pos
-    | x :: xs -> inlr name x (methr' "" xs body None) pos
+    | [x] -> methr name x body
+    | x :: xs -> inlr name x (methr' "" xs body)
     | [] -> body
 
 let meth' args body = methr' "" args body
 
-let lit_int i pos = Lit (LitInt32 i, pos)
-let vv pos x = VV(x,pos)
-let tuple_index v i pos = Op(VVIndex,[v; lit_int i pos], pos)
-let tuple_length v pos = Op(VVLength,[v],pos)
-let tuple_slice_from v i pos = Op(VVSliceFrom,[v; lit_int i pos], pos)
-let tuple_is v = Op(VVIs,[v],None)
+let vv x = VV(x)
+let tuple_index v i = Op(VVIndex,[v; lit_int i pos])
+let tuple_length v = Op(VVLength,[v])
+let tuple_slice_from v i = Op(VVSliceFrom,[v; lit_int i])
+let tuple_is v = Op(VVIs,[v])
 
-let error_type x = Op(ErrorType, [x], None)
-let print_static x = Op(PrintStatic,[x], None)
+let error_type x = Op(ErrorType, [x])
+let print_static x = Op(PrintStatic,[x])
 
-let if_static cond tr fl pos = Op(IfStatic,[cond;tr;fl],pos)
-let case arg case = Op(Case,[arg;case],None)
-let private binop op a b pos = Op(op,[a;b],pos)
-let eq_type a b pos = binop EqType a b pos
-let eq a b pos = binop EQ a b pos
-let lt a b pos = binop LT a b pos
+let if_static cond tr fl = Op(IfStatic,[cond;tr;fl])
+let case arg case = Op(Case,[arg;case])
+let private binop op a b = Op(op,[a;b])
+let eq_type a b = binop EqType a b
+let eq a b = binop EQ a b
+let lt a b = binop LT a b
 
-let get_pos = function
-    | Lit(_,pos) | V(_,pos) | Function(_,_,pos) | VV(_,pos) | Op(_,_,pos) -> pos
-
-let error_non_unit x = Op(ErrorNonUnit, [x], get_pos x)
+let error_non_unit x = Op(ErrorNonUnit, [x])
 
 let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
 let inline vars_union f l = vars_union' Set.empty f l
@@ -342,10 +355,10 @@ let expr_free_variables e =
         let f e = expr_free_variables vars_for_module e
         let f' bound_vars e = expr_free_variables bound_vars e
         match e with
-        | Op(ModuleCreate,[],_) -> vars_for_module
+        | Op(ModuleCreate,[]) -> e, vars_for_module
     
-        | V (n,_) -> Set.singleton n
-        | Op(Apply,[a;b],_) -> f a + f' Set.empty b // This is so modules only capture their local scope, not their entire lexical scope.
+        | V n -> e, Set.singleton n
+        | Op(Apply,[a;b]) -> f a + f' Set.empty b // This is so modules only capture their local scope, not their entire lexical scope.
         | Op(_,l,_) | VV(l,_) -> vars_union f l
         | Function((name,pat,body),free_var_set,_) ->
             let fv = 
