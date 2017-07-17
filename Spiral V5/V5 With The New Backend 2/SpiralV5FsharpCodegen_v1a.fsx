@@ -566,8 +566,28 @@ match x with
 | _ -> 4
     """
 
-let r = spiral_codegen [] test10
+let test11 = 
+    "test1",
+    """
+inl a = type (1,2)
+inl b = type (1,a,a)
+met x = b (1, a (2,3), a (4,5))
+match x with
+| (_ (x _) (_ y)) -> x + y
+| (_ _ _) -> 0
+| (_) -> 0
+    """
+
+let test12 =
+    "test12",
+    """
+met rec t x =
+    type (.V, x)
+    |> union (type (.Add, t x, t x))
+
+inl v a = t a (.V, a)
+v 5
+    """
+
+let r = spiral_codegen [] test12
 printfn "%A" r
-
-
-
