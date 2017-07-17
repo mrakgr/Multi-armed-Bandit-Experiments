@@ -147,6 +147,9 @@ and Pattern =
     | PatAnd of Pattern list
     | PatClauses of (Pattern * Expr) list
     | PatTypeName of string
+    | PatPos of PosKey * Pattern
+
+and PosKey = string * int64 * int64 * Expr
 
 and Expr = 
     | V of string
@@ -156,7 +159,7 @@ and Expr =
     | FunctionOpt of FunctionCore * Set<string> // Function with free variables calculated.
     | VV of Expr list
     | Op of Op * Expr list
-    | Pos of string * int64 * int64 * Expr
+    | Pos of PosKey * Expr
 
 and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
@@ -330,7 +333,7 @@ let rec methr' name args body =
 let meth' args body = methr' "" args body
 
 let vv x = VV(x)
-let tuple_index v i = Op(VVIndex,[v; lit_int i pos])
+let tuple_index v i = Op(VVIndex,[v; lit_int i])
 let tuple_length v = Op(VVLength,[v])
 let tuple_slice_from v i = Op(VVSliceFrom,[v; lit_int i])
 let tuple_is v = Op(VVIs,[v])
@@ -346,31 +349,137 @@ let eq a b = binop EQ a b
 let lt a b = binop LT a b
 
 let error_non_unit x = Op(ErrorNonUnit, [x])
+let type_lit_create x = Op(TypeLitCreate,[Lit x])
+let pos pos x = Pos(pos,x)
 
-let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
-let inline vars_union f l = vars_union' Set.empty f l
+let get_tag =
+    let mutable i = 0
+    fun () -> i <- i+1; i
 
-let expr_free_variables e = 
-    let rec expr_free_variables vars_for_module e =
-        let f e = expr_free_variables vars_for_module e
-        let f' bound_vars e = expr_free_variables bound_vars e
+let pattern_compile arg pat =
+    let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
+        let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
+        let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
+
+        let pat_foldbacki f s l =
+            let mutable len = 0
+            let rec loop i l =
+                match l with
+                | x :: xs -> f (x,i) (loop (i+1) xs)
+                | [] -> len <- i; s
+            loop 0 l, len
+            
+        let pat_tuple l =
+            pat_foldbacki
+                (fun (pat,i) on_succ ->
+                    let arg = tuple_index arg i
+                    cp arg pat on_succ on_fail)
+                on_succ
+                l
+            |> fun (on_succ,len) -> 
+                if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
+                |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                |> case arg
+
+        let pat_cons l = 
+            pat_foldbacki
+                (fun (pat,i) (on_succ, tuple_index') ->
+                    let arg = tuple_index' arg i
+                    cp arg pat on_succ on_fail, tuple_index)
+                (on_succ, tuple_slice_from)
+                l
+            |> fun ((on_succ,_),len) -> 
+                if_static (lt (lit_int len) (tuple_length arg)) on_succ.Value on_fail.Value
+                |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                |> case arg
+
+        let inline force (x: Lazy<_>) = x.Value
+
+        let pat_or l = List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
+        let pat_and l = List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
+        let pat_clauses l = List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy exp) on_fail) l on_fail |> force
+
+        match pat with
+        | E -> on_succ.Value
+        | PatVar x -> 
+            if flag_is_var_type then if_static (eq_type arg (V x)) on_succ.Value on_fail.Value
+            else l x arg on_succ.Value
+        | PatTuple l -> pat_tuple l
+        | PatCons l -> pat_cons l
+        | PatType (typ,exp) ->
+            let on_succ = cp arg exp on_succ on_fail
+            pattern_compile true arg typ on_succ on_fail
+            |> case arg
+        | PatActive (a,b) ->
+            let pat_var = sprintf " pat_var_%i" (get_tag())
+            l pat_var (ap (V a) arg) (cp' (v pat_var) b on_succ on_fail)
+        | PatOr l -> pat_or l
+        | PatAnd l -> pat_and l
+        | PatClauses l -> pat_clauses l
+        | PatTypeName x ->
+            let x = type_lit_create (LitString x)
+            if_static (eq_type arg x) on_succ.Value on_fail.Value |> case arg
+        | PatPos (p, pat) -> pos p (cp' arg pat on_succ on_fail)
+
+    let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
+    let pattern_compile_def_on_fail = lazy error_type (Lit(LitString <| "Pattern matching cases are inexhaustive."))
+    pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
+
+
+let expr_prepass e = 
+    let rec expr_prepass e =
+        let f e = expr_prepass e
         match e with
-        | Op(ModuleCreate,[]) -> e, vars_for_module
-    
         | V n -> e, Set.singleton n
-        | Op(Apply,[a;b]) -> f a + f' Set.empty b // This is so modules only capture their local scope, not their entire lexical scope.
-        | Op(_,l,_) | VV(l,_) -> vars_union f l
-        | Function((name,pat,body),free_var_set,_) ->
-            let fv = 
-                let g f x = x |> f name |> f pat
-                let add_name_pat x = g Set.add x
-                let remove_name_pat x = g Set.remove x
-                remove_name_pat (f' (add_name_pat vars_for_module) body)
-            free_var_set := fv
-            fv
-        | Lit _ -> Set.empty
+        | Op(op,l) ->
+            let l,l' = List.map f l |> List.unzip
+            Op(op,l), Set.unionMany l'
+        | VV l -> 
+            let l,l' = List.map f l |> List.unzip
+            VV l, Set.unionMany l'
+        | FunctionUncompiled pat ->
+            let vars =
+                let rec bindings l = 
+                    let f = bindings
+                    match l with
+                    | E | PatTypeName _ -> Set.empty
+                    | PatClauses l -> List.map (fst >> f) l |> Set.unionMany
+                    | PatActive (_, pat) -> f pat
+                    | PatVar x -> Set.singleton x
+                    | PatPos(_,x) | PatType (_,x) -> f x
+                    | PatTuple l | PatCons l | PatOr l | PatAnd l -> List.map f l |> Set.unionMany
 
-    expr_free_variables Set.empty e
+                let rec free_vars l = 
+                    let f = free_vars
+                    match l with
+                    | PatClauses l -> 
+                        let l1,l2 = List.unzip l
+                        let l,l' = List.map expr_prepass l2 |> List.unzip
+                        PatClauses (List.zip l1 l), l'
+                    | _ -> failwith "Clauses can only be on the outermost level."
+
+                let rec uses l =
+                    let f = uses
+                    match l with
+                    | E | PatTypeName _ -> Set.empty
+                    | PatClauses l -> List.map (fst >> f) l |> Set.unionMany
+                    | PatType (x, pat) | PatActive (x, pat) -> Set.add x (f pat)
+                    | PatVar x -> Set.singleton x
+                    | PatPos(_,pat) -> f pat
+                    | PatTuple l | PatCons l | PatOr l | PatAnd l -> List.map f l |> Set.unionMany
+
+                let clauses, free_vars = free_vars pat
+                uses pat + (free_vars - bindings pat)
+
+            let main_arg = " main_arg"
+            pattern_compile main_arg pat
+        | Function(name,body) ->
+            let body,vars = f body
+            FunctionOpt((name,body),vars), Set.remove name vars
+        | FunctionOpt((name,_),vars) -> e, Set.remove name vars
+        | Lit _ -> e, Set.empty
+
+    expr_prepass e
 
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
@@ -450,8 +559,6 @@ let env_num_args env =
     Map.fold (fun s k v -> 
         let f = typed_expr_free_variables v
         if Set.isEmpty f then s else s+1) 0 env
-
-let type_lit_create pos x = Op(TypeLitCreate,[Lit (x, pos)],pos)
 
 let map_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x =
     match d.TryGetValue x with
