@@ -705,7 +705,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let a, b = tev2 d a b
         match get_type a, get_type b with
         | TypeConstructorT a, TypeConstructorT b -> set_field a + set_field b |> UnionT |> TypeConstructorT |> make_tyv_and_push_ty d
-        | _ -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors."
+        | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
     let typec_create d x =
         let key = d.env, x

@@ -287,7 +287,10 @@ let methr' name args body pos = inlr' name args (meth_memo body) pos
     
 let case_inl_pat_statement expr s = let p = pos s in pipe2 (inl_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern body p) s
 let case_inl_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' "" pattern body p) p) s
-let case_inl_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (inlr' name pattern body p) p) s
+let case_inl_rec_name_pat_list_statement expr s = 
+    let p = pos s 
+    pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> 
+        l (S p name) (inlr' name pattern body p) p) s
 let case_met_pat_statement expr s = let p = pos s in pipe2 (met_ >>. patterns) (eq >>. expr) (fun pattern body -> l pattern (meth_memo body) p) s
 let case_met_name_pat_list_statement expr s = let p = pos s in pipe3 (met_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' "" pattern body p) p) s
 let case_met_rec_name_pat_list_statement expr s = let p = pos s in pipe3 (met_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l (S p name) (methr' name pattern body p) p) s
@@ -344,7 +347,7 @@ let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 let case_module expr s = let p = pos s in (module_ >>% module_create p) s
 let case_apply_type expr s = let p = pos s in (grave >>. expr |>> ap_ty p) s
 let case_string_ty expr s = let p = pos s in keywordChar '.' >>. var_name |>> (LitString >> type_lit_create p) <| s
-let case_type expr s = let p = pos s in keywordString "type" >>. expr |>> type_create p <| s
+let case_type expr s = let p = pos s in keywordString "type" >>. (var <|> rounds expr) |>> type_create p <| s
 
 let expressions expr (s: CharStream<_>) =
     ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type; case_string_ty; case_type

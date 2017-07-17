@@ -428,7 +428,9 @@ let spiral_codegen aux_modules main_module =
         f main_module
         d
      
-    parse_modules aux_modules Fail (fun r -> spiral_typecheck code r Fail (print_program >> Succ))
+    parse_modules aux_modules Fail (fun r -> 
+        printfn "%A" r
+        spiral_typecheck code r Fail (print_program >> Succ))
 
 let test1 =
     "test1",
@@ -578,10 +580,34 @@ match x with
 let test12 =
     "test12",
     """
-met rec t x = type (union (type (.V, x)) (type (.Add, t x, t x)))
-t 1 (.V, 5)
+met rec expr x = type (type (.V, x) 
+                       |> union (type (.Add, expr x, expr x))
+                       |> union (type (.Mult, expr x, expr x)))
+inl int_expr = expr 0
+inl v x = int_expr (.V, x)
+inl add a b = int_expr (.Add, a, b)
+inl mult a b = int_expr (.Mult, a, b)
+inl a = add (v 1) (v 2)
+inl b = add (v 3) (v 4)
+inl c = mult a b
+inl rec interpreter_static x = 
+    inl f = interpreter_static
+    match x with
+    | (.V x) -> x
+    | (.Add a b) -> f a + f b
+    | (.Mult a b) -> f a * f b
+interpreter_static c
     """
 
-let r = spiral_codegen [] test12
+let test13 =
+    "test13",
+    """
+inl rec p = function
+    | (.Some x) -> p x
+    | .None -> 0
+p (.Some, .None)
+    """
+
+let r = spiral_codegen [] test13
 printfn "%A" r
 
