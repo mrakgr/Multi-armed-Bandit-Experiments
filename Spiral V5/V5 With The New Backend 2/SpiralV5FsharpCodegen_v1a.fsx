@@ -219,7 +219,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | UnionT tys -> union_process_tuple (print_rec_case tag) l tys
             | _ -> failwith "Only VVT and UnionT are recursive tuple types."
         | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
-        | TyEnv(env_term,(FunctionT(env_ty,_) | ModuleT env_ty)) ->
+        | TyEnv(env_term,(RecFunctionT (env_ty,_,_) | FunctionT(env_ty,_) | ModuleT env_ty)) ->
             Map.toArray env_term
             |> Array.map snd
             |> fun x -> make_struct x (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_env_ty env_ty) args)
@@ -429,7 +429,6 @@ let spiral_codegen aux_modules main_module =
         d
      
     parse_modules aux_modules Fail (fun r -> 
-        printfn "%A" r
         spiral_typecheck code r Fail (print_program >> Succ))
 
 let test1 =
@@ -478,21 +477,6 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let fib =
-    "fib",
-    """
-met rec fib x = 
-    if x <= 0 then 0 else 
-        // Without this it crashes now that I've added partial evaluation on arithmetic operations. 
-        // Later, I will add a special op for making static stuff dynamic.
-
-        // Maybe adding if_static as a keyword would not be a bad idea either.
-        met x = x
-        fib (x-1) + fib (x-2)
-    : x
-fib 1
-    """
-
 let test6 =
     "test6",
     """
@@ -534,7 +518,7 @@ let test8 =
     "test8",
     """
 met x =
-    inl option_int = type (.Some, 1) |> union (type .None)
+    inl option_int = type (.Some, 1) |> union (type (.None))
     option_int (.Some, 10)
 match x with
 | (.Some x) -> x
@@ -608,6 +592,30 @@ inl rec p = function
 p (.Some, .None)
     """
 
-let r = spiral_codegen [] test13
+let fib =
+    "fib",
+    """
+met rec fib x = 
+    if x <= 0 then 0 else 
+        // Without this it crashes now that I've added partial evaluation on arithmetic operations. 
+        // Later, I will add a special op for making static stuff dynamic.
+
+        // Maybe adding if_static as a keyword would not be a bad idea either.
+        met x = x
+        fib (x-1) + fib (x-2)
+    : x
+fib 1
+    """
+
+let test_rec1 =
+    "test_rec1",
+    """
+inl a = 1,2,3
+inl b = 4,5,6
+inl f (q w e) (a s d) = q+a,w+s,e+d
+f a b
+    """
+
+let r = spiral_codegen [] fib
 printfn "%A" r
 

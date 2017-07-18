@@ -17,9 +17,8 @@ let patpos expr (s: CharStream<_>) =
     let p = pos' s
     (expr |>> fun expr -> PatPos(p, expr)) s
 
-let spaces s =
-    let rec spaces' s: Reply<unit> = (spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces')) s
-    spaces' s
+let rec spaces_template spaces s = spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces_template spaces) <| s
+let spaces, spaces1 = spaces_template spaces, spaces_template spaces1
     
 let isAsciiIdStart c = isAsciiLetter c || c = '_'
 let isAsciiIdContinue c = isAsciiLetter c || isDigit c || c = '_' || c = '''
@@ -188,7 +187,7 @@ let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) pattern
 
 let case_met_pat_statement expr = pipe2 (met_ >>. patterns) (eq >>. expr) (fun pattern body -> lp pattern (meth_memo body))
 let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
-let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) pattern_list1 (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
+let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) pattern_list1 (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
 
 let case_open expr = open_ >>. expr |>> module_open
 

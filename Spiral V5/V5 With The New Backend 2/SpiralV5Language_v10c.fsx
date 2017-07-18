@@ -290,18 +290,17 @@ let fix name x =
     | "" -> x
     | _ -> Op(Fix,[lit_string name; x])
 let inl x y = Function(x,y)
-let inlr name x y = fix name (inl x y)
 let inl_pat x y = Pattern(PatClauses([x,y]))
-let inlr_pat name x y = fix name (inl_pat x y)
 let ap x y = Op(Apply,[x;y])
 let ap_ty x = Op(ApplyType,[x])
-let lp v b e = ap (inl_pat v b) b
+let lp v b e = ap (inl_pat v e) b
 let l v b e = ap (inl v e) b
-let l_rec v b e = ap (inlr v v e) b
+let l_rec v b e = ap (inl v e) (fix v b)
+
+let inl' args body = List.foldBack inl args body
     
 let meth_memo y = Op(MethodMemoize,[y])
-let methr name x y = inlr name x (meth_memo y)
-let meth x y = methr "" x y
+let meth x y = inl x (meth_memo y)
 
 let module_create = Op(ModuleCreate,[])
 let module_open a b = Op(ModuleOpen,[a;b])
@@ -311,7 +310,6 @@ let BVVT = VVT []
 let TyB = TyVV ([], BVVT)
 
 let v x = V(x)
-
 let cons a b = Op(VVCons,[a;b])
 
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
@@ -320,21 +318,6 @@ let rec ap' f l =
     match l with
     | x :: xs -> ap' (ap f x) xs
     | [] -> f
-
-let rec inlr' name args body =
-    match args with
-    | x :: xs -> inlr name x (inlr' "" xs body)
-    | [] -> body
-
-let rec inl' args body = inlr' "" args body
-
-let rec methr' name args body =
-    match args with
-    | [x] -> methr name x body
-    | x :: xs -> inlr name x (methr' "" xs body)
-    | [] -> body
-
-let meth' args body = methr' "" args body
 
 let vv x = VV(x)
 let tuple_index v i = Op(VVIndex,[v; lit_int i])
