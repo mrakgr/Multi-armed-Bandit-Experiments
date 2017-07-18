@@ -289,12 +289,15 @@ let fix name x =
     match name with
     | "" -> x
     | _ -> Op(Fix,[lit_string name; x])
-let fun_ x y = Function(x,y)
-let inlr name x y = fix name (fun_ x y)
-let inl x y = fun_ x y
+let inl x y = Function(x,y)
+let inlr name x y = fix name (inl x y)
+let inl_pat x y = Pattern(PatClauses([x,y]))
+let inlr_pat name x y = fix name (inl_pat x y)
 let ap x y = Op(Apply,[x;y])
 let ap_ty x = Op(ApplyType,[x])
+let lp v b e = ap (inl_pat v b) b
 let l v b e = ap (inl v e) b
+let l_rec v b e = ap (inlr v v e) b
     
 let meth_memo y = Op(MethodMemoize,[y])
 let methr name x y = inlr name x (meth_memo y)

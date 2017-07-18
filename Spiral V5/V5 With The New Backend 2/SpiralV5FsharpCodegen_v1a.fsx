@@ -74,14 +74,14 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
     let rec type_unit_is = function
         | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
-        | ModuleT env | FunctionT(env,_) -> Map.forall (fun _ -> type_unit_is) env
+        | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) -> Map.forall (fun _ -> type_unit_is) env
         | VVT t -> List.forall type_unit_is t
 
     let (|Unit|_|) x = if type_unit_is x then Some () else None
 
     let rec print_type = function
         | Unit -> "unit"
-        | FunctionT(env,_) | ModuleT env -> print_env_ty env
+        | RecFunctionT (env,_,_) | FunctionT(env,_) | ModuleT env -> print_env_ty env
         | VVT t -> print_tuple t
         | UnionT t -> print_union_ty t
         | RecT t -> print_rec_ty t
@@ -418,7 +418,7 @@ let spiral_codegen aux_modules main_module =
         | (name,code as x) :: xs -> 
             p x on_fail <| fun r -> 
                 parse_modules xs on_fail <| fun rs ->
-                    l name r None rs |> ret
+                    l name r rs |> ret
         | [] -> p main_module on_fail ret
 
     let code =
