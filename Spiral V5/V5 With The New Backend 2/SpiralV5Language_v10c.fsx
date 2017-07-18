@@ -23,6 +23,7 @@ type Ty =
     | VVT of Ty list
     | LitT of Value
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
+    | RecFunctionT of EnvTy * FunctionCore * string
     | ModuleT of EnvTy
     | UnionT of Set<Ty>
     | RecT of Tag
@@ -149,17 +150,17 @@ and Pattern =
     | PatTypeName of string
     | PatPos of PosKey * Pattern
 
-and PosKey = string * int64 * int64 * Expr
+and PosKey = string * int64 * int64
 
 and Expr = 
     | V of string
     | Lit of Value
-    | FunctionUncompiled of Pattern
+    | Pattern of Pattern
     | Function of FunctionCore
-    | FunctionOpt of FunctionCore * Set<string> // Function with free variables calculated.
     | VV of Expr list
     | Op of Op * Expr list
     | Pos of PosKey * Expr
+    | FreeVar of Set<string> * Expr
 
 and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
@@ -287,7 +288,7 @@ let lit_string x = Lit (LitString x)
 let fix name x =
     match name with
     | "" -> x
-    | _ -> Op(Fix,[lit_string name;x])
+    | _ -> Op(Fix,[lit_string name; x])
 let fun_ x y = Function(x,y)
 let inlr name x y = fix name (fun_ x y)
 let inl x y = fun_ x y
@@ -356,7 +357,7 @@ let get_tag =
     let mutable i = 0
     fun () -> i <- i+1; i
 
-let pattern_compile arg pat =
+let rec pattern_compile arg pat =
     let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
         let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
         let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
@@ -395,10 +396,6 @@ let pattern_compile arg pat =
 
         let inline force (x: Lazy<_>) = x.Value
 
-        let pat_or l = List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
-        let pat_and l = List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
-        let pat_clauses l = List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy exp) on_fail) l on_fail |> force
-
         match pat with
         | E -> on_succ.Value
         | PatVar x -> 
@@ -413,9 +410,9 @@ let pattern_compile arg pat =
         | PatActive (a,b) ->
             let pat_var = sprintf " pat_var_%i" (get_tag())
             l pat_var (ap (V a) arg) (cp' (v pat_var) b on_succ on_fail)
-        | PatOr l -> pat_or l
-        | PatAnd l -> pat_and l
-        | PatClauses l -> pat_clauses l
+        | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
+        | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
+        | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy FreeVar(expr_prepass exp)) on_fail) l on_fail |> force
         | PatTypeName x ->
             let x = type_lit_create (LitString x)
             if_static (eq_type arg x) on_succ.Value on_fail.Value |> case arg
@@ -425,61 +422,29 @@ let pattern_compile arg pat =
     let pattern_compile_def_on_fail = lazy error_type (Lit(LitString <| "Pattern matching cases are inexhaustive."))
     pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
+and pattern_compile_single pat =
+    let main_arg = " main_arg"
+    inl main_arg (pattern_compile (V main_arg) pat) |> expr_prepass
 
-let expr_prepass e = 
-    let rec expr_prepass e =
-        let f e = expr_prepass e
-        match e with
-        | V n -> e, Set.singleton n
-        | Op(op,l) ->
-            let l,l' = List.map f l |> List.unzip
-            Op(op,l), Set.unionMany l'
-        | VV l -> 
-            let l,l' = List.map f l |> List.unzip
-            VV l, Set.unionMany l'
-        | FunctionUncompiled pat ->
-            let vars =
-                let rec bindings l = 
-                    let f = bindings
-                    match l with
-                    | E | PatTypeName _ -> Set.empty
-                    | PatClauses l -> List.map (fst >> f) l |> Set.unionMany
-                    | PatActive (_, pat) -> f pat
-                    | PatVar x -> Set.singleton x
-                    | PatPos(_,x) | PatType (_,x) -> f x
-                    | PatTuple l | PatCons l | PatOr l | PatAnd l -> List.map f l |> Set.unionMany
-
-                let rec free_vars l = 
-                    let f = free_vars
-                    match l with
-                    | PatClauses l -> 
-                        let l1,l2 = List.unzip l
-                        let l,l' = List.map expr_prepass l2 |> List.unzip
-                        PatClauses (List.zip l1 l), l'
-                    | _ -> failwith "Clauses can only be on the outermost level."
-
-                let rec uses l =
-                    let f = uses
-                    match l with
-                    | E | PatTypeName _ -> Set.empty
-                    | PatClauses l -> List.map (fst >> f) l |> Set.unionMany
-                    | PatType (x, pat) | PatActive (x, pat) -> Set.add x (f pat)
-                    | PatVar x -> Set.singleton x
-                    | PatPos(_,pat) -> f pat
-                    | PatTuple l | PatCons l | PatOr l | PatAnd l -> List.map f l |> Set.unionMany
-
-                let clauses, free_vars = free_vars pat
-                uses pat + (free_vars - bindings pat)
-
-            let main_arg = " main_arg"
-            pattern_compile main_arg pat
-        | Function(name,body) ->
-            let body,vars = f body
-            FunctionOpt((name,body),vars), Set.remove name vars
-        | FunctionOpt((name,_),vars) -> e, Set.remove name vars
-        | Lit _ -> e, Set.empty
-
-    expr_prepass e
+and expr_prepass e =
+    let f e = expr_prepass e
+    match e with
+    | V n -> Set.singleton n, e
+    | Op(op,l) ->
+        let l,l' = List.map f l |> List.unzip
+        Set.unionMany l, Op(op,l')
+    | VV l -> 
+        let l,l' = List.map f l |> List.unzip
+        Set.unionMany l, VV l'
+    | Function(name,body) ->
+        let vars,body = f body
+        Set.remove name vars, Function(name,body)
+    | Lit _ -> Set.empty, e
+    | Pos(pos,body) -> 
+        let vars, body = f body
+        vars, Pos(pos,body)
+    | FreeVar(vars,body) -> vars, e
+    | Pattern pat -> pattern_compile_single pat
 
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
@@ -504,6 +469,9 @@ and renamer_apply_typedexpr r e =
         TyMemoizedExpr(typ,used_vars,renamer,tag,t)
     | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
     | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
+
+let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
+let inline vars_union f l = vars_union' Set.empty f l
 
 let rec typed_expr_free_variables_template on_memo e =
     let inline f e = typed_expr_free_variables_template on_memo e
@@ -847,6 +815,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
             | FunctionT (e, b) -> FunctionT(strip_map e, b)
+            | RecFunctionT (e, b, name) -> RecFunctionT (strip_map e, b, name)
             | ModuleT e -> ModuleT (strip_map e)
             | ForCastT x -> typec_strip x |> ForCastT
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
@@ -868,11 +837,17 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
         else TyOp(Apply,[clo;arg],clo_ret_ty)
 
-    and apply_functiont tev d env_term (env_ty,(name,pat,body) as fun_key) args =
-        let env = Map.add pat args env_term
-        let fv = TyEnv (env, FunctionT fun_key)
-        let d = {d with env = if name <> "" then Map.add name fv env else env}
-        tev d body
+    and apply_functiont tev d env func args =
+        match func with
+        | RecFunctionT (env_ty, (pat,body), name) ->
+            let env = Map.add pat args env
+            let env_ty = Map.add pat (get_type args) env_ty
+            let func = RecFunctionT (env_ty, (pat,body), name)
+            tev {d with env = Map.add name (TyEnv (env, func)) env} body
+        | FunctionT (env_ty, (pat,body)) ->
+            let env = Map.add pat args env
+            tev {d with env = env} body
+        | _ -> failwith "This function can only be used on FunctionT and RecFunctionT."
 
     and apply tev d la ra =
         match la, ra with
@@ -880,12 +855,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
-        | TyEnv(env_term,FunctionT(env_ty,x)),_ -> apply_functiont tev d env_term (env_ty,x) ra
+        | TyEnv(env_term,func & (FunctionT _ | RecFunctionT _)),_ -> apply_functiont tev d env_term func ra
         | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont ra
-        | _ ->
-            match get_type la with
-            | ClosureT(a,r) -> apply_closuret d la (a,r) ra
-            | _ -> on_type_er d.trace "Invalid use of apply."
+        | TyType(ClosureT(a,r)), _ -> apply_closuret d la (a,r) ra
+        | _ -> on_type_er d.trace "Invalid use of apply."
 
     and apply_cast d env_term (env_ty,core as fun_key) args_ty =
         let instantiate_type_as_variable d args_ty =
@@ -1232,32 +1205,31 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 | meth -> TyOp(DotNetTypeCallMethod,[x';n'],meth.ReturnType |> dotnet_type_to_ty)
         | _ -> on_type_er d.trace "Expected a .NET type instance."
 
-    let add_trace d pos =
-        match pos with
-        | Some x -> {d with trace = x :: d.trace}
-        | None -> d
+    let add_trace d x = {d with trace = x :: d.trace}
 
     match expr with
-    | Lit (value,_) -> TyLit value
-    | V (x, pos) -> v_find d.env x (fun () -> on_type_er (add_trace d pos).trace <| sprintf "Variable %A not bound." x)
-    | Function (core, free_var_set, _) -> 
-        let env_term = Set.fold (fun s x -> 
-            match d.env.TryFind x with
-            | Some ex -> Map.add x ex s
-            | None -> s) Map.empty !free_var_set
-        TyEnv(env_term, FunctionT(env_to_ty env_term, core))
-    | VV(vars, pos) -> 
-        let vv = List.map (tev (add_trace d pos)) vars 
+    | Lit value -> TyLit value
+    | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
+    | Function core -> TyEnv(d.env, FunctionT(env_to_ty d.env, core))
+    | Pattern pat -> pattern_compile_single pat |> snd |> tev d
+    | FreeVar (vars, body) ->
+        let env = Map.filter (fun k _ -> Set.contains k vars) d.env
+        tev {d with env=env} body
+    | Pos (pos, body) -> tev (add_trace d pos) body
+    | VV vars -> 
+        let vv = List.map (tev d) vars 
         TyVV(vv, VVT(List.map get_type vv))
-    | Op(op,vars,pos) ->
-        let d = add_trace d pos
+    | Op(op,vars) ->
         match op, vars with
         | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
         | DotNetGetTypeFromAssembly,[a;b] -> dotnet_get_type_from_assembly d a b
         | DotNetTypeInstantiateGenericParams,[a;b] -> dotnet_instantiate_generic_params d a b
         | DotNetTypeConstruct,[a;b] -> dotnet_type_construct d a b
         | DotNetTypeCallMethod,[a;b] -> dotnet_type_call_method d a b
-
+        | Fix,[Lit (LitString name); body] ->
+            match tev d body with
+            | TyEnv(env_term,FunctionT(env_ty,core)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name))  
+            | x -> failwithf "Invalid use of Fix. Got: %A" x
         | Case,[v;case] -> case_tuple_template d v case
         | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
         | If,[cond;tr;fl] -> if_ d cond tr fl
@@ -1358,16 +1330,15 @@ let globals_empty (): LangGlobals =
     memoized_dotnet_types = d0(), d0()
     }
 
-let array_index op a b = Op(op,[a;b],None)
-let type_create pos a = Op(TypeConstructorCreate,[a], pos)
-let type_union a b = Op(TypeConstructorUnion,[a;b], None)
+let array_index op a b = Op(op,[a;b])
+let type_create a = Op(TypeConstructorCreate,[a])
+let type_union a b = Op(TypeConstructorUnion,[a;b])
 
 let core_functions =
-    let p f = inl "x" (f (v "x")) None
-    let p2 f = inl' ["x"; "y"] (f (v "x") (v "y")) None
-    let con x = Op(x,[],None)
-    let lit x = Lit (x, None)
-    let l v b e = l v b None e
+    let p f = inl "x" (f (v "x"))
+    let p2 f = inl' ["x"; "y"] (f (v "x") (v "y"))
+    let con x = Op(x,[])
+    let lit x = Lit (x)
     s  [l "error_type" (p error_type)
         l "print_static" (p print_static)
         l "union" (p2 type_union)
@@ -1377,7 +1348,6 @@ let spiral_typecheck code body on_fail ret =
     let globals = globals_empty()
     let d = data_empty()
     let input = core_functions body
-    expr_free_variables input |> ignore // Is mutable
     try
         let x = !d.seq (expr_typecheck globals d input)
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
