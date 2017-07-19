@@ -1197,11 +1197,17 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     | Lit value -> TyLit value
     | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
     | Function core -> TyEnv(d.env, FunctionT(env_to_ty d.env, core))
-    | Pattern pat -> pattern_compile_single pat |> snd |> tev d
+    | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows."
     | FreeVar (vars, body) ->
         let env = Map.filter (fun k _ -> Set.contains k vars) d.env
         tev {d with env=env} body
-    | Pos (pos, body) -> tev (add_trace d pos) body
+    | Pos (pos, body) -> 
+//        if pos = ("test13", 13L, 8L) then
+//            printfn "%A" pos
+//            tev (add_trace d pos) body
+//        else
+            printfn "%A" pos
+            tev (add_trace d pos) body
     | VV vars -> 
         let vv = List.map (tev d) vars 
         TyVV(vv, VVT(List.map get_type vv))
@@ -1335,7 +1341,7 @@ let spiral_typecheck code body on_fail ret =
     let d = data_empty()
     let input = core_functions body
     try
-        let x = !d.seq (expr_typecheck globals d input)
+        let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd))
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
         ret (x,globals)
     with 

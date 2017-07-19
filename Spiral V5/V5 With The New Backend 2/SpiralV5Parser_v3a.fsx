@@ -58,7 +58,6 @@ let rec patterns (s: CharStream<_>) =
     |> choice |> patpos <| s
 
 let pattern_list = many patterns
-let pattern_list1 = many1 patterns
 
 let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
 let pnumber : Parser<_,_> =
@@ -183,11 +182,11 @@ let meth_pat' args body = inl_pat' args (meth_memo body)
     
 let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns) (eq >>. expr) lp
 let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
-let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) pattern_list1 (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
+let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
 
 let case_met_pat_statement expr = pipe2 (met_ >>. patterns) (eq >>. expr) (fun pattern body -> lp pattern (meth_memo body))
 let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
-let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) pattern_list1 (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
+let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
 
 let case_open expr = open_ >>. expr |>> module_open
 

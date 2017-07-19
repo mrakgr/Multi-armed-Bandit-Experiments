@@ -477,6 +477,21 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
+let fib =
+    "fib",
+    """
+met rec fib x = 
+    if x <= 0 then 0 else 
+        // Without this it crashes now that I've added partial evaluation on arithmetic operations. 
+        // Later, I will add a special op for making static stuff dynamic.
+
+        // Maybe adding if_static as a keyword would not be a bad idea either.
+        met x = x
+        fib (x-1) + fib (x-2)
+    : x
+fib 1
+    """
+
 let test6 =
     "test6",
     """
@@ -528,7 +543,7 @@ match x with
 let test9 =
     "test9",
     """
-inl ab = type .A |> union (type .B)
+inl ab = type (.A) |> union (type (.B))
 met x = (ab .A, ab .A, ab .A)
 match x with
 | (.A _ _) -> 1
@@ -540,7 +555,7 @@ match x with
 let test10 = // This particular pattern is the worst case for partially evaluated pattern matchers.
     "test10",
     """
-inl ab = type .A |> union (type .B)
+inl ab = type (.A) |> union (type (.B))
 met x = (ab .A, ab .A, ab .A, ab .A)
 match x with
 | (.A .A _) -> 1
@@ -564,58 +579,38 @@ match x with
 let test12 =
     "test12",
     """
-met rec expr x = type (type (.V, x) 
-                       |> union (type (.Add, expr x, expr x))
-                       |> union (type (.Mult, expr x, expr x)))
-inl int_expr = expr 0
-inl v x = int_expr (.V, x)
-inl add a b = int_expr (.Add, a, b)
-inl mult a b = int_expr (.Mult, a, b)
-inl a = add (v 1) (v 2)
-inl b = add (v 3) (v 4)
-inl c = mult a b
-inl rec interpreter_static x = 
-    inl f = interpreter_static
-    match x with
-    | (.V x) -> x
-    | (.Add a b) -> f a + f b
-    | (.Mult a b) -> f a * f b
-interpreter_static c
-    """
-
-let test13 =
-    "test13",
-    """
 inl rec p = function
     | (.Some x) -> p x
     | .None -> 0
 p (.Some, .None)
     """
 
-let fib =
-    "fib",
+let test13 =
+    "test13",
     """
-met rec fib x = 
-    if x <= 0 then 0 else 
-        // Without this it crashes now that I've added partial evaluation on arithmetic operations. 
-        // Later, I will add a special op for making static stuff dynamic.
+inl v x = (.V, x)
+inl add a b = (.Add, a, b)
+inl mult a b = (.Mult, a, b)
+inl a = add (v 1) (v 2)
+inl b = add (v 3) (v 4)
+inl c = mult a b
+inl rec interpreter_static x = 
+    print_static "I am in interpreter_static."
+    //inl f x = interpreter_static x
+    print_static "I am in interpreter_static(2)."
+    match x with
+    | (.V x) -> 
+        print_static ("I am in V.", x)
+        x
+    | (.Add a b) -> 
+        print_static ("I am in Add.", a, b)
+        interpreter_static a + interpreter_static b
+    | (.Mult a b) -> 
+        print_static ("I am in Mult.", a, b)
+        interpreter_static a * interpreter_static b
+interpreter_static c
+    """
 
-        // Maybe adding if_static as a keyword would not be a bad idea either.
-        met x = x
-        fib (x-1) + fib (x-2)
-    : x
-fib 1
-    """
-
-let test_rec1 =
-    "test_rec1",
-    """
-inl a = 1,2,3
-inl b = 4,5,6
-inl f (q w e) (a s d) = q+a,w+s,e+d
-f a b
-    """
-
-let r = spiral_codegen [] fib
+let r = spiral_codegen [] test13
 printfn "%A" r
 
