@@ -1,6 +1,10 @@
-﻿#load "SpiralV5Parser_v3a.fsx"
+﻿#if INTERACTIVE
+#load "SpiralV5Parser_v3a.fsx"
+#endif
 
-open SpiralV5Language_v10c
+module Spiral.Codegen
+
+open Spiral.Lang
 open System.Collections.Generic
 open System.Text
 
@@ -411,7 +415,7 @@ open FParsec
 let spiral_codegen aux_modules main_module = 
     let rec parse_modules xs on_fail ret =
         let p x on_fail ret =
-            match SpiralV5Parser_v3a.spiral_parse x with
+            match Spiral.Parse.spiral_parse x with
             | Success(r,_,_) -> ret r
             | Failure(er,_,_) -> on_fail er
         match xs with
@@ -588,29 +592,28 @@ p (.Some, .None)
 let test13 =
     "test13",
     """
-inl v x = (.V, x)
-inl add a b = (.Add, a, b)
-inl mult a b = (.Mult, a, b)
+met rec expr x = type (type (.V, x) 
+                       |> union (type (.Add, expr x, expr x))
+                       |> union (type (.Mult, expr x, expr x)))
+inl int_expr = expr 0
+inl v x = int_expr (.V, x)
+inl add a b = int_expr (.Add, a, b)
+inl mult a b = int_expr (.Mult, a, b)
 inl a = add (v 1) (v 2)
 inl b = add (v 3) (v 4)
 inl c = mult a b
 inl rec interpreter_static x = 
-    print_static "I am in interpreter_static."
-    //inl f x = interpreter_static x
-    print_static "I am in interpreter_static(2)."
+    inl f = interpreter_static
     match x with
-    | (.V x) -> 
-        print_static ("I am in V.", x)
-        x
-    | (.Add a b) -> 
-        print_static ("I am in Add.", a, b)
-        interpreter_static a + interpreter_static b
-    | (.Mult a b) -> 
-        print_static ("I am in Mult.", a, b)
-        interpreter_static a * interpreter_static b
+    | (.V x) -> x
+    | (.Add a b) -> f a + f b
+    | (.Mult a b) -> f a * f b
 interpreter_static c
     """
 
+let get_succ = function
+    | Succ x -> x
+    | Fail _ -> "fail"
 let r = spiral_codegen [] test13
-printfn "%A" r
+printfn "%s" (get_succ r)
 

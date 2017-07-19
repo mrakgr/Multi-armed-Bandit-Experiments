@@ -57,8 +57,6 @@
     <Compile Include="AssemblyInfo.fs" />
     <None Include="App.config" />
     <Content Include="packages.config" />
-    <None Include="SpiralV5CudaTypechecker_v7d.fs_" />
-    <None Include="SpiralV5Parser_v1e.fs_" />
     <None Include="V5 With The New Backend\Dual Eq Abandonware\SpiralV5Parser_v2a%27.fsx" />
     <None Include="V5 With The New Backend\Dual Eq Abandonware\Typechecker_v7a.fsx" />
     <None Include="V5 With The New Backend\Dual Eq Abandonware\Codegen_v3b.fsx" />
@@ -172,14 +170,16 @@
     <None Include="Cuda Backend\Codegen_v3a.fsx" />
     <None Include="Scripts\load-references-release.fsx" />
     <None Include="Scripts\load-project-release.fsx" />
+    <None Include="Scripts\load-references-debug.fsx" />
+    <None Include="Scripts\load-project-debug.fsx" />
     <None Include="V5 With The New Backend 2\patterns_v0.fsx" />
     <None Include="V5 With The New Backend 2\hosting_v0.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v0.fsx" />
     <None Include="V5 With The New Backend 2\SpiralV5Language_v10a.fsx" />
     <None Include="V5 With The New Backend 2\SpiralV5Language_v10b.fsx" />
-    <None Include="V5 With The New Backend 2\SpiralV5Language_v10c.fsx" />
-    <None Include="V5 With The New Backend 2\SpiralV5Parser_v3a.fsx" />
-    <None Include="V5 With The New Backend 2\SpiralV5FsharpCodegen_v1a.fsx" />
+    <Compile Include="V5 With The New Backend 2\SpiralV5Language_v10c.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralV5Parser_v3a.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralV5FsharpCodegen_v1a.fs" />
     <None Include="V5 With The New Backend 2\Script1.fsx" />
   </ItemGroup>
   <ItemGroup>

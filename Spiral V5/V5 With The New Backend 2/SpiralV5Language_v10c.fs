@@ -1,4 +1,8 @@
-﻿#load "../Scripts/load-project-release.fsx"
+﻿#if INTERACTIVE
+#load "../Scripts/load-project-release.fsx"
+#endif
+
+module Spiral.Lang
 
 open ManagedCuda.VectorTypes
 open System.Collections.Generic
@@ -1201,13 +1205,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     | FreeVar (vars, body) ->
         let env = Map.filter (fun k _ -> Set.contains k vars) d.env
         tev {d with env=env} body
-    | Pos (pos, body) -> 
-//        if pos = ("test13", 13L, 8L) then
-//            printfn "%A" pos
-//            tev (add_trace d pos) body
-//        else
-            printfn "%A" pos
-            tev (add_trace d pos) body
+    | Pos (pos, body) -> tev (add_trace d pos) body
     | VV vars -> 
         let vv = List.map (tev d) vars 
         TyVV(vv, VVT(List.map get_type vv))

@@ -1,8 +1,12 @@
-﻿#load "SpiralV5Language_v10c.fsx"
+﻿#if INTERACTIVE
+#load "SpiralV5Language_v10c.fsx"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsecCS.dll"
 #r "../../packages/FParsec.1.0.2/lib/net40-client/FParsec.dll"
+#endif
 
-open SpiralV5Language_v10c
+module Spiral.Parse
+
+open Spiral.Lang
 open FParsec
 
 type ParserExpr =
