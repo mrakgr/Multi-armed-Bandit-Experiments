@@ -602,12 +602,10 @@ inl mult a b = int_expr (.Mult, a, b)
 inl a = add (v 1) (v 2)
 inl b = add (v 3) (v 4)
 inl c = mult a b
-inl rec interpreter_static x = 
-    inl f = interpreter_static
-    match x with
+inl rec interpreter_static = function
     | (.V x) -> x
-    | (.Add a b) -> f a + f b
-    | (.Mult a b) -> f a * f b
+    | (.Add a b) -> interpreter_static a + interpreter_static b
+    | (.Mult a b) -> interpreter_static a * interpreter_static b
 interpreter_static c
     """
 

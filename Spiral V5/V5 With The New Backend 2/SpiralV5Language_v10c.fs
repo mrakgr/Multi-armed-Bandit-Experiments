@@ -590,8 +590,8 @@ type LangGlobals =
 
 exception TypeError of Trace * string
 
-let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
-    let inline tev d expr = expr_typecheck globals d expr
+let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
+    let inline tev d expr = expr_typecheck globals d expr (depth+1)
     let inline apply_seq d x = !d.seq x
     let inline tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
     let inline tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
@@ -1205,7 +1205,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     | FreeVar (vars, body) ->
         let env = Map.filter (fun k _ -> Set.contains k vars) d.env
         tev {d with env=env} body
-    | Pos (pos, body) -> tev (add_trace d pos) body
+    | Pos (pos, body) -> 
+        printfn "depth is %i as %A" depth pos
+        tev (add_trace d pos) body
     | VV vars -> 
         let vv = List.map (tev d) vars 
         TyVV(vv, VVT(List.map get_type vv))
@@ -1339,7 +1341,7 @@ let spiral_typecheck code body on_fail ret =
     let d = data_empty()
     let input = core_functions body
     try
-        let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd))
+        let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd) 0)
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
         ret (x,globals)
     with 
