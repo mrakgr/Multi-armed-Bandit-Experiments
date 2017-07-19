@@ -26,8 +26,8 @@ type Ty =
     | PrimT of PrimitiveType
     | VVT of Ty list
     | LitT of Value
-    | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
-    | RecFunctionT of EnvTy * FunctionCore * string
+    | FunctionT of EnvTy * FunctionCore * Set<string> // Type level function. Can also be though of as a procedural macro.
+    | RecFunctionT of EnvTy * FunctionCore * string * Set<string>
     | ModuleT of EnvTy
     | UnionT of Set<Ty>
     | RecT of Tag
@@ -161,10 +161,10 @@ and Expr =
     | Lit of Value
     | Pattern of Pattern
     | Function of FunctionCore
+    | FunctionFilt of Set<string> * FunctionCore
     | VV of Expr list
     | Op of Op * Expr list
     | Pos of PosKey * Expr
-    | FreeVar of Set<string> * Expr
 
 and Arguments = Set<TyV> ref
 and Renamer = Map<Tag,Tag>
@@ -402,7 +402,7 @@ let rec pattern_compile arg pat =
             l pat_var (ap (V a) arg) (cp' (v pat_var) b on_succ on_fail)
         | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
         | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
-        | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy FreeVar(expr_prepass exp)) on_fail) l on_fail |> force
+        | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
         | PatTypeName x ->
             let x = type_lit_create (LitString x)
             if_static (eq_type arg x) on_succ.Value on_fail.Value |> case arg
@@ -426,14 +426,15 @@ and expr_prepass e =
     | VV l -> 
         let l,l' = List.map f l |> List.unzip
         Set.unionMany l, VV l'
+    | FunctionFilt(vars,(name,body)) ->
+        Set.remove name vars, e
     | Function(name,body) ->
         let vars,body = f body
-        Set.remove name vars, Function(name,body)
+        Set.remove name vars, FunctionFilt(vars,(name,body))
     | Lit _ -> Set.empty, e
     | Pos(pos,body) -> 
         let vars, body = f body
         vars, Pos(pos,body)
-    | FreeVar(vars,body) -> vars, e
     | Pattern pat -> pattern_compile_single pat
 
 
@@ -590,8 +591,8 @@ type LangGlobals =
 
 exception TypeError of Trace * string
 
-let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
-    let inline tev d expr = expr_typecheck globals d expr (depth+1)
+let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
+    let inline tev d expr = expr_typecheck globals d expr
     let inline apply_seq d x = !d.seq x
     let inline tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
     let inline tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
@@ -652,7 +653,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
             let r_ty = get_type r
             match r_ty with
             | VVT tuple_types -> TyVV(index_tuple_args tuple_types, r_ty)
-            | ModuleT env | FunctionT (env, _) -> TyEnv(env_unseal env, r_ty)
+            | ModuleT env | FunctionT (env, _, _) | RecFunctionT (env, _, _, _) -> TyEnv(env_unseal env, r_ty)
             | _ -> chase_recurse r
            
         let destructure_cse r = 
@@ -804,8 +805,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
             | PrimT _ | LitT _ | RecT _ as x -> x
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
-            | FunctionT (e, b) -> FunctionT(strip_map e, b)
-            | RecFunctionT (e, b, name) -> RecFunctionT (strip_map e, b, name)
+            | FunctionT (e, b, vars) -> FunctionT(strip_map e, b, vars)
+            | RecFunctionT (e, b, name, vars) -> RecFunctionT (strip_map e, b, name, vars)
             | ModuleT e -> ModuleT (strip_map e)
             | ForCastT x -> typec_strip x |> ForCastT
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
@@ -828,20 +829,21 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
         else TyOp(Apply,[clo;arg],clo_ret_ty)
 
     and apply_functiont tev d env func args =
+        let filt vars env pat args = 
+            let env = Map.filter (fun k _ -> Set.contains k vars) env
+            if Set.contains pat vars then Map.add pat args env else env
         match func with
-        | RecFunctionT (env_ty, (pat,body), name) ->
-            let env = Map.add pat args env
-            let env_ty = Map.add pat (get_type args) env_ty
-            let func = RecFunctionT (env_ty, (pat,body), name)
+        | RecFunctionT (env_ty, (pat,body), name, vars) ->
+            let env, env_ty = filt vars env pat args, filt vars env_ty pat (get_type args)
+            let func = RecFunctionT (env_ty, (pat,body), name, vars)
             tev {d with env = Map.add name (TyEnv (env, func)) env} body
-        | FunctionT (env_ty, (pat,body)) ->
-            let env = Map.add pat args env
-            tev {d with env = env} body
+        | FunctionT (env_ty, (pat,body), vars) ->
+            tev {d with env = filt vars env pat args} body
         | _ -> failwith "This function can only be used on FunctionT and RecFunctionT."
 
     and apply tev d la ra =
         match la, ra with
-        | TyEnv(env_term,FunctionT(env_ty,x)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t
+//        | TyEnv(env_term,FunctionT(env_ty,x,vars)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
@@ -850,24 +852,24 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
         | TyType(ClosureT(a,r)), _ -> apply_closuret d la (a,r) ra
         | _ -> on_type_er d.trace "Invalid use of apply."
 
-    and apply_cast d env_term (env_ty,core as fun_key) args_ty =
-        let instantiate_type_as_variable d args_ty =
-            let f x = make_tyv_and_push_ty d x
-            match args_ty with
-            | VVT l -> TyVV(List.map f l, args_ty)
-            | x -> f x
-
-        if env_num_args env_term > 0 then on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
-        else
-            let args = instantiate_type_as_variable d args_ty
-            let closure = TyEnv(env_term, FunctionT fun_key)
-
-            let tev d x =
-                let r = memoize_closure (get_type args) d x
-                if is_returnable r then r
-                else on_type_er d.trace "Closure does not have a returnable type."
-                    
-            apply tev d closure args
+//    and apply_cast d env_term (env_ty,core as fun_key) args_ty =
+//        let instantiate_type_as_variable d args_ty =
+//            let f x = make_tyv_and_push_ty d x
+//            match args_ty with
+//            | VVT l -> TyVV(List.map f l, args_ty)
+//            | x -> f x
+//
+//        if env_num_args env_term > 0 then on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
+//        else
+//            let args = instantiate_type_as_variable d args_ty
+//            let closure = TyEnv(env_term, FunctionT fun_key)
+//
+//            let tev d x =
+//                let r = memoize_closure (get_type args) d x
+//                if is_returnable r then r
+//                else on_type_er d.trace "Closure does not have a returnable type."
+//                    
+//            apply tev d closure args
 
     let apply_tev d expr args = 
         let expr,args = tev2 d expr args
@@ -1200,14 +1202,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
     match expr with
     | Lit value -> TyLit value
     | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
-    | Function core -> TyEnv(d.env, FunctionT(env_to_ty d.env, core))
-    | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows."
-    | FreeVar (vars, body) ->
-        let env = Map.filter (fun k _ -> Set.contains k vars) d.env
-        tev {d with env=env} body
-    | Pos (pos, body) -> 
-        printfn "depth is %i as %A" depth pos
-        tev (add_trace d pos) body
+    | FunctionFilt(vars, core) -> TyEnv(d.env, FunctionT(env_to_ty d.env, core, vars))
+    | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
+    | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
+    | Pos (pos, body) -> tev (add_trace d pos) body
     | VV vars -> 
         let vv = List.map (tev d) vars 
         TyVV(vv, VVT(List.map get_type vv))
@@ -1220,7 +1218,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) depth =
         | DotNetTypeCallMethod,[a;b] -> dotnet_type_call_method d a b
         | Fix,[Lit (LitString name); body] ->
             match tev d body with
-            | TyEnv(env_term,FunctionT(env_ty,core)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name))  
+            | TyEnv(env_term,FunctionT(env_ty,core,vars)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name,vars))  
             | x -> failwithf "Invalid use of Fix. Got: %A" x
         | Case,[v;case] -> case_tuple_template d v case
         | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -1341,7 +1339,7 @@ let spiral_typecheck code body on_fail ret =
     let d = data_empty()
     let input = core_functions body
     try
-        let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd) 0)
+        let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd))
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
         ret (x,globals)
     with 

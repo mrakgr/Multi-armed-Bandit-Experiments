@@ -60,32 +60,27 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
     let print_union_ty' v = sprintf "UnionTy%i" v
     let print_union_ty set = union_ty_tag set |> print_union_ty'
 
-//    let rec_ty_definitions = d0()
-//    let rec_ty_tag x = def_proc rec_ty_definitions x
     let print_rec_ty v = sprintf "RecTy%i" v
 
     let state (buffer: Buf) x = buffer.Add <| Statement x
-    let enter' (buffer: Buf) f =
-        buffer.Add Indent
-        f()
-        buffer.Add Dedent
+    let enter' (buffer: Buf) f = buffer.Add Indent; f(); buffer.Add Dedent
     let enter (buffer: Buf) f = 
         enter' buffer <| fun _ -> 
             match f() with
             | "" -> ()
             | s -> state buffer s
 
-    let rec type_unit_is = function
+    let rec is_unit = function
         | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
-        | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) -> Map.forall (fun _ -> type_unit_is) env
-        | VVT t -> List.forall type_unit_is t
+        | ModuleT env | RecFunctionT (env,_,_,_) | FunctionT(env,_,_) -> Map.forall (fun _ -> is_unit) env
+        | VVT t -> List.forall is_unit t
 
-    let (|Unit|_|) x = if type_unit_is x then Some () else None
+    let (|Unit|_|) x = if is_unit x then Some () else None
 
     let rec print_type = function
         | Unit -> "unit"
-        | RecFunctionT (env,_,_) | FunctionT(env,_) | ModuleT env -> print_env_ty env
+        | RecFunctionT (env,_,_,_) | FunctionT(env,_,_) | ModuleT env -> print_env_ty env
         | VVT t -> print_tuple t
         | UnionT t -> print_union_ty t
         | RecT t -> print_rec_ty t
@@ -129,6 +124,10 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | _ -> sprintf "var_%i" tag
     let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
     let print_method tag = sprintf "method_%i" tag
+
+    let print_args args = 
+        Set.toList !args |> List.filter (snd >> is_unit >> not)
+        |> List.map print_tyv_with_type |> String.concat ", "
 
     let print_union_case tag i = sprintf "Union%iCase%i" tag i
     let print_rec_tuple tag = sprintf "Rec%iTuple" tag
@@ -177,7 +176,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                 | "" -> on_empty()
                 | x -> on_rest x
 
-        let if_not_unit ty f = if type_unit_is ty then "" else f()
+        let if_not_unit ty f = if is_unit ty then "" else f()
 
         let print_case_tuple' t l name = make_struct l (fun _ -> name) (sprintf "%s(%s(%s))" name (print_tuple t))
         let print_case_tuple l name = print_case_tuple' (List.map get_type l) l name
@@ -206,9 +205,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
         | TyMemoizedExpr(MemoMethod,used_vars,renamer,tag,_) ->
-            let args = Set.toList !used_vars |> List.map print_tyv |> String.concat ", "
             let method_name = print_method tag
-            sprintf "%s(%s)" method_name args
+            sprintf "%s(%s)" method_name (print_args used_vars)
 //        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
         | TyOp(TypeConstructorApply,[x & TyV(_,t)],UnionT tys) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
         | TyOp(TypeConstructorApply,[x & TyV(_,t)],RecT tag) ->
@@ -223,7 +221,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | UnionT tys -> union_process_tuple (print_rec_case tag) l tys
             | _ -> failwith "Only VVT and UnionT are recursive tuple types."
         | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
-        | TyEnv(env_term,(RecFunctionT (env_ty,_,_) | FunctionT(env_ty,_) | ModuleT env_ty)) ->
+        | TyEnv(env_term,(RecFunctionT (env_ty,_,_,_) | FunctionT(env_ty,_,_) | ModuleT env_ty)) ->
             Map.toArray env_term
             |> Array.map snd
             |> fun x -> make_struct x (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_env_ty env_ty) args)
@@ -361,12 +359,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         let prefix = if is_first then "let rec" else "and"
         let method_name = print_method tag
-        let args = 
-            Set.toList !args
-            |> List.map print_tyv_with_type
-            |> String.concat ", "
-
-        sprintf "%s %s(%s): %s =" prefix method_name args (print_type (get_type body)) |> state
+        sprintf "%s %s(%s): %s =" prefix method_name (print_args args) (print_type (get_type body)) |> state
         enter' <| fun _ -> 
             match codegen buffer body with
             | "" -> ()
@@ -609,9 +602,27 @@ inl rec interpreter_static = function
 interpreter_static c
     """
 
-let get_succ = function
-    | Succ x -> x
-    | Fail _ -> "fail"
-let r = spiral_codegen [] test13
-printfn "%s" (get_succ r)
+let test14 =
+    "test14",
+    """
+met rec expr x = type (type (.V, x) 
+                       |> union (type (.Add, expr x, expr x))
+                       |> union (type (.Mult, expr x, expr x)))
+inl int_expr = expr 0
+inl v x = int_expr (.V, x)
+inl add a b = int_expr (.Add, a, b)
+inl mult a b = int_expr (.Mult, a, b)
+met a = add (v 1) (v 2)
+met b = add (v 3) (v 4)
+inl c = mult a b
+met rec inter x = 
+    match x with
+    | (.V x) -> x
+    | (.Add a b) -> inter a + inter b
+    | (.Mult a b) -> inter a * inter b
+    : 0
+inter c
+    """
+
+printfn "%A" (spiral_codegen [] test14)
 
