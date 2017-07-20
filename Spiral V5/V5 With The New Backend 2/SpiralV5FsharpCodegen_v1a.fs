@@ -71,7 +71,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | s -> state buffer s
 
     let rec is_unit = function
-        | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> true
+        | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetRuntimeTypeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | TyEnvT env -> Map.forall (fun _ -> is_unit) env
         | VVT t -> List.forall is_unit t
@@ -102,21 +102,22 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | Float64T -> "float64"
             | StringT -> "string"
             | BoolT -> "bool"
-        | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> 
+        | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetRuntimeTypeT _ -> 
             failwith "Should be covered in Unit."
                 
 
     and print_dotnet_instance_type (x: System.Type) =
         if x.GenericTypeArguments.Length > 0 then
             [|
-            x.Namespace 
+            x.Namespace
+            "." 
             x.Name.Split '`' |> Array.head
             "<"
             Array.map (dotnet_type_to_ty globals.memoized_dotnet_types >> print_type) x.GenericTypeArguments |> String.concat ","
             ">"
             |] |> String.concat null
         else
-            x.Namespace + x.Name
+            [|x.Namespace; "."; x.Name|] |> String.concat null
 
     let print_tyv (tag,ty) = 
         match ty with
@@ -193,6 +194,12 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let i = Seq.findIndex ((=) v_ty) tys
             print_case_var [v] (f i)
 
+        let (|TyDotNetTypeInstance|) = function
+            | DotNetTypeInstanceT x -> map_rev_dotnet globals.memoized_dotnet_types x
+            | _ -> failwith "impossible"
+
+        let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
+
         match expr with
         | TyV (_, Unit) -> ""
         | TyV v -> print_tyv v
@@ -232,7 +239,6 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             // There is one level of flattening in the outer arguments.
             let b = tuple_field b |> List.map codegen |> String.concat ", "
             sprintf "%s(%s)" (codegen a) b
-
         | TyOp(Case,v :: cases,t) ->
             print_if t <| fun _ ->
                 let tag = 
@@ -286,7 +292,11 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | TyOp(Exp,[x],_) -> sprintf "exp(%s)" (codegen x)
         | TyOp(Tanh,[x],_) -> sprintf "tanh(%s)" (codegen x)
 
-        
+        | TyOp(DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)], TyDotNetTypeInstance instance_type) ->
+            let ins = print_dotnet_instance_type instance_type
+            sprintf "%s(%s)" ins args
+        | TyOp(DotNetTypeCallMethod,[v; TyTuple(TypeString method_name :: DotNetPrintedArgs method_args)],ret_type) ->
+            sprintf "%s.%s(%s)" (codegen v) method_name method_args
 
         // Cuda kernel constants
 //        | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
@@ -616,5 +626,14 @@ met rec inter x =
 inter c
     """
 
-printfn "%A" (spiral_codegen [] test14)
+let test15 = 
+    "test15",
+    """
+inl system = load_assembly .mscorlib
+inl builder_type = lit_lift "System.Text.StringBuilder" |> system 
+builder_type ("Qwe", 128i32)
+    """
 
+printfn "%A" (spiral_codegen [] hacker_rank_1)
+
+let (var_15: System.Text.StringBuilder) = System.Text.StringBuilder("Qwe", 128)

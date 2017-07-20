@@ -37,7 +37,7 @@ type Ty =
     | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
     | DotNetRuntimeTypeT of Tag // Since Type does not support the Comparable interface, I map it to int.
     | DotNetTypeInstanceT of Tag
-    | DotNetAssembly of Tag
+    | DotNetAssemblyT of Tag
 
 and Tag = int64
 and TyV = Tag * Ty
@@ -63,8 +63,6 @@ and Value =
 and Op =
     // DotNetOps
     | DotNetLoadAssembly
-    | DotNetGetTypeFromAssembly
-    | DotNetTypeInstantiateGenericParams
     | DotNetTypeConstruct
     | DotNetTypeCallMethod
 
@@ -234,6 +232,8 @@ let tuple_field = function
     | TyVV(args,_) -> args
     | x -> [x]
 
+let (|TyTuple|) x = tuple_field x
+
 /// Wraps the argument in a set if not a UnionT.
 let set_field = function
     | UnionT t -> t
@@ -249,10 +249,6 @@ let (|TypeLit|_|) = function
     | TyType (LitT x) -> Some x
     | _ -> None
 let (|TypeString|_|) = function
-    | TypeLit (LitString x) -> Some x
-    | _ -> None
-
-let (|NameT|_|) = function
     | TypeLit (LitString x) -> Some x
     | _ -> None
 
@@ -805,7 +801,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
         let rec strip_map x = Map.map (fun _ -> typec_strip) x
         and typec_strip = function // Implements #10.
-            | DotNetAssembly _ | DotNetRuntimeTypeT _ | DotNetTypeInstanceT _
+            | DotNetAssemblyT _ | DotNetRuntimeTypeT _ | DotNetTypeInstanceT _
             | PrimT _ | LitT _ | RecT _ as x -> x
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
@@ -827,18 +823,71 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             // If present it will return that instead.
             tev_seq d x |> get_type |> typec_strip |> add_to_type_dict |> add_to_memo_dict |> ret_tyv
 
-   
+    let inline wrap_exception d f =
+        try f()
+        with e -> on_type_er d.trace e.Message
+
+    let dotnet_load_assembly d x =
+        match tev d x with
+        | TypeString x ->
+            wrap_exception d <| fun _ ->
+                System.Reflection.Assembly.Load(x) |> map_dotnet globals.memoized_dotnet_assemblies 
+                |> DotNetAssemblyT |> make_tyv_and_push_ty d
+        | _ -> on_type_er d.trace "Expected a type level string."
+
+    let (|TyAssembly|_|) = function
+        | TyType (DotNetAssemblyT x) -> map_rev_dotnet globals.memoized_dotnet_assemblies x |> Some
+        | _ -> None
+
+    let dotnet_get_type_from_assembly (x: System.Reflection.Assembly) n =
+        wrap_exception d <| fun _ ->
+            match x.GetType(n) with
+            | null -> on_type_er d.trace "Loading a type from assembly failed."
+            | x -> x |> map_dotnet globals.memoized_dotnet_types
+                     |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d
+
+    let (|TyDotNetRuntimeType|_|) = function
+        | TyType (DotNetRuntimeTypeT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+        | _ -> None
+
+    let (|TyDotNetTypeInstance|_|) = function
+        | TyType (DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+        | _ -> None
+
+    let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
+    let dotnet_ty_to_type (x: Ty) = dotnet_ty_to_type globals.memoized_dotnet_types x
+
     let apply tev d la args =
         match la, args with
 //        | TyEnv(env_term,FunctionT(env_ty,x,vars)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
-        | TyEnv(env_term,ModuleT env_ty), NameT n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
+        | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
         | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)),_ -> 
             let env = Map.add pat args env_term
             tev {d with env = Map.add name recf env} body
         | TyEnv(env_term,FunctionT (env_ty, (pat,body))),_ -> tev {d with env = Map.add pat args env_term} body
         | TyEnv(env_term, BlankFunctionT (env_ty, body)),_ -> tev d body
+        | TyAssembly a, TypeString n -> dotnet_get_type_from_assembly a n
+        | TyAssembly _, _ -> on_type_er d.trace "Expected a type level string as the second argument."
+        | TyDotNetRuntimeType runtime_type, _ ->
+            let n = tuple_field args |> List.toArray |> Array.map (get_type >> dotnet_ty_to_type)
+            wrap_exception d <| fun _ ->
+                if runtime_type.GetGenericArguments().Length > 0 then // instantiate generic type params
+                    runtime_type.MakeGenericType n |> map_dotnet globals.memoized_dotnet_types
+                    |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d
+                else // construct the type
+                    match runtime_type.GetConstructor n with
+                    | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
+                    | _ -> 
+                        let instance_type = map_dotnet globals.memoized_dotnet_types runtime_type |> DotNetTypeInstanceT
+                        TyOp(DotNetTypeConstruct,[args],instance_type)
+        | TyDotNetTypeInstance a, TyTuple(TypeString method_name :: method_args) ->
+            wrap_exception d <| fun _ ->
+                match a.GetMethod(method_name,List.toArray method_args |> Array.map (get_type >> dotnet_ty_to_type)) with
+                | null -> on_type_er d.trace "Cannot find a method with matching arguments."
+                | meth -> TyOp(DotNetTypeCallMethod,[la;args],meth.ReturnType |> dotnet_type_to_ty)
+        | TyDotNetTypeInstance a, _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
         | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont args
         | TyType(ClosureT(clo_arg_ty,clo_ret_ty)), _ -> 
             let arg_ty = get_type args
@@ -1121,76 +1170,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | _ -> failwith "There should always be at least one clause here."
         | _ -> tev d case
 
-    let inline wrap_exception d f =
-        try f()
-        with e -> on_type_er d.trace e.Message
-
-    let dotnet_load_assembly d x =
-        match tev d x with
-        | TypeString x ->
-            wrap_exception d <| fun _ ->
-                System.Reflection.Assembly.Load(x) |> map_dotnet globals.memoized_dotnet_assemblies 
-                |> DotNetAssembly |> make_tyv_and_push_ty d
-        | _ -> on_type_er d.trace "Expected a type level string."
-
-    let (|TyAssembly|_|) = function
-        | TyType (DotNetAssembly x) -> map_rev_dotnet globals.memoized_dotnet_assemblies x |> Some
-        | _ -> None
-
-    let dotnet_get_type_from_assembly d x n =
-        match tev2 d x n with
-        | TyAssembly x, TypeString n -> 
-            wrap_exception d <| fun _ ->
-                match x.GetType(n) with
-                | null -> on_type_er d.trace "Loading a type from assembly failed."
-                | x -> x |> map_dotnet globals.memoized_dotnet_types
-                        |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d
-        | TyAssembly x, _ -> on_type_er d.trace "Expected a type level string as the second argument."
-        | _ -> on_type_er d.trace "Expected a type level .NET Assembly as the first argument."
-
-    let (|TyDotNetRuntimeType|_|) = function
-        | TyType (DotNetRuntimeTypeT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
-        | _ -> None
-
-    let (|TyDotNetTypeInstance|_|) = function
-        | TyType (DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
-        | _ -> None
-
-    let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
-    let dotnet_ty_to_type (x: Ty) = dotnet_ty_to_type globals.memoized_dotnet_types x
-
-    let dotnet_instantiate_generic_params d x n =
-        let x, n = tev d x, tev d n |> tuple_field |> List.toArray |> Array.map (get_type >> dotnet_ty_to_type)
-        match x with
-        | TyDotNetRuntimeType x ->
-            wrap_exception d <| fun _ ->
-                x.MakeGenericType n |> map_dotnet globals.memoized_dotnet_types
-                |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d
-        | _ -> on_type_er d.trace "Expected a runtime .NET type."
-
-    let dotnet_type_construct d x' n' =
-        let x', n' = tev2 d x' n'
-        let n = tuple_field n' |> List.toArray |> Array.map (get_type >> dotnet_ty_to_type)
-        match x' with
-        | TyDotNetRuntimeType x ->
-            wrap_exception d <| fun _ ->
-                match x.GetConstructor n with
-                | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
-                | _ -> 
-                    let x = map_dotnet globals.memoized_dotnet_types x |> DotNetTypeInstanceT
-                    TyOp(DotNetTypeConstruct,[x';n'],x)
-        | _ -> on_type_er d.trace "Expected a runtime .NET type."
-
-    let dotnet_type_call_method d x' n' =
-        let x', n' = tev2 d x' n'
-        match x', tuple_field n' with
-        | TyDotNetTypeInstance x, TypeString method_name :: args ->
-            wrap_exception d <| fun _ ->
-                match x.GetMethod(method_name,List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)) with
-                | null -> on_type_er d.trace "Cannot find a method with matching arguments."
-                | meth -> TyOp(DotNetTypeCallMethod,[x';n'],meth.ReturnType |> dotnet_type_to_ty)
-        | _ -> on_type_er d.trace "Expected a .NET type instance."
-
     let dynamize d a =
         match tev d a with
         | TyLit _ as a -> make_tyv_and_push_typed_expr d a
@@ -1214,10 +1193,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     | Op(op,vars) ->
         match op, vars with
         | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
-        | DotNetGetTypeFromAssembly,[a;b] -> dotnet_get_type_from_assembly d a b
-        | DotNetTypeInstantiateGenericParams,[a;b] -> dotnet_instantiate_generic_params d a b
-        | DotNetTypeConstruct,[a;b] -> dotnet_type_construct d a b
-        | DotNetTypeCallMethod,[a;b] -> dotnet_type_call_method d a b
         | Fix,[Lit (LitString name); body] ->
             match tev d body with
             | TyEnv(env_term,FunctionT(env_ty,core)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name))  
@@ -1348,7 +1323,10 @@ let core_functions =
         l "uint8" (Op(TypeConstructorCreate,[Lit <| LitUInt8 0uy]))
         l "float64" (Op(TypeConstructorCreate,[Lit <| LitFloat64 0.0]))
         l "float32" (Op(TypeConstructorCreate,[Lit <| LitFloat32 0.0f]))
-        l "string" (Op(TypeConstructorCreate,[Lit <| LitString null]))
+        l "string" (Op(TypeConstructorCreate,[Lit <| LitString ""]))
+
+        l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
+        l "lit_lift" (p <| fun x -> Op(TypeLitCreate,[x]))
         ]
 
 let spiral_typecheck code body on_fail ret = 
