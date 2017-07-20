@@ -31,7 +31,7 @@ let var_name =
     many1Satisfy2L isAsciiIdStart isAsciiIdContinue "identifier" .>> spaces
     >>=? function
         | "match" | "function" | "with" | "open" | "module" 
-        | "rec" | "if" | "then" | "else" | "inl" | "met" | "type" as x -> 
+        | "rec" | "if" | "then" | "else" | "inl" | "met" as x -> 
             fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 
@@ -244,10 +244,10 @@ let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 let case_module expr = module_ >>% module_create
 let case_apply_type expr = grave >>. expr |>> ap_ty
 let case_string_ty expr = keywordChar '.' >>. var_name |>> (LitString >> type_lit_create)
-let case_type expr = keywordString "type" >>. (var <|> rounds expr) |>> type_create
+
 
 let expressions expr (s: CharStream<_>) =
-    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type; case_string_ty; case_type
+    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type; case_string_ty
       case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module
       ]
     |> List.map (fun x -> x expr |> attempt)
@@ -277,11 +277,13 @@ let indentations statements expressions (s: CharStream<_>) =
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
-    let expr_up expr (s: CharStream<_>) = expr_indent i (<) expr s
-    let ap_cr = expr |>> flip ap |> expr_up
+    let expr_up (s: CharStream<_>) = expr_indent i (<) expr s
+    let f x = List.reduce ap x
     
-    let f a l = List.fold (fun s x -> x s) a l
-    pipe2 expr (many ap_cr) f s
+    pipe2 expr (many expr_up) (fun x xs ->
+        match x :: xs with
+        | V "type" :: y :: xs -> f (type_create y :: xs) // Special case for the `type` keyword to make it act more like a function.
+        | x -> f x) s
 
 let tuple expr i (s: CharStream<_>) =
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s

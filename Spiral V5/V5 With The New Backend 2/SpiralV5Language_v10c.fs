@@ -26,8 +26,9 @@ type Ty =
     | PrimT of PrimitiveType
     | VVT of Ty list
     | LitT of Value
-    | FunctionT of EnvTy * FunctionCore * Set<string> // Type level function. Can also be though of as a procedural macro.
-    | RecFunctionT of EnvTy * FunctionCore * string * Set<string>
+    | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
+    | RecFunctionT of EnvTy * FunctionCore * string 
+    | BlankFunctionT of EnvTy * Expr // Throws away its argument.
     | ModuleT of EnvTy
     | UnionT of Set<Ty>
     | RecT of Tag
@@ -589,6 +590,10 @@ type LangGlobals =
     memoized_dotnet_types: Dictionary<System.Type,Tag> * Dictionary<Tag,System.Type>
     }
 
+let (|TyEnvT|_|) = function
+    | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) | BlankFunctionT(env,_) -> Some env
+    | _ -> None
+
 exception TypeError of Trace * string
 
 let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
@@ -653,7 +658,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             let r_ty = get_type r
             match r_ty with
             | VVT tuple_types -> TyVV(index_tuple_args tuple_types, r_ty)
-            | ModuleT env | FunctionT (env, _, _) | RecFunctionT (env, _, _, _) -> TyEnv(env_unseal env, r_ty)
+            | TyEnvT env -> TyEnv(env_unseal env, r_ty)
             | _ -> chase_recurse r
            
         let destructure_cse r = 
@@ -749,9 +754,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         memoize_helper (fun (args,renamer,tag,ret_ty) -> 
             TyMemoizedExpr(MemoClosure,args,renamer,tag,ClosureT(arg_ty,ret_ty))) d x
 
-    let apply_module d env_term b = 
-        v_find env_term b (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." b)
-
     let apply_typec d typec ra =
         let rec apply_typec d ty ra on_fail ret =
             let substitute_ty = function 
@@ -805,8 +807,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | PrimT _ | LitT _ | RecT _ as x -> x
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
-            | FunctionT (e, b, vars) -> FunctionT(strip_map e, b, vars)
-            | RecFunctionT (e, b, name, vars) -> RecFunctionT (strip_map e, b, name, vars)
+            | FunctionT (e, b) -> FunctionT(strip_map e, b)
+            | RecFunctionT (e, b, name) -> RecFunctionT (strip_map e, b, name)
+            | BlankFunctionT (e, b) -> BlankFunctionT(strip_map e, b)
             | ModuleT e -> ModuleT (strip_map e)
             | ForCastT x -> typec_strip x |> ForCastT
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
@@ -823,33 +826,23 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             tev_seq d x |> get_type |> typec_strip |> add_to_type_dict |> add_to_memo_dict |> ret_tyv
 
    
-    let rec apply_closuret d clo (clo_arg_ty,clo_ret_ty) arg =
-        let arg_ty = get_type arg
-        if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty clo
-        else TyOp(Apply,[clo;arg],clo_ret_ty)
-
-    and apply_functiont tev d env func args =
-        let filt vars env pat args = 
-            let env = Map.filter (fun k _ -> Set.contains k vars) env
-            if Set.contains pat vars then Map.add pat args env else env
-        match func with
-        | RecFunctionT (env_ty, (pat,body), name, vars) ->
-            let env, env_ty = filt vars env pat args, filt vars env_ty pat (get_type args)
-            let func = RecFunctionT (env_ty, (pat,body), name, vars)
-            tev {d with env = Map.add name (TyEnv (env, func)) env} body
-        | FunctionT (env_ty, (pat,body), vars) ->
-            tev {d with env = filt vars env pat args} body
-        | _ -> failwith "This function can only be used on FunctionT and RecFunctionT."
-
-    and apply tev d la ra =
-        match la, ra with
+    let apply tev d la args =
+        match la, args with
 //        | TyEnv(env_term,FunctionT(env_ty,x,vars)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
-        | TyEnv(env_term,ModuleT env_ty), NameT n -> apply_module d env_term n
+        | TyEnv(env_term,ModuleT env_ty), NameT n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
-        | TyEnv(env_term,func & (FunctionT _ | RecFunctionT _)),_ -> apply_functiont tev d env_term func ra
-        | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont ra
-        | TyType(ClosureT(a,r)), _ -> apply_closuret d la (a,r) ra
+        | TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)),_ -> 
+            let env, env_ty = Map.add pat args env_term, Map.add pat (get_type args) env_ty
+            let func = RecFunctionT (env_ty, (pat,body), name)
+            tev {d with env = Map.add name (TyEnv (env, func)) env} body
+        | TyEnv(env_term,FunctionT (env_ty, (pat,body))),_ -> tev {d with env = Map.add pat args env_term} body
+        | TyEnv(env_term, BlankFunctionT (env_ty, body)),_ -> tev d body
+        | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont args
+        | TyType(ClosureT(clo_arg_ty,clo_ret_ty)), _ -> 
+            let arg_ty = get_type args
+            if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty la
+            else TyOp(Apply,[la;args],clo_ret_ty)
         | _ -> on_type_er d.trace "Invalid use of apply."
 
 //    and apply_cast d env_term (env_ty,core as fun_key) args_ty =
@@ -1202,7 +1195,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     match expr with
     | Lit value -> TyLit value
     | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
-    | FunctionFilt(vars, core) -> TyEnv(d.env, FunctionT(env_to_ty d.env, core, vars))
+    | FunctionFilt(vars, (pat, body) & core) -> 
+        let env = Map.filter (fun k _ -> Set.contains k vars) d.env
+        let env_ty = env_to_ty env
+        if vars.Contains pat then TyEnv(env, FunctionT(env_ty, core)) else TyEnv(env, BlankFunctionT(env_ty, body))
     | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
     | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
     | Pos (pos, body) -> tev (add_trace d pos) body
@@ -1218,7 +1214,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | DotNetTypeCallMethod,[a;b] -> dotnet_type_call_method d a b
         | Fix,[Lit (LitString name); body] ->
             match tev d body with
-            | TyEnv(env_term,FunctionT(env_ty,core,vars)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name,vars))  
+            | TyEnv(env_term,FunctionT(env_ty,core)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name))  
+            | TyEnv(env_term,BlankFunctionT _) as x -> x
             | x -> failwithf "Invalid use of Fix. Got: %A" x
         | Case,[v;case] -> case_tuple_template d v case
         | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -1341,7 +1338,7 @@ let spiral_typecheck code body on_fail ret =
     try
         let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd))
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
-        ret (x,globals)
+        ret (x, globals)
     with 
     | :? TypeError as e -> 
         let trace, message = e.Data0, e.Data1

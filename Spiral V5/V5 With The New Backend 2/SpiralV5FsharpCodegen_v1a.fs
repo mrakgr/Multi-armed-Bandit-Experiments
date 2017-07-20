@@ -73,14 +73,14 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
     let rec is_unit = function
         | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssembly _ | DotNetRuntimeTypeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
-        | ModuleT env | RecFunctionT (env,_,_,_) | FunctionT(env,_,_) -> Map.forall (fun _ -> is_unit) env
+        | TyEnvT env -> Map.forall (fun _ -> is_unit) env
         | VVT t -> List.forall is_unit t
 
     let (|Unit|_|) x = if is_unit x then Some () else None
 
     let rec print_type = function
         | Unit -> "unit"
-        | RecFunctionT (env,_,_,_) | FunctionT(env,_,_) | ModuleT env -> print_env_ty env
+        | TyEnvT env -> print_env_ty env
         | VVT t -> print_tuple t
         | UnionT t -> print_union_ty t
         | RecT t -> print_rec_ty t
@@ -221,7 +221,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | UnionT tys -> union_process_tuple (print_rec_case tag) l tys
             | _ -> failwith "Only VVT and UnionT are recursive tuple types."
         | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
-        | TyEnv(env_term,(RecFunctionT (env_ty,_,_,_) | FunctionT(env_ty,_,_) | ModuleT env_ty)) ->
+        | TyEnv(env_term, TyEnvT env_ty) ->
             Map.toArray env_term
             |> Array.map snd
             |> fun x -> make_struct x (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_env_ty env_ty) args)
@@ -428,7 +428,7 @@ let spiral_codegen aux_modules main_module =
     parse_modules aux_modules Fail (fun r -> 
         spiral_typecheck code r Fail (print_program >> Succ))
 
-let test1 =
+let test1 = // Does it run?
     "test1",
     """
 inl a = 5
@@ -436,7 +436,7 @@ inl b = 10
 a + b
     """
 
-let test2 =
+let test2 = // Does it run methods?
     "test2",
     """
 met a () = 5
@@ -444,7 +444,7 @@ met b () = 10
 a () + b ()
     """
 
-let test3 =
+let test3 = // Does this method case work?
     "test3",
     """
 met a = 5
@@ -452,7 +452,7 @@ met b = 10
 a + b
     """
 
-let test4 =
+let test4 = // Does the and pattern work correctly?
     "test4",
     """
 met f (a b) (c d) = (a+c,b+d)
@@ -461,7 +461,7 @@ met &(w (c d)) = 3,4
 f q w
     """
 
-let test5 =
+let test5 = // Does basic pattern matching work?
     "test5",
     """
 inl f = function
@@ -474,7 +474,7 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let fib =
+let fib = // Does recursion work on the fibonacci example?
     "fib",
     """
 met rec fib x = 
@@ -489,7 +489,7 @@ met rec fib x =
 fib 1
     """
 
-let test6 =
+let test6 = // Does returning type level methods from methods work?
     "test6",
     """
 met min n =
@@ -500,7 +500,7 @@ met min n =
     tes 1 2 (2.2,3,4.5)
 min 10
     """
-let test7 =
+let test7 = // Do active patterns work?
     "test7",
     """
 inl f op1 op2 op3 = function
@@ -526,21 +526,21 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let test8 =
+let test8 = // Does the basic union type work?
     "test8",
     """
 met x =
-    inl option_int = type (.Some, 1) |> union (type (.None))
+    inl option_int = type (.Some, 1) |> union (type .None)
     option_int (.Some, 10)
 match x with
 | (.Some x) -> x
 | .None -> 0
     """
 
-let test9 =
+let test9 = // Does the partial evaluator optimize unused match cases?
     "test9",
     """
-inl ab = type (.A) |> union (type (.B))
+inl ab = type .A |> union (type .B)
 met x = (ab .A, ab .A, ab .A)
 match x with
 | (.A _ _) -> 1
@@ -549,10 +549,10 @@ match x with
 | _ -> 4
     """
 
-let test10 = // This particular pattern is the worst case for partially evaluated pattern matchers.
+let test10 = // The worst case for partially evaluated pattern matchers.
     "test10",
     """
-inl ab = type (.A) |> union (type (.B))
+inl ab = type .A |> union (type .B)
 met x = (ab .A, ab .A, ab .A, ab .A)
 match x with
 | (.A .A _) -> 1
@@ -561,7 +561,7 @@ match x with
 | _ -> 4
     """
 
-let test11 = 
+let test11 = // Do the nested patterns work on dynamic data?
     "test1",
     """
 inl a = type (1,2)
@@ -573,7 +573,7 @@ match x with
 | (_) -> 0
     """
 
-let test12 =
+let test12 = // Does recursive pattern matching work on static data?
     "test12",
     """
 inl rec p = function
@@ -582,7 +582,7 @@ inl rec p = function
 p (.Some, .None)
     """
 
-let test13 =
+let test13 = // A more complex interpreter example on static data.
     "test13",
     """
 met rec expr x = type (type (.V, x) 
@@ -602,7 +602,7 @@ inl rec interpreter_static = function
 interpreter_static c
     """
 
-let test14 =
+let test14 = // Does recursive pattern matching work on partially static data?
     "test14",
     """
 met rec expr x = type (type (.V, x) 
@@ -624,5 +624,5 @@ met rec inter x =
 inter c
     """
 
-printfn "%A" (spiral_codegen [] test14)
+printfn "%A" (spiral_codegen [] test7)
 
