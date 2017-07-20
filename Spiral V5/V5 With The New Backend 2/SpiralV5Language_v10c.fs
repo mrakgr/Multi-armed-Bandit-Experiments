@@ -1337,6 +1337,18 @@ let core_functions =
         l "print_static" (p print_static)
         l "dyn" (p dynamize)
         l "union" (p2 type_union)
+
+        l "int64" (Op(TypeConstructorCreate,[Lit <| LitInt64 0L]))
+        l "int32" (Op(TypeConstructorCreate,[Lit <| LitInt32 0]))
+        l "int16" (Op(TypeConstructorCreate,[Lit <| LitInt16 0s]))
+        l "int8" (Op(TypeConstructorCreate,[Lit <| LitInt8 0y]))
+        l "uint64" (Op(TypeConstructorCreate,[Lit <| LitUInt64 0UL]))
+        l "uint32" (Op(TypeConstructorCreate,[Lit <| LitUInt32 0u]))
+        l "uint16" (Op(TypeConstructorCreate,[Lit <| LitUInt16 0us]))
+        l "uint8" (Op(TypeConstructorCreate,[Lit <| LitUInt8 0uy]))
+        l "float64" (Op(TypeConstructorCreate,[Lit <| LitFloat64 0.0]))
+        l "float32" (Op(TypeConstructorCreate,[Lit <| LitFloat32 0.0f]))
+        l "string" (Op(TypeConstructorCreate,[Lit <| LitString null]))
         ]
 
 let spiral_typecheck code body on_fail ret = 

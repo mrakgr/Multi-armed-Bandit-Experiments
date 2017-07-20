@@ -580,7 +580,7 @@ let test13 = // A more complex interpreter example on static data.
 met rec expr x = type (type (.V, x) 
                        |> union (type (.Add, expr x, expr x))
                        |> union (type (.Mult, expr x, expr x)))
-inl int_expr = expr 0
+inl int_expr = expr int64
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
 inl mult a b = int_expr (.Mult, a, b)
@@ -600,7 +600,7 @@ let test14 = // Does recursive pattern matching work on partially static data?
 met rec expr x = type (type (.V, x) 
                        |> union (type (.Add, expr x, expr x))
                        |> union (type (.Mult, expr x, expr x)))
-inl int_expr = expr 0
+inl int_expr = expr int64
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
 inl mult a b = int_expr (.Mult, a, b)
