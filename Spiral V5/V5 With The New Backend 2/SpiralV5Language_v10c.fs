@@ -128,6 +128,7 @@ and Op =
     | ErrorType
     | ModuleOpen
     | TypeLitCreate
+    | Dynamize
 
     // UnOps
     | Neg
@@ -332,6 +333,7 @@ let tuple_is v = Op(VVIs,[v])
 
 let error_type x = Op(ErrorType, [x])
 let print_static x = Op(PrintStatic,[x])
+let dynamize x = Op(Dynamize,[x])
 
 let if_static cond tr fl = Op(IfStatic,[cond;tr;fl])
 let case arg case = Op(Case,[arg;case])
@@ -832,10 +834,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | TyEnv(env_term,ModuleT env_ty), NameT n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
-        | TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)),_ -> 
-            let env, env_ty = Map.add pat args env_term, Map.add pat (get_type args) env_ty
-            let func = RecFunctionT (env_ty, (pat,body), name)
-            tev {d with env = Map.add name (TyEnv (env, func)) env} body
+        | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)),_ -> 
+            let env = Map.add pat args env_term
+            tev {d with env = Map.add name recf env} body
         | TyEnv(env_term,FunctionT (env_ty, (pat,body))),_ -> tev {d with env = Map.add pat args env_term} body
         | TyEnv(env_term, BlankFunctionT (env_ty, body)),_ -> tev d body
         | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont args
@@ -1190,6 +1191,11 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 | meth -> TyOp(DotNetTypeCallMethod,[x';n'],meth.ReturnType |> dotnet_type_to_ty)
         | _ -> on_type_er d.trace "Expected a .NET type instance."
 
+    let dynamize d a =
+        match tev d a with
+        | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+        | a -> a
+
     let add_trace d x = {d with trace = x :: d.trace}
 
     match expr with
@@ -1229,6 +1235,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | ModuleWith,[a;b;c] -> module_with d a b c
         | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c
         | TypeLitCreate,[a] -> type_lit_create d a
+        | Dynamize,[a] -> dynamize d a
 
         // Primitive operations on expressions.
         | Add,[a;b] -> prim_arith_op d a b Add
@@ -1328,6 +1335,7 @@ let core_functions =
     let lit x = Lit (x)
     s  [l "error_type" (p error_type)
         l "print_static" (p print_static)
+        l "dyn" (p dynamize)
         l "union" (p2 type_union)
         ]
 

@@ -153,21 +153,22 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | LitBool x -> if x then "true" else "false"
 
         let codegen x = codegen buffer x
+
+        let print_if t f =
+            match t with
+            | Unit -> f (); ""
+            | t ->
+                let if_var = sprintf "(if_var_%i: %s)" (get_tag()) (print_type t)
+                sprintf "let %s =" if_var |> state
+                enter' <| fun _ -> f()
+                if_var
         
         let rec if_ cond tr fl =
-            let print_if () =
+            print_if (get_type tr) <| fun _ ->
                 sprintf "if %s then" (codegen cond) |> state
                 enter <| fun _ -> codegen tr
                 "else" |> state
                 enter <| fun _ -> codegen fl
-
-            match get_type tr with
-            | Unit -> print_if (); ""
-            | t ->
-                let if_var = print_tyv_with_type (get_tag(), t)
-                sprintf "let %s =" if_var |> state
-                enter' <| fun _ -> print_if()
-                if_var
 
         let make_struct l on_empty on_rest =
             Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
@@ -233,15 +234,13 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             sprintf "%s(%s)" (codegen a) b
 
         | TyOp(Case,v :: cases,t) ->
-            let tag = 
-                match get_type v with
-                | RecT tag -> tag
-                | UnionT tys -> union_ty_tag tys
-                | _ -> failwith "impossible"
+            print_if t <| fun _ ->
+                let tag = 
+                    match get_type v with
+                    | RecT tag -> tag
+                    | UnionT tys -> union_ty_tag tys
+                    | _ -> failwith "impossible"
 
-            let match_var = sprintf "match_var_%i" (get_tag())
-            sprintf "let %s: %s =" match_var (print_type t) |> state
-            enter' <| fun _ ->
                 sprintf "match %s with" (codegen v) |> state
                 let print_case i = function
                     | case & TyType Unit -> sprintf "| %s ->" (print_union_case tag i) |> state
@@ -254,7 +253,6 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                     | [] -> ()
                     | _ -> failwith "The cases should always be in pairs."
                 loop 0 cases
-            match_var
 
         // Primitive operations on expressions.
         | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -477,14 +475,8 @@ a, b, c
 let fib = // Does recursion work on the fibonacci example?
     "fib",
     """
-met rec fib x = 
-    if x <= 0 then 0 else 
-        // Without this it crashes now that I've added partial evaluation on arithmetic operations. 
-        // Later, I will add a special op for making static stuff dynamic.
-
-        // Maybe adding if_static as a keyword would not be a bad idea either.
-        met x = x
-        fib (x-1) + fib (x-2)
+met rec fib ^dyn x = 
+    if x <= 0 then 0 else fib (x-1) + fib (x-2)
     : x
 fib 1
     """
@@ -624,5 +616,5 @@ met rec inter x =
 inter c
     """
 
-printfn "%A" (spiral_codegen [] test7)
+printfn "%A" (spiral_codegen [] test14)
 
