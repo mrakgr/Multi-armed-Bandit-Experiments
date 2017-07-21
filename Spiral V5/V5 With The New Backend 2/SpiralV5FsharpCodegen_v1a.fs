@@ -387,13 +387,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
     let type_prefix =
         let mutable prefix = false
-        fun _ -> 
-            printfn "prefix=%b" prefix
-            if prefix then "and" else 
-                printfn "I am in false"
-                prefix <- true
-                printfn "prefix=%b" prefix
-                "type"
+        fun () -> if prefix then "and" else prefix <- true; "type"
 
     for x in globals.memoized_types do
         let tag,ty = x.Key, x.Value

@@ -1,5 +1,4 @@
 ﻿// Incorrect let generalization bug
-
 let tag = 
     let mutable i = 0
     fun _ -> i <- i+1; i
