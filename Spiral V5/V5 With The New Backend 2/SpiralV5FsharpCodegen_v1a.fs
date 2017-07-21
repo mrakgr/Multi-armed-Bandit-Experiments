@@ -71,8 +71,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | s -> state buffer s
 
     let rec is_unit = function
-        | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetRuntimeTypeT _ -> true
-        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | DotNetTypeAndMethodInstanceT _ | ClosureT _ | PrimT _ -> false
+        | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | TyEnvT env -> Map.forall (fun _ -> is_unit) env
         | VVT t -> List.forall is_unit t
 
@@ -84,7 +84,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | VVT t -> print_tuple t
         | UnionT t -> print_union_ty t
         | RecT t -> print_rec_ty t
-        | DotNetTypeInstanceT t | DotNetTypeAndMethodInstanceT (t,_) ->
+        | DotNetTypeInstanceT t ->
             globals.memoized_dotnet_types |> snd |> fun x -> x.[t]
             |> print_dotnet_instance_type
         | ClosureT(a,b) -> sprintf "%s -> %s" (print_type a) (print_type b)
@@ -102,7 +102,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | Float64T -> "float64"
             | StringT -> "string"
             | BoolT -> "bool"
-        | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetRuntimeTypeT _ -> 
+        | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
             failwith "Should be covered in Unit."
                 
 
@@ -194,9 +194,13 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let i = Seq.findIndex ((=) v_ty) tys
             print_case_var [v] (f i)
 
-        let (|TyDotNetTypeInstance|) = function
-            | DotNetTypeInstanceT x -> map_rev_dotnet globals.memoized_dotnet_types x
-            | _ -> failwith "impossible"
+        let (|DotNetTypeRuntime|_|) = function
+            | DotNetTypeRuntimeT x -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+            | _ -> None
+
+        let (|DotNetTypeInstance|_|) = function
+            | DotNetTypeInstanceT x -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+            | _ -> None
 
         let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
@@ -292,12 +296,13 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | TyOp(Exp,[x],_) -> sprintf "exp(%s)" (codegen x)
         | TyOp(Tanh,[x],_) -> sprintf "tanh(%s)" (codegen x)
 
-        | TyOp(DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)], TyDotNetTypeInstance instance_type) ->
+        | TyOp(DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)], DotNetTypeInstance instance_type) ->
             let ins = print_dotnet_instance_type instance_type
             sprintf "%s(%s)" ins args
-        | TyOp(DotNetTypeCallMethod,[v; TyLit (LitString method_name); TyTuple(DotNetPrintedArgs method_args)],ret_type) ->
-            sprintf "%s.%s(%s)" (codegen v) method_name method_args
-
+        | TyOp(DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]],ret_type) ->
+            match v with
+            | TyType (DotNetTypeRuntime t) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
+            | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
         // Cuda kernel constants
 //        | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
 
@@ -629,25 +634,28 @@ met rec inter x =
 inter c
     """
 
-let test15 = 
+let test15 = // Does basic .NET interop work?
     "test15",
     """
 inl system = load_assembly .mscorlib
 inl builder_type = lit_lift "System.Text.StringBuilder" |> system 
 inl b = builder_type ("Qwe", 128i32)
-inl a = b .Append >> ignore
+inl a x = 
+    b .Append x |> ignore
+    b .AppendLine () |> ignore
 a 123
 a 123i16
 a "qwe"
 inl str = b.ToString()
-inl console = 
-    inl c = lit_lift "System.Console" |> system
-    inl method -> function
-        | '(args) -> c (method :: args)
-        | arg -> c (method, arg)
-console .Write str
+inl console = lit_lift "System.Console" |> system
+console .Write str |> ignore
+
+inl dictionary_type = lit_lift "System.Collections.Generic.Dictionary`2" |> system
+inl dict = dictionary_type(0, 0)(128i32)
+dict.Add(1,2) |> ignore
+dict
     """
 
 printfn "%A" (spiral_codegen [] test15)
 
-System.Console.Write(123)
+

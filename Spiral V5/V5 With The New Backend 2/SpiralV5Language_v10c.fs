@@ -35,9 +35,8 @@ type Ty =
     | TypeConstructorT of Ty
     | ClosureT of Ty * Ty
     | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
-    | DotNetRuntimeTypeT of Tag // Since Type does not support the Comparable interface, I map it to int.
+    | DotNetTypeRuntimeT of Tag // Since Type does not support the Comparable interface, I map it to int.
     | DotNetTypeInstanceT of Tag
-    | DotNetTypeAndMethodInstanceT of Tag * string
     | DotNetAssemblyT of Tag
 
 and Tag = int64
@@ -543,7 +542,7 @@ let dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
     elif x = typeof<float32> then PrimT Float32T
     elif x = typeof<float> then PrimT Float64T
     elif x = typeof<string> then PrimT StringT
-    else map_dotnet memoized_dotnet_types x |> DotNetRuntimeTypeT
+    else map_dotnet memoized_dotnet_types x |> DotNetTypeRuntimeT
 
 let dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
     match x with
@@ -560,7 +559,7 @@ let dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
     | PrimT Float32T -> typeof<float32>
     | PrimT Float64T -> typeof<float>
     | PrimT StringT -> typeof<string>
-    | DotNetTypeInstanceT x | DotNetRuntimeTypeT x -> map_rev_dotnet memoized_dotnet_types x
+    | DotNetTypeInstanceT x | DotNetTypeRuntimeT x -> map_rev_dotnet memoized_dotnet_types x
     | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
 type Trace = PosKey list
@@ -802,7 +801,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
         let rec strip_map x = Map.map (fun _ -> typec_strip) x
         and typec_strip = function // Implements #10.
-            | DotNetAssemblyT _ | DotNetRuntimeTypeT _ | DotNetTypeInstanceT _ | DotNetTypeAndMethodInstanceT _
+            | DotNetAssemblyT _ | DotNetTypeRuntimeT _ | DotNetTypeInstanceT _
             | PrimT _ | LitT _ | RecT _ as x -> x
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
@@ -842,16 +841,16 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyType (DotNetAssemblyT x) -> map_rev_dotnet globals.memoized_dotnet_assemblies x |> Some
         | _ -> None
 
-    let (|TyDotNetRuntimeType|_|) = function
-        | TyType (DotNetRuntimeTypeT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+    let (|TyDotNetTypeRuntime|_|) = function
+        | TyType (DotNetTypeRuntimeT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
         | _ -> None
 
     let (|TyDotNetTypeInstance|_|) = function
         | TyType (DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
         | _ -> None
 
-    let (|TyDotNetTypeAndMethodInstance|_|) = function
-        | TyType (DotNetTypeAndMethodInstanceT (x,method_name)) -> (map_rev_dotnet globals.memoized_dotnet_types x, method_name) |> Some
+    let (|TyDotNetType|_|) = function
+        | TyType (DotNetTypeRuntimeT x | DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
         | _ -> None
 
     let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
@@ -859,7 +858,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
 
-    let apply tev d la args =
+    let rec apply tev d la args =
         match la, args with
 //        | TyEnv(env_term,FunctionT(env_ty,x,vars)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
@@ -876,33 +875,36 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                     | null -> on_type_er d.trace "Loading a type from assembly failed."
                     | x -> 
                         x |> map_dotnet globals.memoized_dotnet_types
-                        |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d
+                        |> DotNetTypeRuntimeT |> make_tyv_and_push_ty d
         | TyAssembly _, _ -> on_type_er d.trace "Expected a type level string as the second argument."
-        | TyDotNetRuntimeType runtime_type, TyTuple (TypeString method_name :: TySystemTypeArgs method_args)
-        | TyDotNetTypeAndMethodInstance (runtime_type, method_name), TyTuple (TySystemTypeArgs method_args) ->
+        | TyDotNetType _, TypeString method_name ->
+            let lam = inl' ["instance";"method_name";"args"] (ap (V "instance") (VV [V "method_name"; V "args"]))
+                      |> expr_prepass |> snd |> tev d
+            let ap a b = apply tev d a b
+            ap (ap lam la) args
+        | TyDotNetType typ, TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
             wrap_exception d <| fun _ ->
-                match runtime_type.GetMethod(method_name, method_args) with
+                match typ.GetMethod(method_name, method_args) with
                 | null -> on_type_er d.trace "Cannot find a method with matching arguments."
-                | meth -> TyOp(DotNetTypeCallMethod,[la;TyLit (LitString method_name);args],meth.ReturnType |> dotnet_type_to_ty)
-        | TyDotNetRuntimeType runtime_type, TyTuple (TySystemTypeArgs system_type_args) ->
+                | meth -> TyOp(DotNetTypeCallMethod,[la;args],meth.ReturnType |> dotnet_type_to_ty)
+                          |> make_tyv_and_push_typed_expr d
+        | TyDotNetTypeRuntime runtime_type, TyTuple (TySystemTypeArgs system_type_args) ->
             wrap_exception d <| fun _ ->
-                if runtime_type.GetGenericArguments().Length > 0 then // instantiate generic type params
+                if runtime_type.ContainsGenericParameters then // instantiate generic type params
                     runtime_type.MakeGenericType system_type_args |> map_dotnet globals.memoized_dotnet_types
-                    |> DotNetRuntimeTypeT |> make_tyv_and_push_ty d
+                    |> DotNetTypeRuntimeT |> make_tyv_and_push_ty d
                 else // construct the type
                     match runtime_type.GetConstructor system_type_args with
                     | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
                     | _ -> 
                         let instance_type = map_dotnet globals.memoized_dotnet_types runtime_type |> DotNetTypeInstanceT
-                        TyOp(DotNetTypeConstruct,[args],instance_type)
-        
-        | TyType(DotNetTypeInstanceT tag), TypeString method_name -> DotNetTypeAndMethodInstanceT (tag,method_name) |> make_tyv_and_push_ty d
+                        TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
         | TyType(DotNetTypeInstanceT tag), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
         | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont args
         | TyType(ClosureT(clo_arg_ty,clo_ret_ty)), _ -> 
             let arg_ty = get_type args
             if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty la
-            else TyOp(Apply,[la;args],clo_ret_ty)
+            else TyOp(Apply,[la;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
         | _ -> on_type_er d.trace "Invalid use of apply."
 
 //    and apply_cast d env_term (env_ty,core as fun_key) args_ty =
@@ -1279,8 +1281,9 @@ let default_dims = dim3(256), dim3(20)
 let print_type_error (code: Dictionary<string, string []>) (trace: Trace) message = 
     let error = System.Text.StringBuilder(1024)
     error.AppendLine message |> ignore
-    let rec loop prev_file prev_line = function
-        | (file, line: int64, col: int64) :: xs ->
+    let rec loop prev_file prev_line i (trace: _[]) = 
+        if i > 0 then
+            let (file, line: int64, col: int64) = trace.[i-1]
             if prev_file <> file || prev_line <> line then
                 let er_code = code.[file].[int line - 1]
                 let er_file = if file <> "" then sprintf " in file \"%s\"." file else file
@@ -1289,9 +1292,11 @@ let print_type_error (code: Dictionary<string, string []>) (trace: Trace) messag
                 let col = int (col - 1L)
                 for i=1 to col do error.Append(' ') |> ignore
                 error.AppendLine "^" |> ignore
-            loop file line xs
-        | [] -> error.ToString()
-    loop "" -1L trace
+            loop file line (i-1) trace
+        else
+            error.ToString()
+    let trace = List.toArray trace
+    loop "" -1L trace.Length trace
 
 let data_empty () =
     {ltag = ref 0L; seq=ref id; trace=[]; rbeh=AnnotationDive

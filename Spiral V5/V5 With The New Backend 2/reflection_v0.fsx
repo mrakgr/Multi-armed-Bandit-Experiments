@@ -31,6 +31,9 @@ dic_ins'.Invoke([|10|])
 let dic_ins = Activator.CreateInstance(dic_ins_typ)
 dic_ins_typ.InvokeMember("Add",BindingFlags.InvokeMethod,null,dic_ins,[|0;100|])
 dic_ins_typ.GetMethod("Add",[|typeof<int>;typeof<int>|])
+dic'.ContainsGenericParameters // true
+dic_ins_typ.ContainsGenericParameters // false
+
 
 let print_dotnet_instance_type type_printer (x: Type) =
     if x.GenericTypeArguments.Length > 0 then
