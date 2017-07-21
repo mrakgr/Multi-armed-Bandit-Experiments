@@ -642,28 +642,12 @@ a "qwe"
 inl str = b.ToString()
 inl console = 
     inl c = lit_lift "System.Console" |> system
-    function
-    | method (args) -> c (method :: args)
-    | method arg -> c (method, arg)
+    inl method -> function
+        | '(args) -> c (method :: args)
+        | arg -> c (method, arg)
 console .Write str
     """
 
-let test16 =
-    "test16",
-    """
-//inl f = function
-//    | method (args) -> 1
-//    | method arg -> 2
-
-inl f =
-    inl method ->
-        function
-        | (args) -> 1
-        | arg -> 2
-
-f .Hello (1,2,3)
-    """
-
-printfn "%A" (spiral_codegen [] test16)
+printfn "%A" (spiral_codegen [] test15)
 
 System.Console.Write(123)
