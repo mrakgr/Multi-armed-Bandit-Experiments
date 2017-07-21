@@ -37,6 +37,7 @@ type Ty =
     | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
     | DotNetRuntimeTypeT of Tag // Since Type does not support the Comparable interface, I map it to int.
     | DotNetTypeInstanceT of Tag
+    | DotNetTypeAndMethodInstanceT of Tag * string
     | DotNetAssemblyT of Tag
 
 and Tag = int64
@@ -801,7 +802,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
         let rec strip_map x = Map.map (fun _ -> typec_strip) x
         and typec_strip = function // Implements #10.
-            | DotNetAssemblyT _ | DotNetRuntimeTypeT _ | DotNetTypeInstanceT _
+            | DotNetAssemblyT _ | DotNetRuntimeTypeT _ | DotNetTypeInstanceT _ | DotNetTypeAndMethodInstanceT _
             | PrimT _ | LitT _ | RecT _ as x -> x
             | TypeConstructorT x -> x
             | VVT l -> VVT (List.map typec_strip l)
@@ -825,7 +826,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let inline wrap_exception d f =
         try f()
-        with e -> on_type_er d.trace e.Message
+        with 
+        | :? TypeError as e -> reraise()
+        | e -> on_type_er d.trace e.Message
 
     let dotnet_load_assembly d x =
         match tev d x with
@@ -852,6 +855,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let (|TyDotNetTypeInstance|_|) = function
         | TyType (DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+        | _ -> None
+
+    let (|TyDotNetTypeAndMethodInstance|_|) = function
+        | TyType (DotNetTypeAndMethodInstanceT (x,method_name)) -> (map_rev_dotnet globals.memoized_dotnet_types x, method_name) |> Some
         | _ -> None
 
     let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
@@ -882,12 +889,13 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                     | _ -> 
                         let instance_type = map_dotnet globals.memoized_dotnet_types runtime_type |> DotNetTypeInstanceT
                         TyOp(DotNetTypeConstruct,[args],instance_type)
-        | TyDotNetTypeInstance a, TyTuple(TypeString method_name :: method_args) ->
+        | TyDotNetTypeAndMethodInstance (a, method_name), TyTuple method_args ->
             wrap_exception d <| fun _ ->
                 match a.GetMethod(method_name,List.toArray method_args |> Array.map (get_type >> dotnet_ty_to_type)) with
                 | null -> on_type_er d.trace "Cannot find a method with matching arguments."
-                | meth -> TyOp(DotNetTypeCallMethod,[la;args],meth.ReturnType |> dotnet_type_to_ty)
-        | TyDotNetTypeInstance a, _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
+                | meth -> TyOp(DotNetTypeCallMethod,[la;TyLit (LitString method_name);args],meth.ReturnType |> dotnet_type_to_ty)
+        | TyType(DotNetTypeInstanceT tag), TypeString method_name -> DotNetTypeAndMethodInstanceT (tag,method_name) |> make_tyv_and_push_ty d
+        | TyType(DotNetTypeInstanceT tag), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
         | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont args
         | TyType(ClosureT(clo_arg_ty,clo_ret_ty)), _ -> 
             let arg_ty = get_type args

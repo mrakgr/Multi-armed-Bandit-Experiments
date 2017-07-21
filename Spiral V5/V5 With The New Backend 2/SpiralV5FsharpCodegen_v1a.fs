@@ -72,7 +72,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
     let rec is_unit = function
         | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetRuntimeTypeT _ -> true
-        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
+        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | DotNetTypeAndMethodInstanceT _ | ClosureT _ | PrimT _ -> false
         | TyEnvT env -> Map.forall (fun _ -> is_unit) env
         | VVT t -> List.forall is_unit t
 
@@ -84,7 +84,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | VVT t -> print_tuple t
         | UnionT t -> print_union_ty t
         | RecT t -> print_rec_ty t
-        | DotNetTypeInstanceT t ->
+        | DotNetTypeInstanceT t | DotNetTypeAndMethodInstanceT (t,_) ->
             globals.memoized_dotnet_types |> snd |> fun x -> x.[t]
             |> print_dotnet_instance_type
         | ClosureT(a,b) -> sprintf "%s -> %s" (print_type a) (print_type b)
@@ -295,7 +295,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | TyOp(DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)], TyDotNetTypeInstance instance_type) ->
             let ins = print_dotnet_instance_type instance_type
             sprintf "%s(%s)" ins args
-        | TyOp(DotNetTypeCallMethod,[v; TyTuple(TypeString method_name :: DotNetPrintedArgs method_args)],ret_type) ->
+        | TyOp(DotNetTypeCallMethod,[v; TyLit (LitString method_name); TyTuple(DotNetPrintedArgs method_args)],ret_type) ->
             sprintf "%s.%s(%s)" (codegen v) method_name method_args
 
         // Cuda kernel constants
@@ -303,12 +303,12 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
 
-    let print_rec_definition (buffer: Buf) ty tag =
+    let print_rec_definition prefix (buffer: Buf) ty tag =
         let state = state buffer
         let enter' = enter' buffer
         let enter = enter buffer
 
-        sprintf "and %s =" (print_rec_ty tag) |> state
+        sprintf "%s %s =" prefix (print_rec_ty tag) |> state
         match ty with
         | VVT _ & Unit -> "| " + print_rec_tuple tag |> state
         | VVT _ -> sprintf "| %s of %s" (print_rec_tuple tag) (print_type ty) |> state
@@ -320,20 +320,20 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                     | x -> sprintf "| %s of %s" (print_rec_case tag i) (print_type x) |> state) tys
         | _ -> failwith "Only VVT and UnionT are recursive types."
 
-    let print_union_definition (buffer: Buf) tys tag =
+    let print_union_definition prefix (buffer: Buf) tys tag =
         let state = state buffer
         let enter' = enter' buffer
         let enter = enter buffer
 
         let tys = Set.toList tys
 
-        sprintf "and %s =" (print_union_ty' tag) |> state
+        sprintf "%s %s =" prefix (print_union_ty' tag) |> state
         enter' <| fun _ ->
             List.iteri (fun i -> function
                 | Unit -> "| " + print_union_case tag i |> state
                 | x -> sprintf "| %s of %s" (print_union_case tag i) (print_type x) |> state) tys
 
-    let print_struct_definition (buffer: Buf) iter fold name tys tag =
+    let print_struct_definition prefix (buffer: Buf) iter fold name tys tag =
         let state = state buffer
         let enter' = enter' buffer
         let enter = enter buffer
@@ -349,7 +349,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         let args_declaration = args ", " <| fun k -> sprintf "arg_mem_%s" k
         let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
 
-        sprintf "and %s =" name |> state
+        sprintf "%s %s =" prefix name |> state
         enter' <| fun _ -> 
             "struct" |> state
             iter (fun k ty -> 
@@ -385,26 +385,35 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | _ -> is_first) true |> ignore
     codegen method_buffer main |> state method_buffer // Can't forget the non-method
 
-    "type DefinitionsStarter() = class end" |> state definitions_buffer
+    let type_prefix =
+        let mutable prefix = false
+        fun _ -> 
+            printfn "prefix=%b" prefix
+            if prefix then "and" else 
+                printfn "I am in false"
+                prefix <- true
+                printfn "prefix=%b" prefix
+                "type"
+
     for x in globals.memoized_types do
         let tag,ty = x.Key, x.Value
-        print_rec_definition definitions_buffer ty tag
+        print_rec_definition (type_prefix()) definitions_buffer ty tag
 
     for x in union_ty_definitions do
         let tys,tag = x.Key, x.Value
-        print_union_definition definitions_buffer tys tag
+        print_union_definition (type_prefix()) definitions_buffer tys tag
 
     for x in env_ty_definitions do
         let tys, tag = x.Key, x.Value
         let tuple_name = print_env_ty' tag
-        print_struct_definition definitions_buffer Map.iter Map.fold tuple_name tys tag
+        print_struct_definition (type_prefix()) definitions_buffer Map.iter Map.fold tuple_name tys tag
 
     for x in tuple_definitions do
         let tys, tag = x.Key, x.Value
         let tuple_name = print_tuple' tag
         let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
         let iter f l = List.iteri (fun i x -> f (string i) x) l
-        print_struct_definition definitions_buffer iter fold tuple_name tys tag
+        print_struct_definition (type_prefix()) definitions_buffer iter fold tuple_name tys tag
     
     // Definitions need a pass through the AST in order to be memoized. Hence they are printed first in 
     // actual code while here in the codegen that is done last. Here I just swap the buffers.
@@ -631,9 +640,14 @@ let test15 =
     """
 inl system = load_assembly .mscorlib
 inl builder_type = lit_lift "System.Text.StringBuilder" |> system 
-builder_type ("Qwe", 128i32)
+inl ignore _ = ()
+inl a = 
+    inl b = builder_type ("Qwe", 128i32)
+    b .Append >> ignore
+a 123
+a 123i16
+a "qwe"
     """
 
-printfn "%A" (spiral_codegen [] hacker_rank_1)
+printfn "%A" (spiral_codegen [] test14)
 
-let (var_15: System.Text.StringBuilder) = System.Text.StringBuilder("Qwe", 128)
