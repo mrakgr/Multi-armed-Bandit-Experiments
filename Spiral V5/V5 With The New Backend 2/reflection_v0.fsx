@@ -64,3 +64,5 @@ type Ty =
     | DotNetMappedT of int // Since Type does not support the Comparable interface, I map it to int.
     | SetT of Set<Ty>
 
+typeof<System.Console>.GetMethod("Write",[|typeof<int>|])
+

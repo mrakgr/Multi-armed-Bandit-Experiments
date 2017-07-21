@@ -634,14 +634,36 @@ let test15 =
     """
 inl system = load_assembly .mscorlib
 inl builder_type = lit_lift "System.Text.StringBuilder" |> system 
-inl ignore _ = ()
-inl a = 
-    inl b = builder_type ("Qwe", 128i32)
-    b .Append >> ignore
+inl b = builder_type ("Qwe", 128i32)
+inl a = b .Append >> ignore
 a 123
 a 123i16
 a "qwe"
+inl str = b.ToString()
+inl console = 
+    inl c = lit_lift "System.Console" |> system
+    function
+    | method (args) -> c (method :: args)
+    | method arg -> c (method, arg)
+console .Write str
     """
 
-printfn "%A" (spiral_codegen [] test14)
+let test16 =
+    "test16",
+    """
+//inl f = function
+//    | method (args) -> 1
+//    | method arg -> 2
 
+inl f =
+    inl method ->
+        function
+        | (args) -> 1
+        | arg -> 2
+
+f .Hello (1,2,3)
+    """
+
+printfn "%A" (spiral_codegen [] test16)
+
+System.Console.Write(123)
