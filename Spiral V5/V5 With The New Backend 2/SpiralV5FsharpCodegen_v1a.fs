@@ -656,5 +656,20 @@ dict.Add(1,2) |> ignore
 dict.get_Item 1
     """
 
-printfn "%A" (spiral_codegen [] test15)
+let hacker_rank_1 =
+    "hacker_rank_1",
+    """
+// The very first warmup exercise : https://www.hackerrank.com/challenges/solve-me-first
+inl console = lit_lift "System.Console" |> mscorlib
+inl parse_int32 = 
+    inl f = lit_lift "System.Int32" |> mscorlib
+    inl str -> f .Parse str
+inl read_line () = console.ReadLine()
+inl write x = console.Write x
+inl read_int () = read_line() |> parse_int32
+inl (a b) = read_int(), read_int()
+write (a + b)
+    """
+
+printfn "%A" (spiral_codegen [] hacker_rank_1)
 

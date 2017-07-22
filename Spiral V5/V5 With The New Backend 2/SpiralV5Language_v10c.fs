@@ -1354,6 +1354,7 @@ let core_functions =
 
         l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
         l "lit_lift" (p <| fun x -> Op(TypeLitCreate,[x]))
+        l "mscorlib" (ap (V "load_assembly") (ap (V "lit_lift") (lit_string "mscorlib")))
         l "ignore" (inl "" B)
         ]
 
