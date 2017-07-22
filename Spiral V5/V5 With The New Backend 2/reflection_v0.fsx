@@ -34,6 +34,7 @@ dic_ins_typ.GetMethod("Add",[|typeof<int>;typeof<int>|])
 dic'.ContainsGenericParameters // true
 dic_ins_typ.ContainsGenericParameters // false
 
+dic_ins_typ.GetMethod("get_Item",[|typeof<int>|])
 
 let print_dotnet_instance_type type_printer (x: Type) =
     if x.GenericTypeArguments.Length > 0 then

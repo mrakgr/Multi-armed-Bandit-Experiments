@@ -651,11 +651,10 @@ inl console = lit_lift "System.Console" |> system
 console .Write str |> ignore
 
 inl dictionary_type = lit_lift "System.Collections.Generic.Dictionary`2" |> system
-inl dict = dictionary_type(0, 0)(128i32)
+inl dict = dictionary_type(int64, int64)(128i32)
 dict.Add(1,2) |> ignore
-dict
+dict.get_Item 1
     """
 
 printfn "%A" (spiral_codegen [] test15)
-
 

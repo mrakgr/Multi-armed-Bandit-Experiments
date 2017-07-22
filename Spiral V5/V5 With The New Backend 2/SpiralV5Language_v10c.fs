@@ -856,7 +856,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
     let dotnet_ty_to_type (x: Ty) = dotnet_ty_to_type globals.memoized_dotnet_types x
 
-    let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
+    let (|TySystemTypeArgs|) args = 
+        let strip_typec = function TypeConstructorT x -> x | x -> x
+        List.toArray args |> Array.map (get_type >> strip_typec >> dotnet_ty_to_type)
 
     let rec apply tev d la args =
         match la, args with
@@ -872,10 +874,13 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyAssembly a, TypeString name -> 
                 wrap_exception d <| fun _ ->
                     match a.GetType(name) with
-                    | null -> on_type_er d.trace "Loading a type from assembly failed."
+                    | null -> on_type_er d.trace "A type cannot be found inside the assembly."
                     | x -> 
-                        x |> map_dotnet globals.memoized_dotnet_types
-                        |> DotNetTypeRuntimeT |> make_tyv_and_push_ty d
+                        if x.IsPublic then
+                            x |> map_dotnet globals.memoized_dotnet_types
+                            |> DotNetTypeRuntimeT |> make_tyv_and_push_ty d
+                        else
+                            on_type_er d.trace "Cannot load a private type from an assembly."
         | TyAssembly _, _ -> on_type_er d.trace "Expected a type level string as the second argument."
         | TyDotNetType _, TypeString method_name ->
             let lam = inl' ["instance";"method_name";"args"] (ap (V "instance") (VV [V "method_name"; V "args"]))
@@ -886,8 +891,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             wrap_exception d <| fun _ ->
                 match typ.GetMethod(method_name, method_args) with
                 | null -> on_type_er d.trace "Cannot find a method with matching arguments."
-                | meth -> TyOp(DotNetTypeCallMethod,[la;args],meth.ReturnType |> dotnet_type_to_ty)
-                          |> make_tyv_and_push_typed_expr d
+                | meth -> 
+                    if meth.IsPublic then
+                        TyOp(DotNetTypeCallMethod,[la;args],meth.ReturnType |> dotnet_type_to_ty)
+                        |> make_tyv_and_push_typed_expr d
+                    else
+                        on_type_er d.trace "Cannot call a private method."
         | TyDotNetTypeRuntime runtime_type, TyTuple (TySystemTypeArgs system_type_args) ->
             wrap_exception d <| fun _ ->
                 if runtime_type.ContainsGenericParameters then // instantiate generic type params
@@ -896,9 +905,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 else // construct the type
                     match runtime_type.GetConstructor system_type_args with
                     | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
-                    | _ -> 
-                        let instance_type = map_dotnet globals.memoized_dotnet_types runtime_type |> DotNetTypeInstanceT
-                        TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
+                    | con -> 
+                        if con.IsPublic then
+                            let instance_type = map_dotnet globals.memoized_dotnet_types runtime_type |> DotNetTypeInstanceT
+                            TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
+                        else
+                            on_type_er d.trace "Cannot call a private constructor."    
         | TyType(DotNetTypeInstanceT tag), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
         | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont args
         | TyType(ClosureT(clo_arg_ty,clo_ret_ty)), _ -> 
