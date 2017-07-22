@@ -640,7 +640,7 @@ let test15 = // Does basic .NET interop work?
 inl system = load_assembly .mscorlib
 inl builder_type = lit_lift "System.Text.StringBuilder" |> system 
 inl b = builder_type ("Qwe", 128i32)
-inl a x = 
+inl a x =
     b .Append x |> ignore
     b .AppendLine () |> ignore
 a 123
