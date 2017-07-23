@@ -702,7 +702,6 @@ inl pchar s =
     | c -> c
     : ParserResult char
 
-
 inl pdigit s =
     inl c = pchar s
     
@@ -713,7 +712,10 @@ met rec many p s =
     inl state = s.pos
     inl x = p s
     match x with
-    | .Succ, x when state < s.pos -> .Succ, (.ListCons, (x, many p s))
+    | .Succ, x when state < s.pos -> 
+        match many p s with
+        | .Succ, xs -> .Succ, (.ListCons, (x, xs))
+        | x -> x
     | .Succ, _ when state = s.pos -> .FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
     | .Fail, _ when state = s.pos -> .Succ, .ListNil
     | .Fail, _ -> .Fail, (pos, "many")
@@ -742,22 +744,23 @@ met rec spaces s =
     : ParserResult ()
 
 inl tuple2 a b s =
+    let a_ty, b_ty =
+        match_type a s with
+        | .Succ, a ->
+            a, match_type b s with
+               | .Succ, b -> b
+
     match a s with
     | .Succ, a ->
         match b s with
         | .Succ, b -> .Succ, (a, b)
         | x -> x
     | x -> x
-    : ...
+    : List (a_ty, b_ty)
 
 inl read_int = tuple2 pint64 spaces
-
 
     """
 
 printfn "%A" (spiral_codegen [] hacker_rank_1)
-
-let x = "123"
-let v = x.[0]
-System.Char.IsDigit v
 
