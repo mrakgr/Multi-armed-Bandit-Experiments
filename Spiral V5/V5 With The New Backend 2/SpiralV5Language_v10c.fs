@@ -21,6 +21,7 @@ type PrimitiveType =
     | Float64T
     | BoolT
     | StringT
+    | CharT
 
 type Ty =
     | PrimT of PrimitiveType
@@ -59,6 +60,7 @@ and Value =
     | LitFloat64 of float
     | LitBool of bool
     | LitString of string
+    | LitChar of char
 
 and Op =
     // DotNetOps
@@ -216,6 +218,7 @@ let get_type_of_value = function
     | LitFloat64 _ -> PrimT Float64T   
     | LitBool _ -> PrimT BoolT
     | LitString _ -> PrimT StringT
+    | LitChar _ -> PrimT CharT
 
 let get_type = function
     | TyLit x -> get_type_of_value x
@@ -1351,6 +1354,7 @@ let core_functions =
         l "float64" (Op(TypeConstructorCreate,[Lit <| LitFloat64 0.0]))
         l "float32" (Op(TypeConstructorCreate,[Lit <| LitFloat32 0.0f]))
         l "string" (Op(TypeConstructorCreate,[Lit <| LitString ""]))
+        l "char" (Op(TypeConstructorCreate,[Lit <| LitChar ' ']))
 
         l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
         l "lit_lift" (p <| fun x -> Op(TypeLitCreate,[x]))

@@ -9,6 +9,8 @@ module Spiral.Parse
 open Spiral.Lang
 open FParsec
 
+ne
+
 type ParserExpr =
 | ParserStatement of (Expr -> Expr)
 | ParserExpr of Expr

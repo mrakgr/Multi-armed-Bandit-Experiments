@@ -100,8 +100,9 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | UInt64T -> "uint64"
             | Float32T -> "float32"
             | Float64T -> "float64"
-            | StringT -> "string"
             | BoolT -> "bool"
+            | StringT -> "string"
+            | CharT -> "char"
         | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
             failwith "Should be covered in Unit."
                 
@@ -151,6 +152,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | LitFloat32 x -> sprintf "%ff" x
             | LitFloat64 x -> sprintf "%f" x
             | LitString x -> sprintf "\"%s\"" x
+            | LitChar x -> sprintf "'%c'" x
             | LitBool x -> if x then "true" else "false"
 
         let codegen x = codegen buffer x
@@ -671,5 +673,90 @@ inl (a b) = read_int(), read_int()
 write (a + b)
     """
 
+let parsers =
+    "parsers",
+    """
+inl is_digit (x: char) = int32 x >= int32 '0' && int32 x <= int32 '9'
+inl is_whitespace x = x = ' '
+inl is_newline x = x = '\n' || x = '\r'
+
+inl StreamPosition = int64
+inl stream stream =
+    inl (pos: StreamPosition) = ref 0
+    module (pos, stream)
+
+inl ParserResult suc =
+    type 
+        (.Succ, suc)
+        (.Fail, (pos, string))
+        (.FatalFail, string)
+
+met rec List x =
+    type
+        (.ListCons, (x, List x))
+        .ListNil
+
+inl pchar s = 
+    match (s.stream) !(s.pos) with
+    | .Succ, _ as c -> s.pos := !s.pos + 1; c
+    | c -> c
+    : ParserResult char
+
+
+inl pdigit s =
+    inl c = pchar s
+    
+    if is_digit c then .Succ, c else .Fail, (pos, "digit")
+    : ParserResult char
+
+met rec many p s =
+    inl state = s.pos
+    inl x = p s
+    match x with
+    | .Succ, x when state < s.pos -> .Succ, (.ListCons, (x, many p s))
+    | .Succ, _ when state = s.pos -> .FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
+    | .Fail, _ when state = s.pos -> .Succ, .ListNil
+    | .Fail, _ -> .Fail, (pos, "many")
+    | .FatalFail, _ -> x
+    : type (List x)
+
+inl pint64 s =
+    met rec loop state i = 
+        match read_digit s with
+        | .Succ, c -> 
+            inl x = convert int64 c - convert int64 '0'
+            i * 10 + x |> loop .Rest
+        | .Fail, _ -> 
+            match state with
+            | .First -> .Fail, (s.pos, "int64")
+            | .Rest -> .Succ, i
+        | .FatalFail, _ as x -> x
+        : ParserResult (int64)
+    loop .First 0
+
+met rec spaces s =
+    inl c = pchar s
+    
+    if is_whitespace c || is_newline c then spaces s
+    else .Succ,()
+    : ParserResult ()
+
+inl tuple2 a b s =
+    match a s with
+    | .Succ, a ->
+        match b s with
+        | .Succ, b -> .Succ, (a, b)
+        | x -> x
+    | x -> x
+    : ...
+
+inl read_int = tuple2 pint64 spaces
+
+    """
+
 printfn "%A" (spiral_codegen [] hacker_rank_1)
+
+let x = "123"
+let v = x.[0]
+System.Char.IsDigit v
 
