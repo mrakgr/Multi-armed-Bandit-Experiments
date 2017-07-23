@@ -752,6 +752,7 @@ inl tuple2 a b s =
 
 inl read_int = tuple2 pint64 spaces
 
+
     """
 
 printfn "%A" (spiral_codegen [] hacker_rank_1)
