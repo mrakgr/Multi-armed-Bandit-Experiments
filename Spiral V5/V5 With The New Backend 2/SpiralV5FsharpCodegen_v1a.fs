@@ -758,8 +758,17 @@ inl tuple2 a b s =
     | x -> x
     : List (a_ty, b_ty)
 
+inl tuple2_cps a b s ret =
+    a s <| function
+        | .Succ, a ->
+            b s <| function
+                | .Succ, b -> ret (.Succ, (a, b))
+                | x -> ret x
+                : List (a_ty, b_ty)
+        | x -> ret x
+        : List (a_ty, b_ty)
+    
 inl read_int = tuple2 pint64 spaces
-
     """
 
 printfn "%A" (spiral_codegen [] hacker_rank_1)
