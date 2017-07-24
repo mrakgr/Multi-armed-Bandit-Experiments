@@ -759,14 +759,38 @@ inl tuple2 a b s =
     : List (a_ty, b_ty)
 
 inl tuple2_cps a b s ret =
+    inl get_type f =
+        type (f s <| function
+                | .Succ, a -> a
+                | _ -> bottom)
+    inl a_ty = get_type a
+    inl b_ty = get_type b
+    inl retf = List (a_ty, b_ty)
+
     a s <| function
         | .Succ, a ->
             b s <| function
-                | .Succ, b -> ret (.Succ, (a, b))
-                | x -> ret x
-                : List (a_ty, b_ty)
-        | x -> ret x
-        : List (a_ty, b_ty)
+                | .Succ, b -> retf (.Succ, (a, b))
+                | x -> retf x
+        | x -> retf x
+
+met rec many_cps p s ret =
+    inl state = s.pos
+    inl x_ty = 
+        type (p s <| function
+                | .Succ, x -> x
+                | _ -> bottom)
+    inl retf = type (List x) >> ret
+    p s <| function
+        | .Succ, (^dyn x) when state < s.pos -> 
+            many_cps p s <| function
+                | .Succ, xs -> retf (.Succ, (.ListCons, (x, xs)))
+                | x -> retf x
+        | .Succ, _ when state = s.pos -> retf (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
+        | .Fail, _ when state = s.pos -> retf (.Succ, .ListNil)
+        | .Fail, _ -> retf (.Fail, (pos, "many"))
+        | .FatalFail, _ -> retf x
+
     
 inl read_int = tuple2 pint64 spaces
     """
