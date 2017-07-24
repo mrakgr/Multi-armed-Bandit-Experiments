@@ -756,7 +756,7 @@ inl tuple2 a b s =
         | .Succ, b -> .Succ, (a, b)
         | x -> x
     | x -> x
-    : List (a_ty, b_ty)
+    : ParserResult (List (a_ty, b_ty))
 
 inl tuple2_cps a b s ret =
     inl get_type f =
@@ -765,7 +765,7 @@ inl tuple2_cps a b s ret =
                 | _ -> bottom)
     inl a_ty = get_type a
     inl b_ty = get_type b
-    inl retf = List (a_ty, b_ty)
+    inl retf = ParserResult (List (a_ty, b_ty))
 
     a s <| function
         | .Succ, a ->
@@ -780,7 +780,16 @@ met rec many_cps p s ret =
         type (p s <| function
                 | .Succ, x -> x
                 | _ -> bottom)
-    inl retf = type (List x) >> ret
+    inl retf x = type (ParserResult (List x)) |> ret
+    inl ret_ty =
+        type
+            p s <| function
+                | .Succ, (^dyn x) when state < s.pos -> 
+                    many_cps p s <| function
+                        | .Succ, xs -> retf (.Succ, (.ListCons, (x, xs)))
+                        | _ -> bottom
+                | _ -> bottom
+
     p s <| function
         | .Succ, (^dyn x) when state < s.pos -> 
             many_cps p s <| function
@@ -790,8 +799,8 @@ met rec many_cps p s ret =
         | .Fail, _ when state = s.pos -> retf (.Succ, .ListNil)
         | .Fail, _ -> retf (.Fail, (pos, "many"))
         | .FatalFail, _ -> retf x
+    : ret_ty
 
-    
 inl read_int = tuple2 pint64 spaces
     """
 
