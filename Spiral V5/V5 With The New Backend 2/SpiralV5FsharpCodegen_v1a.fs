@@ -708,20 +708,6 @@ inl pdigit s =
     if is_digit c then .Succ, c else .Fail, (pos, "digit")
     : ParserResult char
 
-met rec many p s =
-    inl state = s.pos
-    inl x = p s
-    match x with
-    | .Succ, x when state < s.pos -> 
-        match many p s with
-        | .Succ, xs -> .Succ, (.ListCons, (x, xs))
-        | x -> x
-    | .Succ, _ when state = s.pos -> .FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
-    | .Fail, _ when state = s.pos -> .Succ, .ListNil
-    | .Fail, _ -> .Fail, (pos, "many")
-    | .FatalFail, _ -> x
-    : type (List x)
-
 inl pint64 s =
     met rec loop state i = 
         match read_digit s with
@@ -736,6 +722,19 @@ inl pint64 s =
         : ParserResult (int64)
     loop .First 0
 
+met rec many 'x p s =
+    inl state = s.pos
+    match p s with
+    | .Succ, (^dyn x) when state < s.pos -> 
+        match many p s with
+        | .Succ, xs -> .Succ, (.ListCons, (x, xs))
+        | x -> x
+    | .Succ, _ when state = s.pos -> .FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
+    | .Fail, _ when state = s.pos -> .Succ, .ListNil
+    | .Fail, _ -> .Fail, (pos, "many")
+    | .FatalFail, _ -> x
+    : ParserResult (List 'x)
+
 met rec spaces s =
     inl c = pchar s
     
@@ -743,65 +742,40 @@ met rec spaces s =
     else .Succ,()
     : ParserResult ()
 
-inl tuple2 a b s =
-    let a_ty, b_ty =
-        match_type a s with
-        | .Succ, a ->
-            a, match_type b s with
-               | .Succ, b -> b
-
+inl tuple2 'a 'b a b s =
     match a s with
     | .Succ, a ->
         match b s with
         | .Succ, b -> .Succ, (a, b)
         | x -> x
     | x -> x
-    : ParserResult (List (a_ty, b_ty))
+    : ParserResult (List ('a, 'b))
 
-inl tuple2_cps a b s ret =
-    inl get_type f =
-        type (f s <| function
-                | .Succ, a -> a
-                | _ -> bottom)
-    inl a_ty = get_type a
-    inl b_ty = get_type b
-    inl retf = ParserResult (List (a_ty, b_ty))
-
+inl tuple2_cps 'a 'b a b s ret =
     a s <| function
         | .Succ, a ->
             b s <| function
-                | .Succ, b -> retf (.Succ, (a, b))
-                | x -> retf x
-        | x -> retf x
+                | .Succ, b -> ret (.Succ, (a, b))
+                | x -> ret x
+        | x -> ret x
 
-met rec many_cps p s ret =
+met rec many_cps 'x p s ret =
     inl state = s.pos
-    inl x_ty = 
-        type (p s <| function
-                | .Succ, x -> x
-                | _ -> bottom)
-    inl retf x = type (ParserResult (List x)) |> ret
-    inl ret_ty =
-        type
-            p s <| function
-                | .Succ, (^dyn x) when state < s.pos -> 
-                    many_cps p s <| function
-                        | .Succ, xs -> retf (.Succ, (.ListCons, (x, xs)))
-                        | _ -> bottom
-                | _ -> bottom
 
+    inl t = ParserResult (List 'x)
     p s <| function
         | .Succ, (^dyn x) when state < s.pos -> 
-            many_cps p s <| function
-                | .Succ, xs -> retf (.Succ, (.ListCons, (x, xs)))
-                | x -> retf x
-        | .Succ, _ when state = s.pos -> retf (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
-        | .Fail, _ when state = s.pos -> retf (.Succ, .ListNil)
-        | .Fail, _ -> retf (.Fail, (pos, "many"))
-        | .FatalFail, _ -> retf x
-    : ret_ty
+            inl ret x = 
+                match x with
+                | .Succ, xs -> t (.Succ, (.ListCons, (x, xs))) |> ret
+                | x -> t x |> ret
+            many_cps p s (ret `t)
+        | .Succ, _ when state = s.pos -> t (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.") |> ret
+        | .Fail, _ when state = s.pos -> t (.Succ, .ListNil) |> ret
+        | .Fail, _ -> t (.Fail, (s.pos, "many")) |> ret
+        | .FatalFail, _ -> t x |> ret
 
-inl read_int = tuple2 pint64 spaces
+inl read_int = tuple2 int64 unit pint64 spaces
     """
 
 printfn "%A" (spiral_codegen [] hacker_rank_1)
