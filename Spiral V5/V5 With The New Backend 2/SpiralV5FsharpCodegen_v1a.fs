@@ -776,7 +776,9 @@ met rec many_cps 'x p s ret =
         | .FatalFail, _ -> t x |> ret
 
 inl read_int = tuple2 int64 unit pint64 spaces
+inl read_many_ints = many int64 read_int
     """
 
 printfn "%A" (spiral_codegen [] hacker_rank_1)
 
+// ...

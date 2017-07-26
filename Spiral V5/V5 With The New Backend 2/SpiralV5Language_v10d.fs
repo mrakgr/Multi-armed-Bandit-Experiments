@@ -181,7 +181,6 @@ and LetType =
 
 and TypedExpr =
     | TyV of TyV
-    | TyV' of TyV * Ty
     | TyLet of LetType * TyV * TypedExpr * TypedExpr * Ty
     | TyLit of Value
     
