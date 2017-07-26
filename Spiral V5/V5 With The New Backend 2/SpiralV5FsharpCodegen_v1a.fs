@@ -774,6 +774,7 @@ met rec many_cps 'x p s ret =
         | .Fail, _ when state = s.pos -> t (.Succ, .ListNil) |> ret
         | .Fail, _ -> t (.Fail, (s.pos, "many")) |> ret
         | .FatalFail, _ -> t x |> ret
+    : t
 
 inl read_int = tuple2 int64 unit pint64 spaces
 inl read_many_ints = many int64 read_int
