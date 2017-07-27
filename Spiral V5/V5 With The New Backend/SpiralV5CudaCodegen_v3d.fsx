@@ -163,14 +163,10 @@ let print_method_dictionary (imemo: MemoDict) =
         // Array cases
         let index = 
             let rec loop = function
-                | None, s :: sx, i :: ix ->
-                    loop (Some(sprintf "(%s) * %s" i s),sx,ix)
-                | None, [], [i] ->
-                    i
-                | Some p, s :: sx, i :: ix ->
-                    loop (Some(sprintf "(%s + (%s)) * %s" p i s),sx,ix)
-                | Some p, [], [i] ->
-                    sprintf "%s + (%s)" p i
+                | None, s :: sx, i :: ix -> loop (Some(sprintf "(%s) * %s" i s),sx,ix)
+                | None, [], [i] -> i
+                | Some p, s :: sx, i :: ix -> loop (Some(sprintf "(%s + (%s)) * %s" p i s),sx,ix)
+                | Some p, [], [i] -> sprintf "%s + (%s)" p i
                 | _ -> failwith "invalid state"
             if i.IsEmpty = false then loop (None,List.tail ar_sizes,i)
             else "0"

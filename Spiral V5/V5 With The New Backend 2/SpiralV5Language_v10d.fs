@@ -94,7 +94,6 @@ and Op =
     | GTE 
     | And 
     | Or 
-    | MSet 
 
     | Fix
     | Apply
@@ -115,9 +114,8 @@ and Op =
     | EqType
 
     | ArrayCreate
-    | ArrayCreateShared
     | ArrayIndex
-    | ArrayUnsafeIndex
+    | ArraySet
    
     | ShiftLeft
     | ShiftRight
@@ -954,12 +952,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let expr,args = tev2 d expr args
         apply tev d expr args
 
-    let mset d a b =
-        let l,r = tev2 d a b
-        match l, r with
-        | TyOp((ArrayUnsafeIndex | ArrayIndex),[_;_],lt), r when lt = get_type r -> make_tyv_and_push_typed_expr d (TyOp(MSet,[l;r],BVVT))
-        | _ -> on_type_er d.trace <| sprintf "Error in mset. Expected: TyBinOp((ArrayUnsafeIndex | ArrayIndex),_,_,lt), r when lt = get_type r.\nGot: %A and %A" l r
-
     let (|LitIndex|_|) = function
         | TyLit (LitInt32 i) -> Some i
         | TyLit (LitInt64 i) -> Some (int i)
@@ -1244,6 +1236,11 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | _, IntTuple idx -> on_type_er d.trace "Trying to index into a non-array."
         | _ -> on_type_er d.trace "One of the index arguments in array index is not an int."
 
+    let array_set d ar idx r =
+        match array_index d ar idx, tev d r with
+        | l, r when get_type l = get_type r -> make_tyv_and_push_typed_expr d (TyOp(ArraySet,[l;r],BVVT))
+        | _ -> on_type_er d.trace "The two sides in array set have different types."
+
     let add_trace d x = {d with trace = x :: d.trace}
 
     match expr with
@@ -1313,7 +1310,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | VVSliceFrom,[a;b] -> vv_slice_from d a b
         | VVCons,[a;b] -> vv_cons d a b
 
-        | MSet,[a;b] -> mset d a b
         | TypeAnnot,[a;b] -> type_annot d a b
         | TypeConstructorUnion,[a;b] -> typec_union d a b
         | EqType,[a;b] -> eq_type d a b

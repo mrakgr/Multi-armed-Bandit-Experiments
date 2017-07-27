@@ -69,6 +69,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
     let rec is_unit = function
         | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
+        | ArrayT(_,t) -> is_unit t
         | TyEnvT env -> Map.forall (fun _ -> is_unit) env
         | VVT t -> List.forall is_unit t
 
@@ -80,6 +81,9 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | VVT t -> print_tuple t
         | UnionT t -> print_union_ty t
         | RecT t -> print_rec_ty t
+        | ArrayT(DotNetHeap,t) -> sprintf "%s ref" (print_type t)
+        | ArrayT(DotNetReference,t) -> sprintf "%s []" (print_type t)
+        | ArrayT _ -> failwith "Not implemented."
         | DotNetTypeInstanceT t ->
             globals.memoized_dotnet_types |> snd |> fun x -> x.[t]
             |> print_dotnet_instance_type
@@ -201,6 +205,29 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | _ -> None
 
         let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
+
+        let array_create (TyTuple size) t =
+            let x = List.map codegen size |> String.concat "*"
+            sprintf "Array.zeroCreate<%s> (%s)" (print_type t) x
+
+        let reference_create x = sprintf "(ref %s)" (codegen x)
+
+        let array_index (TyTuple size) ar (TyTuple idx) =
+            let rec index_first = function
+                | _ :: s :: sx, i :: ix -> index_rest (sprintf "%s * %s" i s) (sx, ix)
+                | [_], [i] -> i
+                | _ -> "0"
+            and index_rest prev = function
+                | s :: sx, i :: ix -> index_rest (sprintf "(%s + %s) * %s" prev i s) (sx, ix)
+                | [], [i] -> sprintf "%s + %s" prev i
+                | _ -> failwith "Invalid state."
+
+            sprintf "%s.[%s]" (codegen ar) (index_first (List.map codegen size, List.map codegen idx))
+
+        let reference_index x = sprintf "(!%s)" (codegen x)
+
+        let array_set size ar idx r = sprintf "%s <- %s" (array_index size ar idx) (codegen r) |> state
+        let reference_set l r = sprintf "%s := %s" (codegen l) (codegen r) |> state
 
         match expr with
         | TyTag (_, Unit) | TyV (_, Unit) -> ""
