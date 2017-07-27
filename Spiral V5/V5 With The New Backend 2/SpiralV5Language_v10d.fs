@@ -1,8 +1,4 @@
-﻿#if INTERACTIVE
-#load "../Scripts/load-project-release.fsx"
-#endif
-
-module Spiral.Lang
+﻿module Spiral.Lang
 
 open ManagedCuda.VectorTypes
 open System.Collections.Generic
@@ -41,7 +37,7 @@ type Ty =
     | DotNetAssemblyT of Tag
 
 and Tag = int64
-and TyV = Tag * Ty
+and TyTag = Tag * Ty
 and EnvTerm = Map<string, TypedExpr>
 and EnvTy = Map<string, Ty>
 and FunctionCore = string * Expr
@@ -107,7 +103,6 @@ and Op =
     | EnvUnseal
     | TypeConstructorCreate
     | TypeConstructorUnion
-    | TypeConstructorApply
     | EqType
 
     | ArrayCreate
@@ -168,7 +163,7 @@ and Expr =
     | Op of Op * Expr list
     | Pos of PosKey * Expr
 
-and Arguments = Set<TyV> ref
+and Arguments = Set<TyTag> ref
 and Renamer = Map<Tag,Tag>
 
 and MemoExprType =
@@ -180,8 +175,9 @@ and LetType =
 | LetInvisible
 
 and TypedExpr =
-    | TyV of TyV
-    | TyLet of LetType * TyV * TypedExpr * TypedExpr * Ty
+    | TyTag of TyTag
+    | TyV of TypedExpr * Ty
+    | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
     | TyLit of Value
     
     | TyVV of TypedExpr list * Ty
@@ -222,7 +218,7 @@ let get_type_of_value = function
 
 let get_type = function
     | TyLit x -> get_type_of_value x
-    | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
+    | TyTag(_,t) | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
 
 let get_subtype x = 
@@ -452,7 +448,8 @@ let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v)
 and renamer_apply_typedexpr r e =
     let f e = renamer_apply_typedexpr r e
     match e with
-    | TyV (n,t) -> TyV (Map.find n r,t)
+    | TyTag (n,t) -> TyTag (Map.find n r,t)
+    | TyV (n,t) -> TyV(f n,t)
     | TyLit _ -> e
     | TyVV(l,t) -> TyVV(List.map f l,t)
     | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
@@ -469,7 +466,8 @@ let inline vars_union f l = vars_union' Set.empty f l
 let rec typed_expr_free_variables_template on_memo e =
     let inline f e = typed_expr_free_variables_template on_memo e
     match e with
-    | TyV (n,t) -> Set.singleton (n, t)
+    | TyV (n,t) -> f n
+    | TyTag (n,t) -> Set.singleton (n, t)
     | TyLit _ -> Set.empty
     | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
     | TyEnv(l,_) -> env_free_variables_template on_memo l
@@ -626,11 +624,11 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let v = make_tyv_typed_expr d ty_exp
         let seq = !d.seq
         d.seq := fun rest -> TyLet(LetStd,v,ty_exp,rest,get_type rest) |> seq
-        TyV v
+        TyTag v
 
     let make_tyv_and_push_ty d ty =
         let v = make_tyv_ty d ty
-        let v' = TyV v
+        let v' = TyTag v
         let seq = !d.seq
         d.seq := fun rest -> TyLet(LetInvisible,v,v',rest,get_type rest) |> seq
         v'
@@ -673,7 +671,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             
         match r with
         | TyLit _ -> r
-        | TyV _ -> destructure_var r
+        | TyTag _ | TyV _ -> destructure_var r
         | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
         | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l, ty)
         | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
@@ -759,11 +757,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let rec apply_typec d ty ra on_fail ret =
             let substitute_ty = function 
                 | TyVV(l,_) -> TyVV(l,ty) |> ret
-                | x & TyV(_,t) when t <> ty -> TyOp(TypeConstructorApply,[x],ty) |> make_tyv_and_push_typed_expr d
+                | x when get_type x <> ty -> TyV(x,ty) |> ret
                 | x -> ret x
             match ty, ra with
             | TypeConstructorT _, _ -> failwith "Type constructors should never be nested."
             | x, TyType r when x = r -> ret ra
+            | x, TyV(n,_) -> apply_typec d x n on_fail ret
             | RecT tag, _ -> apply_typec d globals.memoized_types.[tag] ra on_fail substitute_ty
             | UnionT tys, _ ->
                 let rec loop = function
@@ -1175,7 +1174,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let case_tuple_template d v case =
         let assume d v x branch = tev_assume (cse_add' d v x) d branch
         match tev d v with
-        | TyV(_, t & (UnionT _ | RecT _)) as v ->
+        | TyTag(_, t & (UnionT _ | RecT _)) as v ->
             let rec case_destructure d args_ty =
                 let f x = make_tyv_and_push_ty d x
                 let union_case = function
@@ -1355,6 +1354,7 @@ let core_functions =
         l "float32" (Op(TypeConstructorCreate,[Lit <| LitFloat32 0.0f]))
         l "string" (Op(TypeConstructorCreate,[Lit <| LitString ""]))
         l "char" (Op(TypeConstructorCreate,[Lit <| LitChar ' ']))
+        l "unit" (Op(TypeConstructorCreate,[B]))
 
         l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
         l "lit_lift" (p <| fun x -> Op(TypeLitCreate,[x]))

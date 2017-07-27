@@ -1,8 +1,4 @@
-﻿#if INTERACTIVE
-#load "SpiralV5Parser_v3a.fsx"
-#endif
-
-module Spiral.Codegen
+﻿module Spiral.Codegen
 
 open Spiral.Lang
 open System.Collections.Generic
@@ -207,8 +203,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
         match expr with
-        | TyV (_, Unit) -> ""
-        | TyV v -> print_tyv v
+        | TyTag (_, Unit) | TyV (_, Unit) -> ""
+        | TyTag v -> print_tyv v
         | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
         | TyLet(_,(_,Unit),b,rest,_) ->
@@ -222,8 +218,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let method_name = print_method tag
             sprintf "%s(%s)" method_name (print_args used_vars)
 //        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
-        | TyOp(TypeConstructorApply,[x & TyV(_,t)],UnionT tys) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
-        | TyOp(TypeConstructorApply,[x & TyV(_,t)],RecT tag) ->
+        | TyV(x & TyType t, UnionT tys) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
+        | TyV(x & TyType t, RecT tag) ->
             match globals.memoized_types.[tag] with
             | UnionT tys -> union_process_var (print_rec_case tag) (x,t) tys
             | _ -> failwith "Only UnionT can be a recursive var type."
@@ -309,6 +305,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 //        | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
 
         | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
+        | x -> failwithf "The match cases were incomplete. Got: %A" x
 
     let print_rec_definition prefix (buffer: Buf) ty tag =
         let state = state buffer
@@ -673,113 +670,13 @@ inl (a b) = read_int(), read_int()
 write (a + b)
     """
 
-let parsers =
-    "parsers",
+let test16 = // Do var union types work?
+    "test16",
     """
-inl is_digit (x: char) = int32 x >= int32 '0' && int32 x <= int32 '9'
-inl is_whitespace x = x = ' '
-inl is_newline x = x = '\n' || x = '\r'
-
-inl StreamPosition = int64
-inl stream stream =
-    inl (pos: StreamPosition) = ref 0
-    module (pos, stream)
-
-inl ParserResult suc =
-    type 
-        (.Succ, suc)
-        (.Fail, (pos, string))
-        (.FatalFail, string)
-
-met rec List x =
-    type
-        (.ListCons, (x, List x))
-        .ListNil
-
-inl pchar s = 
-    match (s.stream) !(s.pos) with
-    | .Succ, _ as c -> s.pos := !s.pos + 1; c
-    | c -> c
-    : ParserResult char
-
-inl pdigit s =
-    inl c = pchar s
-    
-    if is_digit c then .Succ, c else .Fail, (pos, "digit")
-    : ParserResult char
-
-inl pint64 s =
-    met rec loop state i = 
-        match read_digit s with
-        | .Succ, c -> 
-            inl x = convert int64 c - convert int64 '0'
-            i * 10 + x |> loop .Rest
-        | .Fail, _ -> 
-            match state with
-            | .First -> .Fail, (s.pos, "int64")
-            | .Rest -> .Succ, i
-        | .FatalFail, _ as x -> x
-        : ParserResult (int64)
-    loop .First 0
-
-met rec many 'x p s =
-    inl state = s.pos
-    match p s with
-    | .Succ, (^dyn x) when state < s.pos -> 
-        match many p s with
-        | .Succ, xs -> .Succ, (.ListCons, (x, xs))
-        | x -> x
-    | .Succ, _ when state = s.pos -> .FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
-    | .Fail, _ when state = s.pos -> .Succ, .ListNil
-    | .Fail, _ -> .Fail, (pos, "many")
-    | .FatalFail, _ -> x
-    : ParserResult (List 'x)
-
-met rec spaces s =
-    inl c = pchar s
-    
-    if is_whitespace c || is_newline c then spaces s
-    else .Succ,()
-    : ParserResult ()
-
-inl tuple2 'a 'b a b s =
-    match a s with
-    | .Succ, a ->
-        match b s with
-        | .Succ, b -> .Succ, (a, b)
-        | x -> x
-    | x -> x
-    : ParserResult (List ('a, 'b))
-
-inl tuple2_cps 'a 'b a b s ret =
-    a s <| function
-        | .Succ, a ->
-            b s <| function
-                | .Succ, b -> ret (.Succ, (a, b))
-                | x -> ret x
-        | x -> ret x
-
-met rec many_cps 'x p s ret =
-    inl state = s.pos
-
-    inl t = ParserResult (List 'x)
-    p s <| function
-        | .Succ, (^dyn x) when state < s.pos -> 
-            inl ret x = 
-                match x with
-                | .Succ, xs -> t (.Succ, (.ListCons, (x, xs))) |> ret
-                | x -> t x |> ret
-            many_cps p s (ret `t)
-        | .Succ, _ when state = s.pos -> t (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.") |> ret
-        | .Fail, _ when state = s.pos -> t (.Succ, .ListNil) |> ret
-        | .Fail, _ -> t (.Fail, (s.pos, "many")) |> ret
-        | .FatalFail, _ -> t x |> ret
-    : t
-
-inl read_int = tuple2 int64 unit pint64 spaces
-inl read_many_ints = many int64 read_int
+inl t = type (union (type int64) (type float32))
+if dyn true then t 0
+else t 0.0
     """
 
-printfn "%A" (spiral_codegen [] hacker_rank_1)
+printfn "%A" (spiral_codegen [] test16)
 
-// ...
