@@ -25,7 +25,6 @@ type Ty =
     | LitT of Value
     | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
     | RecFunctionT of EnvTy * FunctionCore * string 
-    | BlankFunctionT of EnvTy * Expr // Throws away its argument.
     | ModuleT of EnvTy
     | UnionT of Set<Ty>
     | RecT of Tag
@@ -303,7 +302,7 @@ let inl' args body = List.foldBack inl args body
 let meth_memo y = Op(MethodMemoize,[y])
 let meth x y = inl x (meth_memo y)
 
-let module_create = Op(ModuleCreate,[])
+let module_create l = Op(ModuleCreate,[l])
 let module_open a b = Op(ModuleOpen,[a;b])
 
 let B = VV ([])
@@ -590,7 +589,7 @@ type LangGlobals =
     }
 
 let (|TyEnvT|_|) = function
-    | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) | BlankFunctionT(env,_) -> Some env
+    | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) -> Some env
     | _ -> None
 
 exception TypeError of Trace * string
@@ -809,7 +808,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | VVT l -> VVT (List.map typec_strip l)
             | FunctionT (e, b) -> FunctionT(strip_map e, b)
             | RecFunctionT (e, b, name) -> RecFunctionT (strip_map e, b, name)
-            | BlankFunctionT (e, b) -> BlankFunctionT(strip_map e, b)
             | ModuleT e -> ModuleT (strip_map e)
             | ForCastT x -> typec_strip x |> ForCastT
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
@@ -869,10 +867,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
         | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)),_ -> 
-            let env = Map.add pat args env_term
+            let env = if pat <> "" then Map.add pat args env_term else env_term
             tev {d with env = Map.add name recf env} body
-        | TyEnv(env_term,FunctionT (env_ty, (pat,body))),_ -> tev {d with env = Map.add pat args env_term} body
-        | TyEnv(env_term, BlankFunctionT (env_ty, body)),_ -> tev d body
+        | TyEnv(env_term,FunctionT (env_ty, (pat,body))),_ -> 
+            tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
         | TyAssembly a, TypeString name -> 
                 wrap_exception d <| fun _ ->
                     match a.GetType(name) with
@@ -1201,15 +1199,26 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyLit _ as a -> make_tyv_and_push_typed_expr d a
         | a -> a
 
+    let module_create d l =
+        let rec loop acc = function
+            | V x -> x :: acc
+            | VV l -> List.fold loop acc l
+            | Pos(_,x) -> loop acc x
+            | _ -> on_type_er d.trace "Only variable names are allowed in module create."
+        let er _ = on_type_er d.trace "In module create, the variable was not found."
+        let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
+        TyEnv(env, ModuleT <| env_to_ty env)
+
     let add_trace d x = {d with trace = x :: d.trace}
 
     match expr with
     | Lit value -> TyLit value
     | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
-    | FunctionFilt(vars, (pat, body) & core) -> 
+    | FunctionFilt(vars, (pat, body)) -> 
         let env = Map.filter (fun k _ -> Set.contains k vars) d.env
         let env_ty = env_to_ty env
-        if vars.Contains pat then TyEnv(env, FunctionT(env_ty, core)) else TyEnv(env, BlankFunctionT(env_ty, body))
+        let pat = if vars.Contains pat then pat else ""
+        TyEnv(env, FunctionT(env_ty, (pat, body)))
     | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
     | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
     | Pos (pos, body) -> tev (add_trace d pos) body
@@ -1222,7 +1231,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | Fix,[Lit (LitString name); body] ->
             match tev d body with
             | TyEnv(env_term,FunctionT(env_ty,core)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name))  
-            | TyEnv(env_term,BlankFunctionT _) as x -> x
             | x -> failwithf "Invalid use of Fix. Got: %A" x
         | Case,[v;case] -> case_tuple_template d v case
         | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -1233,6 +1241,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         
         | PrintStatic,[a] -> tev d a |> fun r -> printfn "%A" r; TyB
         | ModuleOpen,[a;b] -> module_open d a b
+        | ModuleCreate,[l] -> module_create d l
         | ModuleWith,[a;b;c] -> module_with d a b c
         | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c
         | TypeLitCreate,[a] -> type_lit_create d a
@@ -1283,7 +1292,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | Tanh,[a] -> prim_un_floating d a Tanh
 
         // Constants
-        | ModuleCreate,[] -> TyEnv(d.env, ModuleT <| env_to_ty d.env)
         | TypeConstructorCreate,[a] -> typec_create d a
         | _ -> failwith "Missing Op case."
     |> destructure d

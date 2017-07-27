@@ -235,7 +235,7 @@ let inline case_typex match_type expr (s: CharStream<_>) =
 let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
 let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
-let case_module expr = module_ >>% module_create
+let case_module expr = module_ >>. expr |>> module_create
 let case_apply_type expr = grave >>. expr |>> ap_ty
 let case_string_ty expr = keywordChar '.' >>. var_name |>> (LitString >> type_lit_create)
 

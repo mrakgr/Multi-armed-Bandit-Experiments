@@ -678,5 +678,16 @@ if dyn true then t 0
 else t 0.0
     """
 
-printfn "%A" (spiral_codegen [] test16)
+let test17 = // Do modules work?
+    "test17",
+    """
+inl m =
+    inl x = 2
+    inl y = 3.4
+    inl z = "123"
+    module (x,(y),z)
+m.x, m.y, m.z
+    """
+
+printfn "%A" (spiral_codegen [] test17)
 
