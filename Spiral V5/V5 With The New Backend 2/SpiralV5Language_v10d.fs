@@ -19,6 +19,15 @@ type PrimitiveType =
     | StringT
     | CharT
 
+type ArrayType =
+| DotNetHeap
+| DotNetStack
+| DotNetReference
+| CudaGlobal
+| CudaShared
+| CudaLocal
+| CudaReference
+
 type Ty =
     | PrimT of PrimitiveType
     | VVT of Ty list
@@ -30,6 +39,7 @@ type Ty =
     | RecT of Tag
     | TypeConstructorT of Ty
     | ClosureT of Ty * Ty
+    | ArrayT of ArrayType * Ty
     | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
     | DotNetTypeRuntimeT of Tag // Since Type does not support the Comparable interface, I map it to int.
     | DotNetTypeInstanceT of Tag
@@ -542,6 +552,7 @@ let dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
     elif x = typeof<float32> then PrimT Float32T
     elif x = typeof<float> then PrimT Float64T
     elif x = typeof<string> then PrimT StringT
+    elif x = typeof<unit> then BVVT
     else map_dotnet memoized_dotnet_types x |> DotNetTypeRuntimeT
 
 let dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
@@ -812,6 +823,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | ForCastT x -> typec_strip x |> ForCastT
             | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
             | UnionT s -> UnionT (Set.map typec_strip s)
+            | ArrayT (a,b) -> ArrayT (a, typec_strip b)
 
         match globals.memoized_methods.TryGetValue key with
         | true, MemoType ty -> ret_tyv ty
@@ -989,10 +1001,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         match b with
         | TyVV(b, VVT bt) -> TyVV(a::b, VVT (get_type a :: bt))
         | _ -> on_type_er d.trace "Expected a tuple on the right is in VVCons."
-
-    let guard_is_int d args = 
-        if List.forall is_int args = false then on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" args
-        else ()
 
     let type_lit_create' d x = LitT x |> make_tyv_and_push_ty d
 
@@ -1208,6 +1216,33 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let er _ = on_type_er d.trace "In module create, the variable was not found."
         let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
         TyEnv(env, ModuleT <| env_to_ty env)
+
+    let is_all_int size = List.forall is_int (tuple_field size)
+    let (|IntTuple|_|) size = if is_all_int size then Some size else None
+
+    let array_create d size typ =
+        let typ = tev_seq d typ |> function 
+            | TyType (TypeConstructorT x) -> x 
+            | TyType x -> x
+
+        let array_type, size = 
+            match tev d size with
+            | TyTuple [] & size -> ArrayT(DotNetReference, typ), size
+            | size when is_all_int size -> ArrayT(DotNetHeap,typ), size
+            | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" size
+
+        let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
+        let l = [size;array] in TyVV(l,VVT <| List.map get_type l)
+
+    let array_index d ar idx =
+        match tev2 d ar idx with
+        | TyTuple [IntTuple size; ar & TyType (ArrayT (_,t))], IntTuple idx ->
+            if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
+            else on_type_er d.trace "Array index does not match the number of dimensions in the array."
+        | TyTuple [size; ar & TyType (ArrayT (_,t))], IntTuple idx ->
+            on_type_er d.trace "One of the size arguments in array index is not an int."
+        | _, IntTuple idx -> on_type_er d.trace "Trying to index into a non-array."
+        | _ -> on_type_er d.trace "One of the index arguments in array index is not an int."
 
     let add_trace d x = {d with trace = x :: d.trace}
 
