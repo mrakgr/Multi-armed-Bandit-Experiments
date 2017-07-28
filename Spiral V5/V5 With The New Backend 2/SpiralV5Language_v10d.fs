@@ -289,6 +289,11 @@ let rec is_int' = function
     | _ -> false
 let is_int a = is_int' (get_type a)
 
+let rec is_int64' = function
+    | PrimT Int64T -> true
+    | _ -> false
+let is_int64 a = is_int64' (get_type a)
+
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
@@ -602,9 +607,9 @@ let (|TyEnvT|_|) = function
     | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) -> Some env
     | _ -> None
 
-let is_all_int size = List.forall is_int (tuple_field size)
+let is_all_int64 size = List.forall is_int64 (tuple_field size)
 let (|TyArray|_|) = function
-    | TyTuple [size; ar & TyType (ArrayT (ar_type,ret_type))] when is_all_int size -> Some (size,ar,ar_type,ret_type)
+    | TyTuple [size; ar & TyType (ArrayT (ar_type,ret_type))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
     | _ -> None
 
 exception TypeError of Trace * string
@@ -877,13 +882,13 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         List.toArray args |> Array.map (get_type >> strip_typec >> dotnet_ty_to_type)
 
     let array_index' d = function
-        | ar, idx when is_all_int idx ->
+        | ar, idx when is_all_int64 idx ->
             match ar with
             | TyArray (size,ar,_,t) ->
                 if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
                 else on_type_er d.trace "Array index does not match the number of dimensions in the array."
             | _ -> on_type_er d.trace "Trying to index into a non-array."
-        | _ -> on_type_er d.trace "One of the index arguments in array index is not an int."
+        | _ -> on_type_er d.trace "One of the index arguments in array index is not an int64."
     
     let array_index d ar idx = array_index' d (tev2 d ar idx)
 
@@ -1234,8 +1239,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
         let size, array_type =
             match tev d size with
-            | size when is_all_int size -> size, ArrayT(DotNetHeap,typ)
-            | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" size
+            | size when is_all_int64 size -> size, ArrayT(DotNetHeap,typ)
+            | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
 
         let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
         let l = [size;array] in TyVV(l,VVT <| List.map get_type l)

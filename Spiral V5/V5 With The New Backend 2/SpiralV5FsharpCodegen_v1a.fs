@@ -210,7 +210,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | Unit -> ""
             | ArrayT(_,t) ->
                 let x = List.map codegen size |> String.concat "*"
-                sprintf "Array.zeroCreate<%s> (%s)" (print_type t) x
+                sprintf "Array.zeroCreate<%s> (int32 (%s))" (print_type t) x
 
         let reference_create = function
             | TyType Unit -> ""
@@ -229,7 +229,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                     | [], [i] -> sprintf "%s + %s" prev i
                     | _ -> failwith "Invalid state."
 
-                sprintf "%s.[%s]" (codegen ar) (index_first (List.map codegen size, List.map codegen idx))
+                sprintf "%s.[int32 (%s)]" (codegen ar) (index_first (List.map codegen size, List.map codegen idx))
 
         let reference_index = function
             | TyType Unit -> ""
@@ -754,20 +754,20 @@ inl a = ref ()
 a := ()
 a() |> ignore
 
-inl a = array_create 10 int64
-a 0 <- 2
-a 0 |> ignore
+inl a = array_create (10,15,5) int64
+a (0,8,1) <- 2
+a (0,8,1) |> ignore
+
+inl a = array_create 3 ()
+a (1) <- ()
+a (1) |> ignore
     """
+
+printfn "%A" (spiral_codegen [] test18)
 
 let (var_15: int64 ref) = (ref 0L)
 var_15 := 5L
 let (var_17: int64) = (!var_15)
-let (var_21: int64 []) = Array.zeroCreate<_> (10)
-var_21.[0] <- 2L
-let (var_23: int64) = var_21.[0]
-
-
-
-printfn "%A" (spiral_codegen [] test18)
-
-var_21.GetType()
+let (var_21: int64 []) = Array.zeroCreate<int64> (int32 10L)
+var_21.[int32 (0L)] <- 2L
+let (var_23: int64) = var_21.[int32 (0L)]
