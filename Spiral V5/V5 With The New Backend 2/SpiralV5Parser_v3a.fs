@@ -164,7 +164,6 @@ let eq = keywordChar '='
 let bar = keywordChar '|' 
 let barbar = keywordString "||" 
 let lam = keywordString "->"
-let set_me = keywordString "<-"
 let inl_ = keywordString "inl"
 let met_ = keywordString "met"
 let inl_rec = keywordString1 "inl" .>> keywordString "rec"
@@ -290,11 +289,19 @@ let tuple expr i (s: CharStream<_>) =
 
 let mset expr i (s: CharStream<_>) = 
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
-    pipe2 (expr i)
-        (opt (expr_indent set_me >>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
-        (fun l -> function
-            | Some r -> Op(MSet,[l;r])
-            | None -> l) s
+    let op =
+        (keywordString ":=" >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
+        <|> (keywordString "<-" >>% fun l r -> 
+                let rec loop = function
+                    | Pos(_,x) -> loop x
+                    | Op(Apply,[a;b]) -> Op(ArraySet,[a;b;r]) |> preturn
+                    | _ -> fail "Expected two arguments on the left of <-."
+                loop l)
+
+    (tuple2 (expr i) (opt (expr_indent op .>>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
+    >>= function 
+        | a,Some(f,b) -> f a b
+        | a,None -> preturn a) s
 
 let annotations expr (s: CharStream<_>) = 
     let i = s.Column
