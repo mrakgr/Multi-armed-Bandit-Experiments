@@ -210,7 +210,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | Unit -> ""
             | ArrayT(_,t) ->
                 let x = List.map codegen size |> String.concat "*"
-                sprintf "Array.zeroCreate<%s> (int32 (%s))" (print_type t) x
+                sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) x
 
         let reference_create = function
             | TyType Unit -> ""
@@ -220,6 +220,19 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             match ar with
             | TyType Unit -> ""
             | _ ->
+                let size, idx = List.map codegen size, List.map codegen idx
+                // Print assertions for multidimensional arrays.
+                // For 1d arrays, the .NET runtime does the checking.
+                match size with
+                | _ :: _ :: _ ->
+                    List.iter2 (fun s i -> 
+                        let cond = sprintf "%s < %s && %s >= 0L" i s i
+                        // I am worried about code size blowup due to the string in sprintf so I'll leave the message out.
+                        //let message = """sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i" """
+                        sprintf "if (%s) = false then raise <| System.ArgumentOutOfRangeException(\"%s\")" cond i |> state
+                        ) size idx
+                | _ -> ()
+
                 let rec index_first = function
                     | _ :: s :: sx, i :: ix -> index_rest (sprintf "%s * %s" i s) (sx, ix)
                     | [_], [i] -> i
@@ -229,7 +242,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                     | [], [i] -> sprintf "%s + %s" prev i
                     | _ -> failwith "Invalid state."
 
-                sprintf "%s.[int32 (%s)]" (codegen ar) (index_first (List.map codegen size, List.map codegen idx))
+                sprintf "%s.[int32 (%s)]" (codegen ar) (index_first (size, idx))
 
         let reference_index = function
             | TyType Unit -> ""
@@ -768,6 +781,12 @@ printfn "%A" (spiral_codegen [] test18)
 let (var_15: int64 ref) = (ref 0L)
 var_15 := 5L
 let (var_17: int64) = (!var_15)
-let (var_21: int64 []) = Array.zeroCreate<int64> (int32 10L)
-var_21.[int32 (0L)] <- 2L
-let (var_23: int64) = var_21.[int32 (0L)]
+let (var_21: int64 []) = Array.zeroCreate<int64> (System.Convert.ToInt32(10L*15L*5L))
+if (0L < 10L && 0L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("0L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  0L 10L)
+if (8L < 15L && 8L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("8L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  8L 15L)
+if (1L < 5L && 1L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("1L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  1L 5L)
+var_21.[int32 ((0L * 15L + 8L) * 5L + 1L)] <- 2L
+if (0L < 10L && 0L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("0L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  0L 10L)
+if (8L < 15L && 8L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("8L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  8L 15L)
+if (1L < 5L && 1L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("1L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  1L 5L)
+let (var_23: int64) = var_21.[int32 ((0L * 15L + 8L) * 5L + 1L)]
