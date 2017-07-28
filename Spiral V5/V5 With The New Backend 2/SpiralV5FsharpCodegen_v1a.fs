@@ -238,7 +238,11 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let b = codegen b
             if b <> "" then sprintf "%s" b |> state
             codegen rest
-//        | TyLet(_,_, TyOp(MSet,[a;b],_),rest,_) -> sprintf "%s = %s;" (codegen a) (codegen b) |> state; codegen rest
+        | TyLet(_,_, TyOp(ArraySet,[TyOp(ArrayIndex,[size;ar;idx],_);b],_),rest,_) -> 
+            match get_type ar with
+            | ArrayT(DotNetReference,_) -> reference_set ar b
+            | ArrayT(DotNetHeap,_) -> array_set size ar idx b
+            codegen rest
         | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
         | TyMemoizedExpr(MemoMethod,used_vars,renamer,tag,_) ->
@@ -263,75 +267,80 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             |> Array.map snd
             |> fun x -> make_struct x (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_env_ty env_ty) args)
         | TyEnv(env_term,_) -> failwith "Can't be any other type."
-        | TyOp(Apply,[a;b],t) -> 
-            // Apply during codegen is only used for applying closures.
-            // There is one level of flattening in the outer arguments.
-            let b = tuple_field b |> List.map codegen |> String.concat ", "
-            sprintf "%s(%s)" (codegen a) b
-        | TyOp(Case,v :: cases,t) ->
-            print_if t <| fun _ ->
-                let tag = 
-                    match get_type v with
-                    | RecT tag -> tag
-                    | UnionT tys -> union_ty_tag tys
-                    | _ -> failwith "impossible"
+        | TyOp(op,args,t) ->
+            match op, args with
+            | Apply,[a;b] ->
+                // Apply during codegen is only used for applying closures.
+                // There is one level of flattening in the outer arguments.
+                let b = tuple_field b |> List.map codegen |> String.concat ", "
+                sprintf "%s(%s)" (codegen a) b
+            | Case,v :: cases ->
+                print_if t <| fun _ ->
+                    let tag = 
+                        match get_type v with
+                        | RecT tag -> tag
+                        | UnionT tys -> union_ty_tag tys
+                        | _ -> failwith "impossible"
 
-                sprintf "match %s with" (codegen v) |> state
-                let print_case i = function
-                    | case & TyType Unit -> sprintf "| %s ->" (print_union_case tag i) |> state
-                    | case -> sprintf "| %s(%s) ->" (print_union_case tag i) (codegen case) |> state
-                let rec loop i = function
-                    | case :: body :: rest -> 
-                        print_case i case
-                        enter <| fun _ -> codegen body
-                        loop (i+1) rest
-                    | [] -> ()
-                    | _ -> failwith "The cases should always be in pairs."
-                loop 0 cases
+                    sprintf "match %s with" (codegen v) |> state
+                    let print_case i = function
+                        | case & TyType Unit -> sprintf "| %s ->" (print_union_case tag i) |> state
+                        | case -> sprintf "| %s(%s) ->" (print_union_case tag i) (codegen case) |> state
+                    let rec loop i = function
+                        | case :: body :: rest -> 
+                            print_case i case
+                            enter <| fun _ -> codegen body
+                            loop (i+1) rest
+                        | [] -> ()
+                        | _ -> failwith "The cases should always be in pairs."
+                    loop 0 cases
 
-        // Primitive operations on expressions.
-        | TyOp(Add,[a;b],t) -> sprintf "(%s + %s)" (codegen a) (codegen b)
-        | TyOp(Sub,[a;b],t) -> sprintf "(%s - %s)" (codegen a) (codegen b)
-        | TyOp(Mult,[a;b],t) -> sprintf "(%s * %s)" (codegen a) (codegen b)
-        | TyOp(Div,[a;b],t) -> sprintf "(%s / %s)" (codegen a) (codegen b)
-        | TyOp(Mod,[a;b],t) -> sprintf "(%s %% %s)" (codegen a) (codegen b)
-        | TyOp(LT,[a;b],t) -> sprintf "(%s < %s)" (codegen a) (codegen b)
-        | TyOp(LTE,[a;b],t) -> sprintf "(%s <= %s)" (codegen a) (codegen b)
-        | TyOp(EQ,[a;b],t) -> sprintf "(%s == %s)" (codegen a) (codegen b)
-        | TyOp(NEQ,[a;b],t) -> sprintf "(%s != %s)" (codegen a) (codegen b)
-        | TyOp(GT,[a;b],t) -> sprintf "(%s > %s)" (codegen a) (codegen b)
-        | TyOp(GTE,[a;b],t) -> sprintf "(%s >= %s)" (codegen a) (codegen b)
-        | TyOp(And,[a;b],t) -> sprintf "(%s && %s)" (codegen a) (codegen b)
-        | TyOp(Or,[a;b],t) -> sprintf "(%s || %s)" (codegen a) (codegen b)
+            | ArrayCreate,[a] -> array_create a t
+            | ReferenceCreate,[a] -> reference_create a
+            | ArrayIndex,[a;b;c] -> array_index a b c
 
-        | TyOp(ShiftLeft,[x;y],_) -> sprintf "(%s << %s)" (codegen x) (codegen y)
-        | TyOp(ShiftRight,[x;y],_) -> sprintf "(%s >> %s)" (codegen x) (codegen y)
+            // Primitive operations on expressions.
+            | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
+            | Sub,[a;b] -> sprintf "(%s - %s)" (codegen a) (codegen b)
+            | Mult,[a;b] -> sprintf "(%s * %s)" (codegen a) (codegen b)
+            | Div,[a;b] -> sprintf "(%s / %s)" (codegen a) (codegen b)
+            | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
+            | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
+            | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
+            | EQ,[a;b] -> sprintf "(%s == %s)" (codegen a) (codegen b)
+            | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
+            | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
+            | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
+            | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
+            | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
 
-//        | TyOp(ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
-//        | TyOp(ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
-//        | TyOp(ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
-//        | TyOp(ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
+            | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
+            | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
 
-        | TyOp(Neg,[a],t) -> sprintf "(-%s)" (codegen a)
-        | TyOp(VVIndex,[a;b],t) -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen a) (codegen b)
-        | TyOp(EnvUnseal,[r; TyLit (LitString k)], t) -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
-//        | TyOp(ArrayIndex,[a;b],t) -> print_array true a b
-//        | TyOp(ArrayUnsafeIndex,[a;b],t) -> print_array false a b
-        | TyOp(Log,[x],_) -> sprintf "log(%s)" (codegen x)
-        | TyOp(Exp,[x],_) -> sprintf "exp(%s)" (codegen x)
-        | TyOp(Tanh,[x],_) -> sprintf "tanh(%s)" (codegen x)
+    //        | ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
+    //        | ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
+    //        | ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
+    //        | ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
 
-        | TyOp(DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)], DotNetTypeInstance instance_type) ->
-            let ins = print_dotnet_instance_type instance_type
-            sprintf "%s(%s)" ins args
-        | TyOp(DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]],ret_type) ->
-            match v with
-            | TyType (DotNetTypeRuntime t) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
-            | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
-        // Cuda kernel constants
-//        | TyOp(Syncthreads,[],_) -> state "syncthreads();"; ""
+            | Neg,[a] -> sprintf "(-%s)" (codegen a)
+            | VVIndex,[a;b] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen a) (codegen b)
+            | EnvUnseal,[r; TyLit (LitString k)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
+            | Log,[x] -> sprintf "log(%s)" (codegen x)
+            | Exp,[x] -> sprintf "exp(%s)" (codegen x)
+            | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
 
-        | TyOp _ as x -> failwithf "Missing TyOp case. %A" x
+            | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] ->
+                match t with 
+                | DotNetTypeInstance instance_type -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
+                | _ -> failwith "impossible"
+            | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
+                match v with
+                | TyType (DotNetTypeRuntime t) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
+                | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
+            // Cuda kernel constants
+    //        | Syncthreads,[],_) -> state "syncthreads();"; ""
+
+            | x -> failwithf "Missing TyOp case. %A" x
         | x -> failwithf "The match cases were incomplete. Got: %A" x
 
     let print_rec_definition prefix (buffer: Buf) ty tag =

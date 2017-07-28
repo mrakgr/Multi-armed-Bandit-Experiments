@@ -114,6 +114,7 @@ and Op =
     | EqType
 
     | ArrayCreate
+    | ReferenceCreate
     | ArrayIndex
     | ArraySet
    
@@ -1210,30 +1211,36 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         TyEnv(env, ModuleT <| env_to_ty env)
 
     let is_all_int size = List.forall is_int (tuple_field size)
-    let (|IntTuple|_|) size = if is_all_int size then Some size else None
 
     let array_create d size typ =
         let typ = tev_seq d typ |> function 
             | TyType (TypeConstructorT x) -> x 
             | TyType x -> x
 
-        let array_type, size = 
+        let size, array_type =
             match tev d size with
-            | TyTuple [] & size -> ArrayT(DotNetReference, typ), size
-            | size when is_all_int size -> ArrayT(DotNetHeap,typ), size
+            | size when is_all_int size -> size, ArrayT(DotNetHeap,typ)
             | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int.\nGot: %A" size
 
         let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
         let l = [size;array] in TyVV(l,VVT <| List.map get_type l)
 
+    let reference_create d x =
+        let x = tev d x
+        let size, array_type = TyB, ArrayT(DotNetReference, get_type x)
+        let array = TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
+        let l = [size;array] in TyVV(l,VVT <| List.map get_type l)
+
     let array_index d ar idx =
         match tev2 d ar idx with
-        | TyTuple [IntTuple size; ar & TyType (ArrayT (_,t))], IntTuple idx ->
-            if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
-            else on_type_er d.trace "Array index does not match the number of dimensions in the array."
-        | TyTuple [size; ar & TyType (ArrayT (_,t))], IntTuple idx ->
-            on_type_er d.trace "One of the size arguments in array index is not an int."
-        | _, IntTuple idx -> on_type_er d.trace "Trying to index into a non-array."
+        | ar, idx when is_all_int idx ->
+            match ar with
+            | TyTuple [size; ar & TyType (ArrayT (_,t))] when is_all_int size ->
+                if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
+                else on_type_er d.trace "Array index does not match the number of dimensions in the array."
+            | TyTuple [size; TyType (ArrayT (_,t))]  ->
+                on_type_er d.trace "One of the size arguments in array index is not an int."
+            | _ -> on_type_er d.trace "Trying to index into a non-array."
         | _ -> on_type_er d.trace "One of the index arguments in array index is not an int."
 
     let array_set d ar idx r =
@@ -1278,6 +1285,11 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c
         | TypeLitCreate,[a] -> type_lit_create d a
         | Dynamize,[a] -> dynamize d a
+
+        | ArrayCreate,[a;b] -> array_create d a b
+        | ReferenceCreate,[a] -> reference_create d a
+        | ArrayIndex,[a;b] -> array_index d a b
+        | ArraySet,[a;b;c] -> array_set d a b c
 
         // Primitive operations on expressions.
         | Add,[a;b] -> prim_arith_op d a b Add
