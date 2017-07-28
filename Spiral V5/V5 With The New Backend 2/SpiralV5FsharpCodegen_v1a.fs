@@ -81,8 +81,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | VVT t -> print_tuple t
         | UnionT t -> print_union_ty t
         | RecT t -> print_rec_ty t
-        | ArrayT(DotNetHeap,t) -> sprintf "%s ref" (print_type t)
-        | ArrayT(DotNetReference,t) -> sprintf "%s []" (print_type t)
+        | ArrayT(DotNetReference,t) -> sprintf "%s ref" (print_type t)
+        | ArrayT(DotNetHeap,t) -> sprintf "%s []" (print_type t)
         | ArrayT _ -> failwith "Not implemented."
         | DotNetTypeInstanceT t ->
             globals.memoized_dotnet_types |> snd |> fun x -> x.[t]
@@ -206,28 +206,43 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
-        let array_create (TyTuple size) t =
-            let x = List.map codegen size |> String.concat "*"
-            sprintf "Array.zeroCreate<%s> (%s)" (print_type t) x
+        let array_create (TyTuple size) = function
+            | Unit -> ""
+            | ArrayT(_,t) ->
+                let x = List.map codegen size |> String.concat "*"
+                sprintf "Array.zeroCreate<%s> (%s)" (print_type t) x
 
-        let reference_create x = sprintf "(ref %s)" (codegen x)
+        let reference_create = function
+            | TyType Unit -> ""
+            | x -> sprintf "(ref %s)" (codegen x)
 
         let array_index (TyTuple size) ar (TyTuple idx) =
-            let rec index_first = function
-                | _ :: s :: sx, i :: ix -> index_rest (sprintf "%s * %s" i s) (sx, ix)
-                | [_], [i] -> i
-                | _ -> "0"
-            and index_rest prev = function
-                | s :: sx, i :: ix -> index_rest (sprintf "(%s + %s) * %s" prev i s) (sx, ix)
-                | [], [i] -> sprintf "%s + %s" prev i
-                | _ -> failwith "Invalid state."
+            match ar with
+            | TyType Unit -> ""
+            | _ ->
+                let rec index_first = function
+                    | _ :: s :: sx, i :: ix -> index_rest (sprintf "%s * %s" i s) (sx, ix)
+                    | [_], [i] -> i
+                    | _ -> "0"
+                and index_rest prev = function
+                    | s :: sx, i :: ix -> index_rest (sprintf "(%s + %s) * %s" prev i s) (sx, ix)
+                    | [], [i] -> sprintf "%s + %s" prev i
+                    | _ -> failwith "Invalid state."
 
-            sprintf "%s.[%s]" (codegen ar) (index_first (List.map codegen size, List.map codegen idx))
+                sprintf "%s.[%s]" (codegen ar) (index_first (List.map codegen size, List.map codegen idx))
 
-        let reference_index x = sprintf "(!%s)" (codegen x)
+        let reference_index = function
+            | TyType Unit -> ""
+            | x -> sprintf "(!%s)" (codegen x)
 
-        let array_set size ar idx r = sprintf "%s <- %s" (array_index size ar idx) (codegen r) |> state
-        let reference_set l r = sprintf "%s := %s" (codegen l) (codegen r) |> state
+        let array_set size ar idx r = 
+            match ar with
+            | TyType Unit -> ()
+            | _ -> sprintf "%s <- %s" (array_index size ar idx) (codegen r) |> state
+        let reference_set l r = 
+            match l with
+            | TyType Unit -> ()
+            | _ -> sprintf "%s := %s" (codegen l) (codegen r) |> state
 
         match expr with
         | TyTag (_, Unit) | TyV (_, Unit) -> ""
@@ -235,13 +250,15 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
         | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
         | TyLet(_,(_,Unit),b,rest,_) ->
-            let b = codegen b
-            if b <> "" then sprintf "%s" b |> state
-            codegen rest
-        | TyLet(_,_, TyOp(ArraySet,[TyOp(ArrayIndex,[size;ar;idx],_);b],_),rest,_) -> 
-            match get_type ar with
-            | ArrayT(DotNetReference,_) -> reference_set ar b
-            | ArrayT(DotNetHeap,_) -> array_set size ar idx b
+            match b with
+            | TyOp(ArraySet,[TyOp(ArrayIndex,[size;ar;idx],_);b],_) ->
+                match get_type ar with
+                | ArrayT(DotNetReference,_) -> reference_set ar b
+                | ArrayT(DotNetHeap,_) -> array_set size ar idx b
+                | _ -> failwith "impossible"
+            | _ ->
+                let b = codegen b
+                if b <> "" then sprintf "%s" b |> state
             codegen rest
         | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
@@ -297,7 +314,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
             | ArrayCreate,[a] -> array_create a t
             | ReferenceCreate,[a] -> reference_create a
-            | ArrayIndex,[a;b;c] -> array_index a b c
+            | ArrayIndex,[a;b & TyType(ArrayT(DotNetHeap,_));c] -> array_index a b c
+            | ArrayIndex,[a;b & TyType(ArrayT(DotNetReference,_));c] -> reference_index b
 
             // Primitive operations on expressions.
             | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -725,5 +743,31 @@ inl m =
 m.x, m.y, m.z
     """
 
-printfn "%A" (spiral_codegen [] test17)
+let test18 = // Do references work?
+    "test18",
+    """
+inl a = ref 0
+a := 5
+a() |> ignore
 
+inl a = ref ()
+a := ()
+a() |> ignore
+
+inl a = array_create 10 int64
+a 0 <- 2
+a 0 |> ignore
+    """
+
+let (var_15: int64 ref) = (ref 0L)
+var_15 := 5L
+let (var_17: int64) = (!var_15)
+let (var_21: int64 []) = Array.zeroCreate<_> (10)
+var_21.[0] <- 2L
+let (var_23: int64) = var_21.[0]
+
+
+
+printfn "%A" (spiral_codegen [] test18)
+
+var_21.GetType()

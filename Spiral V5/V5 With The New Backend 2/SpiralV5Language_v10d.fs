@@ -602,6 +602,11 @@ let (|TyEnvT|_|) = function
     | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) -> Some env
     | _ -> None
 
+let is_all_int size = List.forall is_int (tuple_field size)
+let (|TyArray|_|) = function
+    | TyTuple [size; ar & TyType (ArrayT (ar_type,ret_type))] when is_all_int size -> Some (size,ar,ar_type,ret_type)
+    | _ -> None
+
 exception TypeError of Trace * string
 
 let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
@@ -871,10 +876,22 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let strip_typec = function TypeConstructorT x -> x | x -> x
         List.toArray args |> Array.map (get_type >> strip_typec >> dotnet_ty_to_type)
 
+    let array_index' d = function
+        | ar, idx when is_all_int idx ->
+            match ar with
+            | TyArray (size,ar,_,t) ->
+                if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
+                else on_type_er d.trace "Array index does not match the number of dimensions in the array."
+            | _ -> on_type_er d.trace "Trying to index into a non-array."
+        | _ -> on_type_er d.trace "One of the index arguments in array index is not an int."
+    
+    let array_index d ar idx = array_index' d (tev2 d ar idx)
+
     let rec apply tev d la args =
         match la, args with
 //        | TyEnv(env_term,FunctionT(env_ty,x,vars)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t
-        | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+//        | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+        | TyArray _, _ -> array_index' d (la, args)
         | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
         | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)),_ -> 
@@ -928,7 +945,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             let arg_ty = get_type args
             if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty la
             else TyOp(Apply,[la;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
-        | _ -> on_type_er d.trace "Invalid use of apply."
+        | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
 //    and apply_cast d env_term (env_ty,core as fun_key) args_ty =
 //        let instantiate_type_as_variable d args_ty =
@@ -1210,8 +1227,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
         TyEnv(env, ModuleT <| env_to_ty env)
 
-    let is_all_int size = List.forall is_int (tuple_field size)
-
     let array_create d size typ =
         let typ = tev_seq d typ |> function 
             | TyType (TypeConstructorT x) -> x 
@@ -1230,18 +1245,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let size, array_type = TyB, ArrayT(DotNetReference, get_type x)
         let array = TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
         let l = [size;array] in TyVV(l,VVT <| List.map get_type l)
-
-    let array_index d ar idx =
-        match tev2 d ar idx with
-        | ar, idx when is_all_int idx ->
-            match ar with
-            | TyTuple [size; ar & TyType (ArrayT (_,t))] when is_all_int size ->
-                if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
-                else on_type_er d.trace "Array index does not match the number of dimensions in the array."
-            | TyTuple [size; TyType (ArrayT (_,t))]  ->
-                on_type_er d.trace "One of the size arguments in array index is not an int."
-            | _ -> on_type_er d.trace "Trying to index into a non-array."
-        | _ -> on_type_er d.trace "One of the index arguments in array index is not an int."
 
     let array_set d ar idx r =
         match array_index d ar idx, tev d r with
@@ -1411,6 +1414,8 @@ let core_functions =
         l "lit_lift" (p <| fun x -> Op(TypeLitCreate,[x]))
         l "mscorlib" (ap (V "load_assembly") (ap (V "lit_lift") (lit_string "mscorlib")))
         l "ignore" (inl "" B)
+        l "ref" (p <| fun x -> Op(ReferenceCreate,[x]))
+        l "array_create" (p2 <| fun size typ -> Op(ArrayCreate,[size;typ]))
         ]
 
 let spiral_typecheck code body on_fail ret = 
