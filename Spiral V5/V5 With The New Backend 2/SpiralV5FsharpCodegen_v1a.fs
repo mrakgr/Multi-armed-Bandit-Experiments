@@ -778,15 +778,7 @@ a (1) |> ignore
 
 printfn "%A" (spiral_codegen [] test18)
 
-let (var_15: int64 ref) = (ref 0L)
-var_15 := 5L
-let (var_17: int64) = (!var_15)
-let (var_21: int64 []) = Array.zeroCreate<int64> (System.Convert.ToInt32(10L*15L*5L))
-if (0L < 10L && 0L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("0L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  0L 10L)
-if (8L < 15L && 8L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("8L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  8L 15L)
-if (1L < 5L && 1L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("1L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  1L 5L)
-var_21.[int32 ((0L * 15L + 8L) * 5L + 1L)] <- 2L
-if (0L < 10L && 0L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("0L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  0L 10L)
-if (8L < 15L && 8L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("8L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  8L 15L)
-if (1L < 5L && 1L >= 0L) = false then raise <| System.ArgumentOutOfRangeException("1L",sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i"  1L 5L)
-let (var_23: int64) = var_21.[int32 ((0L * 15L + 8L) * 5L + 1L)]
+type Q =
+    | Asd of int32
+
+typeof<Q []>
