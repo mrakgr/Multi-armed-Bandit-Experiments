@@ -156,7 +156,8 @@ let keywordChar = patid
 let keywordString x = skipString x .>> spaces
 let keywordString1 x = skipString x .>> spaces1
 
-let comma = keywordChar ',' 
+let comma = keywordChar ','
+let dot = keywordChar '.'
 let grave = keywordChar '`' 
 let pp = keywordChar ':'
 let semicolon = keywordChar ';' 
@@ -164,6 +165,8 @@ let eq = keywordChar '='
 let bar = keywordChar '|' 
 let barbar = keywordString "||" 
 let lam = keywordString "->"
+let set_ref = keywordString ":="
+let set_array = keywordString "<-"
 let inl_ = keywordString "inl"
 let met_ = keywordString "met"
 let inl_rec = keywordString1 "inl" .>> keywordString "rec"
@@ -235,12 +238,12 @@ let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
 let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
 let case_module expr = module_ >>. expr |>> module_create
-let case_apply_type expr = grave >>. expr |>> ap_ty
-let case_string_ty expr = keywordChar '.' >>. var_name |>> (LitString >> type_lit_create)
+let case_for_cast expr = grave >>. expr |>> for_cast
+let case_string_ty expr = dot >>. var_name |>> (LitString >> type_lit_create)
 
 
 let expressions expr (s: CharStream<_>) =
-    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_apply_type; case_string_ty
+    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_for_cast; case_string_ty
       case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module
       ]
     |> List.map (fun x -> x expr |> attempt)
@@ -290,8 +293,8 @@ let tuple expr i (s: CharStream<_>) =
 let mset expr i (s: CharStream<_>) = 
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
     let op =
-        (keywordString ":=" >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
-        <|> (keywordString "<-" >>% fun l r -> 
+        (set_ref >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
+        <|> (set_array >>% fun l r -> 
                 let rec loop = function
                     | Pos(_,x) -> loop x
                     | Op(Apply,[a;b]) -> Op(ArraySet,[a;b;r]) |> preturn

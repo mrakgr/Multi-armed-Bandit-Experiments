@@ -97,7 +97,7 @@ and Op =
 
     | Fix
     | Apply
-    | ApplyType
+    | ForCast
     | MethodMemoize
     | StructCreate
     | VVIndex
@@ -175,7 +175,7 @@ and Arguments = Set<TyTag> ref
 and Renamer = Map<Tag,Tag>
 
 and MemoExprType =
-| MemoClosure
+| MemoClosure of Set<TyTag>
 | MemoMethod
 
 and LetType =
@@ -195,7 +195,7 @@ and TypedExpr =
 
 and MemoCases =
     | MemoMethodInEvaluation of Tag
-    | MemoMethodDone of TypedExpr * Tag * Arguments
+    | MemoMethodDone of MemoExprType * TypedExpr * Tag * Arguments
     | MemoTypeInEvaluation
     | MemoType of Ty
 
@@ -306,7 +306,7 @@ let fix name x =
 let inl x y = Function(x,y)
 let inl_pat x y = Pattern(PatClauses([x,y]))
 let ap x y = Op(Apply,[x;y])
-let ap_ty x = Op(ApplyType,[x])
+let for_cast x = Op(ForCast,[x])
 let lp v b e = ap (inl_pat v e) b
 let l v b e = ap (inl v e) b
 let l_rec v b e = ap (inl v e) (fix v b)
@@ -499,27 +499,23 @@ and env_free_variables env = env_free_variables_template typed_expr_std_pass env
 /// Optimizes the free variables for the sake of tuple deforestation.
 /// It needs at least two passes to converge properly. And probably exactly two.
 let typed_expr_optimization_pass num_passes (memo: MemoDict) typed_exp =
-    let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (typ, r, renamer, tag) =
-        match typ with
-        | MemoMethod ->
-            let vars,counter = memo.[int tag]
-            let set_vars vars = renamer_apply_pool renamer vars |> fun x -> r := x; x
-            if counter < num_passes then
-                let counter = counter + 1
-                memo.[int tag] <- vars, counter
-                let ty_expr, arguments = expr_map.[tag]
-                let vars = typed_expr_free_variables_template (on_method_call_optimization_pass memo expr_map) ty_expr
-                arguments := vars
-                memo.[int tag] <- vars, counter
-                set_vars vars
-            else
-                set_vars vars
-        | MemoClosure -> 
-            !r
+    let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (_, r, renamer, tag) =
+        let vars,counter = memo.[int tag]
+        let set_vars vars = renamer_apply_pool renamer vars |> fun x -> r := x; x
+        if counter < num_passes then
+            let counter = counter + 1
+            memo.[int tag] <- vars, counter
+            let ty_expr, arguments = expr_map.[tag]
+            let vars = typed_expr_free_variables_template (on_method_call_optimization_pass memo expr_map) ty_expr
+            arguments := vars
+            memo.[int tag] <- vars, counter
+            set_vars vars
+        else
+            set_vars vars
 
     let memo = 
         Seq.choose (function
-            | MemoMethodDone (e, tag, args) -> Some (tag,(e,args))
+            | MemoMethodDone (_, e, tag, args) -> Some (tag,(e,args))
             | MemoType t -> None
             | _ -> failwith "impossible") memo.Values |> Map
 
@@ -738,7 +734,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let method_tag () = tag globals.method_tag
     let type_tag () = tag globals.type_tag
 
-    let eval_method used_vars d expr =
+    let eval_method memo_type used_vars d expr =
         let key_args = d.env, expr
         let memoized_methods = globals.memoized_methods
 
@@ -748,34 +744,38 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
             memoized_methods.[key_args] <- MemoMethodInEvaluation tag
             let typed_expr = tev_method d expr
-            memoized_methods.[key_args] <- MemoMethodDone (typed_expr, tag, used_vars)
+            memoized_methods.[key_args] <- MemoMethodDone (memo_type, typed_expr, tag, used_vars)
             typed_expr, tag
         | true, MemoMethodInEvaluation tag -> 
             tev_rec d expr, tag
-        | true, MemoMethodDone (typed_expr, tag, used_vars) -> 
+        | true, MemoMethodDone (memo_type, typed_expr, tag, used_vars) -> 
             typed_expr, tag
         | true, (MemoTypeInEvaluation | MemoType _) ->
             failwith "Expected a method, not a recursive type."
 
-    let eval_renaming d expr =
+    let eval_renaming memo_type d expr =
         let env = d.env
         let fv = env_free_variables env
         let renamer = renamer_make fv
         let renamed_env = renamer_apply_env renamer env
 
-        let typed_expr, tag = eval_method (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr
+        let memo_type = memo_type renamer
+        let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr
         let typed_expr_ty = get_type typed_expr
         if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-        else ref fv, renamer_reverse renamer, tag, typed_expr_ty
+        else memo_type, ref fv, renamer_reverse renamer, tag, typed_expr_ty
 
-    let inline memoize_helper k d x = eval_renaming d x |> k |> make_tyv_and_push_typed_expr d
+    let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
     let memoize_method d x = 
-        memoize_helper (fun (args,renamer,tag,ret_ty) -> 
-            TyMemoizedExpr(MemoMethod,args,renamer,tag,ret_ty)) d x
+        let memo_type _ = MemoMethod
+        memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
+            TyMemoizedExpr(memo_type,args,rev_renamer,tag,ret_ty)) d x
 
-    let memoize_closure arg_ty d x =
-        memoize_helper (fun (args,renamer,tag,ret_ty) -> 
-            TyMemoizedExpr(MemoClosure,args,renamer,tag,ClosureT(arg_ty,ret_ty))) d x
+    let memoize_closure arg d x =
+        let fv, arg_ty = typed_expr_free_variables arg, get_type arg
+        let memo_type r = MemoClosure (renamer_apply_pool r fv)
+        memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
+            TyMemoizedExpr(memo_type,args,rev_renamer,tag,ClosureT(arg_ty,ret_ty))) d x
 
     let apply_typec d typec ra =
         let rec apply_typec d ty ra on_fail ret =
@@ -812,6 +812,20 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TypeConstructorT a, TypeConstructorT b -> set_field a + set_field b |> UnionT |> TypeConstructorT |> make_tyv_and_push_ty d
         | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
+    let rec strip_map x = Map.map (fun _ -> typec_strip) x
+    and typec_strip = function // Implements #10.
+        | DotNetAssemblyT _ | DotNetTypeRuntimeT _ | DotNetTypeInstanceT _
+        | PrimT _ | LitT _ | RecT _ as x -> x
+        | TypeConstructorT x -> x
+        | VVT l -> VVT (List.map typec_strip l)
+        | FunctionT (e, b) -> FunctionT(strip_map e, b)
+        | RecFunctionT (e, b, name) -> RecFunctionT (strip_map e, b, name)
+        | ModuleT e -> ModuleT (strip_map e)
+        | ForCastT x -> typec_strip x |> ForCastT
+        | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
+        | UnionT s -> UnionT (Set.map typec_strip s)
+        | ArrayT (a,b) -> ArrayT (a, typec_strip b)
+
     let typec_create d x =
         let key = d.env, x
         let ret_tyv x = TypeConstructorT x |> make_tyv_and_push_ty d
@@ -824,20 +838,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             match globals.memoized_methods.TryGetValue key with
             | true, MemoType (RecT tag) -> globals.memoized_types.[tag] <- x; RecT tag
             | _ -> x
-
-        let rec strip_map x = Map.map (fun _ -> typec_strip) x
-        and typec_strip = function // Implements #10.
-            | DotNetAssemblyT _ | DotNetTypeRuntimeT _ | DotNetTypeInstanceT _
-            | PrimT _ | LitT _ | RecT _ as x -> x
-            | TypeConstructorT x -> x
-            | VVT l -> VVT (List.map typec_strip l)
-            | FunctionT (e, b) -> FunctionT(strip_map e, b)
-            | RecFunctionT (e, b, name) -> RecFunctionT (strip_map e, b, name)
-            | ModuleT e -> ModuleT (strip_map e)
-            | ForCastT x -> typec_strip x |> ForCastT
-            | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
-            | UnionT s -> UnionT (Set.map typec_strip s)
-            | ArrayT (a,b) -> ArrayT (a, typec_strip b)
 
         match globals.memoized_methods.TryGetValue key with
         | true, MemoType ty -> ret_tyv ty
@@ -883,8 +883,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let dotnet_ty_to_type (x: Ty) = dotnet_ty_to_type globals.memoized_dotnet_types x
 
     let (|TySystemTypeArgs|) args = 
-        let strip_typec = function TypeConstructorT x -> x | x -> x
-        List.toArray args |> Array.map (get_type >> strip_typec >> dotnet_ty_to_type)
+        let typec_strip = function TypeConstructorT x -> x | x -> x
+        List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
 
     let array_index' d = function
         | ar, idx when is_all_int64 idx ->
@@ -897,17 +897,29 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     
     let array_index d ar idx = array_index' d (tev2 d ar idx)
 
-    let rec apply tev d la args =
-        match la, args with
-//        | TyEnv(env_term,FunctionT(env_ty,x,vars)), TyType (ForCastT t) -> apply_cast d env_term (env_ty,x) t
-//        | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
-        | TyArray _, _ -> array_index' d (la, args)
+    let rec apply tev d = function
+        | closure & TyEnv(env_term,(FunctionT(env_ty,x) | RecFunctionT(env_ty,x,_))), TyType (ForCastT args_ty) -> 
+            let instantiate_type_as_variable d args_ty =
+                let f x = make_tyv_and_push_ty d x
+                match args_ty with
+                | VVT l -> TyVV(List.map f l, args_ty)
+                | x -> f x
+
+            let args = instantiate_type_as_variable d args_ty
+//            let tev d x =
+//                let r = memoize_closure args d x
+//                if is_returnable r then r // This is always true in the F# segment.
+//                else on_type_er d.trace "Closure does not have a returnable type."
+                    
+            apply (memoize_closure args) d (closure, args)
+        | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+        | ar & TyArray _, idx -> array_index' d (ar, idx)
         | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
-        | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)),_ -> 
+        | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)), args -> 
             let env = if pat <> "" then Map.add pat args env_term else env_term
             tev {d with env = Map.add name recf env} body
-        | TyEnv(env_term,FunctionT (env_ty, (pat,body))),_ -> 
+        | TyEnv(env_term,FunctionT (env_ty, (pat,body))), args -> 
             tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
         | TyAssembly a, TypeString name -> 
                 wrap_exception d <| fun _ ->
@@ -920,22 +932,22 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                         else
                             on_type_er d.trace "Cannot load a private type from an assembly."
         | TyAssembly _, _ -> on_type_er d.trace "Expected a type level string as the second argument."
-        | TyDotNetType _, TypeString method_name ->
+        | dotnet_type & TyDotNetType _, method_name & TypeString _ ->
             let lam = inl' ["instance";"method_name";"args"] (ap (V "instance") (VV [V "method_name"; V "args"]))
                       |> expr_prepass |> snd |> tev d
-            let ap a b = apply tev d a b
-            ap (ap lam la) args
-        | TyDotNetType typ, TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
+            let ap a b = apply tev d (a, b)
+            ap (ap lam dotnet_type) method_name
+        | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
             wrap_exception d <| fun _ ->
                 match typ.GetMethod(method_name, method_args) with
                 | null -> on_type_er d.trace "Cannot find a method with matching arguments."
                 | meth -> 
                     if meth.IsPublic then
-                        TyOp(DotNetTypeCallMethod,[la;args],meth.ReturnType |> dotnet_type_to_ty)
+                        TyOp(DotNetTypeCallMethod,[dotnet_type;args],meth.ReturnType |> dotnet_type_to_ty)
                         |> make_tyv_and_push_typed_expr d
                     else
                         on_type_er d.trace "Cannot call a private method."
-        | TyDotNetTypeRuntime runtime_type, TyTuple (TySystemTypeArgs system_type_args) ->
+        | TyDotNetTypeRuntime runtime_type, args & TyTuple (TySystemTypeArgs system_type_args) ->
             wrap_exception d <| fun _ ->
                 if runtime_type.ContainsGenericParameters then // instantiate generic type params
                     runtime_type.MakeGenericType system_type_args |> map_dotnet globals.memoized_dotnet_types
@@ -950,35 +962,16 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                         else
                             on_type_er d.trace "Cannot call a private constructor."    
         | TyType(DotNetTypeInstanceT tag), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
-        | TyType(TypeConstructorT uniont), _ -> apply_typec d uniont args
-        | TyType(ClosureT(clo_arg_ty,clo_ret_ty)), _ -> 
+        | TyType(TypeConstructorT uniont), args -> apply_typec d uniont args
+        | closure & TyType(ClosureT(clo_arg_ty,clo_ret_ty)), args -> 
             let arg_ty = get_type args
-            if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure %A" arg_ty la
-            else TyOp(Apply,[la;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
+            if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
+            else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
         | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
-
-//    and apply_cast d env_term (env_ty,core as fun_key) args_ty =
-//        let instantiate_type_as_variable d args_ty =
-//            let f x = make_tyv_and_push_ty d x
-//            match args_ty with
-//            | VVT l -> TyVV(List.map f l, args_ty)
-//            | x -> f x
-//
-//        if env_num_args env_term > 0 then on_type_er d.trace <| sprintf "The number of implicit + explicit arguments to a closure exceeds one. Implicit args: %A" env_term
-//        else
-//            let args = instantiate_type_as_variable d args_ty
-//            let closure = TyEnv(env_term, FunctionT fun_key)
-//
-//            let tev d x =
-//                let r = memoize_closure (get_type args) d x
-//                if is_returnable r then r
-//                else on_type_er d.trace "Closure does not have a returnable type."
-//                    
-//            apply tev d closure args
 
     let apply_tev d expr args = 
         let expr,args = tev2 d expr args
-        apply tev d expr args
+        apply tev d (expr, args)
 
     let (|LitIndex|_|) = function
         | TyLit (LitInt32 i) -> Some i
@@ -1186,7 +1179,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | _ -> prim_un_op_helper t a
             )
 
-    let for_cast d x = tev_seq d x |> get_type |> ForCastT |> make_tyv_and_push_ty d
+    let for_cast d x = tev_seq d x |> get_type |> typec_strip |> ForCastT |> make_tyv_and_push_ty d
     let error_non_unit d a =
         let x = tev d a 
         if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
@@ -1220,6 +1213,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
                 else on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
             | _ -> failwith "There should always be at least one clause here."
+        | a & TyV(b,_) -> assume d a b case
         | _ -> tev d case
 
     let dynamize d a =
@@ -1289,7 +1283,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | If,[cond;tr;fl] -> if_ d cond tr fl
         | Apply,[a;b] -> apply_tev d a b
         | MethodMemoize,[a] -> memoize_method d a
-        | ApplyType,[x] -> for_cast d x
+        | ForCast,[x] -> for_cast d x
         
         | PrintStatic,[a] -> tev d a |> fun r -> printfn "%A" r; TyB
         | ModuleOpen,[a;b] -> module_open d a b

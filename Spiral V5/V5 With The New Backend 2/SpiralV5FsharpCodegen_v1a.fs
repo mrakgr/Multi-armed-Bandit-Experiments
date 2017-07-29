@@ -87,7 +87,9 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | DotNetTypeInstanceT t ->
             globals.memoized_dotnet_types |> snd |> fun x -> x.[t]
             |> print_dotnet_instance_type
-        | ClosureT(a,b) -> sprintf "%s -> %s" (print_type a) (print_type b)
+        | ClosureT(a,b) -> 
+            let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
+            sprintf "(%s) -> %s" a (print_type b)
         | PrimT x ->
             match x with
             | Int8T -> "int8"
@@ -128,7 +130,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
     let print_method tag = sprintf "method_%i" tag
 
     let print_args args = 
-        Set.toList !args |> List.filter (snd >> is_unit >> not)
+        Set.toList args |> List.filter (snd >> is_unit >> not)
         |> List.map print_tyv_with_type |> String.concat ", "
 
     let print_union_case tag i = sprintf "Union%iCase%i" tag i
@@ -211,6 +213,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | ArrayT(_,t) ->
                 let x = List.map codegen size |> String.concat "*"
                 sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) x
+            | _ -> failwith "impossible"
 
         let reference_create = function
             | TyType Unit -> ""
@@ -275,10 +278,14 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             codegen rest
         | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
         | TyLit x -> print_value x
-        | TyMemoizedExpr(MemoMethod,used_vars,renamer,tag,_) ->
+        | TyMemoizedExpr(MemoMethod,fv,_,tag,_) ->
             let method_name = print_method tag
-            sprintf "%s(%s)" method_name (print_args used_vars)
-//        | TyMemoizedExpr(MemoClosure,_,_,tag,_) -> sprintf "(&%s)" (print_method tag)
+            sprintf "%s(%s)" method_name (print_args !fv)
+        | TyMemoizedExpr(MemoClosure args,fv,rev_renamer,tag,_) -> 
+            let method_name = print_method tag
+            let fv = !fv - (renamer_apply_pool rev_renamer args)
+            if fv.IsEmpty then method_name
+            else sprintf "%s(%s)" method_name (print_args fv)
         | TyV(x & TyType t, UnionT tys) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
         | TyV(x & TyType t, RecT tag) ->
             match globals.memoized_types.[tag] with
@@ -302,6 +309,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | Apply,[a;b] ->
                 // Apply during codegen is only used for applying closures.
                 // There is one level of flattening in the outer arguments.
+                // The reason for this is the symmetry between the F# and the Cuda side.
                 let b = tuple_field b |> List.map codegen |> String.concat ", "
                 sprintf "%s(%s)" (codegen a) b
             | Case,v :: cases ->
@@ -431,14 +439,21 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
             "end" |> state
 
-    let print_method (buffer: Buf) is_first (body,tag,args) = 
+    let print_method_definition (buffer: Buf) is_first (memo_type,body,tag,fv) = 
         let state = state buffer
         let enter' = enter' buffer
         let enter = enter buffer
 
         let prefix = if is_first then "let rec" else "and"
         let method_name = print_method tag
-        sprintf "%s %s(%s): %s =" prefix method_name (print_args args) (print_type (get_type body)) |> state
+        match memo_type with
+        | MemoClosure args -> 
+            let fv = !fv - args |> fun fv -> if fv.IsEmpty then "" else sprintf "(%s) " (print_args fv)
+            sprintf "%s %s %s(%s): %s =" prefix method_name fv (print_args args) (print_type (get_type body))
+            
+        | MemoMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args !fv) (print_type (get_type body))
+        |> state
+
         enter' <| fun _ -> 
             match codegen buffer body with
             | "" -> ()
@@ -452,7 +467,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
     globals.memoized_methods |> Seq.fold (fun is_first x -> 
         match x.Value with
-        | MemoMethodDone (e, tag, args) -> print_method method_buffer is_first (e, tag, args); false
+        | MemoMethodDone (memo_type, e, tag, args) -> print_method_definition method_buffer is_first (memo_type, e, tag, args); false
         | _ -> is_first) true |> ignore
     codegen method_buffer main |> state method_buffer // Can't forget the non-method
 
@@ -776,5 +791,12 @@ a (1) <- ()
 a (1) |> ignore
     """
 
-printfn "%A" (spiral_codegen [] test18)
+let test19 = // Does term level casting for functions work?
+    "test19",
+    """
+inl add a b (c (d f) e) = a + b + c + d + e + f
+inl f = add 1 (dyn 2) `(int64,(int64,int64),int64)
+f (1,(2,5),3)
+    """
 
+printfn "%A" (spiral_codegen [] test19)
