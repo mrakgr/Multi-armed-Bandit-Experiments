@@ -34,27 +34,52 @@ let rounds p = between_brackets '(' p ')'
 let curlies p = between_brackets '{' p '}'
 let quares p = between_brackets '[' p ']'
 
-let patid c = skipChar c >>. spaces
-let pat_tuple' pattern = rounds (many pattern)
+let keywordChar x = skipChar x .>> spaces
+let keywordString x = skipString x .>> spaces
+let keywordString1 x = skipString x .>> spaces1
 
-let pat_e pattern = patid '_' >>% E
-let pat_var pattern = var_name |>> PatVar
-let pat_tuple pattern = pat_tuple' pattern |>> PatTuple
-let pat_cons pattern = patid ''' >>. pat_tuple' pattern |>> PatCons
-let pat_type pattern = patid '?' >>. tuple2 pattern pattern |>> PatType
-let pat_active pattern = patid '^' >>. tuple2 var_name pattern |>> PatActive
-let pat_or pattern = patid '|' >>. pat_tuple' pattern |>> PatOr
-let pat_and pattern = patid '&' >>. pat_tuple' pattern |>> PatAnd
-let pat_type_string pattern = patid '.' >>. var_name |>> PatTypeName
+let comma = keywordChar ','
+let dot = keywordChar '.'
+let grave = keywordChar '`' 
+let pp = keywordChar ':'
+let semicolon = keywordChar ';' 
+let eq = keywordChar '=' 
+let bar = keywordChar '|' 
+let amphersand = keywordChar '&'
+let barbar = keywordString "||" 
+let lam = keywordString "->"
+let set_ref = keywordString ":="
+let set_array = keywordString "<-"
+let inl_ = keywordString "inl"
+let met_ = keywordString "met"
+let inl_rec = keywordString1 "inl" .>> keywordString "rec"
+let met_rec = keywordString1 "met" .>> keywordString "rec"
+let match_ = keywordString "match"
+let function_ = keywordString "function"
+let module_ = keywordString "module"
+let with_ = keywordString "with"
+let open_ = keywordString "open"
+let cons = keywordString "::"
+let active = keywordChar '^'
 
-let rec patterns (s: CharStream<_>) =
-    [|
-    pat_e; pat_var; pat_tuple; pat_cons; pat_type
-    pat_active; pat_or; pat_and; pat_type_string
-    |] 
-    |> Array.map (fun x -> x patterns)
-    |> choice |> patpos <| s
+let wildcard = keywordChar '_'
 
+let pat_e = wildcard >>% E
+let pat_var = var_name |>> PatVar
+let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
+let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
+let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
+let pat_type pattern = tuple2 (pattern .>> pp) pattern |>> PatType
+let pat_active pattern = active >>. tuple2 var_name pattern |>> PatActive
+let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
+let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
+let pat_type_string = dot >>. var_name |>> PatTypeName
+
+let (^<|) a b = a b // High precedence, right associative <| operator
+let rec patterns s = // The order the pattern parsers are chained determines their precedence.
+    pat_or ^<| pat_tuple ^<| pat_and ^<| pat_cons ^<| pat_type ^<| pat_active 
+    ^<| choice [|pat_e; pat_var; pat_type_string; pat_rounds patterns|] <| s
+    
 let pattern_list = many patterns
 
 let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
@@ -151,31 +176,6 @@ let if_then_else expr (s: CharStream<_>) =
     <| s
 
 let name = var_name
-
-let keywordChar = patid
-let keywordString x = skipString x .>> spaces
-let keywordString1 x = skipString x .>> spaces1
-
-let comma = keywordChar ','
-let dot = keywordChar '.'
-let grave = keywordChar '`' 
-let pp = keywordChar ':'
-let semicolon = keywordChar ';' 
-let eq = keywordChar '=' 
-let bar = keywordChar '|' 
-let barbar = keywordString "||" 
-let lam = keywordString "->"
-let set_ref = keywordString ":="
-let set_array = keywordString "<-"
-let inl_ = keywordString "inl"
-let met_ = keywordString "met"
-let inl_rec = keywordString1 "inl" .>> keywordString "rec"
-let met_rec = keywordString1 "met" .>> keywordString "rec"
-let match_ = keywordString "match"
-let function_ = keywordString "function"
-let module_ = keywordString "module"
-let with_ = keywordString "with"
-let open_ = keywordString "open"
 
 let inl_pat' (args: Pattern list) body = List.foldBack inl_pat args body
 let meth_pat' args body = inl_pat' args (meth_memo body)
@@ -374,7 +374,7 @@ let expr: Parser<_,unit> =
         let term s = expr_indent expr s
         tdop op term 0 s
 
-    let rec expr s = pos (annotations (indentations (statements expr) (mset (tuple (operators (application (expressions expr))))))) s
+    let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset ^<| tuple ^<| operators ^<| application ^<| expressions expr) <| s
     expr
 
 let spiral_parse (name, code) = runParserOnString (spaces >>. expr .>> eof) () name code
