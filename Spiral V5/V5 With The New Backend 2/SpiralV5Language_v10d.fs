@@ -542,7 +542,7 @@ let map_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x =
 
 let map_rev_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x = dr.[x]
 
-let dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
+let rec dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
     if x = typeof<int8> then PrimT Int8T
     elif x = typeof<int16> then PrimT Int16T
     elif x = typeof<int32> then PrimT Int32T
@@ -557,9 +557,12 @@ let dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
     elif x = typeof<float> then PrimT Float64T
     elif x = typeof<string> then PrimT StringT
     elif x = typeof<unit> then BVVT
+    elif x.IsArray then ArrayT(DotNetHeap,dotnet_type_to_ty memoized_dotnet_types (x.GetElementType()))
+    // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
+    elif x.IsByRef then ArrayT(DotNetReference, dotnet_type_to_ty memoized_dotnet_types (x.GetElementType())) // Incorrect, but useful
     else map_dotnet memoized_dotnet_types x |> DotNetTypeRuntimeT
 
-let dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
+let rec dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
     match x with
     | PrimT Int8T -> typeof<int8>
     | PrimT Int16T -> typeof<int16>
@@ -574,6 +577,8 @@ let dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
     | PrimT Float32T -> typeof<float32>
     | PrimT Float64T -> typeof<float>
     | PrimT StringT -> typeof<string>
+    | ArrayT(DotNetHeap,t) -> (dotnet_ty_to_type memoized_dotnet_types t).MakeArrayType()
+    | ArrayT(DotNetReference,t) -> (dotnet_ty_to_type memoized_dotnet_types t).MakeByRefType() // Incorrect, but useful
     | DotNetTypeInstanceT x | DotNetTypeRuntimeT x -> map_rev_dotnet memoized_dotnet_types x
     | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 

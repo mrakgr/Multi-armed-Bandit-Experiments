@@ -756,7 +756,7 @@ inl m =
 m.x, m.y, m.z
     """
 
-let test18 = // Do references work?
+let test18 = // Do arrays and references work?
     "test18",
     """
 inl a = ref 0
@@ -778,7 +778,3 @@ a (1) |> ignore
 
 printfn "%A" (spiral_codegen [] test18)
 
-type Q =
-    | Asd of int32
-
-typeof<Q []>
