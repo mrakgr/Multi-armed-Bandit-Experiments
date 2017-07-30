@@ -621,10 +621,13 @@ let test8 = // Does the basic union type work?
     "test8",
     """
 met x =
-    inl option_int = type (.Some, 1) |> union (type .None)
+    inl option_int = 
+        type 
+            .Some, 1 
+            .None
     option_int .None //(.Some, 10)
 match x with
-| (.Some, x) -> x
+| .Some, x -> x
 | .None -> 0
     """
 
@@ -809,4 +812,4 @@ match x with
 | q : int64 -> x * x
     """
 
-printfn "%A" (spiral_codegen [] test20)
+printfn "%A" (spiral_codegen [] test8)

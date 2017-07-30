@@ -61,6 +61,7 @@ let with_ = keywordString "with"
 let open_ = keywordString "open"
 let cons = keywordString "::"
 let active = keywordChar '^'
+let type_' = keywordString "type"
 
 let wildcard = keywordChar '_'
 
@@ -244,8 +245,7 @@ let case_string_ty expr = dot >>. var_name |>> (LitString >> type_lit_create)
 
 let expressions expr (s: CharStream<_>) =
     ([case_inl_pat_list_expr; case_met_pat_list_expr; case_for_cast; case_string_ty
-      case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module
-      ]
+      case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module]
     |> List.map (fun x -> x expr |> attempt)
     |> choice) s
  
@@ -274,12 +274,8 @@ let indentations statements expressions (s: CharStream<_>) =
 let application expr (s: CharStream<_>) =
     let i = s.Column
     let expr_up (s: CharStream<_>) = expr_indent i (<) expr s
-    let f x = List.reduce ap x
     
-    pipe2 expr (many expr_up) (fun x xs ->
-        match x :: xs with
-        | V "type" :: y :: xs -> f (type_create y :: xs) // Special case for the `type` keyword to make it act more like a function.
-        | x -> f x) s
+    pipe2 expr (many expr_up) (List.fold ap) s
 
 let tuple expr i (s: CharStream<_>) =
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
@@ -290,7 +286,14 @@ let tuple expr i (s: CharStream<_>) =
         | _ -> failwith "impossible"
     <| s
 
-let mset expr i (s: CharStream<_>) = 
+let type_ expr i (s: CharStream<_>) =
+    let type_ = 
+        let i = s.Column
+        let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
+        type_' >>. many (expr_indent (expr i)) |>> (List.map type_create >> List.reduce type_union)
+    (type_ <|> expr i) s
+
+let mset statements expressions i (s: CharStream<_>) = 
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
     let op =
         (set_ref >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
@@ -301,7 +304,7 @@ let mset expr i (s: CharStream<_>) =
                     | _ -> fail "Expected two arguments on the left of <-."
                 loop l)
 
-    (tuple2 (expr i) (opt (expr_indent op .>>. expr_indent (fun (s: CharStream<_>) -> expr s.Column s)))
+    (tuple2 (expressions i) (opt (expr_indent op .>>. expr_indent statements))
     >>= function 
         | a,Some(f,b) -> f a b
         | a,None -> preturn a) s
@@ -374,7 +377,7 @@ let expr: Parser<_,unit> =
         let term s = expr_indent expr s
         tdop op term 0 s
 
-    let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset ^<| tuple ^<| operators ^<| application ^<| expressions expr) <| s
+    let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| operators ^<| application ^<| expressions expr) <| s
     expr
 
 let spiral_parse (name, code) = runParserOnString (spaces >>. expr .>> eof) () name code
