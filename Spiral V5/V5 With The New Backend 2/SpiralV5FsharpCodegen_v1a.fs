@@ -634,7 +634,9 @@ match x with
 let test9 = // Does the partial evaluator optimize unused match cases?
     "test9",
     """
-inl ab = type .A |> union (type .B)
+inl ab = 
+    type .A
+         .B
 met x = (ab .A, ab .A, ab .A)
 match x with
 | .A, _, _ -> 1
@@ -646,7 +648,9 @@ match x with
 let test10 = // The worst case for partially evaluated pattern matchers.
     "test10",
     """
-inl ab = type .A |> union (type .B)
+inl ab = 
+    type .A
+         .B
 met x = (ab .A, ab .A, ab .A, ab .A)
 match x with
 | .A, .A, _ -> 1
@@ -679,9 +683,11 @@ p (.Some, .None)
 let test13 = // A more complex interpreter example on static data.
     "test13",
     """
-met rec expr x = type (type (.V, x) 
-                       |> union (type (.Add, expr x, expr x))
-                       |> union (type (.Mult, expr x, expr x)))
+met rec expr x = 
+    type 
+        .V, x
+        .Add, expr x, expr x
+        .Mult, expr x, expr x
 inl int_expr = expr int64
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
@@ -701,11 +707,10 @@ let test14 = // Does recursive pattern matching work on partially static data?
     """
 met rec expr x = 
     type 
-        (.V, x)
-        (.Add, expr x, expr x)
-        (.Mult, expr x, expr x)
+        .V, x
+        .Add, expr x, expr x
+        .Mult, expr x, expr x
 inl int_expr = expr int64
-print_static expr
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
 inl mult a b = int_expr (.Mult, a, b)
@@ -815,4 +820,4 @@ match x with
 | q : int64 -> x * x
     """
 
-printfn "%A" (spiral_codegen [] test14)
+printfn "%A" (spiral_codegen [] fib)

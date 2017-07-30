@@ -288,7 +288,7 @@ let type_ expr =
     let type_parse (s: CharStream<_>) = 
         let i = s.Column
         let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
-        many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union) <| s
+        many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
     (type_' >>. type_parse) <|> expr
 
 let mset statements expressions (s: CharStream<_>) = 
