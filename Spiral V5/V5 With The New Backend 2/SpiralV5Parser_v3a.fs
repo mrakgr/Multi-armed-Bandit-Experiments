@@ -69,15 +69,15 @@ let pat_var = var_name |>> PatVar
 let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
 let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
 let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
-let pat_type pattern = tuple2 (pattern .>> pp) pattern |>> PatType
-let pat_active pattern = active >>. tuple2 var_name pattern |>> PatActive
+let pat_type pattern = tuple2 pattern (opt (pp >>. pattern)) |>> function a,Some b -> PatType(a,b) | a, None -> a
+let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> pattern
 let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
 let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
 let pat_type_string = dot >>. var_name |>> PatTypeName
 
 let (^<|) a b = a b // High precedence, right associative <| operator
 let rec patterns s = // The order the pattern parsers are chained determines their precedence.
-    pat_or ^<| pat_tuple ^<| pat_and ^<| pat_cons ^<| pat_type ^<| pat_active 
+    pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type ^<| pat_cons ^<| pat_active 
     ^<| choice [|pat_e; pat_var; pat_type_string; pat_rounds patterns|] <| s
     
 let pattern_list = many patterns

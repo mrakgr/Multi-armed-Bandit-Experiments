@@ -404,7 +404,7 @@ let rec pattern_compile arg pat =
             else l x arg on_succ.Value
         | PatTuple l -> pat_tuple l
         | PatCons l -> pat_cons l
-        | PatType (typ,exp) ->
+        | PatType (exp,typ) ->
             let on_succ = cp arg exp on_succ on_fail
             pattern_compile true arg typ on_succ on_fail
             |> case arg

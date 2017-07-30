@@ -552,9 +552,9 @@ a + b
 let test4 = // Does the and pattern work correctly?
     "test4",
     """
-met f (a b) (c d) = (a+c,b+d)
-met &(q (a b)) = 1,2
-met &(w (c d)) = 3,4
+met f (a, b) (c, d) = (a+c,b+d)
+met q & (a, b) = 1,2
+met w & (c, d) = 3,4
 f q w
     """
 
@@ -595,9 +595,9 @@ let test7 = // Do active patterns work?
     "test7",
     """
 inl f op1 op2 op3 = function
-    | ^op1 (.Some x) -> x
-    | ^op2 (.Some x) -> x
-    | ^op3 (.Some x) -> x
+    | ^op1 (.Some, x) -> x
+    | ^op2 (.Some, x) -> x
+    | ^op3 (.Some, x) -> x
 
 inl add = function
     | .Add -> .Some, inl x y -> x + y
@@ -622,9 +622,9 @@ let test8 = // Does the basic union type work?
     """
 met x =
     inl option_int = type (.Some, 1) |> union (type .None)
-    option_int (.Some, 10)
+    option_int .None //(.Some, 10)
 match x with
-| (.Some x) -> x
+| (.Some, x) -> x
 | .None -> 0
     """
 
@@ -634,9 +634,9 @@ let test9 = // Does the partial evaluator optimize unused match cases?
 inl ab = type .A |> union (type .B)
 met x = (ab .A, ab .A, ab .A)
 match x with
-| (.A _ _) -> 1
-| (_ .A _) -> 2
-| (_ _ .A) -> 3
+| .A, _, _ -> 1
+| _, .A, _ -> 2
+| _, _, .A -> 3
 | _ -> 4
     """
 
@@ -646,9 +646,9 @@ let test10 = // The worst case for partially evaluated pattern matchers.
 inl ab = type .A |> union (type .B)
 met x = (ab .A, ab .A, ab .A, ab .A)
 match x with
-| (.A .A _) -> 1
-| (_ _ .A .A) -> 2
-| (.A .B .A .B) -> 3
+| .A, .A, _ -> 1
+| _, _, .A, .A -> 2
+| .A, .B, .A, .B -> 3
 | _ -> 4
     """
 
@@ -659,16 +659,16 @@ inl a = type (1,2)
 inl b = type (1,a,a)
 met x = b (1, a (2,3), a (4,5))
 match x with
-| (_ (x _) (_ y)) -> x + y
-| (_ _ _) -> 0
-| (_) -> 0
+| _, (x, _), (_, y) -> x + y
+| _, _, _ -> 0
+| _ :: () -> 0
     """
 
 let test12 = // Does recursive pattern matching work on static data?
     "test12",
     """
 inl rec p = function
-    | (.Some x) -> p x
+    | .Some, x -> p x
     | .None -> 0
 p (.Some, .None)
     """
@@ -687,9 +687,9 @@ inl a = add (v 1) (v 2)
 inl b = add (v 3) (v 4)
 inl c = mult a b
 inl rec interpreter_static = function
-    | (.V x) -> x
-    | (.Add a b) -> interpreter_static a + interpreter_static b
-    | (.Mult a b) -> interpreter_static a * interpreter_static b
+    | .V, x -> x
+    | .Add, a, b -> interpreter_static a + interpreter_static b
+    | .Mult, a, b -> interpreter_static a * interpreter_static b
 interpreter_static c
     """
 
@@ -708,9 +708,9 @@ met b = add (v 3) (v 4)
 inl c = mult a b
 met rec inter x = 
     match x with
-    | (.V x) -> x
-    | (.Add a b) -> inter a + inter b
-    | (.Mult a b) -> inter a * inter b
+    | .V, x -> x
+    | .Add, a, b -> inter a + inter b
+    | .Mult, a, b -> inter a * inter b
     : 0
 inter c
     """
@@ -748,7 +748,7 @@ inl parse_int32 =
 inl read_line () = console.ReadLine()
 inl write x = console.Write x
 inl read_int () = read_line() |> parse_int32
-inl (a b) = read_int(), read_int()
+inl a, b = read_int(), read_int()
 write (a + b)
     """
 
@@ -794,9 +794,19 @@ a (1) |> ignore
 let test19 = // Does term level casting for functions work?
     "test19",
     """
-inl add a b (c (d f) e) = a + b + c + d + e + f
+inl add a b (c, (d, f), e) = a + b + c + d + e + f
 inl f = add 1 (dyn 2) `(int64,(int64,int64),int64)
 f (1,(2,5),3)
     """
 
-printfn "%A" (spiral_codegen [] test19)
+let test20 = // Does pattern matching on union non-tuple types work? Do type annotation patterns work?
+    "test20",
+    """
+inl t = union (type int64) (type float32)
+inl x = t 3.5
+match x with
+| q : float32 -> x + x
+| q : int64 -> x * x
+    """
+
+printfn "%A" (spiral_codegen [] test20)
