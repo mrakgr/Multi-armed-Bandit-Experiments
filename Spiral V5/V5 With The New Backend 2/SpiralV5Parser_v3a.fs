@@ -269,7 +269,7 @@ let indentations statements expressions (s: CharStream<_>) =
         let semicolon s = if_ (<) (semicolon |>> set_op (<=)) s
         let expr s = if_ op (expr |>> set_op (=)) s
         many1 (expr .>> optional semicolon)
-    expr_indent ((statements |>> ParserStatement) <|> (expressions i |>> ParserExpr)) >>= process_parser_exprs <| s
+    expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs <| s
 
 let application expr (s: CharStream<_>) =
     let i = s.Column
@@ -277,23 +277,22 @@ let application expr (s: CharStream<_>) =
     
     pipe2 expr (many expr_up) (List.fold ap) s
 
-let tuple expr i (s: CharStream<_>) =
+let tuple expr (s: CharStream<_>) =
+    let i = s.Column
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
-    sepBy1 (expr_indent (expr i)) (expr_indent comma)
-    |>> function
-        | x :: _ :: _ as l -> vv l
-        | x :: _ -> x
-        | _ -> failwith "impossible"
+    sepBy1 (expr_indent expr) (expr_indent comma)
+    |>> function [x] -> x | x -> vv x
     <| s
 
-let type_ expr i (s: CharStream<_>) =
-    let type_ = 
+let type_ expr =
+    let type_parse (s: CharStream<_>) = 
         let i = s.Column
         let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
-        type_' >>. many (expr_indent (expr i)) |>> (List.map type_create >> List.reduce type_union)
-    (type_ <|> expr i) s
+        many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union) <| s
+    (type_' >>. type_parse) <|> expr
 
-let mset statements expressions i (s: CharStream<_>) = 
+let mset statements expressions (s: CharStream<_>) = 
+    let i = s.Column
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
     let op =
         (set_ref >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
@@ -304,7 +303,7 @@ let mset statements expressions i (s: CharStream<_>) =
                     | _ -> fail "Expected two arguments on the left of <-."
                 loop l)
 
-    (tuple2 (expressions i) (opt (expr_indent op .>>. expr_indent statements))
+    (tuple2 expressions (opt (expr_indent op .>>. expr_indent statements))
     >>= function 
         | a,Some(f,b) -> f a b
         | a,None -> preturn a) s
@@ -371,7 +370,8 @@ let expr: Parser<_,unit> =
         and loop left = attempt (f left) <|>% left
         term >>= loop
 
-    let operators expr i (s: CharStream<_>) =
+    let operators expr (s: CharStream<_>) =
+        let i = s.Column
         let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
         let op s = expr_indent poperator s
         let term s = expr_indent expr s

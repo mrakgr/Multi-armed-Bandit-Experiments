@@ -699,10 +699,13 @@ interpreter_static c
 let test14 = // Does recursive pattern matching work on partially static data?
     "test14",
     """
-met rec expr x = type (type (.V, x) 
-                       |> union (type (.Add, expr x, expr x))
-                       |> union (type (.Mult, expr x, expr x)))
+met rec expr x = 
+    type 
+        (.V, x)
+        (.Add, expr x, expr x)
+        (.Mult, expr x, expr x)
 inl int_expr = expr int64
+print_static expr
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
 inl mult a b = int_expr (.Mult, a, b)
@@ -812,4 +815,4 @@ match x with
 | q : int64 -> x * x
     """
 
-printfn "%A" (spiral_codegen [] test8)
+printfn "%A" (spiral_codegen [] test14)
