@@ -820,4 +820,14 @@ match x with
 | q : int64 -> x * x
     """
 
-printfn "%A" (spiral_codegen [] test2)
+let test21 = // Does defining user operators work?
+    "test21",
+    """
+inl (.+) a b = a + b
+2 * 22 .+ 33 |> ignore
+
+inl f op a b = op a b
+f (*) 2 x
+    """
+
+printfn "%A" (spiral_codegen [] test21)

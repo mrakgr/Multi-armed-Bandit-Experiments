@@ -175,7 +175,7 @@ let if_then_else expr (s: CharStream<_>) =
             Op(If,[cond;tr;fl]))
     <| s
 
-let is_operator c = (is_identifier_char c || isAnyOf [|'.';' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
+let is_operator c = (is_identifier_char c || isAnyOf [|' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
 let poperator (s: CharStream<Userstate>) = 
     many1Satisfy is_operator .>> spaces
     <| s
@@ -249,10 +249,10 @@ let case_string_ty expr = dot >>. var_name |>> (LitString >> type_lit_create)
 
 
 let expressions expr (s: CharStream<_>) =
-    ([case_inl_pat_list_expr; case_met_pat_list_expr; case_for_cast; case_string_ty
-      case_lit; case_if_then_else; case_rounds; case_var; case_typecase; case_typeinl; case_module]
+    [case_inl_pat_list_expr; case_met_pat_list_expr; case_for_cast; case_string_ty
+     case_lit; case_if_then_else; case_rounds; case_typecase; case_typeinl; case_module; case_var]
     |> List.map (fun x -> x expr |> attempt)
-    |> choice) s
+    |> choice <| s
  
 let process_parser_exprs exprs = 
     let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")
@@ -345,18 +345,20 @@ let operators expr (s: CharStream<_>) =
     let poperator (s: CharStream<Userstate>) =
         let dict_operator = s.UserState
         let p = pos' s
-        let rec calculate on_fail on_succ trimmed_op = 
-            match dict_operator.TryGetValue trimmed_op with
+        let rec calculate on_fail on_succ op = 
+            match dict_operator.TryGetValue op with
             | true, (prec,asoc) -> on_succ (prec,asoc)
-            | false, _ -> on_fail trimmed_op
+            | false, _ -> on_fail op
         let on_succ orig_op (prec,asoc) = preturn (prec,asoc,fun a b -> Pos(p,ap' (v orig_op) [a; b]))
-        let on_fail_try1 (orig_op: string) =
+        let on_fail (orig_op: string) =
             let x = orig_op.TrimStart [|'.'|]
-            let on_succ = on_succ orig_op
             let fail _ = fail "unknown operator"
-            let on_fail_try0 _ = calculate fail on_succ x.[0..0]
-            calculate on_fail_try0 on_succ x.[0..1]
-        (poperator >>= (fun orig_op -> calculate on_fail_try1 (on_succ orig_op) orig_op)) s
+            let on_succ = on_succ orig_op
+            let rec on_fail i _ =
+                if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i]
+                else fail ()
+            calculate (on_fail (x.Length-1)) on_succ x
+        (poperator >>= (fun orig_op -> calculate on_fail (on_succ orig_op) orig_op)) s
 
     let rec led poperator term left (prec,asoc,m) =
         match asoc with
