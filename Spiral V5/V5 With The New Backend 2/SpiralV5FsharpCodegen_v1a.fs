@@ -830,4 +830,16 @@ inl f op a b = op a b
 f (*) 2 x
     """
 
-printfn "%A" (spiral_codegen [] test21)
+let test22 = // Do unary operators work?
+    "test22",
+    """
+inl lit_lift x =
+    print_static "I am in lit_lift."
+    lit_lift x
+inl t1 x = -x
+inl t2 x = `x
+inl t3 x = .(x)
+t1 2.2, t2 true, t3 "asd"
+    """
+
+printfn "%A" (spiral_codegen [] test22)

@@ -1417,8 +1417,11 @@ let core_functions =
         l "char" (Op(TypeConstructorCreate,[Lit <| LitChar ' ']))
         l "unit" (Op(TypeConstructorCreate,[B]))
 
-        l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
         l "lit_lift" (p <| fun x -> Op(TypeLitCreate,[x]))
+        l "for_cast" (p for_cast)
+        l "negate" (p <| fun x -> Op(Neg,[x]))
+        
+        l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
         l "mscorlib" (ap (V "load_assembly") (ap (V "lit_lift") (lit_string "mscorlib")))
         l "ignore" (inl "" B)
         l "ref" (p <| fun x -> Op(ReferenceCreate,[x]))

@@ -39,6 +39,7 @@ let keywordChar x = skipChar x .>> spaces
 let keywordString x = skipString x .>> spaces
 let keywordString1 x = skipString x .>> spaces1
 
+let negate = keywordChar '-'
 let comma = keywordChar ','
 let dot = keywordChar '.'
 let grave = keywordChar '`' 
@@ -244,12 +245,12 @@ let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
 let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
 let case_module expr = module_ >>. expr |>> module_create
-let case_for_cast expr = grave >>. expr |>> for_cast
-let case_string_ty expr = dot >>. var_name |>> (LitString >> type_lit_create)
-
+let case_for_cast expr = grave >>. expr |>> ap (v "for_cast")
+let case_lit_lift expr = dot >>. ((var_name |>> (LitString >> Lit >> ap (v "lit_lift"))) <|> (expr |>> ap (v "lit_lift")))
+let case_negate expr = negate >>. expr |>> (ap (v "negate"))
 
 let expressions expr (s: CharStream<_>) =
-    [case_inl_pat_list_expr; case_met_pat_list_expr; case_for_cast; case_string_ty
+    [case_inl_pat_list_expr; case_met_pat_list_expr; case_for_cast; case_negate; case_lit_lift
      case_lit; case_if_then_else; case_rounds; case_typecase; case_typeinl; case_module; case_var]
     |> List.map (fun x -> x expr |> attempt)
     |> choice <| s
