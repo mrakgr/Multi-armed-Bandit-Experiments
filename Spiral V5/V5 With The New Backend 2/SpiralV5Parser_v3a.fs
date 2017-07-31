@@ -275,17 +275,7 @@ let indentations statements expressions (s: CharStream<Userstate>) =
         let expr s = if_ op (expr |>> set_op (=)) s
         many1 (expr .>> optional semicolon)
 
-    let with_userstate x' f (s: CharStream<_>) = 
-        let x = s.UserState
-        s.UserState <- x'
-        let r = f s
-        s.UserState <- x
-        r
-
-    with_userstate 
-        (Dictionary(s.UserState))
-        (expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs)
-        s
+    expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs <| s
 
 let application expr (s: CharStream<_>) =
     let i = s.Column

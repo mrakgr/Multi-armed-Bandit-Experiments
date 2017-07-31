@@ -536,10 +536,9 @@ a + b
 let test2 = // Does it run methods?
     "test2",
     """
-()
-//met a () = 5
-//met b () = 10
-//a () + b ()
+met a () = 5
+met b () = 10
+a () + b ()
     """
 
 let test3 = // Does this method case work?
