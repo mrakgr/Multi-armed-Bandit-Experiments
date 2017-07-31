@@ -328,10 +328,7 @@ let cons a b = Op(VVCons,[a;b])
 
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
-let rec ap' f l =
-    match l with
-    | x :: xs -> ap' (ap f x) xs
-    | [] -> f
+let rec ap' f l = List.fold ap f l
 
 let vv x = VV(x)
 let tuple_index v i = Op(VVIndex,[v; lit_int i])
@@ -1393,6 +1390,12 @@ let type_union a b = Op(TypeConstructorUnion,[a;b])
 let core_functions =
     let p f = inl "x" (f (v "x"))
     let p2 f = inl' ["x"; "y"] (f (v "x") (v "y"))
+    let p3 f = inl' ["x"; "y"; "z"] (f (v "x") (v "y") (v "z"))
+    let binop' op a b = Op(op,[a;b])
+    let binop op = p2 (binop' op)
+    let b str op = l str (binop op)
+    let apply a b = binop' Apply a b
+    let compose a b c = apply a (apply b c)
     let con x = Op(x,[])
     let lit x = Lit (x)
     s  [l "error_type" (p error_type)
@@ -1420,6 +1423,12 @@ let core_functions =
         l "ignore" (inl "" B)
         l "ref" (p <| fun x -> Op(ReferenceCreate,[x]))
         l "array_create" (p2 <| fun size typ -> Op(ArrayCreate,[size;typ]))
+
+        b "+" Add; b "-" Sub; b "*" Mult; b "/" Div
+        b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
+
+        b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
+        b "||" Or; b "&&" And; b "::" VVCons
         ]
 
 let spiral_typecheck code body on_fail ret = 

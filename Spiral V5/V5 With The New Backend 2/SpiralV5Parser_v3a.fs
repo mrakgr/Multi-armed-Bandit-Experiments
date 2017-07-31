@@ -19,11 +19,11 @@ let patpos expr (s: CharStream<_>) =
 let rec spaces_template spaces s = spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces_template spaces) <| s
 let spaces, spaces1 = spaces_template spaces, spaces_template spaces1
     
-let isAsciiIdStart c = isAsciiLetter c || c = '_'
-let isAsciiIdContinue c = isAsciiLetter c || isDigit c || c = '_' || c = '''
+let is_identifier_starting_char c = isAsciiLetter c || c = '_'
+let is_identifier_char c = is_identifier_starting_char c || c = ''' || isDigit c 
 
 let var_name =
-    many1Satisfy2L isAsciiIdStart isAsciiIdContinue "identifier" .>> spaces
+    many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
     >>=? function
         | "match" | "function" | "with" | "open" | "module" 
         | "rec" | "if" | "then" | "else" | "inl" | "met" as x -> 
@@ -158,7 +158,7 @@ let lit =
     choice 
         [|
         pbool
-        pnumber .>> notFollowedBy (satisfy isAsciiIdContinue)
+        pnumber .>> notFollowedBy (satisfy is_identifier_char)
         quoted_string
         |] |>> Lit .>> spaces
     
@@ -175,12 +175,9 @@ let if_then_else expr (s: CharStream<_>) =
             Op(If,[cond;tr;fl]))
     <| s
 
-let is_operator c = (isAsciiIdContinue c || isAnyOf [|'.';' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
+let is_operator c = (is_identifier_char c || isAnyOf [|'.';' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
 let poperator (s: CharStream<Userstate>) = 
     many1Satisfy is_operator .>> spaces
-    >>= fun op ->
-        if s.UserState.ContainsKey op then preturn op
-        else fail "undefined operator"
     <| s
 
 let name = var_name <|> rounds poperator
@@ -197,11 +194,6 @@ let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) pattern_list (
 let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
 
 let case_open expr = open_ >>. expr |>> module_open
-
-let operator_definition expr (s: CharStream<Userstate>) =
-    let add_operator assoc op prec = s.UserState.Add(op,(prec,assoc))
-    let operator str assoc = pipe2 (keywordString str >>. poperator) pint32 (add_operator assoc)
-    ((operator "infixl" Associativity.Left <|> operator "infixr" Associativity.Right) >>. expr) s
 
 let statements expr = 
     [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
@@ -346,68 +338,35 @@ let inbuilt_operators =
 
     let left_assoc_ops = 
         let f = add_infix_operator Associativity.Left
-        f "+" 60
-        f "-" 60
-        f "*" 70
-        f "/" 70
-
-        f "<|" 10
-        f "|>" 10
-        f "<<" 10
-        f ">>" 10
+        f "+" 60; f "-" 60; f "*" 70; f "/" 70
+        f "<|" 10; f "|>" 10; f "<<" 10; f ">>" 10
 
     let no_assoc_ops =
-        let f str op = add_infix_operator Associativity.None str 40
-        f "<=" LTE; f "<" LT; f "=" EQ; f ">" GT; f ">=" GTE
+        let f str = add_infix_operator Associativity.None str 40
+        f "<="; f "<"; f "="; f ">"; f ">="
 
     let right_associative_ops =
         let f str prec = add_infix_operator Associativity.Right str prec
-        f "||" 20 
-        f "&&" 30 
-        f "::" 50
+        f "||" 20; f "&&" 30; f "::" 50
          
     dict_operator
-
-//let inbuilt_operators =
-//    let dict_operator = d0()
-//    let add_infix_operator assoc str prec op = dict_operator.Add(str, (prec, assoc, op))
-//
-//    let binop op a b = Op(op,[a;b])
-//
-//    let left_assoc_ops = 
-//        let f = add_infix_operator Associativity.Left
-//        let apply a b = binop Apply a b
-//        f "+" 60 <| binop Add
-//        f "-" 60 <| binop Sub
-//        f "*" 70 <| binop Mult
-//        f "/" 70 <| binop Div
-//
-//        f "<|" 10 apply
-//        f "|>" 10 (flip apply)
-//        let compose a b = inl "x" (apply a (apply b (V "x")))
-//        f "<<" 10 compose
-//        f ">>" 10 (flip compose)
-//
-//    let no_assoc_ops =
-//        let f str op = add_infix_operator Associativity.None str 40 (binop op)
-//        f "<=" LTE; f "<" LT; f "=" EQ; f ">" GT; f ">=" GTE
-//
-//    let right_associative_ops =
-//        let f str prec op = add_infix_operator Associativity.Right str prec (binop op)
-//        f "||" 20 Or
-//        f "&&" 30 And
-//        f "::" 50 VVCons
-//    dict_operator
 
 let operators expr (s: CharStream<_>) =
     let poperator (s: CharStream<Userstate>) =
         let dict_operator = s.UserState
         let p = pos' s
-        poperator >>= fun op ->
-            match dict_operator.TryGetValue op with
-            | true, (prec,asoc) -> preturn (prec,asoc,fun a b -> Pos(p,ap' (v op) [a; b]))
-            | false, _ -> fail "unknown operator"
-        <| s
+        let rec calculate on_fail on_succ trimmed_op = 
+            match dict_operator.TryGetValue trimmed_op with
+            | true, (prec,asoc) -> on_succ (prec,asoc)
+            | false, _ -> on_fail trimmed_op
+        let on_succ orig_op (prec,asoc) = preturn (prec,asoc,fun a b -> Pos(p,ap' (v orig_op) [a; b]))
+        let on_fail_try1 (orig_op: string) =
+            let x = orig_op.TrimStart [|'.'|]
+            let on_succ = on_succ orig_op
+            let fail _ = fail "unknown operator"
+            let on_fail_try0 _ = calculate fail on_succ x.[0..0]
+            calculate on_fail_try0 on_succ x.[0..1]
+        (poperator >>= (fun orig_op -> calculate on_fail_try1 (on_succ orig_op) orig_op)) s
 
     let rec led poperator term left (prec,asoc,m) =
         match asoc with
@@ -429,6 +388,6 @@ let operators expr (s: CharStream<_>) =
     let term s = expr_indent expr s
     tdop op term 0 s
 
-let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (operator_definition ^<| mset expr ^<| type_ ^<| tuple ^<| operators ^<| application ^<| expressions expr) <| s
+let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| operators ^<| application ^<| expressions expr) <| s
 
 let spiral_parse (name, code) = runParserOnString (spaces >>. expr .>> eof) inbuilt_operators name code
