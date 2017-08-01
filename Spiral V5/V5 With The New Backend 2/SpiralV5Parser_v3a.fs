@@ -25,7 +25,7 @@ let is_identifier_char c = is_identifier_starting_char c || c = ''' || isDigit c
 let var_name =
     many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
     >>=? function
-        | "match" | "function" | "with" | "open" | "module" 
+        | "match" | "function" | "with" | "open" | "module" | "as" | "when"
         | "rec" | "if" | "then" | "else" | "inl" | "met" as x -> 
             fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
@@ -39,6 +39,8 @@ let keywordChar x = skipChar x .>> spaces
 let keywordString x = skipString x .>> spaces
 let keywordString1 x = skipString x .>> spaces1
 
+let when_ = keywordString "when"
+let as_ = keywordString "as"
 let negate = keywordChar '-'
 let comma = keywordChar ','
 let dot = keywordChar '.'
@@ -77,13 +79,15 @@ let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> 
 let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
 let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
 let pat_type_string = dot >>. var_name |>> PatTypeName
+let pat_when expr pattern = pattern .>>. (opt (when_ >>. rounds expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
+let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
 
 let (^<|) a b = a b // High precedence, right associative <| operator
-let rec patterns s = // The order the pattern parsers are chained determines their precedence.
-    pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type ^<| pat_cons ^<| pat_active 
-    ^<| choice [|pat_e; pat_var; pat_type_string; pat_rounds patterns|] <| s
+let rec patterns expr s = // The order the pattern parsers are chained determines their precedence.
+    pat_when expr ^<| pat_as ^<| pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type ^<| pat_cons ^<| pat_active 
+    ^<| choice [|pat_e; pat_var; pat_type_string; pat_rounds (patterns expr)|] <| s
     
-let pattern_list = many patterns
+let pattern_list expr = many (patterns expr)
 
 let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
 let pnumber : Parser<_,_> =
@@ -155,13 +159,14 @@ let quoted_string =
             (manyChars (normalChar <|> escapedChar))
     |>> LitString
 
-let lit = 
+let lit s = 
     choice 
         [|
         pbool
         pnumber .>> notFollowedBy (satisfy is_identifier_char)
         quoted_string
         |] |>> Lit .>> spaces
+    <| s
     
 let expr_indent i op expr (s: CharStream<_>) = if op i s.Column then expr s else pzero s
 let if_then_else expr (s: CharStream<_>) =
@@ -186,13 +191,13 @@ let name = var_name <|> rounds poperator
 let inl_pat' (args: Pattern list) body = List.foldBack inl_pat args body
 let meth_pat' args body = inl_pat' args (meth_memo body)
     
-let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns) (eq >>. expr) lp
-let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
-let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
+let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (eq >>. expr) lp
+let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
+let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
 
-let case_met_pat_statement expr = pipe2 (met_ >>. patterns) (eq >>. expr) (fun pattern body -> lp pattern (meth_memo body))
-let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
-let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) pattern_list (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
+let case_met_pat_statement expr = pipe2 (met_ >>. patterns expr) (eq >>. expr) (fun pattern body -> lp pattern (meth_memo body))
+let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
+let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
 
 let case_open expr = open_ >>. expr |>> module_open
 
@@ -203,22 +208,22 @@ let statements expr =
     |> List.map (fun x -> x expr |> attempt)
     |> choice
 
-let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list) (lam >>. expr) inl_pat'
-let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list) (lam >>. expr) meth_pat'
+let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (lam >>. expr) inl_pat'
+let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. expr) meth_pat'
 
 let case_lit expr = lit
 let case_if_then_else expr = if_then_else expr 
-let case_rounds expr = rounds (expr <|>% B)
+let case_rounds expr s = rounds (expr <|>% B) s
 let case_var expr = name |>> V
 
 let inline case_typex match_type expr (s: CharStream<_>) =
     let mutable i = None
     let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
-    let pat_body = expr_indent (<=) patterns
+    let pat_body = expr_indent (<=) (patterns expr)
     let pat = 
         let pat_meth = barbar >>. many1 pat_body |>> fun x -> true, x
         let pat_inl = bar >>. many1 pat_body |>> fun x -> false, x
-        expr_indent (<=) (pat_meth <|> pat_inl) .>> lam
+        expr_indent (<=) ((pat_meth <|> pat_inl) .>> lam)
             
     let clause pat = tuple2 pat expr
     let set_col (s: CharStream<_>) = i <- Some (s.Column); Reply(())
@@ -249,7 +254,7 @@ let case_for_cast expr = grave >>. expr |>> ap (v "for_cast")
 let case_lit_lift expr = dot >>. ((var_name |>> (LitString >> Lit >> ap (v "lit_lift"))) <|> (expr |>> ap (v "lit_lift")))
 let case_negate expr = negate >>. expr |>> (ap (v "negate"))
 
-let rec expressions expr (s: CharStream<_>) =
+let rec expressions expr s =
     let unary_ops = 
         [case_for_cast; case_negate; case_lit_lift]
         |> List.map (fun x -> x (expressions expr))
@@ -353,17 +358,15 @@ let operators expr (s: CharStream<_>) =
         let dict_operator = s.UserState
         let p = pos' s
         let rec calculate on_fail on_succ op = 
-            match dict_operator.TryGetValue op with
-            | true, (prec,asoc) -> on_succ (prec,asoc)
-            | false, _ -> on_fail op
+                match dict_operator.TryGetValue op with
+                | true, (prec,asoc) -> on_succ (prec,asoc)
+                | false, _ -> on_fail op
         let on_succ orig_op (prec,asoc) = preturn (prec,asoc,fun a b -> Pos(p,ap' (v orig_op) [a; b]))
         let on_fail (orig_op: string) =
             let x = orig_op.TrimStart [|'.'|]
             let fail _ = fail "unknown operator"
             let on_succ = on_succ orig_op
-            let rec on_fail i _ =
-                if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i]
-                else fail ()
+            let rec on_fail i _ = if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i] else fail ()
             calculate (on_fail (x.Length-1)) on_succ x
         (poperator >>= (fun orig_op -> calculate on_fail (on_succ orig_op) orig_op)) s
 

@@ -158,6 +158,7 @@ and Pattern =
     | PatClauses of (Pattern * Expr) list
     | PatTypeName of string
     | PatPos of PosKey * Pattern
+    | PatWhen of Pattern * Expr
 
 and PosKey = string * int64 * int64
 
@@ -415,6 +416,7 @@ let rec pattern_compile arg pat =
             let x = type_lit_create (LitString x)
             if_static (eq_type arg x) on_succ.Value on_fail.Value |> case arg
         | PatPos (p, pat) -> pos p (cp' arg pat on_succ on_fail)
+        | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
 
     let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
     let pattern_compile_def_on_fail = lazy error_type (Lit(LitString <| "Pattern matching cases are inexhaustive."))

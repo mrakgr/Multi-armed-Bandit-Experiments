@@ -842,4 +842,68 @@ inl t3 x = .(x)
 t1 2.2, t2 true, t3 "asd"
     """
 
-printfn "%A" (spiral_codegen [] test15)
+let parsers =
+    "parsers",
+    """
+inl to_int32 = mscorlib ."System.Convert.ToInt32"
+inl to_int64 = mscorlib ."System.Convert.ToInt64"
+
+inl is_digit (^to_int32 (_: char) x) = x >= to_int32 '0' && x <= to_int32 '9'
+inl is_whitespace x = x = ' '
+inl is_newline x = x = '\n' || x = '\r'
+
+inl StreamPosition = int64
+inl stream stream =
+    inl (pos: StreamPosition) = ref 0
+    module (pos, stream)
+
+inl ParserResult suc =
+    type 
+        .Succ, suc
+        .Fail, (StreamPosition, string)
+        .FatalFail, string
+
+met rec List x =
+    type
+        .ListCons, (x, List x)
+        .ListNil
+
+inl pchar s = 
+    match (s.stream) (s.pos()) with
+    | .Succ, _ as c -> 
+        s.pos := !s.pos + 1
+        c
+    | c -> c
+    : ParserResult char
+
+inl pdigit s =
+    inl c = pchar s
+    
+    if is_digit c then ParserResult char (.Succ, c)
+    else ParserResult char (.Fail, (pos, "digit"))
+
+inl pint64 s =
+    met rec loop state i = 
+        match read_digit s with
+        | .Succ, c -> 
+            inl x = to_int64 c - to_int64 '0'
+            i * 10 + x |> loop .Rest
+        | .Fail, _ -> 
+            match state with
+            | .First -> ParserResult int64 (.Fail, (s.pos, "int64"))
+            | .Rest -> ParserResult int64 (.Succ, i)
+        | .FatalFail, _ as x -> x
+        : ParserResult int64
+    loop .First 0
+    """
+
+let test23 = // Do when and as patterns work?
+    "test23",
+    """
+inl f = function
+    | a,b,c as q when (a < 10) -> q
+    | _ -> 0,0,0
+f (1,2,3)
+    """
+
+printfn "%A" (spiral_codegen [] test23)
