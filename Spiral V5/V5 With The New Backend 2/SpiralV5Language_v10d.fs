@@ -1434,6 +1434,11 @@ let core_functions =
 
         b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
         b "||" Or; b "&&" And; b "::" VVCons
+
+        l "fst" (p <| fun x -> tuple_index x 0)
+        l "snd" (p <| fun x -> tuple_index x 1)
+        l "third" (p <| fun x -> tuple_index x 2)
+        l "fourth" (p <| fun x -> tuple_index x 3)
         ]
 
 let spiral_typecheck code body on_fail ret = 

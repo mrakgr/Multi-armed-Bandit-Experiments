@@ -842,6 +842,15 @@ inl t3 x = .(x)
 t1 2.2, t2 true, t3 "asd"
     """
 
+let test23 = // Do when and as patterns work?
+    "test23",
+    """
+inl f = function
+    | a,b,c as q when (a < 10) -> q
+    | _ -> 0,0,0
+f (1,2,3)
+    """
+
 let parsers =
     "parsers",
     """
@@ -869,20 +878,23 @@ met rec List x =
         .ListNil
 
 inl pchar s = 
+    inl typ_r = ParserResult char
     match (s.stream) (s.pos()) with
     | .Succ, _ as c -> 
         s.pos := !s.pos + 1
-        c
-    | c -> c
-    : ParserResult char
+        typ_r c
+    | c -> typ_r c
+    : typ_r
 
 inl pdigit s =
+    inl typ_r = ParserResult char
     inl c = pchar s
     
-    if is_digit c then ParserResult char (.Succ, c)
-    else ParserResult char (.Fail, (pos, "digit"))
+    if is_digit c then typ_r (.Succ, c)
+    else typ_r (.Fail, (pos, "digit"))
 
 inl pint64 s =
+    inl typ_r = ParserResult int64
     met rec loop state i = 
         match read_digit s with
         | .Succ, c -> 
@@ -890,20 +902,62 @@ inl pint64 s =
             i * 10 + x |> loop .Rest
         | .Fail, _ -> 
             match state with
-            | .First -> ParserResult int64 (.Fail, (s.pos, "int64"))
-            | .Rest -> ParserResult int64 (.Succ, i)
-        | .FatalFail, _ as x -> x
-        : ParserResult int64
+            | .First -> typ_r (.Fail, (s.pos, "int64"))
+            | .Rest -> typ_r (.Succ, i)
+        | .FatalFail, _ as x -> typ_r x
+        : typ_r
     loop .First 0
+
+met rec many typ_p p s =
+    inl typ_r = ParserResult (List typ_p)
+    inl state = s.pos
+    match p s with
+    | .Succ, (^dyn x) when (state < s.pos) -> 
+        match many p s with
+        | .Succ, xs -> typ_r (.Succ, (.ListCons, (x, xs)))
+        | x -> typ_r x
+    | .Succ, _ when (state = s.pos) -> typ_r (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
+    | .Fail, _ when (state = s.pos) -> typ_r (.Succ, .ListNil)
+    | .Fail, _ -> typ_r (.Fail, (pos, "many"))
+    | .FatalFail, _ -> typ_r x
+    : typ_r
+
+met rec spaces s =
+    inl typ_r = ParserResult ()
+    inl c = pchar s
+    
+    if is_whitespace c || is_newline c then spaces s
+    else typ_r (.Succ,())
+    : typ_r
+
+inl tuple2_template typ_ab f a b s =
+    let typ_r = ParserResult (List typ_ab)
+    match a s with
+    | .Succ, a ->
+        match b s with
+        | .Succ, b -> typ_r (.Succ, f (a, b))
+        | x -> typ_r x
+    | x -> typ_r x
+    : typ_r
+
+inl tuple2 typ_ab a b s = tuple2_template typ_ab id a b s
+inl tuple2_fst typ_a a b s = tuple2_template typ_a fst a b s
+inl tuple2_snd typ_b a b s = tuple2_template typ_b snd a b s
+    
+inl bind typ_b a b s =
+    match a s with
+    | .Succ, x -> typ_b (b x s)
+    | x -> typ_b x
+
+inl map typ_f a f = bind typ_b a <| fun b -> typ_b (.Succ, f b)
+inl pipe2 typ_ab typ_f a b f = map typ_f (tuple2 typ_ab a b) f
+
+/// ---
+
+inl parse_int = tuple_fst int64 pint64 spaces
+inl parse_ints = many int64 parse_int
     """
 
-let test23 = // Do when and as patterns work?
-    "test23",
-    """
-inl f = function
-    | a,b,c as q when (a < 10) -> q
-    | _ -> 0,0,0
-f (1,2,3)
-    """
+
 
 printfn "%A" (spiral_codegen [] test23)
