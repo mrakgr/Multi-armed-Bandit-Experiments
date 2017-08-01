@@ -730,7 +730,7 @@ let test15 = // Does basic .NET interop work?
     "test15",
     """
 inl system = load_assembly .mscorlib
-inl builder_type = lit_lift "System.Text.StringBuilder" |> system 
+inl builder_type = ."System.Text.StringBuilder" |> system 
 inl b = builder_type ("Qwe", 128i32)
 inl a x =
     b .Append x |> ignore
@@ -739,10 +739,10 @@ a 123
 a 123i16
 a "qwe"
 inl str = b.ToString()
-inl console = lit_lift "System.Console" |> system
+inl console = ."System.Console" |> system
 console .Write str |> ignore
 
-inl dictionary_type = lit_lift "System.Collections.Generic.Dictionary`2" |> system
+inl dictionary_type = ."System.Collections.Generic.Dictionary`2" |> system
 inl dict = dictionary_type(int64, int64)(128i32)
 dict.Add(1,2) |> ignore
 dict.get_Item 1
@@ -842,4 +842,4 @@ inl t3 x = .(x)
 t1 2.2, t2 true, t3 "asd"
     """
 
-printfn "%A" (spiral_codegen [] test22)
+printfn "%A" (spiral_codegen [] test15)

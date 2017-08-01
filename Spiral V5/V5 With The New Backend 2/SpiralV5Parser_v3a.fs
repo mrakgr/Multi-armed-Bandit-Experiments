@@ -249,11 +249,17 @@ let case_for_cast expr = grave >>. expr |>> ap (v "for_cast")
 let case_lit_lift expr = dot >>. ((var_name |>> (LitString >> Lit >> ap (v "lit_lift"))) <|> (expr |>> ap (v "lit_lift")))
 let case_negate expr = negate >>. expr |>> (ap (v "negate"))
 
-let expressions expr (s: CharStream<_>) =
-    [case_inl_pat_list_expr; case_met_pat_list_expr; case_for_cast; case_negate; case_lit_lift
-     case_lit; case_if_then_else; case_rounds; case_typecase; case_typeinl; case_module; case_var]
-    |> List.map (fun x -> x expr |> attempt)
-    |> choice <| s
+let rec expressions expr (s: CharStream<_>) =
+    let unary_ops = 
+        [case_for_cast; case_negate; case_lit_lift]
+        |> List.map (fun x -> x (expressions expr))
+        |> choice
+    let rest = 
+        [case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
+         case_rounds; case_typecase; case_typeinl; case_module; case_var]
+        |> List.map (fun x -> x expr |> attempt)
+        |> choice
+    unary_ops <|> rest <| s
  
 let process_parser_exprs exprs = 
     let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")
