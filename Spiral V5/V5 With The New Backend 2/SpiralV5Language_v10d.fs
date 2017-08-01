@@ -156,7 +156,8 @@ and Pattern =
     | PatOr of Pattern list
     | PatAnd of Pattern list
     | PatClauses of (Pattern * Expr) list
-    | PatTypeName of string
+    | PatTypeLit of Value
+    | PatLit of Value
     | PatPos of PosKey * Pattern
     | PatWhen of Pattern * Expr
 
@@ -412,9 +413,8 @@ let rec pattern_compile arg pat =
         | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
         | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
         | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
-        | PatTypeName x ->
-            let x = type_lit_create (LitString x)
-            if_static (eq_type arg x) on_succ.Value on_fail.Value |> case arg
+        | PatTypeLit x -> if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value |> case arg
+        | PatLit x -> if_static (eq arg (Lit x)) on_succ.Value on_fail.Value |> case arg
         | PatPos (p, pat) -> pos p (cp' arg pat on_succ on_fail)
         | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
 
@@ -700,9 +700,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         else on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" r
 
     let if_body d cond tr fl =
-        let b x = (cse_add' d cond (TyLit(LitBool x)))
-        let tr = tev_assume (b true) d tr
-        let fl = tev_assume (b false) d fl
+        let tr = tev_seq d tr
+        let fl = tev_seq d fl
         let type_tr, type_fl = get_type tr, get_type fl
         if type_tr = type_fl then
             match cond with
@@ -725,6 +724,26 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
+    let inline prim_equality a b = a = b
+    let if_is d a b tr fl = 
+        let a,b = tev2 d a b
+        let rec f cse_dict a b = 
+            match a, b with
+            | TyTag _, TyLit _ -> Map.add a b cse_dict
+            | TyLit _, TyTag _ -> Map.add b a cse_dict
+            | TyVV (a, _), TyVV (b, _) -> List.fold2 f cse_dict a b
+            | _ -> cse_dict
+        match prim_equality a b with
+        | true -> tev_assume (f !d.cse_env a b) d tr 
+        | false when get_type a = get_type b -> if_cond d tr fl cond
+        |> if_is_returnable
+//        if a = b then tev_seq d tr |> if_is_returnable
+//        elif get_type a = get_type b then
+//            let tr = tev_assume (f !d.cse_env a b) d tr
+//            let fl = tev_seq d fl
+//            if_cond d tr fl
+//        else
+//            on_type_er d.trace "The conditionals in if is are not of equal types."
     let tag r =
         let tag = !r
         r := tag + 1L
@@ -1091,36 +1110,37 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 | _ -> prim_bin_op_helper t a b
             | _ -> prim_bin_op_helper t a b
             )
-            
 
     let prim_comp_op d = 
         let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
         prim_bin_op_template d er check (fun t a b ->
-            let inline op a b =
-                match t with
-                | LT -> a < b
-                | LTE -> a <= b
-                | EQ -> a = b
-                | GT -> a > b
-                | GTE -> a >= b 
-                | _ -> failwith "Expected a comparison operation."
-            match a, b with
-            | TyLit a', TyLit b' ->
-                match a', b' with
-                | LitInt8 a, LitInt8 b -> op a b |> LitBool |> TyLit
-                | LitInt16 a, LitInt16 b -> op a b |> LitBool |> TyLit
-                | LitInt32 a, LitInt32 b -> op a b |> LitBool |> TyLit
-                | LitInt64 a, LitInt64 b -> op a b |> LitBool |> TyLit
-                | LitUInt8 a, LitUInt8 b -> op a b |> LitBool |> TyLit
-                | LitUInt16 a, LitUInt16 b -> op a b |> LitBool |> TyLit
-                | LitUInt32 a, LitUInt32 b -> op a b |> LitBool |> TyLit
-                | LitUInt64 a, LitUInt64 b -> op a b |> LitBool |> TyLit
-                | LitFloat32 a, LitFloat32 b -> op a b |> LitBool |> TyLit
-                | LitFloat64 a, LitFloat64 b -> op a b |> LitBool |> TyLit
+            match t with
+            | EQ -> prim_equality a b |> LitBool |> TyLit
+            | _ ->
+                let inline op a b =
+                    match t with
+                    | LT -> a < b
+                    | LTE -> a <= b
+                    | GT -> a > b
+                    | GTE -> a >= b 
+                    | _ -> failwith "Expected a comparison operation."
+                match a, b with
+                | TyLit a', TyLit b' ->
+                    match a', b' with
+                    | LitInt8 a, LitInt8 b -> op a b |> LitBool |> TyLit
+                    | LitInt16 a, LitInt16 b -> op a b |> LitBool |> TyLit
+                    | LitInt32 a, LitInt32 b -> op a b |> LitBool |> TyLit
+                    | LitInt64 a, LitInt64 b -> op a b |> LitBool |> TyLit
+                    | LitUInt8 a, LitUInt8 b -> op a b |> LitBool |> TyLit
+                    | LitUInt16 a, LitUInt16 b -> op a b |> LitBool |> TyLit
+                    | LitUInt32 a, LitUInt32 b -> op a b |> LitBool |> TyLit
+                    | LitUInt64 a, LitUInt64 b -> op a b |> LitBool |> TyLit
+                    | LitFloat32 a, LitFloat32 b -> op a b |> LitBool |> TyLit
+                    | LitFloat64 a, LitFloat64 b -> op a b |> LitBool |> TyLit
+                    | _ -> bool_helper t a b
                 | _ -> bool_helper t a b
-            | _ -> bool_helper t a b
-            )
+                )
 
     let prim_bool_op d = 
         let er = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A"

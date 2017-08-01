@@ -26,7 +26,7 @@ let var_name =
     many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
     >>=? function
         | "match" | "function" | "with" | "open" | "module" | "as" | "when"
-        | "rec" | "if" | "then" | "else" | "inl" | "met" as x -> 
+        | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
             fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
 
@@ -66,28 +66,7 @@ let open_ = keywordString "open"
 let cons = keywordString "::"
 let active = keywordChar '^'
 let type_' = keywordString "type"
-
 let wildcard = keywordChar '_'
-
-let pat_e = wildcard >>% E
-let pat_var = var_name |>> PatVar
-let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
-let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
-let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
-let pat_type pattern = tuple2 pattern (opt (pp >>. pattern)) |>> function a,Some b -> PatType(a,b) | a, None -> a
-let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> pattern
-let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
-let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
-let pat_type_string = dot >>. var_name |>> PatTypeName
-let pat_when expr pattern = pattern .>>. (opt (when_ >>. rounds expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
-let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
-
-let (^<|) a b = a b // High precedence, right associative <| operator
-let rec patterns expr s = // The order the pattern parsers are chained determines their precedence.
-    pat_when expr ^<| pat_as ^<| pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type ^<| pat_cons ^<| pat_active 
-    ^<| choice [|pat_e; pat_var; pat_type_string; pat_rounds (patterns expr)|] <| s
-    
-let pattern_list expr = many (patterns expr)
 
 let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
 let pnumber : Parser<_,_> =
@@ -165,8 +144,29 @@ let lit s =
         pbool
         pnumber .>> notFollowedBy (satisfy is_identifier_char)
         quoted_string
-        |] |>> Lit .>> spaces
+        |] .>> spaces
     <| s
+
+let pat_e = wildcard >>% E
+let pat_var = var_name |>> PatVar
+let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
+let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
+let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
+let pat_type pattern = tuple2 pattern (opt (pp >>. pattern)) |>> function a,Some b -> PatType(a,b) | a, None -> a
+let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> pattern
+let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
+let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
+let pat_type_lit = dot >>. (lit <|> (var_name |>> LitString)) |>> PatTypeLit
+let pat_lit = lit |>> PatLit
+let pat_when expr pattern = pattern .>>. (opt (when_ >>. rounds expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
+let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
+
+let (^<|) a b = a b // High precedence, right associative <| operator
+let rec patterns expr s = // The order the pattern parsers are chained determines their precedence.
+    pat_when expr ^<| pat_as ^<| pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type ^<| pat_cons ^<| pat_active 
+    ^<| choice [|pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds (patterns expr)|] <| s
+    
+let pattern_list expr = many (patterns expr)
     
 let expr_indent i op expr (s: CharStream<_>) = if op i s.Column then expr s else pzero s
 let if_then_else expr (s: CharStream<_>) =
@@ -211,7 +211,7 @@ let statements expr =
 let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (lam >>. expr) inl_pat'
 let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. expr) meth_pat'
 
-let case_lit expr = lit
+let case_lit expr = lit |>> Lit
 let case_if_then_else expr = if_then_else expr 
 let case_rounds expr s = rounds (expr <|>% B) s
 let case_var expr = name |>> V
@@ -251,7 +251,10 @@ let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
 let case_module expr = module_ >>. expr |>> module_create
 let case_for_cast expr = grave >>. expr |>> ap (v "for_cast")
-let case_lit_lift expr = dot >>. ((var_name |>> (LitString >> Lit >> ap (v "lit_lift"))) <|> (expr |>> ap (v "lit_lift")))
+let case_lit_lift expr = 
+    let var = var_name |>> (LitString >> Lit >> ap (v "lit_lift"))
+    let lit = expr |>> ap (v "lit_lift")
+    dot >>. (var <|> lit)
 let case_negate expr = negate >>. expr |>> (ap (v "negate"))
 
 let rec expressions expr s =
