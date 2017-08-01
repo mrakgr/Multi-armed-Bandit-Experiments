@@ -1217,7 +1217,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let dynamize d a =
         match tev d a with
-        | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+        | TyVV(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
         | a -> a
 
     let module_create d l =

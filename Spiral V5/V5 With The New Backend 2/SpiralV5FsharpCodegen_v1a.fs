@@ -877,87 +877,73 @@ met rec List x =
         .ListCons, (x, List x)
         .ListNil
 
-inl pchar s = 
-    inl typ_r = ParserResult char
+inl pchar s ret = 
     match (s.stream) (s.pos()) with
     | .Succ, _ as c -> 
         s.pos := !s.pos + 1
-        typ_r c
-    | c -> typ_r c
-    : typ_r
+        ret c
+    | c -> ret c
 
-inl pdigit s =
-    inl typ_r = ParserResult char
+inl pdigit s ret =
     inl c = pchar s
     
-    if is_digit c then typ_r (.Succ, c)
-    else typ_r (.Fail, (pos, "digit"))
+    if is_digit c then ret (.Succ, c)
+    else ret (.Fail, (pos, "digit"))
 
-inl pint64 s =
-    inl typ_r = ParserResult int64
+inl pint64 s ret =
     met rec loop state i = 
-        match read_digit s with
-        | .Succ, c -> 
-            inl x = to_int64 c - to_int64 '0'
-            i * 10 + x |> loop .Rest
-        | .Fail, _ -> 
-            match state with
-            | .First -> typ_r (.Fail, (s.pos, "int64"))
-            | .Rest -> typ_r (.Succ, i)
-        | .FatalFail, _ as x -> typ_r x
-        : typ_r
+        read_digit s <| function
+            | .Succ, c -> 
+                inl x = to_int64 c - to_int64 '0'
+                i * 10 + x |> loop .Rest
+            | .Fail, _ -> 
+                match state with
+                | .First -> ret (.Fail, (s.pos, "int64"))
+                | .Rest -> ret (.Succ, i)
+            | .FatalFail, _ as x -> ret x
     loop .First 0
 
-met rec many typ_p p s =
-    inl typ_r = ParserResult (List typ_p)
+inl many typ_p p s ret =
     inl state = s.pos
-    match p s with
-    | .Succ, (^dyn x) when (state < s.pos) -> 
-        match many p s with
-        | .Succ, xs -> typ_r (.Succ, (.ListCons, (x, xs)))
-        | x -> typ_r x
-    | .Succ, _ when (state = s.pos) -> typ_r (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
-    | .Fail, _ when (state = s.pos) -> typ_r (.Succ, .ListNil)
-    | .Fail, _ -> typ_r (.Fail, (pos, "many"))
-    | .FatalFail, _ -> typ_r x
-    : typ_r
+    let typ = List typ_p
 
-met rec spaces s =
-    inl typ_r = ParserResult ()
+    met rec many (^dyn r) =
+        match p s with
+        | .Succ, x when (state < s.pos) -> many <| typ (.ListCons (x, r))
+        | .Succ, _ when (state = s.pos) -> ret (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
+        | .Fail, _ when (state = s.pos) -> ret (.Succ, r)
+        | .Fail, _ -> ret (.Fail, (pos, "many"))
+        | .FatalFail, _ as x -> ret x
+        : ParserResult typ
+
+    many <| typ .ListNil
+
+met rec spaces s ret =
     inl c = pchar s
     
     if is_whitespace c || is_newline c then spaces s
-    else typ_r (.Succ,())
-    : typ_r
+    else ret (.Succ,())
 
-inl tuple2_template typ_ab f a b s =
-    let typ_r = ParserResult (List typ_ab)
-    match a s with
+inl tuple2 a b s ret =
+    a s <| function
     | .Succ, a ->
-        match b s with
-        | .Succ, b -> typ_r (.Succ, f (a, b))
-        | x -> typ_r x
-    | x -> typ_r x
-    : typ_r
+        b s <| function
+        | .Succ, b -> ret (.Succ, (a, b))
+        | x -> ret x
+    | x -> ret x
 
-inl tuple2 typ_ab a b s = tuple2_template typ_ab id a b s
-inl tuple2_fst typ_a a b s = tuple2_template typ_a fst a b s
-inl tuple2_snd typ_b a b s = tuple2_template typ_b snd a b s
-    
-inl bind typ_b a b s =
-    match a s with
-    | .Succ, x -> typ_b (b x s)
-    | x -> typ_b x
+inl (>>=) a b s ret =
+    a s <| function
+    | .Succ, x -> b x s ret
+    | x -> ret x
 
-inl map typ_f a f = bind typ_b a <| fun b -> typ_b (.Succ, f b)
-inl pipe2 typ_ab typ_f a b f = map typ_f (tuple2 typ_ab a b) f
+inl (|>>) a f = a >>= fun x s ret -> ret (.Succ, f x)
 
 /// ---
 
-inl parse_int = tuple_fst int64 pint64 spaces
+inl parse_int = tuple2 pint64 spaces |>> fst
 inl parse_ints = many int64 parse_int
     """
-
 
 
 printfn "%A" (spiral_codegen [] test23)
