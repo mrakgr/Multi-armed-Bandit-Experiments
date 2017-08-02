@@ -846,7 +846,7 @@ let test23 = // Do when and as patterns work?
     "test23",
     """
 inl f = function
-    | a,b,c as q when (a < 10) -> q
+    | a,b,c as q when a < 10 -> q
     | _ -> 0,0,0
 f (1,2,3)
     """
@@ -871,8 +871,16 @@ f 0, f 1, f false, f true, f "asd", f 1i8,
 f 5.5, f 5f64, f .5.5, f .23u32
     """
 
-let parsers =
-    "parsers",
+let test25 = // Does the tuple cons pattern work?
+    "test25",
+    """
+inl f = function | x1 :: x2 :: x3 :: xs -> 3 | x1 :: x2 :: xs -> 2 | x1 :: xs -> 1 | () -> 0
+
+f (), f (1 :: ()), f (1,2)
+    """
+
+let parsing =
+    "Parsing",
     """
 inl to_int32 = mscorlib ."System.Convert.ToInt32"
 inl to_int64 = mscorlib ."System.Convert.ToInt64"
@@ -964,6 +972,91 @@ inl (|>>) a f = a >>= fun x s ret -> ret (.Succ, f x)
 inl parse_int = tuple2 pint64 spaces |>> fst
 inl parse_ints = many int64 parse_int
     """
+let tuple =
+    "Tuple",
+    """
+inl rec foldl f s = function
+    | x :: xs -> foldl f (f s x) xs
+    | () -> s
+inl rec foldr f l s = 
+    match l with
+    | x :: xs -> f x (foldr f xs s)
+    | () -> s
+    
+inl rev, map =
+    inl map' f l = foldl (inl s x -> f x :: s) () l
+    inl rev l = map' id l
+    inl map f = map' f >> rev
+    rev, map
 
-printfn "%A" (spiral_codegen [] test24)
+inl rec forall f = function
+    | x :: xs -> f x && forall f xs
+    | () -> true
+
+inl rec exists f = function
+    | x :: xs -> f x || exists f xs
+    | () -> false
+
+inl filter f l ret =
+    inl rec loop acc = function
+        | x :: xs when f x -> loop (x :: acc) xs
+        | x :: xs -> loop acc xs
+        | () -> ret <| rev acc
+    loop ()
+
+inl is_empty = function
+    | _ :: _ -> false
+    | () -> true
+
+inl is_tuple = function
+    | _ :: _ -> true
+    | _ -> false
+
+inl transpose l on_fail on_succ =
+    inl rec loop acc_total acc_head acc_tail l = 
+        match l with
+        | () :: ys ->
+            match acc_head with
+            | () when forall is_empty ys ->
+                match acc_total with
+                | _ :: _ -> rev acc_total |> on_succ
+                | () -> error_type "Empty inputs in the inner dimension to transpose are invalid."
+            | _ -> on_fail()
+        | (x :: xs) :: ys -> loop acc_total (x :: acc_head) (xs :: acc_tail) ys
+        | _ :: _ -> on_fail ()
+        | () -> 
+            match acc_tail with
+            | _ :: _ -> loop (rev acc_head :: acc_total) () () (rev acc_tail)
+            | () -> rev acc_total |> on_succ
+    loop () () () l
+
+inl zip_template on_ireg l = 
+    inl rec zip = function
+        | _ :: _ as l -> transpose l (inl _ -> on_ireg l) (map (function | x :: () -> zip x | x -> x))
+        | () -> error_type "Zip called on an empty tuple."
+        | _ -> error_type "Zip called on a non-tuple."
+    zip l
+
+inl regularity_guard l =
+    if forall is_empty l then l
+    else error_type "Irregular inputs in unzip/zip."
+inl zip = zip_template regularity_guard
+inl zip' = zip_template id
+
+inl rec unzip_template on_irreg l = 
+    inl is_all_vv x = 
+    inl rec unzip = function
+        | _ :: _ as l when forall is_tuple l -> transpose (map unzip l) (inl _ -> on_irreg l) id 
+        | _ :: _ -> l
+        | () -> error_type "Unzip called on an empty tuple."
+        | _ -> error_type "Unzip called on a non-tuple."
+    unzip true l
+
+inl unzip = unzip_template regularity_guard
+inl unzip' = unzip_template id
+
+module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,zip',unzip,unzip')
+    """
+
+printfn "%A" (spiral_codegen [] test23)
 

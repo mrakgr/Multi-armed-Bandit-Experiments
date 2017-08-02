@@ -158,7 +158,7 @@ let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
 let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
 let pat_type_lit = dot >>. (lit <|> (var_name |>> LitString)) |>> PatTypeLit
 let pat_lit = lit |>> PatLit
-let pat_when expr pattern = pattern .>>. (opt (when_ >>. rounds expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
+let pat_when expr pattern = pattern .>>. (opt (when_ >>. expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
 let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
 
 let (^<|) a b = a b // High precedence, right associative <| operator
@@ -255,7 +255,7 @@ let case_lit_lift expr =
     let var = var_name |>> (LitString >> Lit >> ap (v "lit_lift"))
     let lit = expr |>> ap (v "lit_lift")
     dot >>. (var <|> lit)
-let case_negate expr = negate >>. expr |>> (ap (v "negate"))
+let case_negate expr = attempt (negate >>. expr |>> (ap (v "negate")))
 
 let rec expressions expr s =
     let unary_ops = 
@@ -371,7 +371,9 @@ let operators expr (s: CharStream<_>) =
             let on_succ = on_succ orig_op
             let rec on_fail i _ = if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i] else fail ()
             calculate (on_fail (x.Length-1)) on_succ x
-        (poperator >>= (fun orig_op -> calculate on_fail (on_succ orig_op) orig_op)) s
+        (poperator >>= (function
+            | "=" | "->" -> fail "forbidden operator"
+            | orig_op -> calculate on_fail (on_succ orig_op) orig_op)) s
 
     let rec led poperator term left (prec,asoc,m) =
         match asoc with

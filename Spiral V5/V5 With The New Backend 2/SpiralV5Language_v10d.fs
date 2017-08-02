@@ -353,6 +353,7 @@ let private binop op a b = Op(op,[a;b])
 let eq_type a b = binop EqType a b
 let eq a b = binop EQ a b
 let lt a b = binop LT a b
+let gte a b = binop GTE a b
 
 let error_non_unit x = Op(ErrorNonUnit, [x])
 let type_lit_create x = Op(TypeLitCreate,[Lit x])
@@ -395,7 +396,7 @@ let rec pattern_compile arg pat =
                 (on_succ, tuple_slice_from)
                 l
             |> fun ((on_succ,_),len) -> 
-                if_static (lt (lit_int len) (tuple_length arg)) on_succ.Value on_fail.Value
+                if_static (gte (tuple_length arg) (lit_int (len-1))) on_succ.Value on_fail.Value
                 |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
                 |> case arg
 
@@ -1441,6 +1442,7 @@ let core_functions =
         l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
         l "mscorlib" (ap (V "load_assembly") (ap (V "lit_lift") (lit_string "mscorlib")))
         l "ignore" (inl "" B)
+        l "id" (p <| id)
         l "ref" (p <| fun x -> Op(ReferenceCreate,[x]))
         l "array_create" (p2 <| fun size typ -> Op(ArrayCreate,[size;typ]))
 
@@ -1454,6 +1456,9 @@ let core_functions =
         l "snd" (p <| fun x -> tuple_index x 1)
         l "third" (p <| fun x -> tuple_index x 2)
         l "fourth" (p <| fun x -> tuple_index x 3)
+
+        l "tuple_length" (p <| fun x -> Op(VVLength,[x]))
+        l "not" (p <| fun x -> eq x (Lit <| LitBool false))
         ]
 
 let spiral_typecheck code body on_fail ret = 
