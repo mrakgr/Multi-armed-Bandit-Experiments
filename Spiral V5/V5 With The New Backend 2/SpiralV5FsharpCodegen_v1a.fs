@@ -260,6 +260,9 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | TyType Unit -> ()
             | _ -> sprintf "%s := %s" (codegen l) (codegen r) |> state
 
+        let string_length str = sprintf "(int64 %s.Length)" (codegen str)
+        let string_index str idx = sprintf "%s.[int32 (%s)]" (codegen str) (codegen idx)
+
         match expr with
         | TyTag (_, Unit) | TyV (_, Unit) -> ""
         | TyTag v -> print_tyv v
@@ -337,6 +340,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | ReferenceCreate,[a] -> reference_create a
             | ArrayIndex,[a;b & TyType(ArrayT(DotNetHeap,_));c] -> array_index a b c
             | ArrayIndex,[a;b & TyType(ArrayT(DotNetReference,_));c] -> reference_index b
+            | StringIndex,[str;idx] -> string_index str idx
+            | StringLength,[str] -> string_length str
 
             // Primitive operations on expressions.
             | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -752,9 +757,9 @@ let hacker_rank_1 =
     "hacker_rank_1",
     """
 // The very first warmup exercise : https://www.hackerrank.com/challenges/solve-me-first
-inl console = lit_lift "System.Console" |> mscorlib
+inl console = ."System.Console" |> mscorlib
 inl parse_int32 = 
-    inl f = lit_lift "System.Int32" |> mscorlib
+    inl f = ."System.Int32" |> mscorlib
     inl str -> f .Parse str
 inl read_line () = console.ReadLine()
 inl write x = console.Write x
@@ -984,6 +989,15 @@ inl n = 123,456
 Tuple.zip ((j,k),(l,m),n) |> Tuple.unzip
     """
 
+let test28 = // Does string indexing work?
+    "test28",
+    """
+inl console = mscorlib ."System.Console"
+inl a = "qwe"
+inl b = console.ReadLine()
+a(0),b(0)
+    """
+
 let parsing =
     "Parsing",
     """
@@ -995,9 +1009,8 @@ inl is_digit (^to_int32 x) = x >= to_int32 '0' && x <= to_int32 '9'
 inl is_whitespace x = x = ' '
 inl is_newline x = x = '\n' || x = '\r'
 
-inl StreamPosition = int64
-inl stream stream =
-    inl (pos: StreamPosition) = ref 0
+inl stream_create stream = 
+    inl pos = ref 0
     module (pos, stream)
 
 inl ParserResult suc =
@@ -1012,21 +1025,22 @@ met rec List x =
         .ListNil
 
 inl pchar s ret = 
-    match (s.stream) (s.pos()) with
+    (s.stream) (s.pos()) <| function
     | .Succ, _ as c -> 
         s.pos := s.pos () + 1
         ret c
     | c -> ret c
 
 inl pdigit s ret =
-    inl c = pchar s
-    
-    if is_digit c then ret (.Succ, c)
-    else ret (.Fail, (pos, "digit"))
+    pchar s <| function
+    | .Succ, (c: char) ->
+        if is_digit c then ret (.Succ, c)
+        else ret (.Fail, (s.pos, "digit"))
+    | x -> ret x
 
 inl pint64 s ret =
-    met rec loop state i = 
-        read_digit s <| function
+    met rec loop state (^ dyn i) = 
+        pdigit s <| function
             | .Succ, c -> 
                 inl x = to_int64 c - to_int64 '0'
                 i * 10 + x |> loop .Rest
@@ -1034,7 +1048,10 @@ inl pint64 s ret =
                 match state with
                 | .First -> ret (.Fail, (s.pos, "int64"))
                 | .Rest -> ret (.Succ, i)
-            | .FatalFail, _ as x -> ret x
+            | .FatalFail, _ as x -> 
+                ret x
+        : ret .FetchType
+            
     loop .First 0
 
 inl many typ_p p s ret =
@@ -1073,19 +1090,38 @@ inl (>>=) a b s ret =
     | x -> ret x
 
 inl (|>>) a f = a >>= inl x s ret -> ret (.Succ, f x)
+inl run (^stream_create stream) parser ret = parser stream ret
 
 /// ---
 
 inl parse_int = tuple (pint64, spaces) |>> fst
 inl parse_ints = many int64 parse_int
-module (ParserResult,List,spaces,tuple,(>>=),(|>>))
+
+inl preturn x s ret = ret (.Succ, x)
+
+module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn)
     """
 
-let test28 =
-    "test28",
+let test29 = // Does a simple int parser work?
+    "test29",
     """
-'\n'
+inl stream str idx ret = 
+    if idx >= 0 && idx < string_length str then ret (.Succ, (str idx)) 
+    else ret (.Fail,"string index out of bounds")
+
+inl t =
+    type
+        int64
+        string
+
+Parsing.run (stream (dyn "123")) (Parsing.pint64) <| function
+    | .Succ, x -> t x //mscorlib ."System.Conversion" .ToString x
+    | (.FatalFail, er | .Fail, (_, er)) -> t er
+    | .FetchType -> t ""
     """
 
-printfn "%A" (spiral_codegen [tuple; parsing] hacker_rank_1)
+printfn "%A" (spiral_codegen [tuple; parsing] test29)
+
+
+
 

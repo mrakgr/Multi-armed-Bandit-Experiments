@@ -41,7 +41,7 @@ let keywordString1 x = skipString x .>> spaces1
 
 let when_ = keywordString "when"
 let as_ = keywordString "as"
-let negate = keywordChar '-'
+let negate_ = keywordChar '-'
 let comma = keywordChar ','
 let dot = keywordChar '.'
 let grave = keywordChar '`' 
@@ -266,11 +266,10 @@ let case_lit_lift expr =
     let var = var_name |>> (LitString >> Lit >> ap (v "lit_lift"))
     let lit = expr |>> ap (v "lit_lift")
     dot >>. (var <|> lit)
-let case_negate expr = attempt (negate >>. expr |>> (ap (v "negate")))
 
 let rec expressions expr s =
     let unary_ops = 
-        [case_for_cast; case_negate; case_lit_lift]
+        [case_for_cast; case_lit_lift]
         |> List.map (fun x -> x (expressions expr))
         |> choice
     let rest = 
@@ -367,6 +366,8 @@ let inbuilt_operators =
          
     dict_operator
 
+let negate expr = attempt (negate_ >>. expr |>> (ap (v "negate"))) <|> expr
+
 let operators expr (s: CharStream<_>) =
     let poperator (s: CharStream<Userstate>) =
         let dict_operator = s.UserState
@@ -406,6 +407,6 @@ let operators expr (s: CharStream<_>) =
     let term s = expr_indent expr s
     tdop op term 0 s
 
-let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| operators ^<| application ^<| expressions expr) <| s
+let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
 
 let spiral_parse (name, code) = runParserOnString (spaces >>. expr .>> eof) inbuilt_operators name code

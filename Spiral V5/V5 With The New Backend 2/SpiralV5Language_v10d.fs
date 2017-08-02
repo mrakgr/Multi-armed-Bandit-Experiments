@@ -68,6 +68,10 @@ and Value =
     | LitChar of char
 
 and Op =
+    // StringOps
+    | StringLength
+    | StringIndex
+
     // DotNetOps
     | DotNetLoadAssembly
     | DotNetTypeConstruct
@@ -560,6 +564,7 @@ let rec dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
     elif x = typeof<float32> then PrimT Float32T
     elif x = typeof<float> then PrimT Float64T
     elif x = typeof<string> then PrimT StringT
+    elif x = typeof<char> then PrimT CharT
     elif x = typeof<unit> then BVVT
     elif x.IsArray then ArrayT(DotNetHeap,dotnet_type_to_ty memoized_dotnet_types (x.GetElementType()))
     // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
@@ -581,6 +586,7 @@ let rec dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
     | PrimT Float32T -> typeof<float32>
     | PrimT Float64T -> typeof<float>
     | PrimT StringT -> typeof<string>
+    | PrimT CharT -> typeof<char>
     | ArrayT(DotNetHeap,t) -> (dotnet_ty_to_type memoized_dotnet_types t).MakeArrayType()
     | ArrayT(DotNetReference,t) -> (dotnet_ty_to_type memoized_dotnet_types t).MakeByRefType() // Incorrect, but useful
     | DotNetTypeInstanceT x | DotNetTypeRuntimeT x -> map_rev_dotnet memoized_dotnet_types x
@@ -713,7 +719,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let tr = 
             match cond with
             | TyOp(EQ,[b & TyLit _; a & TyTag _],_) | TyOp(EQ,[a & TyTag _; b & TyLit _],_) -> tev_assume (cse_add' d a b) d tr
-            | _ -> tev_assume (b true) d fl
+            | _ -> tev_assume (b true) d tr
         let fl = tev_assume (b false) d fl
         let type_tr, type_fl = get_type tr, get_type fl
         if type_tr = type_fl then
@@ -908,6 +914,19 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     
     let array_index d ar idx = array_index' d (tev2 d ar idx)
 
+    let (|TyLitIndex|_|) = function
+        | TyLit (LitInt32 i) -> Some i
+        | TyLit (LitInt64 i) -> Some (int i)
+        | TyLit (LitUInt32 i) -> Some (int i)
+        | TyLit (LitUInt64 i) -> Some (int i)
+        | _ -> None
+
+    let string_length d a = 
+        match tev d a with
+        | TyLit (LitString str) -> TyLit (LitInt64 (int64 str.Length))
+        | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
+        | _ -> on_type_er d.trace "Expected a string."
+
     let rec apply tev d = function
         | closure & TyEnv(env_term,(FunctionT(env_ty,x) | RecFunctionT(env_ty,x,_))), TyType (ForCastT args_ty) -> 
             let instantiate_type_as_variable d args_ty =
@@ -915,13 +934,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 match args_ty with
                 | VVT l -> TyVV(List.map f l, args_ty)
                 | x -> f x
-
+            
             let args = instantiate_type_as_variable d args_ty
-//            let tev d x =
-//                let r = memoize_closure args d x
-//                if is_returnable r then r // This is always true in the F# segment.
-//                else on_type_er d.trace "Closure does not have a returnable type."
-                    
             apply (memoize_closure args) d (closure, args)
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | ar & TyArray _, idx -> array_index' d (ar, idx)
@@ -974,6 +988,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                             on_type_er d.trace "Cannot call a private constructor."    
         | TyType(DotNetTypeInstanceT tag), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
         | TyType(TypeConstructorT uniont), args -> apply_typec d uniont args
+        | TyLit (LitString str), TyLitIndex x -> 
+            if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
+            else on_type_er d.trace "The index into a string literal is out of bounds."
+        | TyType(PrimT StringT) & str, idx -> 
+            if is_int idx = false then on_type_er d.trace "Expected an int as the second argument to string index."
+            TyOp(StringIndex,[str;idx],PrimT CharT)
         | closure & TyType(ClosureT(clo_arg_ty,clo_ret_ty)), args -> 
             let arg_ty = get_type args
             if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
@@ -984,21 +1004,14 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let expr,args = tev2 d expr args
         apply tev d (expr, args)
 
-    let (|LitIndex|_|) = function
-        | TyLit (LitInt32 i) -> Some i
-        | TyLit (LitInt64 i) -> Some (int i)
-        | TyLit (LitUInt32 i) -> Some (int i)
-        | TyLit (LitUInt64 i) -> Some (int i)
-        | _ -> None
-
     let vv_index_template f d v i =
         let v,i = tev2 d v i
         match v, i with
-        | TyVV(l,_), LitIndex i ->
+        | TyVV(l,_), TyLitIndex i ->
             if i >= 0 || i < List.length l then f l i
             else on_type_er d.trace "Tuple index not within bounds."
-        | v & TyType (VVT ts), LitIndex i -> failwith "The tuple should ways be destructured."
-        | v, LitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
+        | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should ways be destructured."
+        | v, TyLitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
         | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
     let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
@@ -1289,6 +1302,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         TyVV(vv, VVT(List.map get_type vv))
     | Op(op,vars) ->
         match op, vars with
+        | StringLength,[a] -> string_length d a
         | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
         | Fix,[Lit (LitString name); body] ->
             match tev d body with
@@ -1301,7 +1315,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | MethodMemoize,[a] -> memoize_method d a
         | ForCast,[x] -> for_cast d x
         
-        | PrintStatic,[a] -> tev d a |> fun r -> printfn "%A" r; TyB
+        | PrintStatic,[a] -> 
+            let rec show = function
+                | TyEnv(x,_) -> Map.iter (fun _ v -> show v) x
+                | r -> printfn "%A" r
+            show (tev d a)
+            TyB
         | ModuleOpen,[a;b] -> module_open d a b
         | ModuleCreate,[l] -> module_create d l
         | ModuleWith,[a;b;c] -> module_with d a b c
@@ -1459,6 +1478,7 @@ let core_functions =
         l "tuple_length" (p <| fun x -> Op(VVLength,[x]))
         l "tuple_index" (p2 tuple_index')
         l "not" (p <| fun x -> eq x (Lit <| LitBool false))
+        l "string_length" (p <| fun x -> Op(StringLength,[x]))
         ]
 
 let spiral_typecheck code body on_fail ret = 
@@ -1473,3 +1493,5 @@ let spiral_typecheck code body on_fail ret =
     | :? TypeError as e -> 
         let trace, message = e.Data0, e.Data1
         on_fail <| print_type_error code trace message
+    | e ->
+        on_fail <| print_type_error code [] e.Message
