@@ -700,8 +700,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         else on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" r
 
     let if_body d cond tr fl =
-        let tr = tev_seq d tr
-        let fl = tev_seq d fl
+        let b x = cse_add' d cond (TyLit <| LitBool x)
+        let tr = 
+            match cond with
+            | TyOp(EQ,[b & TyLit _; a & TyTag _],_) | TyOp(EQ,[a & TyTag _; b & TyLit _],_) -> tev_assume (cse_add' d a b) d tr
+            | _ -> tev_assume (b true) d fl
+        let fl = tev_assume (b false) d fl
         let type_tr, type_fl = get_type tr, get_type fl
         if type_tr = type_fl then
             match cond with
@@ -724,26 +728,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
-    let inline prim_equality a b = a = b
-    let if_is d a b tr fl = 
-        let a,b = tev2 d a b
-        let rec f cse_dict a b = 
-            match a, b with
-            | TyTag _, TyLit _ -> Map.add a b cse_dict
-            | TyLit _, TyTag _ -> Map.add b a cse_dict
-            | TyVV (a, _), TyVV (b, _) -> List.fold2 f cse_dict a b
-            | _ -> cse_dict
-        match prim_equality a b with
-        | true -> tev_assume (f !d.cse_env a b) d tr 
-        | false when get_type a = get_type b -> if_cond d tr fl cond
-        |> if_is_returnable
-//        if a = b then tev_seq d tr |> if_is_returnable
-//        elif get_type a = get_type b then
-//            let tr = tev_assume (f !d.cse_env a b) d tr
-//            let fl = tev_seq d fl
-//            if_cond d tr fl
-//        else
-//            on_type_er d.trace "The conditionals in if is are not of equal types."
     let tag r =
         let tag = !r
         r := tag + 1L
@@ -1115,13 +1099,14 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
         let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
         prim_bin_op_template d er check (fun t a b ->
-            match t with
-            | EQ -> prim_equality a b |> LitBool |> TyLit
+            match t, a, b with
+            | EQ, TyTag (a,_), TyTag (b,_) when a = b -> LitBool true |> TyLit
             | _ ->
                 let inline op a b =
                     match t with
                     | LT -> a < b
                     | LTE -> a <= b
+                    | EQ -> a = b
                     | GT -> a > b
                     | GTE -> a >= b 
                     | _ -> failwith "Expected a comparison operation."
@@ -1237,7 +1222,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let dynamize d a =
         match tev d a with
-        | TyVV(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+        | TyV(_, (UnionT _ | RecT _)) | TyVV(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
         | a -> a
 
     let module_create d l =
