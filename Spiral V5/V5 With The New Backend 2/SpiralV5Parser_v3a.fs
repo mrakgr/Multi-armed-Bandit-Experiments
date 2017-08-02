@@ -127,13 +127,13 @@ let pnumber : Parser<_,_> =
             Reply(reply.Status, reply.Error)
 
 let quoted_char = 
-    let normalChar = satisfy (fun c -> c <> '\\' || c <> ''')
+    let normalChar = satisfy (fun c -> c <> '\\' && c <> ''')
     let unescape c = match c with
                      | 'n' -> '\n'
                      | 'r' -> '\r'
                      | 't' -> '\t'
                      | c   -> c
-    let escapedChar = pstring "\\" >>. (anyOf "\\nrt'" |>> unescape)
+    let escapedChar = pchar '\\' >>. (anyOf "\\nrt'" |>> unescape)
     let a = (normalChar <|> escapedChar) .>> pchar ''' |>> LitChar
     let b = pstring "''" >>% LitChar '''
     pchar ''' >>. (a <|> b)
@@ -145,8 +145,8 @@ let quoted_string =
                      | 'r' -> '\r'
                      | 't' -> '\t'
                      | c   -> c
-    let escapedChar = pstring "\\" >>. (anyOf "\\nrt\"" |>> unescape)
-    between (pstring "\"") (pstring "\"")
+    let escapedChar = pchar '\\' >>. (anyOf "\\nrt\"" |>> unescape)
+    between (pchar '"') (pchar '"')
             (manyChars (normalChar <|> escapedChar))
     |>> LitString
 
@@ -195,9 +195,7 @@ let if_then_else expr (s: CharStream<_>) =
     <| s
 
 let is_operator c = (is_identifier_char c || isAnyOf [|' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
-let poperator (s: CharStream<Userstate>) = 
-    many1Satisfy is_operator .>> spaces
-    <| s
+let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator .>> spaces <| s
 
 let name = var_name <|> rounds poperator
 
@@ -385,7 +383,7 @@ let operators expr (s: CharStream<_>) =
             let rec on_fail i _ = if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i] else fail ()
             calculate (on_fail (x.Length-1)) on_succ x
         (poperator >>= (function
-            | "=" | "->" -> fail "forbidden operator"
+            | "->" -> fail "forbidden operator"
             | orig_op -> calculate on_fail (on_succ orig_op) orig_op)) s
 
     let rec led poperator term left (prec,asoc,m) =

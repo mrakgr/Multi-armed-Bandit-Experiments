@@ -338,7 +338,8 @@ let s l fin = List.foldBack (fun x rest -> x rest) l fin
 let rec ap' f l = List.fold ap f l
 
 let vv x = VV(x)
-let tuple_index v i = Op(VVIndex,[v; lit_int i])
+let tuple_index' v i = Op(VVIndex,[v; i])
+let tuple_index v i = tuple_index' v (lit_int i)
 let tuple_length v = Op(VVLength,[v])
 let tuple_slice_from v i = Op(VVSliceFrom,[v; lit_int i])
 let tuple_is v = Op(VVIs,[v])
@@ -1454,10 +1455,9 @@ let core_functions =
 
         l "fst" (p <| fun x -> tuple_index x 0)
         l "snd" (p <| fun x -> tuple_index x 1)
-        l "third" (p <| fun x -> tuple_index x 2)
-        l "fourth" (p <| fun x -> tuple_index x 3)
 
         l "tuple_length" (p <| fun x -> Op(VVLength,[x]))
+        l "tuple_index" (p2 tuple_index')
         l "not" (p <| fun x -> eq x (Lit <| LitBool false))
         ]
 

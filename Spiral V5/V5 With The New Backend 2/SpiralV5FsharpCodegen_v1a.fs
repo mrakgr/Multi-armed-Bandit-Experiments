@@ -879,99 +879,6 @@ inl f = function | x1 :: x2 :: x3 :: xs -> 3 | x1 :: x2 :: xs -> 2 | x1 :: xs ->
 f (), f (1 :: ()), f (1,2)
     """
 
-let parsing =
-    "Parsing",
-    """
-inl to_int32 = mscorlib ."System.Convert.ToInt32"
-inl to_int64 = mscorlib ."System.Convert.ToInt64"
-
-inl is_digit (^to_int32 (_: char) x) = x >= to_int32 '0' && x <= to_int32 '9'
-inl is_whitespace x = x = ' '
-inl is_newline x = x = '\n' || x = '\r'
-
-inl StreamPosition = int64
-inl stream stream =
-    inl (pos: StreamPosition) = ref 0
-    module (pos, stream)
-
-inl ParserResult suc =
-    type 
-        .Succ, suc
-        .Fail, (StreamPosition, string)
-        .FatalFail, string
-
-met rec List x =
-    type
-        .ListCons, (x, List x)
-        .ListNil
-
-inl pchar s ret = 
-    match (s.stream) (s.pos()) with
-    | .Succ, _ as c -> 
-        s.pos := !s.pos + 1
-        ret c
-    | c -> ret c
-
-inl pdigit s ret =
-    inl c = pchar s
-    
-    if is_digit c then ret (.Succ, c)
-    else ret (.Fail, (pos, "digit"))
-
-inl pint64 s ret =
-    met rec loop state i = 
-        read_digit s <| function
-            | .Succ, c -> 
-                inl x = to_int64 c - to_int64 '0'
-                i * 10 + x |> loop .Rest
-            | .Fail, _ -> 
-                match state with
-                | .First -> ret (.Fail, (s.pos, "int64"))
-                | .Rest -> ret (.Succ, i)
-            | .FatalFail, _ as x -> ret x
-    loop .First 0
-
-inl many typ_p p s ret =
-    inl state = s.pos
-    let typ = List typ_p
-
-    met rec many (^dyn r) =
-        match p s with
-        | .Succ, x when (state < s.pos) -> many <| typ (.ListCons (x, r))
-        | .Succ, _ when (state = s.pos) -> ret (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
-        | .Fail, _ when (state = s.pos) -> ret (.Succ, r)
-        | .Fail, _ -> ret (.Fail, (pos, "many"))
-        | .FatalFail, _ as x -> ret x
-        : ParserResult typ
-
-    many <| typ .ListNil
-
-met rec spaces s ret =
-    inl c = pchar s
-    
-    if is_whitespace c || is_newline c then spaces s
-    else ret (.Succ,())
-
-inl tuple2 a b s ret =
-    a s <| function
-    | .Succ, a ->
-        b s <| function
-        | .Succ, b -> ret (.Succ, (a, b))
-        | x -> ret x
-    | x -> ret x
-
-inl (>>=) a b s ret =
-    a s <| function
-    | .Succ, x -> b x s ret
-    | x -> ret x
-
-inl (|>>) a f = a >>= fun x s ret -> ret (.Succ, f x)
-
-/// ---
-
-inl parse_int = tuple2 pint64 spaces |>> fst
-inl parse_ints = many int64 parse_int
-    """
 let tuple =
     "Tuple",
     """
@@ -1055,7 +962,9 @@ inl rec unzip_template on_irreg l =
 inl unzip = unzip_template regularity_guard
 inl unzip' = unzip_template id
 
-module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,zip',unzip,unzip')
+inl index = tuple_index
+
+module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index)
     """
 
 let test26 = // Does tuple map work? This also tests rev and foldl.
@@ -1075,5 +984,108 @@ inl n = 123,456
 Tuple.zip ((j,k),(l,m),n) |> Tuple.unzip
     """
 
-printfn "%A" (spiral_codegen [tuple] test27)
+let parsing =
+    "Parsing",
+    """
+inl convert = mscorlib ."System.Convert"
+inl to_int32 = convert .ToInt32
+inl to_int64 = convert .ToInt64
+
+inl is_digit (^to_int32 x) = x >= to_int32 '0' && x <= to_int32 '9'
+inl is_whitespace x = x = ' '
+inl is_newline x = x = '\n' || x = '\r'
+
+inl StreamPosition = int64
+inl stream stream =
+    inl (pos: StreamPosition) = ref 0
+    module (pos, stream)
+
+inl ParserResult suc =
+    type 
+        .Succ, suc
+        .Fail, (StreamPosition, string)
+        .FatalFail, string
+
+met rec List x =
+    type
+        .ListCons, (x, List x)
+        .ListNil
+
+inl pchar s ret = 
+    match (s.stream) (s.pos()) with
+    | .Succ, _ as c -> 
+        s.pos := s.pos () + 1
+        ret c
+    | c -> ret c
+
+inl pdigit s ret =
+    inl c = pchar s
+    
+    if is_digit c then ret (.Succ, c)
+    else ret (.Fail, (pos, "digit"))
+
+inl pint64 s ret =
+    met rec loop state i = 
+        read_digit s <| function
+            | .Succ, c -> 
+                inl x = to_int64 c - to_int64 '0'
+                i * 10 + x |> loop .Rest
+            | .Fail, _ -> 
+                match state with
+                | .First -> ret (.Fail, (s.pos, "int64"))
+                | .Rest -> ret (.Succ, i)
+            | .FatalFail, _ as x -> ret x
+    loop .First 0
+
+inl many typ_p p s ret =
+    inl state = s.pos
+    let typ = List typ_p
+
+    met rec many (^dyn r) =
+        match p s with
+        | .Succ, x when state < s.pos -> many <| typ (.ListCons (x, r))
+        | .Succ, _ when state = s.pos -> ret (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
+        | .Fail, _ when state = s.pos -> ret (.Succ, r)
+        | .Fail, _ -> ret (.Fail, (pos, "many"))
+        | .FatalFail, _ as x -> ret x
+        : ParserResult typ
+
+    many <| typ .ListNil
+
+met rec spaces s ret =
+    inl c = pchar s
+    
+    if is_whitespace c || is_newline c then spaces s
+    else ret (.Succ,())
+
+inl tuple l s ret =
+    inl rec loop acc = function
+        | x :: xs ->
+            x s <| function
+            | .Succ, x -> loop (x :: acc) xs
+            | x -> ret x
+        | () -> ret (Tuple.rev acc)
+    loop ()
+
+inl (>>=) a b s ret =
+    a s <| function
+    | .Succ, x -> b x s ret
+    | x -> ret x
+
+inl (|>>) a f = a >>= inl x s ret -> ret (.Succ, f x)
+
+/// ---
+
+inl parse_int = tuple (pint64, spaces) |>> fst
+inl parse_ints = many int64 parse_int
+module (ParserResult,List,spaces,tuple,(>>=),(|>>))
+    """
+
+let test28 =
+    "test28",
+    """
+'\n'
+    """
+
+printfn "%A" (spiral_codegen [tuple; parsing] hacker_rank_1)
 
