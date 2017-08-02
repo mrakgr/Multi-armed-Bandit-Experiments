@@ -1007,6 +1007,7 @@ inl filter f l ret =
 inl is_empty = function
     | _ :: _ -> false
     | () -> true
+    | _ -> error_type "Not a tuple."
 
 inl is_tuple = function
     | _ :: _ -> true
@@ -1031,7 +1032,7 @@ inl transpose l on_fail on_succ =
     loop () () () l
 
 inl zip_template on_ireg l = 
-    inl rec zip = function
+    inl rec zip = function // when forall is_tuple l 
         | _ :: _ as l -> transpose l (inl _ -> on_ireg l) (map (function | x :: () -> zip x | x -> x))
         | () -> error_type "Zip called on an empty tuple."
         | _ -> error_type "Zip called on a non-tuple."
@@ -1044,13 +1045,12 @@ inl zip = zip_template regularity_guard
 inl zip' = zip_template id
 
 inl rec unzip_template on_irreg l = 
-    inl is_all_vv x = 
     inl rec unzip = function
         | _ :: _ as l when forall is_tuple l -> transpose (map unzip l) (inl _ -> on_irreg l) id 
         | _ :: _ -> l
         | () -> error_type "Unzip called on an empty tuple."
         | _ -> error_type "Unzip called on a non-tuple."
-    unzip true l
+    unzip l
 
 inl unzip = unzip_template regularity_guard
 inl unzip' = unzip_template id
@@ -1058,5 +1058,22 @@ inl unzip' = unzip_template id
 module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,zip',unzip,unzip')
     """
 
-printfn "%A" (spiral_codegen [] test23)
+let test26 = // Does tuple map work? This also tests rev and foldl.
+    "test26",
+    """
+Tuple.map (inl x -> x * 2) (1,2,3)
+    """
+
+let test27 = // Do tuple zip and unzip work?
+    "test27",
+    """
+inl j = 2,3.3
+inl k = 4.4,55
+inl l = 66,77
+inl m = 88,99
+inl n = 123,456
+Tuple.zip ((j,k),(l,m),n) |> Tuple.unzip
+    """
+
+printfn "%A" (spiral_codegen [tuple] test27)
 

@@ -126,6 +126,18 @@ let pnumber : Parser<_,_> =
         else // reconstruct error reply
             Reply(reply.Status, reply.Error)
 
+let quoted_char = 
+    let normalChar = satisfy (fun c -> c <> '\\' || c <> ''')
+    let unescape c = match c with
+                     | 'n' -> '\n'
+                     | 'r' -> '\r'
+                     | 't' -> '\t'
+                     | c   -> c
+    let escapedChar = pstring "\\" >>. (anyOf "\\nrt'" |>> unescape)
+    let a = (normalChar <|> escapedChar) .>> pchar ''' |>> LitChar
+    let b = pstring "''" >>% LitChar '''
+    pchar ''' >>. (a <|> b)
+
 let quoted_string =
     let normalChar = satisfy (fun c -> c <> '\\' && c <> '"')
     let unescape c = match c with
@@ -144,6 +156,7 @@ let lit s =
         pbool
         pnumber .>> notFollowedBy (satisfy is_identifier_char)
         quoted_string
+        quoted_char
         |] .>> spaces
     <| s
 
