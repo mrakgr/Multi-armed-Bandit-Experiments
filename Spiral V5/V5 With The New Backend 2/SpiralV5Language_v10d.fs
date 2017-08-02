@@ -271,6 +271,11 @@ let is_numeric' = function
     | _ -> false
 let is_numeric a = is_numeric' (get_type a)
 
+let is_string' = function
+    | PrimT StringT -> true
+    | _ -> false
+let is_string a = is_string' (get_type a)
+
 let is_primt' = function
     | PrimT x -> true
     | _ -> false
@@ -405,8 +410,7 @@ let rec pattern_compile arg pat =
         | PatCons l -> pat_cons l
         | PatType (exp,typ) ->
             let on_succ = cp arg exp on_succ on_fail
-            pattern_compile true arg typ on_succ on_fail
-            |> case arg
+            pattern_compile true arg typ on_succ on_fail |> case arg
         | PatActive (a,b) ->
             let pat_var = sprintf " pat_var_%i" (get_tag())
             l pat_var (ap (V a) arg) (cp' (v pat_var) b on_succ on_fail)
@@ -414,7 +418,10 @@ let rec pattern_compile arg pat =
         | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
         | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
         | PatTypeLit x -> if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value |> case arg
-        | PatLit x -> if_static (eq arg (Lit x)) on_succ.Value on_fail.Value |> case arg
+        | PatLit x -> 
+            let x = Lit x
+            let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
+            if_static (eq_type arg x) on_succ on_fail.Value |> case arg
         | PatPos (p, pat) -> pos p (cp' arg pat on_succ on_fail)
         | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
 
@@ -1096,11 +1103,14 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             )
 
     let prim_comp_op d = 
-        let er = sprintf "`(is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
-        let check a b = (is_numeric a || is_bool a) && get_type a = get_type b
+        let er = sprintf "(is_string a || is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
+        let check a b = (is_string a || is_numeric a || is_bool a) && get_type a = get_type b
         prim_bin_op_template d er check (fun t a b ->
+            let inline eq_op a b = LitBool (a = b) |> TyLit
             match t, a, b with
             | EQ, TyTag (a,_), TyTag (b,_) when a = b -> LitBool true |> TyLit
+            | EQ, TyLit (LitBool a), TyLit (LitBool b) -> eq_op a b
+            | EQ, TyLit (LitString a), TyLit (LitString b) -> eq_op a b
             | _ ->
                 let inline op a b =
                     match t with

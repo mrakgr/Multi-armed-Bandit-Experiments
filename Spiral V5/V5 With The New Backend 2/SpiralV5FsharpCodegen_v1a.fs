@@ -851,6 +851,26 @@ inl f = function
 f (1,2,3)
     """
 
+let test24 = // Do literal pattern matchers work? Does partial evaluation of equality work?
+    "test24",
+    """
+inl f x = 
+    match x with
+    | 0 -> "0", x
+    | 1 -> "1", x
+    | false -> "false", x
+    | true -> "true", x
+    | "asd" -> "asd", x
+    | 1i8 -> "1i8", x
+    | 5.5 -> "5.5", x
+    | .5.5 -> ".5.5", x
+    | .23u32 -> ".23u32",x
+    | _ -> "unknown", x
+
+f 0, f 1, f false, f true, f "asd", f 1i8,
+f 5.5, f 5f64, f .5.5, f .23u32
+    """
+
 let parsers =
     "parsers",
     """
@@ -945,6 +965,5 @@ inl parse_int = tuple2 pint64 spaces |>> fst
 inl parse_ints = many int64 parse_int
     """
 
-
-printfn "%A" (spiral_codegen [] test23)
+printfn "%A" (spiral_codegen [] test24)
 
