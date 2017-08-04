@@ -154,7 +154,13 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | LitFloat32 x -> sprintf "%ff" x
             | LitFloat64 x -> sprintf "%f" x
             | LitString x -> sprintf "\"%s\"" x
-            | LitChar x -> sprintf "'%c'" x
+            | LitChar x -> 
+                match x with
+                | '\n' -> @"\n"
+                | '\t' -> @"\t"
+                | '\r' -> @"\r"
+                | x -> string x
+                |> sprintf "'%s'"
             | LitBool x -> if x then "true" else "false"
 
         let codegen x = codegen buffer x
@@ -351,7 +357,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
             | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
             | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
-            | EQ,[a;b] -> sprintf "(%s == %s)" (codegen a) (codegen b)
+            | EQ,[a;b] -> sprintf "(%s = %s)" (codegen a) (codegen b)
             | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
             | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
             | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
@@ -1002,10 +1008,9 @@ let parsing =
     "Parsing",
     """
 inl convert = mscorlib ."System.Convert"
-inl to_int32 = convert .ToInt32
 inl to_int64 = convert .ToInt64
 
-inl is_digit (^to_int32 x) = x >= to_int32 '0' && x <= to_int32 '9'
+inl is_digit x = x >= '0' && x <= '9'
 inl is_whitespace x = x = ' '
 inl is_newline x = x = '\n' || x = '\r'
 
@@ -1024,10 +1029,12 @@ met rec List x =
         .ListCons, (x, List x)
         .ListNil
 
+inl stream_advance i s = s.pos := s.pos () + i
+
 inl pchar s ret = 
     (s.stream) (s.pos()) <| function
     | .Succ, _ as c -> 
-        s.pos := s.pos () + 1
+        stream_advance 1 s
         ret c
     | c -> ret c
 
@@ -1048,32 +1055,42 @@ inl pint64 s ret =
                 match state with
                 | .First -> ret (.Fail, (s.pos, "int64"))
                 | .Rest -> ret (.Succ, i)
-            | .FatalFail, _ as x -> 
-                ret x
+            | x -> ret x
         : ret .FetchType
             
     loop .First 0
 
+inl list_rev typ l = 
+    met rec loop acc l = 
+        match l with
+        | .ListNil x -> acc
+        | .ListCons, (x, xs) -> loop (typ (.ListCons, (x, acc))) xs
+        : typ l
+    loop .ListNil l
+
 inl many typ_p p s ret =
-    inl state = s.pos
-    let typ = List typ_p
+    inl state = s.pos ()
+    inl typ = List typ_p >> dyn
 
-    met rec many (^dyn r) =
-        match p s with
-        | .Succ, x when state < s.pos -> many <| typ (.ListCons (x, r))
-        | .Succ, _ when state = s.pos -> ret (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
-        | .Fail, _ when state = s.pos -> ret (.Succ, r)
+    met rec many r =
+        p s <| function
+        | .Succ, x when state < s.pos() -> many <| typ (.ListCons, (x, r))
+        | .Succ, _ when state = s.pos() -> ret (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
+        | .Fail, _ when state = s.pos() -> ret (.Succ, list_rev typ r)
         | .Fail, _ -> ret (.Fail, (pos, "many"))
-        | .FatalFail, _ as x -> ret x
-        : ParserResult typ
+        | x -> ret x
+        : ret .FetchType
 
-    many <| typ .ListNil
+    many (typ .ListNil)
 
 met rec spaces s ret =
-    inl c = pchar s
-    
-    if is_whitespace c || is_newline c then spaces s
-    else ret (.Succ,())
+    pchar s <| function
+    | .Succ, c ->    
+        if is_whitespace c || is_newline c then spaces s ret
+        else stream_advance (-1) s; ret (.Succ,())
+    | .Fail, _ -> ret (.Succ,())
+    | x -> ret x
+    : ret .FetchType
 
 inl tuple l s ret =
     inl rec loop acc = function
@@ -1081,8 +1098,9 @@ inl tuple l s ret =
             x s <| function
             | .Succ, x -> loop (x :: acc) xs
             | x -> ret x
-        | () -> ret (Tuple.rev acc)
-    loop ()
+        | () -> ret (.Succ, Tuple.rev acc)
+        | _ -> error_type "Incorrect input to tuple."
+    loop () l
 
 inl (>>=) a b s ret =
     a s <| function
@@ -1095,11 +1113,12 @@ inl run (^stream_create stream) parser ret = parser stream ret
 /// ---
 
 inl parse_int = tuple (pint64, spaces) |>> fst
+inl parse_2_ints = tuple (parse_int, parse_int)
 inl parse_ints = many int64 parse_int
 
 inl preturn x s ret = ret (.Succ, x)
 
-module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn)
+module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_2_ints,parse_ints)
     """
 
 let test29 = // Does a simple int parser work?
@@ -1107,21 +1126,22 @@ let test29 = // Does a simple int parser work?
     """
 inl stream str idx ret = 
     if idx >= 0 && idx < string_length str then ret (.Succ, (str idx)) 
-    else ret (.Fail,"string index out of bounds")
+    else ret (.Fail, (idx, "string index out of bounds"))
 
 inl t =
     type
         int64
+        int64, int64
         string
 
-Parsing.run (stream (dyn "123")) (Parsing.pint64) <| function
-    | .Succ, x -> t x //mscorlib ."System.Conversion" .ToString x
+Parsing.run (stream (dyn "12 34 ")) (Parsing.parse_ints) <| function
+    | .Succ, x -> t x
     | (.FatalFail, er | .Fail, (_, er)) -> t er
     | .FetchType -> t ""
+    | x -> error_type "Got a strange input."
     """
 
 printfn "%A" (spiral_codegen [tuple; parsing] test29)
 
-//
 
 

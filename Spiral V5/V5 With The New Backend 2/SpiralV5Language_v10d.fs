@@ -280,6 +280,11 @@ let is_string' = function
     | _ -> false
 let is_string a = is_string' (get_type a)
 
+let is_char' = function
+    | PrimT CharT -> true
+    | _ -> false
+let is_char a = is_char' (get_type a)
+
 let is_primt' = function
     | PrimT x -> true
     | _ -> false
@@ -938,7 +943,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             let args = instantiate_type_as_variable d args_ty
             apply (memoize_closure args) d (closure, args)
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
-        | ar & TyArray _, idx -> array_index' d (ar, idx)
+        | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
         | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
         | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)), args -> 
@@ -1118,8 +1123,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             )
 
     let prim_comp_op d = 
-        let er = sprintf "(is_string a || is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
-        let check a b = (is_string a || is_numeric a || is_bool a) && get_type a = get_type b
+        let er = sprintf "(is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
+        let check a b = (is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b
         prim_bin_op_template d er check (fun t a b ->
             let inline eq_op a b = LitBool (a = b) |> TyLit
             match t, a, b with
@@ -1148,6 +1153,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                     | LitUInt64 a, LitUInt64 b -> op a b |> LitBool |> TyLit
                     | LitFloat32 a, LitFloat32 b -> op a b |> LitBool |> TyLit
                     | LitFloat64 a, LitFloat64 b -> op a b |> LitBool |> TyLit
+                    | LitString a, LitString b -> op a b |> LitBool |> TyLit
+                    | LitChar a, LitChar b -> op a b |> LitBool |> TyLit
                     | _ -> bool_helper t a b
                 | _ -> bool_helper t a b
                 )
@@ -1240,7 +1247,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             match map_cases (case_destructure d t) with
             | (_, TyType p) :: _ as cases -> 
                 if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
-                else on_type_er d.trace "All the cases in pattern matching clause with dynamic data must have the same type."
+                else 
+                    let l = List.map (snd >> get_type) cases
+                    on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
             | _ -> failwith "There should always be at least one clause here."
         | a & TyV(b,_) -> assume d a b case
         | _ -> tev d case
@@ -1315,12 +1324,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | MethodMemoize,[a] -> memoize_method d a
         | ForCast,[x] -> for_cast d x
         
-        | PrintStatic,[a] -> 
-            let rec show = function
-                | TyEnv(x,_) -> Map.iter (fun _ v -> show v) x
-                | r -> printfn "%A" r
-            show (tev d a)
-            TyB
+        | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
         | ModuleOpen,[a;b] -> module_open d a b
         | ModuleCreate,[l] -> module_create d l
         | ModuleWith,[a;b;c] -> module_with d a b c
