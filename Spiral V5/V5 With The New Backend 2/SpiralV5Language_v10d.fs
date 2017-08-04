@@ -168,6 +168,7 @@ and Pattern =
 and PosKey = string * int64 * int64
 
 and Expr = 
+    | T of TypedExpr
     | V of string
     | Lit of Value
     | Pattern of Pattern
@@ -251,6 +252,8 @@ let (|TyTuple|) x = tuple_field x
 let set_field = function
     | UnionT t -> t
     | t -> Set.singleton t
+
+let (|TySet|) x = set_field x
 
 /// Wraps the argument in a list if not a tuple type.
 let tuple_field_ty = function 
@@ -447,6 +450,7 @@ and pattern_compile_single pat =
 and expr_prepass e =
     let f e = expr_prepass e
     match e with
+    | T _ -> Set.empty, e
     | V n -> Set.singleton n, e
     | Op(op,l) ->
         let l,l' = List.map f l |> List.unzip
@@ -646,6 +650,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let tev2 d a b = tev d a, tev d b
     let tev3 d a b c = tev d a, tev d b, tev d c
 
+    let inner_compile x = expr_prepass x |> snd |> tev d
+
     let v_find env x on_fail = 
         match Map.tryFind x env with
         | Some v -> v
@@ -799,54 +805,44 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
             TyMemoizedExpr(memo_type,args,rev_renamer,tag,ClosureT(arg_ty,ret_ty))) d x
 
-    let apply_typec d typec ra =
-        let rec apply_typec d ty ra on_fail ret =
-            let substitute_ty = function 
-                | TyVV(l,_) -> TyVV(l,ty) |> ret
-                | x when get_type x <> ty -> TyV(x,ty) |> ret
-                | x -> ret x
-            match ty, ra with
-            | TypeConstructorT _, _ -> failwith "Type constructors should never be nested."
-            | x, TyType r when x = r -> ret ra
-            | x, TyV(n,_) -> apply_typec d x n on_fail ret
-            | RecT tag, _ -> apply_typec d globals.memoized_types.[tag] ra on_fail substitute_ty
-            | UnionT tys, _ ->
-                let rec loop = function
-                    | x :: xs -> apply_typec d x ra (fun _ -> loop xs) substitute_ty
-                    | [] -> on_fail()
-                loop (Set.toList tys)
-            | VVT t, TyVV(l,_) ->
-                let rec loop ret = function
-                    | x :: xs, r :: rs ->
-                        apply_typec d x r on_fail <| fun v ->
-                            loop (fun vs -> ret (v :: vs)) (xs, rs)
-                    | [], [] -> ret []
-                    | _ -> on_fail()
-                loop (fun l -> TyVV(l,ty)) (t,l)
-            | _ -> on_fail()
+    let case_ d v case =
+        let assume d v x branch = tev_assume (cse_add' d v x) d branch
+        match tev d v with
+        | TyTag(_, t & (UnionT _ | RecT _)) as v ->
+            let rec case_destructure d args_ty =
+                let f x = make_tyv_and_push_ty d x
+                let union_case = function
+                    | UnionT l -> Set.toList l |> List.collect (case_destructure d)
+                    | _ -> [f args_ty]
+                match args_ty with
+                | RecT tag -> union_case globals.memoized_types.[tag]
+                | x -> union_case x
 
-        let er _ = on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." typec (get_type ra)
-        apply_typec d typec ra er id
-            
+            let rec map_cases l =
+                match l with
+                | x :: xs -> (x, assume d v x case) :: map_cases xs
+                | _ -> []
+                            
+            match map_cases (case_destructure d t) with
+            | (_, TyType p) :: _ as cases -> 
+                if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
+                else 
+                    let l = List.map (snd >> get_type) cases
+                    on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
+            | _ -> failwith "There should always be at least one clause here."
+        | a & TyV(b,_) -> assume d a b case
+        | _ -> tev d case
+           
     let typec_union d a b =
         let a, b = tev2 d a b
         match get_type a, get_type b with
         | TypeConstructorT a, TypeConstructorT b -> set_field a + set_field b |> UnionT |> TypeConstructorT |> make_tyv_and_push_ty d
         | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
-    let rec strip_map x = Map.map (fun _ -> typec_strip) x
-    and typec_strip = function // Implements #10.
-        | DotNetAssemblyT _ | DotNetTypeRuntimeT _ | DotNetTypeInstanceT _
-        | PrimT _ | LitT _ | RecT _ as x -> x
+    let rec typec_strip = function 
         | TypeConstructorT x -> x
         | VVT l -> VVT (List.map typec_strip l)
-        | FunctionT (e, b) -> FunctionT(strip_map e, b)
-        | RecFunctionT (e, b, name) -> RecFunctionT (strip_map e, b, name)
-        | ModuleT e -> ModuleT (strip_map e)
-        | ForCastT x -> typec_strip x |> ForCastT
-        | ClosureT (a,b) -> ClosureT (typec_strip a, typec_strip b)
-        | UnionT s -> UnionT (Set.map typec_strip s)
-        | ArrayT (a,b) -> ArrayT (a, typec_strip b)
+        | x -> x
 
     let typec_create d x =
         let key = d.env, x
@@ -856,7 +852,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             globals.memoized_methods.[key] <- MemoType x
             x
 
-        let add_to_type_dict x =
+        let add_recursive_type_to_type_dict x =
             match globals.memoized_methods.TryGetValue key with
             | true, MemoType (RecT tag) -> globals.memoized_types.[tag] <- x; RecT tag
             | _ -> x
@@ -869,7 +865,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             globals.memoized_methods.[key] <- MemoTypeInEvaluation
             // After the evaluation, if the type is recursive the dictionary should have its key.
             // If present it will return that instead.
-            tev_seq d x |> get_type |> typec_strip |> add_to_type_dict |> add_to_memo_dict |> ret_tyv
+            tev_seq d x |> get_type |> typec_strip |> add_recursive_type_to_type_dict |> add_to_memo_dict |> ret_tyv
 
     let inline wrap_exception d f =
         try f()
@@ -904,9 +900,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
     let dotnet_ty_to_type (x: Ty) = dotnet_ty_to_type globals.memoized_dotnet_types x
 
-    let (|TySystemTypeArgs|) args = 
-        let typec_strip = function TypeConstructorT x -> x | x -> x
-        List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
+    let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
 
     let array_index' d = function
         | ar, idx when is_all_int64 idx ->
@@ -963,10 +957,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                             on_type_er d.trace "Cannot load a private type from an assembly."
         | TyAssembly _, _ -> on_type_er d.trace "Expected a type level string as the second argument."
         | dotnet_type & TyDotNetType _, method_name & TypeString _ ->
-            let lam = inl' ["instance";"method_name";"args"] (ap (V "instance") (VV [V "method_name"; V "args"]))
-                      |> expr_prepass |> snd |> tev d
-            let ap a b = apply tev d (a, b)
-            ap (ap lam dotnet_type) method_name
+            inl "args" (ap (T dotnet_type) (VV [T method_name; V "args"])) |> inner_compile
         | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
             wrap_exception d <| fun _ ->
                 match typ.GetMethod(method_name, method_args) with
@@ -992,7 +983,22 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                         else
                             on_type_er d.trace "Cannot call a private constructor."    
         | TyType(DotNetTypeInstanceT tag), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
-        | TyType(TypeConstructorT uniont), args -> apply_typec d uniont args
+        | typec & TyType(TypeConstructorT ty), args -> 
+            let substitute_ty = function 
+                | TyVV(l,_) -> TyVV(l,ty)
+                | TyV(x,_) -> TyV(x,ty) 
+                | x -> TyV(x,ty) 
+
+            let (|TyRecUnion|_|) = function
+                | UnionT ty' -> Some ty'
+                | RecT tag -> Some (globals.memoized_types.[tag] |> set_field)
+                | _ -> None
+
+            match ty, args with
+            | x, TyType r when x = r -> args
+            | TyRecUnion ty', TyType (UnionT ty_args) when Set.isSubset ty_args ty' -> Op(Case,[T args; ap (T typec) (T args)]) |> inner_compile
+            | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args                
+            | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
         | TyLit (LitString str), TyLitIndex x -> 
             if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
             else on_type_er d.trace "The index into a string literal is out of bounds."
@@ -1078,10 +1084,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let type_annot d a b =
         match d.rbeh with
-        | AnnotationReturn -> tev d b |> get_type |> make_tyv_and_push_ty d
+        | AnnotationReturn -> tev d b |> get_type |> typec_strip |> make_tyv_and_push_ty d
         | AnnotationDive ->
             let a, b = tev d a, tev_seq d b
-            let ta, tb = get_type a, get_type b
+            let ta, tb = get_type a, get_type b |> typec_strip
             if ta = tb then a else on_type_er d.trace <| sprintf "%A <> %A" ta tb
 
     let prim_bin_op_template d check_error is_check k a b t =
@@ -1226,34 +1232,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyLit a -> type_lit_create' d a
         | _ -> on_type_er d.trace "Expected a literal in type literal create."
 
-    let case_tuple_template d v case =
-        let assume d v x branch = tev_assume (cse_add' d v x) d branch
-        match tev d v with
-        | TyTag(_, t & (UnionT _ | RecT _)) as v ->
-            let rec case_destructure d args_ty =
-                let f x = make_tyv_and_push_ty d x
-                let union_case = function
-                    | UnionT l -> Set.toList l |> List.collect (case_destructure d)
-                    | _ -> [f args_ty]
-                match args_ty with
-                | RecT tag -> union_case globals.memoized_types.[tag]
-                | x -> union_case x
-
-            let rec map_cases l =
-                match l with
-                | x :: xs -> (x, assume d v x case) :: map_cases xs
-                | _ -> []
-                            
-            match map_cases (case_destructure d t) with
-            | (_, TyType p) :: _ as cases -> 
-                if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
-                else 
-                    let l = List.map (snd >> get_type) cases
-                    on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
-            | _ -> failwith "There should always be at least one clause here."
-        | a & TyV(b,_) -> assume d a b case
-        | _ -> tev d case
-
     let dynamize d a =
         match tev d a with
         | TyV(_, (UnionT _ | RecT _)) | TyVV(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
@@ -1296,6 +1274,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let add_trace d x = {d with trace = x :: d.trace}
 
     match expr with
+    | T x -> x
     | Lit value -> TyLit value
     | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
     | FunctionFilt(vars, (pat, body)) -> 
@@ -1317,7 +1296,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             match tev d body with
             | TyEnv(env_term,FunctionT(env_ty,core)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name))  
             | x -> failwithf "Invalid use of Fix. Got: %A" x
-        | Case,[v;case] -> case_tuple_template d v case
+        | Case,[v;case] -> case_ d v case
         | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
         | If,[cond;tr;fl] -> if_ d cond tr fl
         | Apply,[a;b] -> apply_tev d a b
@@ -1498,4 +1477,5 @@ let spiral_typecheck code body on_fail ret =
         let trace, message = e.Data0, e.Data1
         on_fail <| print_type_error code trace message
     | e ->
+        printfn "%s" e.StackTrace
         on_fail <| print_type_error code [] e.Message

@@ -323,16 +323,16 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                 sprintf "%s(%s)" (codegen a) b
             | Case,v :: cases ->
                 print_if t <| fun _ ->
-                    let tag = 
+                    let print_case = 
                         match get_type v with
-                        | RecT tag -> tag
-                        | UnionT tys -> union_ty_tag tys
+                        | RecT tag -> print_rec_case tag
+                        | UnionT tys -> print_union_case (union_ty_tag tys)
                         | _ -> failwith "impossible"
 
                     sprintf "match %s with" (codegen v) |> state
                     let print_case i = function
-                        | case & TyType Unit -> sprintf "| %s ->" (print_union_case tag i) |> state
-                        | case -> sprintf "| %s(%s) ->" (print_union_case tag i) (codegen case) |> state
+                        | case & TyType Unit -> sprintf "| %s ->" (print_case i) |> state
+                        | case -> sprintf "| %s(%s) ->" (print_case i) (codegen case) |> state
                     let rec loop i = function
                         | case :: body :: rest -> 
                             print_case i case
@@ -499,7 +499,19 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         let tuple_name = print_env_ty' tag
         print_struct_definition (type_prefix()) definitions_buffer Map.iter Map.fold tuple_name tys tag
 
-    for x in tuple_definitions do
+    let safe_print (def: Dictionary<_,_>) f =
+        let printed = h0()
+        let rec loop () =
+            let prev_count = def.Count
+            let f x =
+                if printed.Contains x then ()
+                else printed.Add x |> ignore; f x
+            Seq.iter f (Seq.toArray def)
+            if prev_count <> def.Count then loop ()
+            else ()
+        loop ()
+
+    safe_print tuple_definitions <| fun x ->
         let tys, tag = x.Key, x.Value
         let tuple_name = print_tuple' tag
         let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
@@ -1141,7 +1153,44 @@ Parsing.run (stream (dyn "12 34 ")) (Parsing.parse_ints) <| function
     | x -> error_type "Got a strange input."
     """
 
-printfn "%A" (spiral_codegen [tuple; parsing] test29)
+let test30 = // Do recursive algebraic datatypes work?
+    "test30",
+    """
+met rec List x =
+    type
+        .ListCons, (x, List x)
+        .ListNil
+
+inl t = List int64
+inl nil = t .ListNil
+inl cons x xs = t (.ListCons, (x, xs))
+
+met rec sum s l = 
+    match l with
+    | .ListCons, (x, xs) -> sum (s + x) xs
+    | .ListNil -> s
+    : int64
+
+nil |> cons 3 |> cons 2 |> cons 1 |> dyn |> sum 0
+        """
+
+let test31 = // Does passing types into types work?
+    "test31",
+    """
+inl a = 
+    type 
+        .A, (int64, int64)
+        .B, string
+
+inl b = 
+    type 
+        a
+        .Hello
+
+a (.A, (2,3)) |> dyn |> b
+    """
+
+printfn "%A" (spiral_codegen [tuple; parsing] test30)
 
 
 
