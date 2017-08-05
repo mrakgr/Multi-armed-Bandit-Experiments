@@ -576,7 +576,7 @@ let rec dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
     elif x = typeof<float> then PrimT Float64T
     elif x = typeof<string> then PrimT StringT
     elif x = typeof<char> then PrimT CharT
-    elif x = typeof<unit> then BVVT
+    elif x = typeof<unit> || x = typeof<System.Void> then BVVT
     elif x.IsArray then ArrayT(DotNetHeap,dotnet_type_to_ty memoized_dotnet_types (x.GetElementType()))
     // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
     elif x.IsByRef then ArrayT(DotNetReference, dotnet_type_to_ty memoized_dotnet_types (x.GetElementType())) // Incorrect, but useful

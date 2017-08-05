@@ -1165,26 +1165,37 @@ inl (>>=) a b s ret =
     | x -> ret x
 
 inl (|>>) a f = a >>= inl x s ret -> ret (.Succ, f x)
-inl run (^stream_create stream) parser ret = parser stream ret
 
-/// ---
+inl string_stream str = 
+    stream_create <| inl idx ret ->
+        if idx >= 0 && idx < string_length str then ret (.Succ, (str idx)) 
+        else ret (.Fail, (idx, "string index out of bounds"))
+
+inl run (^dyn data) parser ret = 
+    match data with
+    | _ : string -> parser (string_stream data) ret
+    | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
-inl parse_2_ints = tuple (parse_int, parse_int)
+
+inl parse_n_ints n = 
+    inl rec loop n = 
+        match n with 
+        | n when n > 0 -> parse_int :: loop (n-1)
+        | 0 -> ()
+        | _ -> error_type "The input to this function cannot be static or less than 0 or not an int."
+    loop n |> tuple
+    
 inl parse_ints = many int64 parse_int
 
 inl preturn x s ret = ret (.Succ, x)
 
-module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_2_ints,parse_ints)
+module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints)
     """
 
 let test29 = // Does a simple int parser work?
     "test29",
     """
-inl stream str idx ret = 
-    if idx >= 0 && idx < string_length str then ret (.Succ, (str idx)) 
-    else ret (.Fail, (idx, "string index out of bounds"))
-
 inl t =
     type
         int64
@@ -1192,13 +1203,37 @@ inl t =
         string
         Parsing.List int64
 
-Parsing.run (stream (dyn "12 34 ")) (Parsing.parse_ints) <| function
+Parsing.run "12 34 " (Parsing.parse_ints) <| function
     | .Succ, x -> t x
     | .FatalFail, er | .Fail, (_, er) -> t er
     | .FetchType -> t ""
     | x -> error_type "Got a strange input."
     """
 
-printfn "%A" (spiral_codegen [tuple; parsing] test29)
+let hacker_rank_2 =
+    "hacker_rank_2",
+    """
+// https://www.hackerrank.com/challenges/compare-the-triplets
+
+inl console = mscorlib."System.Console"
+inl (|>>) = Parsing."|>>"
+inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3 |>> f) (inl _ -> ())
+inl alice = ref 0
+inl bob = ref 0
+inl comp = function
+    | a,b when a > b -> alice := alice () + 1
+    | a,b when a < b -> bob := bob () + 1
+    | a,b -> ()
+
+parse_3 <| inl a1,a2,a3 ->
+    parse_3 <| inl x1,x2,x3 ->
+        comp (a1,x1); comp (a2,x2); comp (a3,x3)
+
+alice() |> console.Write
+console.Write ' '
+bob() |> console.Write
+    """
+
+printfn "%A" (spiral_codegen [tuple;parsing] hacker_rank_2)
 
 

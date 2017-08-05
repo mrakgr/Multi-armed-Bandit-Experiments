@@ -230,31 +230,32 @@ let case_var expr = name |>> V
 let inline case_typex match_type expr (s: CharStream<_>) =
     let mutable i = None
     let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
-    let pat_body = expr_indent (<=) (patterns expr)
-    let pat = 
-        let pat_meth = barbar >>. many1 pat_body |>> fun x -> true, x
-        let pat_inl = bar >>. many1 pat_body |>> fun x -> false, x
-        expr_indent (<=) ((pat_meth <|> pat_inl) .>> lam)
+    
+    let clause = 
+        let clause_template is_meth = 
+            pipe2 (many1 (patterns expr) .>> lam) expr <| fun pat body ->
+                match pat with
+                | x :: xs -> x, if is_meth then meth_pat' xs body else inl_pat' xs body
+                | _ -> failwith "impossible"
+
+        poperator >>=? function
+            | "|" -> clause_template false
+            | "||" -> clause_template true
+            | _ -> fail "not a pattern matching clause"
+        |> expr_indent (<=) 
             
-    let clause pat = tuple2 pat expr
     let set_col (s: CharStream<_>) = i <- Some (s.Column); Reply(())
 
-    let with_clauses l = 
-        List.map (function
-            | (is_meth, x :: xs), body -> x, if is_meth then meth_pat' xs body else inl_pat' xs body
-            | _ -> failwith "impossible"
-            ) l
-        |> PatClauses
-    let pat_function l = Pattern (with_clauses l)
+    let pat_function l = Pattern (PatClauses l)
     let pat_match x l = ap (pat_function l) x
 
     match match_type with
     | true -> // function
-        (function_ >>. set_col >>. many1 (clause pat)
+        (function_ >>. set_col >>. many1 clause
         |>> pat_function) s    
     | false -> // match
         pipe2 (match_ >>. expr .>> with_ .>> set_col)
-            (many1 (clause pat))
+            (many1 clause)
             pat_match s
 
 let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
@@ -383,9 +384,9 @@ let operators expr (s: CharStream<_>) =
             let on_succ = on_succ orig_op
             let rec on_fail i _ = if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i] else fail ()
             calculate (on_fail (x.Length-1)) on_succ x
-        (poperator >>= (function
+        (poperator >>=? function
             | "->" -> fail "forbidden operator"
-            | orig_op -> calculate on_fail (on_succ orig_op) orig_op)) s
+            | orig_op -> calculate on_fail (on_succ orig_op) orig_op) s
 
     let rec led poperator term left (prec,asoc,m) =
         match asoc with
