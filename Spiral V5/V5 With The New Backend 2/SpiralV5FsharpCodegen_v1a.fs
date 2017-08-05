@@ -1194,13 +1194,11 @@ inl t =
 
 Parsing.run (stream (dyn "12 34 ")) (Parsing.parse_ints) <| function
     | .Succ, x -> t x
-    | (.FatalFail, er | .Fail, (_, er)) -> t er
+    | .FatalFail, er | .Fail, (_, er) -> t er
     | .FetchType -> t ""
     | x -> error_type "Got a strange input."
     """
 
 printfn "%A" (spiral_codegen [tuple; parsing] test29)
-
-// ...
 
 
