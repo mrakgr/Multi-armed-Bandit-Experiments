@@ -1016,6 +1016,43 @@ inl b = console.ReadLine()
 a(0),b(0)
     """
 
+let test30 = // Do recursive algebraic datatypes work?
+    "test30",
+    """
+met rec List x =
+    type
+        .ListCons, (x, List x)
+        .ListNil
+
+inl t = List int64
+inl nil = t .ListNil
+inl cons x xs = t (.ListCons, (x, xs))
+
+met rec sum (^int64 (^dyn s)) l = 
+    match l with
+    | .ListCons, (x, xs) -> sum (s + x) xs
+    | .ListNil -> s
+    : int64
+
+nil |> cons 3 |> cons 2 |> cons 1 |> dyn |> sum 0
+        """
+
+let test31 = // Does passing types into types work?
+    "test31",
+    """
+inl a = 
+    type 
+        .A, (int64, int64)
+        .B, string
+
+inl b = 
+    type 
+        a
+        .Hello
+
+a (.A, (2,3)) |> dyn |> b
+    """
+
 let parsing =
     "Parsing",
     """
@@ -1073,27 +1110,27 @@ inl pint64 s ret =
     loop .First 0
 
 inl list_rev typ l = 
-    met rec loop acc l = 
+    met rec loop (^typ (^dyn acc)) l = 
         match l with
-        | .ListNil x -> acc
-        | .ListCons, (x, xs) -> loop (typ (.ListCons, (x, acc))) xs
-        : typ l
+        | .ListNil -> acc
+        | .ListCons, (x, xs) -> loop (.ListCons, (x, acc)) xs
+        : l
     loop .ListNil l
 
 inl many typ_p p s ret =
-    inl state = s.pos ()
-    inl typ = List typ_p >> dyn
+    inl typ = List typ_p
 
-    met rec many r =
+    met rec many (^typ (^dyn r)) =
+        inl state = s.pos ()
         p s <| function
-        | .Succ, x when state < s.pos() -> many <| typ (.ListCons, (x, r))
-        | .Succ, _ when state = s.pos() -> ret (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
-        | .Fail, _ when state = s.pos() -> ret (.Succ, list_rev typ r)
-        | .Fail, _ -> ret (.Fail, (pos, "many"))
-        | x -> ret x
+            | .Succ, x when state < s.pos() -> many <| (.ListCons, (x, r))
+            | .Succ, _ when state = s.pos() -> ret (.FatalFail, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
+            | .Fail, _ when state = s.pos() -> ret (.Succ, list_rev typ r)
+            | .Fail, _ -> ret (.Fail, (s.pos, "many"))
+            | x -> ret x
         : ret .FetchType
 
-    many (typ .ListNil)
+    many .ListNil
 
 met rec spaces s ret =
     pchar s <| function
@@ -1145,6 +1182,7 @@ inl t =
         int64
         int64, int64
         string
+        Parsing.List int64
 
 Parsing.run (stream (dyn "12 34 ")) (Parsing.parse_ints) <| function
     | .Succ, x -> t x
@@ -1153,44 +1191,7 @@ Parsing.run (stream (dyn "12 34 ")) (Parsing.parse_ints) <| function
     | x -> error_type "Got a strange input."
     """
 
-let test30 = // Do recursive algebraic datatypes work?
-    "test30",
-    """
-met rec List x =
-    type
-        .ListCons, (x, List x)
-        .ListNil
-
-inl t = List int64
-inl nil = t .ListNil
-inl cons x xs = t (.ListCons, (x, xs))
-
-met rec sum s l = 
-    match l with
-    | .ListCons, (x, xs) -> sum (s + x) xs
-    | .ListNil -> s
-    : int64
-
-nil |> cons 3 |> cons 2 |> cons 1 |> dyn |> sum 0
-        """
-
-let test31 = // Does passing types into types work?
-    "test31",
-    """
-inl a = 
-    type 
-        .A, (int64, int64)
-        .B, string
-
-inl b = 
-    type 
-        a
-        .Hello
-
-a (.A, (2,3)) |> dyn |> b
-    """
-
-printfn "%A" (spiral_codegen [tuple; parsing] test30)
+printfn "%A" (spiral_codegen [tuple; parsing] test29)
 
 
 

@@ -471,7 +471,13 @@ and expr_prepass e =
 
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
-let renamer_apply_pool r s = Set.map (fun (tag,ty) -> Map.find tag r, ty) s
+let renamer_apply_pool r s = 
+//    printfn "r = %A" r
+//    printfn "s = %A" s
+    Set.map (fun (tag,ty) -> 
+        match Map.tryFind tag r with
+        | Some x -> x, ty
+        | None -> failwith "renamer no key") s
 let renamer_apply_renamer r m = Map.map (fun _ v -> Map.find v r) m
 
 let renamer_reverse r = 
@@ -539,7 +545,7 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) typed_exp =
             | MemoMethodDone (_, e, tag, args) -> Some (tag,(e,args))
             | MemoType t -> None
             | _ -> failwith "impossible") memo.Values |> Map
-
+    
     typed_expr_free_variables_template (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo) typed_exp
     |> ignore
 
@@ -854,7 +860,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
         let add_recursive_type_to_type_dict x =
             match globals.memoized_methods.TryGetValue key with
-            | true, MemoType (RecT tag) -> globals.memoized_types.[tag] <- x; RecT tag
+            | true, MemoType (RecT tag & t) -> globals.memoized_types.[tag] <- x; t
+            | true, MemoType _ -> failwith "Only recursive types allowed."
             | _ -> x
 
         match globals.memoized_methods.TryGetValue key with
@@ -1470,12 +1477,12 @@ let spiral_typecheck code body on_fail ret =
     let input = core_functions body
     try
         let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd))
-        typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
+        //typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
         ret (x, globals)
     with 
     | :? TypeError as e -> 
         let trace, message = e.Data0, e.Data1
         on_fail <| print_type_error code trace message
     | e ->
-        printfn "%s" e.StackTrace
+        //printfn "%s" e.StackTrace
         on_fail <| print_type_error code [] e.Message
