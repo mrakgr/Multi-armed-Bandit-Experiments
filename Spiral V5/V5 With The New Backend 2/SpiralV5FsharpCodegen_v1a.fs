@@ -1053,6 +1053,14 @@ inl b =
 a (.A, (2,3)) |> dyn |> b
     """
 
+let test32 = // Do the .NET methods work inside methods?
+    "test32",
+    """
+inl to_int64 = mscorlib ."System.Convert" .ToInt64
+met f = to_int64 (dyn 'a')
+f
+    """
+
 let parsing =
     "Parsing",
     """

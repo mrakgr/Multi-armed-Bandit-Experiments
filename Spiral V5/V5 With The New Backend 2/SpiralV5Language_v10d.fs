@@ -168,7 +168,6 @@ and Pattern =
 and PosKey = string * int64 * int64
 
 and Expr = 
-    | T of TypedExpr
     | V of string
     | Lit of Value
     | Pattern of Pattern
@@ -450,7 +449,6 @@ and pattern_compile_single pat =
 and expr_prepass e =
     let f e = expr_prepass e
     match e with
-    | T _ -> Set.empty, e
     | V n -> Set.singleton n, e
     | Op(op,l) ->
         let l,l' = List.map f l |> List.unzip
@@ -472,8 +470,6 @@ and expr_prepass e =
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
 let renamer_apply_pool r s = 
-//    printfn "r = %A" r
-//    printfn "s = %A" s
     Set.map (fun (tag,ty) -> 
         match Map.tryFind tag r with
         | Some x -> x, ty
@@ -519,16 +515,16 @@ let rec typed_expr_free_variables_template on_memo e =
 and env_free_variables_template on_memo env = 
     Map.fold (fun s _ v -> typed_expr_free_variables_template on_memo v + s) Set.empty env
 
-let private typed_expr_std_pass (typ,used_vars,renamer,tag) = !used_vars
+let private typed_expr_std_pass (typ,fv,renamer,tag) = !fv
 let rec typed_expr_free_variables e = typed_expr_free_variables_template typed_expr_std_pass e
 and env_free_variables env = env_free_variables_template typed_expr_std_pass env
 
 /// Optimizes the free variables for the sake of tuple deforestation.
 /// It needs at least two passes to converge properly. And probably exactly two.
 let typed_expr_optimization_pass num_passes (memo: MemoDict) typed_exp =
-    let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (_, r, renamer, tag) =
+    let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (_, fv, renamer, tag) =
         let vars,counter = memo.[int tag]
-        let set_vars vars = renamer_apply_pool renamer vars |> fun x -> r := x; x
+        let set_vars vars = renamer_apply_pool renamer vars |> fun x -> fv := x; x
         if counter < num_passes then
             let counter = counter + 1
             memo.[int tag] <- vars, counter
@@ -795,6 +791,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
         let memo_type = memo_type renamer
         let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr
+
         let typed_expr_ty = get_type typed_expr
         if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
         else memo_type, ref fv, renamer_reverse renamer, tag, typed_expr_ty
@@ -933,7 +930,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
         | _ -> on_type_er d.trace "Expected a string."
 
-    let rec apply tev d = function
+    let rec apply d a b = apply_template tev d (a, b)
+    and apply_template tev d = function
         | closure & TyEnv(env_term,(FunctionT(env_ty,x) | RecFunctionT(env_ty,x,_))), TyType (ForCastT args_ty) -> 
             let instantiate_type_as_variable d args_ty =
                 let f x = make_tyv_and_push_ty d x
@@ -942,7 +940,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 | x -> f x
             
             let args = instantiate_type_as_variable d args_ty
-            apply (memoize_closure args) d (closure, args)
+            apply_template (memoize_closure args) d (closure, args)
         | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
         | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
         | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
@@ -964,7 +962,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                             on_type_er d.trace "Cannot load a private type from an assembly."
         | TyAssembly _, _ -> on_type_er d.trace "Expected a type level string as the second argument."
         | dotnet_type & TyDotNetType _, method_name & TypeString _ ->
-            inl "args" (ap (T dotnet_type) (VV [T method_name; V "args"])) |> inner_compile
+            let lam = inl' ["instance";"method_name";"args"] (ap (V "instance") (VV [V "method_name"; V "args"]))
+                      |> inner_compile
+            apply d (apply d lam dotnet_type) method_name
         | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
             wrap_exception d <| fun _ ->
                 match typ.GetMethod(method_name, method_args) with
@@ -1003,7 +1003,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
             match ty, args with
             | x, TyType r when x = r -> args
-            | TyRecUnion ty', TyType (UnionT ty_args) when Set.isSubset ty_args ty' -> Op(Case,[T args; ap (T typec) (T args)]) |> inner_compile
+            | TyRecUnion ty', TyType (UnionT ty_args) when Set.isSubset ty_args ty' -> 
+                let lam = inl' ["args"; "typec"] (Op(Case,[V "args"; ap (V "typec") (V "args")])) |> inner_compile
+                apply d (apply d lam typec) args
             | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args                
             | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
         | TyLit (LitString str), TyLitIndex x -> 
@@ -1018,9 +1020,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
         | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
-    let apply_tev d expr args = 
-        let expr,args = tev2 d expr args
-        apply tev d (expr, args)
+    let apply_tev d expr args = apply d (tev d expr) (tev d args)
 
     let vv_index_template f d v i =
         let v,i = tev2 d v i
@@ -1281,7 +1281,6 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let add_trace d x = {d with trace = x :: d.trace}
 
     match expr with
-    | T x -> x
     | Lit value -> TyLit value
     | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
     | FunctionFilt(vars, (pat, body)) -> 
@@ -1476,8 +1475,10 @@ let spiral_typecheck code body on_fail ret =
     let d = data_empty()
     let input = core_functions body
     try
+        let watch = System.Diagnostics.Stopwatch.StartNew()
         let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd))
-        //typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
+        typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
+        printfn "Time for parsing + typechecking was: %A" watch.Elapsed
         ret (x, globals)
     with 
     | :? TypeError as e -> 
