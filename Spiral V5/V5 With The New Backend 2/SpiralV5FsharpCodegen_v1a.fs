@@ -175,6 +175,12 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                 if_var
         
         let rec if_ cond tr fl =
+            let enter f =
+                enter <| fun _ ->
+                    match f () with
+                    | "" -> "()"
+                    | x -> x
+                
             print_if (get_type tr) <| fun _ ->
                 sprintf "if %s then" (codegen cond) |> state
                 enter <| fun _ -> codegen tr
@@ -1234,6 +1240,34 @@ console.Write ' '
 bob() |> console.Write
     """
 
-printfn "%A" (spiral_codegen [tuple;parsing] hacker_rank_2)
+let test34 = // Does parse_n_ints blow up the code size?
+    "test34",
+    """
+inl console = mscorlib."System.Console"
+inl (|>>) = Parsing."|>>"
+inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 4 |>> f) (inl _ -> ())
+inl r = ref 0
+
+parse_3 <| inl a1,a2,a3,a4 ->
+    r := a1+a2+a3+a4
+
+r() |> console.Write
+console.WriteLine()
+    """
+
+let test35 = // How long does it take to produce Hello 2000x times? 0.27s. More than that and it overflows.
+    "test35",
+    """
+inl console = mscorlib."System.Console"
+inl rec loop = function
+    | i when i > 0 -> 
+        console.WriteLine "Hello."
+        loop (i-1)
+    | 0 -> ()
+loop 2000
+    """
+
+let x = spiral_codegen [tuple;parsing] test34
+printfn "%A" x
 
 
