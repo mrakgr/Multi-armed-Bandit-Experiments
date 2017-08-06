@@ -25,7 +25,8 @@ let is_identifier_char c = is_identifier_starting_char c || c = ''' || isDigit c
 let var_name =
     many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
     >>=? function
-        | "match" | "function" | "with" | "open" | "module" | "as" | "when"
+        | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env"
+        | "print_expr"
         | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
             fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
         | x -> preturn x
@@ -181,9 +182,11 @@ let rec patterns expr s = // The order the pattern parsers are chained determine
     
 let pattern_list expr = many (patterns expr)
     
-let expr_indent i op expr (s: CharStream<_>) = if op i s.Column then expr s else pzero s
+let col (s: CharStream<_>) = s.Column
+
+let expr_indent i op expr (s: CharStream<_>) = if op i (col s) then expr s else pzero s
 let if_then_else expr (s: CharStream<_>) =
-    let i = s.Column
+    let i = (col s)
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     pipe3
         (skipString "if" >>. spaces1 >>. expr)
@@ -206,7 +209,10 @@ let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (eq >>. expr) l
 let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
 let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
 
-let case_met_pat_statement expr = pipe2 (met_ >>. patterns expr) (eq >>. expr) (fun pattern body -> lp pattern (meth_memo body))
+let case_met_pat_statement expr = 
+    pipe2 (met_ >>. patterns expr) (eq >>. expr) <| fun pattern body -> 
+        let filter_env x = ap (inl "" x) B
+        lp pattern (filter_env (meth_memo body))
 let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
 let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
 
@@ -244,7 +250,7 @@ let inline case_typex match_type expr (s: CharStream<_>) =
             | _ -> fail "not a pattern matching clause"
         |> expr_indent (<=) 
             
-    let set_col (s: CharStream<_>) = i <- Some (s.Column); Reply(())
+    let set_col (s: CharStream<_>) = i <- Some ((col s)); Reply(())
 
     let pat_function l = Pattern (PatClauses l)
     let pat_match x l = ap (pat_function l) x
@@ -268,13 +274,24 @@ let case_lit_lift expr =
     let lit = expr |>> ap (v "lit_lift")
     dot >>. (var <|> lit)
 
+let case_print_env expr s = 
+    let i = col s
+    keywordString "print_env" >>. expr_indent i (<=) expr |>> print_env
+    <| s
+
+let case_print_expr expr s = 
+    let i = col s
+    keywordString "print_expr" >>. expr_indent i (<=) expr |>> print_expr
+    <| s
+
 let rec expressions expr s =
     let unary_ops = 
         [case_for_cast; case_lit_lift]
         |> List.map (fun x -> x (expressions expr))
         |> choice
     let rest = 
-        [case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
+        [case_print_env; case_print_expr
+         case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
          case_rounds; case_typecase; case_typeinl; case_module; case_var]
         |> List.map (fun x -> x expr |> attempt)
         |> choice
@@ -292,7 +309,7 @@ let process_parser_exprs exprs =
     process_parser_exprs preturn exprs
 
 let indentations statements expressions (s: CharStream<Userstate>) =
-    let i = s.Column
+    let i = (col s)
     let inline if_ op tr (s: CharStream<_>) = expr_indent i op tr s
     let expr_indent expr =
         let mutable op = (=)
@@ -304,13 +321,13 @@ let indentations statements expressions (s: CharStream<Userstate>) =
     expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs <| s
 
 let application expr (s: CharStream<_>) =
-    let i = s.Column
+    let i = (col s)
     let expr_up (s: CharStream<_>) = expr_indent i (<) expr s
     
     pipe2 expr (many expr_up) (List.fold ap) s
 
 let tuple expr (s: CharStream<_>) =
-    let i = s.Column
+    let i = (col s)
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     sepBy1 (expr_indent expr) (expr_indent comma)
     |>> function [x] -> x | x -> vv x
@@ -318,13 +335,13 @@ let tuple expr (s: CharStream<_>) =
 
 let type_ expr =
     let type_parse (s: CharStream<_>) = 
-        let i = s.Column
+        let i = (col s)
         let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
         many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
     (type_' >>. type_parse) <|> expr
 
 let mset statements expressions (s: CharStream<_>) = 
-    let i = s.Column
+    let i = (col s)
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
     let op =
         (set_ref >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
@@ -341,7 +358,7 @@ let mset statements expressions (s: CharStream<_>) =
         | a,None -> preturn a) s
 
 let annotations expr (s: CharStream<_>) = 
-    let i = s.Column
+    let i = (col s)
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     pipe2 (expr_indent expr) (opt (expr_indent pp >>. expr_indent expr))
         (fun a -> function
@@ -402,7 +419,7 @@ let operators expr (s: CharStream<_>) =
         and loop left = attempt (f left) <|>% left
         term >>= loop
 
-    let i = s.Column
+    let i = (col s)
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     let op s = expr_indent poperator s
     let term s = expr_indent expr s

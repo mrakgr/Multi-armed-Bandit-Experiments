@@ -1022,6 +1022,23 @@ inl b = console.ReadLine()
 a(0),b(0)
     """
 
+let test29 = // Does a simple int parser work?
+    "test29",
+    """
+inl t =
+    type
+        int64
+        int64, int64
+        string
+        Parsing.List int64
+
+Parsing.run "12 34 " (Parsing.parse_ints) <| function
+    | .Succ, x -> t x
+    | .FatalFail, er | .Fail, (_, er) -> t er
+    | .FetchType -> t ""
+    | x -> error_type "Got a strange input."
+    """
+
 let test30 = // Do recursive algebraic datatypes work?
     "test30",
     """
@@ -1067,15 +1084,51 @@ met f = to_int64 (dyn 'a')
 f
     """
 
+let hacker_rank_2 =
+    "hacker_rank_2",
+    """
+// https://www.hackerrank.com/challenges/compare-the-triplets
+
+inl console = mscorlib."System.Console"
+inl (|>>) = Parsing."|>>"
+inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3 |>> f) (inl _ -> ())
+inl alice = ref 0
+inl bob = ref 0
+inl comp = function
+    | a,b when a > b -> alice := alice () + 1
+    | a,b when a < b -> bob := bob () + 1
+    | a,b -> ()
+
+parse_3 <| inl a1,a2,a3 ->
+    parse_3 <| inl x1,x2,x3 ->
+        comp (a1,x1); comp (a2,x2); comp (a3,x3)
+
+alice() |> console.Write
+console.Write ' '
+bob() |> console.Write
+    """
+
+let test35 = // How long does it take to produce Hello 2000x times? 0.27s. More than that and it overflows.
+    "test35",
+    """
+inl console = mscorlib."System.Console"
+inl rec loop = function
+    | i when i > 0 -> 
+        console.WriteLine "Hello."
+        loop (i-1)
+    | 0 -> ()
+loop 2000
+    """
+
 let parsing =
     "Parsing",
     """
 inl convert = mscorlib ."System.Convert"
 inl to_int64 = convert .ToInt64
 
-inl is_digit x = x >= '0' && x <= '9'
-inl is_whitespace x = x = ' '
-inl is_newline x = x = '\n' || x = '\r'
+met is_digit x = x >= '0' && x <= '9'
+met is_whitespace x = x = ' '
+met is_newline x = x = '\n' || x = '\r'
 
 inl stream_create stream = 
     inl pos = ref 0
@@ -1174,7 +1227,8 @@ inl (|>>) a f = a >>= inl x s ret -> ret (.Succ, f x)
 
 inl string_stream str = 
     stream_create <| inl idx ret ->
-        if idx >= 0 && idx < string_length str then ret (.Succ, (str idx)) 
+        met cond = idx >= 0 && idx < string_length str
+        if cond then ret (.Succ, (str idx)) 
         else ret (.Fail, (idx, "string index out of bounds"))
 
 inl run (^dyn data) parser ret = 
@@ -1183,6 +1237,8 @@ inl run (^dyn data) parser ret =
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
+//inl parse_int = pint64
+//inl parse_int = spaces
 
 inl parse_n_ints n = 
     inl rec loop n = 
@@ -1199,47 +1255,6 @@ inl preturn x s ret = ret (.Succ, x)
 module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints)
     """
 
-let test29 = // Does a simple int parser work?
-    "test29",
-    """
-inl t =
-    type
-        int64
-        int64, int64
-        string
-        Parsing.List int64
-
-Parsing.run "12 34 " (Parsing.parse_ints) <| function
-    | .Succ, x -> t x
-    | .FatalFail, er | .Fail, (_, er) -> t er
-    | .FetchType -> t ""
-    | x -> error_type "Got a strange input."
-    """
-
-let hacker_rank_2 =
-    "hacker_rank_2",
-    """
-// https://www.hackerrank.com/challenges/compare-the-triplets
-
-inl console = mscorlib."System.Console"
-inl (|>>) = Parsing."|>>"
-inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3 |>> f) (inl _ -> ())
-inl alice = ref 0
-inl bob = ref 0
-inl comp = function
-    | a,b when a > b -> alice := alice () + 1
-    | a,b when a < b -> bob := bob () + 1
-    | a,b -> ()
-
-parse_3 <| inl a1,a2,a3 ->
-    parse_3 <| inl x1,x2,x3 ->
-        comp (a1,x1); comp (a2,x2); comp (a3,x3)
-
-alice() |> console.Write
-console.Write ' '
-bob() |> console.Write
-    """
-
 let test34 = // Does parse_n_ints blow up the code size?
     "test34",
     """
@@ -1249,23 +1264,13 @@ inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 4 |>> f) 
 inl r = ref 0
 
 parse_3 <| inl a1,a2,a3,a4 ->
-    r := a1+a2+a3+a4
+    //r := a1+a2+a3+a4
+    ()
 
 r() |> console.Write
 console.WriteLine()
     """
 
-let test35 = // How long does it take to produce Hello 2000x times? 0.27s. More than that and it overflows.
-    "test35",
-    """
-inl console = mscorlib."System.Console"
-inl rec loop = function
-    | i when i > 0 -> 
-        console.WriteLine "Hello."
-        loop (i-1)
-    | 0 -> ()
-loop 2000
-    """
 
 let x = spiral_codegen [tuple;parsing] test34
 printfn "%A" x

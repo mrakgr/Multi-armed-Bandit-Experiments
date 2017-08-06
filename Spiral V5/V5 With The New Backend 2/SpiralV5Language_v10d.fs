@@ -131,6 +131,8 @@ and Op =
 
     // Static unary operations
     | PrintStatic
+    | PrintEnv
+    | PrintExpr
     | ErrorNonUnit
     | ErrorType
     | ModuleOpen
@@ -355,8 +357,10 @@ let tuple_length v = Op(VVLength,[v])
 let tuple_slice_from v i = Op(VVSliceFrom,[v; lit_int i])
 let tuple_is v = Op(VVIs,[v])
 
-let error_type x = Op(ErrorType, [x])
+let error_type x = Op(ErrorType,[x])
 let print_static x = Op(PrintStatic,[x])
+let print_env x = Op(PrintEnv,[x])
+let print_expr x = Op(PrintExpr,[x])
 let dynamize x = Op(Dynamize,[x])
 
 let if_static cond tr fl = Op(IfStatic,[cond;tr;fl])
@@ -1310,6 +1314,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | ForCast,[x] -> for_cast d x
         
         | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
+        | PrintEnv,[a] -> printfn "%A" d.env; tev d a
+        | PrintExpr,[a] -> printfn "%A" a; tev d a
         | ModuleOpen,[a;b] -> module_open d a b
         | ModuleCreate,[l] -> module_create d l
         | ModuleWith,[a;b;c] -> module_with d a b c
