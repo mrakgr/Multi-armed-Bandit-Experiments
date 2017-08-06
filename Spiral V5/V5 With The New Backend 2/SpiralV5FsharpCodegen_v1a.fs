@@ -551,8 +551,14 @@ let spiral_codegen aux_modules main_module =
         f main_module
         d
      
+    let copy_to_clipboard x =
+        let path = @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\ConsoleApplication4\ConsoleApplication4\Program.fs"
+        printfn "Copied the code to: %s" path
+        System.IO.File.WriteAllText(path,x)
+        x
+
     parse_modules aux_modules Fail (fun r -> 
-        spiral_typecheck code r Fail (print_program >> Succ))
+        spiral_typecheck code r Fail (print_program >> copy_to_clipboard >> Succ))
 
 let test1 = // Does it run?
     "test1",
@@ -1255,24 +1261,17 @@ inl preturn x s ret = ret (.Succ, x)
 module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints)
     """
 
-let test34 = // Does parse_n_ints blow up the code size?
+let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
     "test34",
     """
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
-inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 4 |>> f) (inl _ -> ())
-inl r = ref 0
+inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 1 |>> f) (inl _ -> ())
 
-parse_3 <| inl a1,a2,a3,a4 ->
-    //r := a1+a2+a3+a4
-    ()
-
-r() |> console.Write
-console.WriteLine()
+parse_3 <| inl _ -> ()
     """
 
-
 let x = spiral_codegen [tuple;parsing] test34
-printfn "%A" x
+//printfn "%A" x
 
 

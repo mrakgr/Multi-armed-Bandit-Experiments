@@ -50,7 +50,7 @@ and TyTag = Tag * Ty
 and EnvTerm = Map<string, TypedExpr>
 and EnvTy = Map<string, Ty>
 and FunctionCore = string * Expr
-and MemoKey = EnvTerm * Expr
+and MemoKey = Expr * EnvTerm
 
 and Value = 
     | LitUInt8 of uint8
@@ -208,7 +208,7 @@ and MemoCases =
     | MemoType of Ty
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
-and MemoDict = Dictionary<MemoKey, MemoCases>
+and MemoDict = SortedDictionary<MemoKey, MemoCases>
 and ClosureDict = Dictionary<Tag, TypedExpr> 
 // For Common Subexpression Elimination. I need it not for its own sake, but to enable other PE based optimizations.
 and CSEDict = Map<TypedExpr,TypedExpr> ref
@@ -316,6 +316,7 @@ let is_int64 a = is_int64' (get_type a)
 
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
+let sd0() = SortedDictionary()
 
 let lit_int i = Lit (LitInt32 i)
 let lit_string x = Lit (LitString x)
@@ -769,7 +770,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let type_tag () = tag globals.type_tag
 
     let eval_method memo_type used_vars d expr =
-        let key_args = d.env, expr
+        let key_args = expr, d.env
         let memoized_methods = globals.memoized_methods
 
         match memoized_methods.TryGetValue key_args with
@@ -852,7 +853,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | x -> x
 
     let typec_create d x =
-        let key = d.env, x
+        let key = x, d.env
         let ret_tyv x = TypeConstructorT x |> make_tyv_and_push_ty d
 
         let add_to_memo_dict x = 
@@ -1409,7 +1410,7 @@ let data_empty () =
 let globals_empty (): LangGlobals =
     {
     method_tag = ref 0L
-    memoized_methods = d0()
+    memoized_methods = sd0()
     type_tag = ref 0L
     memoized_types = d0()
     memoized_dotnet_assemblies = d0(), d0()
