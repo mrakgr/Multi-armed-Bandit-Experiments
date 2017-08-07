@@ -807,6 +807,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
         | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l, ty)
         | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
+//        | x -> x
 
     let if_is_returnable (TyType r & x) =
         if is_returnable' r then x
