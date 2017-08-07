@@ -10,11 +10,11 @@ type ParserExpr =
 | ParserExpr of Expr
 
 let pos' (s: CharStream<_>) = s.Name, s.Line, s.Column
-let pos expr (s: CharStream<_>) = (expr |>> pos (pos' s)) s
+let pos expr (s: CharStream<_>) = (expr |>> expr_pos (pos' s)) s
 
 let patpos expr (s: CharStream<_>) = 
     let p = pos' s
-    (expr |>> fun expr -> PatPos(p, expr)) s
+    (expr |>> fun expr -> pat_pos p expr) s
 
 let rec spaces_template spaces s = spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces_template spaces) <| s
 let spaces, spaces1 = spaces_template spaces, spaces_template spaces1
@@ -347,7 +347,8 @@ let mset statements expressions (s: CharStream<_>) =
         (set_ref >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
         <|> (set_array >>% fun l r -> 
                 let rec loop = function
-                    | Pos(_,x) -> loop x
+                    | ExprPos p -> loop p.Expression
+                    | ExprNode p -> loop p.Expression
                     | Op(Apply,[a;b]) -> Op(ArraySet,[a;b;r]) |> preturn
                     | _ -> fail "Expected two arguments on the left of <-."
                 loop l)
@@ -394,7 +395,7 @@ let operators expr (s: CharStream<_>) =
                 match dict_operator.TryGetValue op with
                 | true, (prec,asoc) -> on_succ (prec,asoc)
                 | false, _ -> on_fail op
-        let on_succ orig_op (prec,asoc) = preturn (prec,asoc,fun a b -> Pos(p,ap' (v orig_op) [a; b]))
+        let on_succ orig_op (prec,asoc) = preturn (prec,asoc,fun a b -> expr_pos p (ap' (v orig_op) [a; b]))
         let on_fail (orig_op: string) =
             let x = orig_op.TrimStart [|'.'|]
             let fail _ = fail "unknown operator"
