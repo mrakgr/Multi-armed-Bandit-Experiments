@@ -802,12 +802,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 r
             
         match r with
-        | TyLit _ -> r
-        | TyTag _ | TyV _ -> destructure_var r
-        | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
-        | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l, ty)
+        | TyV _ | TyEnv _ | TyVV _ | TyLit _ -> r
+        | TyTag _ -> destructure_var r
         | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
-//        | x -> x
 
     let if_is_returnable (TyType r & x) =
         if is_returnable' r then x
