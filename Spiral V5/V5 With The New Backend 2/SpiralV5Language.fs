@@ -4,12 +4,6 @@ open ManagedCuda.VectorTypes
 open System
 open System.Collections.Generic
 
-type ListDictionaryNode<'K, 'T> = 
-  { mutable Result : 'T option
-    Nested : ListDictionary<'K, 'T> }
-
-and ListDictionary<'K, 'V> = Dictionary<'K, ListDictionaryNode<'K, 'V>>
-
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
     member x.Symbol = symbol

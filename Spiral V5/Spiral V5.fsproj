@@ -179,7 +179,7 @@
     <Compile Include="V5 With The New Backend 2\SpiralV5Parser.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5FsharpCodegen.fs" />
     <None Include="V5 With The New Backend 2\node_caching.fsx" />
-    <None Include="V5 With The New Backend 2\Script1.fsx" />
+    <None Include="V5 With The New Backend 2\node_caching_testing.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
