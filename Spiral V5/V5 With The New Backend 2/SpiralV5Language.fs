@@ -1,7 +1,46 @@
 ﻿module Spiral.Lang
 
 open ManagedCuda.VectorTypes
+open System
 open System.Collections.Generic
+
+type ListDictionaryNode<'K, 'T> = 
+  { mutable Result : 'T option
+    Nested : ListDictionary<'K, 'T> }
+
+and ListDictionary<'K, 'V> = Dictionary<'K, ListDictionaryNode<'K, 'V>>
+
+type Node<'a>(expr:'a, symbol:int) = 
+    member x.Expression = expr
+    member x.Symbol = symbol
+    override x.GetHashCode() = symbol
+    override x.Equals(y) = 
+        match y with 
+        | :? Node<'a> as y -> symbol = y.Symbol
+        | _ -> failwith "Invalid equality for Node."
+
+    interface IComparable with
+        member x.CompareTo(y) = 
+            match y with
+            | :? Node<'a> as y -> compare symbol y.Symbol
+            | _ -> failwith "Invalid comparison for Node."
+
+type PosKey = string * int64 * int64
+
+type Pos<'a when 'a: equality and 'a: comparison>(pos:PosKey, expr:'a) = 
+    member x.Expression = expr
+    member x.Pos = pos
+    override x.GetHashCode() = expr.GetHashCode()
+    override x.Equals(y) = 
+        match y with 
+        | :? Pos<'a> as y -> expr = y.Expression
+        | x -> failwithf "Invalid equality for Pos. Got: %A" x
+
+    interface IComparable with
+        member x.CompareTo(y) = 
+            match y with
+            | :? Pos<'a> as y -> compare expr y.Expression
+            | x -> failwithf "Invalid comparison for Pos. Got: %A" x
 
 /// The dynamic device variable type.
 type PrimitiveType =
@@ -20,37 +59,13 @@ type PrimitiveType =
     | CharT
 
 type ArrayType =
-| DotNetHeap
-| DotNetStack
-| DotNetReference
-| CudaGlobal
-| CudaShared
-| CudaLocal
-| CudaReference
-
-type Ty =
-    | PrimT of PrimitiveType
-    | VVT of Ty list
-    | LitT of Value
-    | FunctionT of EnvTy * FunctionCore // Type level function. Can also be though of as a procedural macro.
-    | RecFunctionT of EnvTy * FunctionCore * string 
-    | ModuleT of EnvTy
-    | UnionT of Set<Ty>
-    | RecT of Tag
-    | TypeConstructorT of Ty
-    | ClosureT of Ty * Ty
-    | ArrayT of ArrayType * Ty
-    | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
-    | DotNetTypeRuntimeT of Tag // Since Type does not support the Comparable interface, I map it to int.
-    | DotNetTypeInstanceT of Tag
-    | DotNetAssemblyT of Tag
-
-and Tag = int64
-and TyTag = Tag * Ty
-and EnvTerm = Map<string, TypedExpr>
-and EnvTy = Map<string, Ty>
-and FunctionCore = string * Expr
-and MemoKey = Expr * EnvTerm
+    | DotNetHeap
+    | DotNetStack
+    | DotNetReference
+    | CudaGlobal
+    | CudaShared
+    | CudaLocal
+    | CudaReference
 
 and Value = 
     | LitUInt8 of uint8
@@ -164,20 +179,53 @@ and Pattern =
     | PatClauses of (Pattern * Expr) list
     | PatTypeLit of Value
     | PatLit of Value
-    | PatPos of PosKey * Pattern
     | PatWhen of Pattern * Expr
-
-and PosKey = string * int64 * int64
+    | PatPos of Pos<Pattern>
 
 and Expr = 
-    | V of string
-    | Lit of Value
-    | Pattern of Pattern
-    | Function of FunctionCore
-    | FunctionFilt of Set<string> * FunctionCore
-    | VV of Expr list
-    | Op of Op * Expr list
-    | Pos of PosKey * Expr
+    | V of Node<string>
+    | Lit of Node<Value>
+    | Pattern of Node<Pattern>
+    | Function of Node<FunctionCore>
+    | FunctionFilt of Node<Set<string> * FunctionCore>
+    | VV of Node<Expr list>
+    | Op of Node<Op * Expr list>
+    | ExprPos of Pos<Expr>
+
+and Ty =
+    | PrimT of PrimitiveType
+    | VVT of Node<Ty list>
+    | LitT of Node<Value>
+    | FunctionT of Node<EnvTy * FunctionCore> // Type level function. Can also be though of as a procedural macro.
+    | RecFunctionT of Node<EnvTy * FunctionCore * string>
+    | ModuleT of EnvTy
+    | UnionT of Node<Set<Ty>>
+    | RecT of Node<Ty>
+    | TypeConstructorT of Node<Ty>
+    | ClosureT of Node<Ty * Ty>
+    | ArrayT of Node<ArrayType * Ty>
+    | ForCastT of Node<Ty> // For casting type level function to term (ClosureT) level ones.
+    | DotNetTypeRuntimeT of Node<Type> 
+    | DotNetTypeInstanceT of Node<Type>
+    | DotNetAssemblyT of Node<Type>
+
+and TypedExpr =
+    | TyTag of Node<TyTag>
+    | TyV of Node<TypedExpr * Ty>
+    | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
+    | TyLit of Node<Value>
+    
+    | TyVV of Node<TypedExpr list * Ty>
+    | TyEnv of Node<EnvTerm * Ty>
+    | TyOp of Op * TypedExpr list * Ty
+    | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
+
+and Tag = int64
+and TyTag = Node<Tag * Ty>
+and EnvTerm = Node<Map<string, TypedExpr>>
+and EnvTy = Node<Map<string, Ty>>
+and FunctionCore = Node<string * Expr>
+and MemoKey = Node<Expr * EnvTerm>
 
 and Arguments = Set<TyTag> ref
 and Renamer = Map<Tag,Tag>
@@ -190,17 +238,6 @@ and LetType =
 | LetStd
 | LetInvisible
 
-and TypedExpr =
-    | TyTag of TyTag
-    | TyV of TypedExpr * Ty
-    | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
-    | TyLit of Value
-    
-    | TyVV of TypedExpr list * Ty
-    | TyEnv of EnvTerm * Ty
-    | TyOp of Op * TypedExpr list * Ty
-    | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
-
 and MemoCases =
     | MemoMethodInEvaluation of Tag
     | MemoMethodDone of MemoExprType * TypedExpr * Tag * Arguments
@@ -208,7 +245,7 @@ and MemoCases =
     | MemoType of Ty
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
-and MemoDict = SortedDictionary<MemoKey, MemoCases>
+and MemoDict = Dictionary<MemoKey, MemoCases>
 and ClosureDict = Dictionary<Tag, TypedExpr> 
 // For Common Subexpression Elimination. I need it not for its own sake, but to enable other PE based optimizations.
 and CSEDict = Map<TypedExpr,TypedExpr> ref
@@ -233,7 +270,7 @@ let get_type_of_value = function
     | LitChar _ -> PrimT CharT
 
 let get_type = function
-    | TyLit x -> get_type_of_value x
+    | TyLit x -> get_type_of_value x.Expression
     | TyTag(_,t) | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
 
@@ -374,11 +411,65 @@ let gte a b = binop GTE a b
 
 let error_non_unit x = Op(ErrorNonUnit, [x])
 let type_lit_create x = Op(TypeLitCreate,[Lit x])
-let pos pos x = Pos(pos,x)
+let expr_pos pos x = ExprPos(Pos(pos,x))
+let pat_pos pos x = PatPos(Pos(pos,x))
+let expr_node sym x = ExprNode(Node(x,sym))
 
 let get_tag =
     let mutable i = 0
     fun () -> i <- i+1; i
+
+type NodeDict<'a when 'a: comparison> = Dictionary<'a,Node<'a>>
+
+// Not to be without the subnodes being processed first.
+let nodify (dict: NodeDict<_>) x =
+    match dict.TryGetValue x with
+    | true, x -> x
+    | false, _ ->
+        let x' = Node(x,get_tag())
+        dict.[x] <- x'
+        x'
+
+type NodeDicts =
+    {
+    dict_pat: NodeDict<Pattern>
+    dict_expr: NodeDict<Expr>
+    }
+
+let rec expr_nodify (d: NodeDicts) l = 
+    let f l = expr_nodify d l
+    let nodify = nodify d.dict_expr >> ExprNode
+    match l with
+    | ExprNode _ | Lit _ | V _ as x -> x
+    | Op(op,l) -> nodify <| Op(op,List.map f l)
+    | VV l -> nodify <| VV (List.map f l)
+    | FunctionFilt(vars,(name,body)) -> nodify <| FunctionFilt (vars,(name,f body))
+    | Function(name,body) -> nodify <| Function(name,f body)
+    | ExprPos p -> expr_pos p.Pos (f p.Expression)
+    | Pattern pat -> nodify <| Pattern (pattern_nodify d pat)
+
+and pattern_nodify d l =
+    let f l = pattern_nodify d l
+    let g l = expr_nodify d l
+    match l with
+    | PatTypeLit _ | PatLit _ | PatVar _ | E as x -> x
+    | PatCons l -> PatCons (List.map f l)
+    | PatTuple l -> PatTuple (List.map f l)
+    | PatType (exp,typ) -> PatType (f exp, f typ)
+    | PatActive (a,b) -> PatActive (a, f b)
+    | PatOr l -> PatOr (List.map f l)
+    | PatAnd l -> PatAnd (List.map f l)
+    | PatClauses l -> PatClauses (List.map (fun (a,b) -> f a, g b) l)
+    | PatPos p -> PatPos (Pos(p.Pos,f p.Expression))
+    | PatWhen (p, e) -> PatWhen(f p, g e)
+
+//let rec typed_expr_nodify = function
+//    | TyTag (v,t) -> [1L;v] @ ty_nodify t
+//    | TyV (a,t) -> 2L :: typed_expr_nodify a @ ty_nodify t
+//    | TyLit v -> 3L :: value_nodify v
+//    | TyVV (l,t) -> 4L :: List.collect (fun x -> -1L :: typed_expr_nodify x) l @ [0L]
+//    | TyEnv (e,_) -> 5L :: env_term_nodify e @ [0L]
+
 
 let rec pattern_compile arg pat =
     let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
@@ -440,8 +531,8 @@ let rec pattern_compile arg pat =
             let x = Lit x
             let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
             if_static (eq_type arg x) on_succ on_fail.Value |> case arg
-        | PatPos (p, pat) -> pos p (cp' arg pat on_succ on_fail)
         | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
+        | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
 
     let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
     let pattern_compile_def_on_fail = lazy error_type (Lit(LitString <| "Pattern matching cases are inexhaustive."))
@@ -467,11 +558,13 @@ and expr_prepass e =
         let vars,body = f body
         Set.remove name vars, FunctionFilt(vars,(name,body))
     | Lit _ -> Set.empty, e
-    | Pos(pos,body) -> 
-        let vars, body = f body
-        vars, Pos(pos,body)
     | Pattern pat -> pattern_compile_single pat
-
+    | ExprPos p -> 
+        let vars, body = f p.Expression
+        vars, expr_pos p.Pos body
+    | ExprNode p ->
+        let vars, body = f p.Expression
+        vars, expr_node p.Symbol body
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
 let renamer_apply_pool r s = 
@@ -722,10 +815,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 r
             
         match r with
-        | TyLit _ -> r
-        | TyTag _ | TyV _ -> destructure_var r
-        | TyVV(l,ty) -> TyVV(List.map destructure l, ty)
-        | TyEnv(l,ty) -> TyEnv(Map.map (fun _ -> destructure) l, ty)
+        | TyV _ | TyEnv _ | TyVV _ | TyLit _ -> r
+        | TyTag _ -> destructure_var r
         | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
 
     let if_is_returnable (TyType r & x) =
@@ -1253,7 +1344,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let rec loop acc = function
             | V x -> x :: acc
             | VV l -> List.fold loop acc l
-            | Pos(_,x) -> loop acc x
+            | ExprPos p -> loop acc p.Expression
+            | ExprNode p -> loop acc p.Expression
             | _ -> on_type_er d.trace "Only variable names are allowed in module create."
         let er _ = on_type_er d.trace "In module create, the variable was not found."
         let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
@@ -1295,8 +1387,9 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         TyEnv(env, FunctionT(env_ty, (pat, body)))
     | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
     | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
-    | Pos (pos, body) -> tev (add_trace d pos) body
-    | VV vars -> 
+    | ExprPos p -> tev (add_trace d p.Pos) p.Expression
+    | ExprNode p -> tev d p.Expression
+    | VV vars ->
         let vv = List.map (tev d) vars 
         TyVV(vv, VVT(List.map get_type vv))
     | Op(op,vars) ->
@@ -1480,10 +1573,11 @@ let core_functions =
 let spiral_typecheck code body on_fail ret = 
     let globals = globals_empty()
     let d = data_empty()
+    let dn = {dict_expr = d0(); dict_pat = d0()}
     let input = core_functions body
     try
         let watch = System.Diagnostics.Stopwatch.StartNew()
-        let x = !d.seq (expr_typecheck globals d (expr_prepass input |> snd))
+        let x = !d.seq (expr_nodify dn input |> expr_prepass |> snd |> expr_typecheck globals d)
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
         printfn "Time for parsing + typechecking was: %A" watch.Elapsed
         ret (x, globals)
@@ -1491,6 +1585,3 @@ let spiral_typecheck code body on_fail ret =
     | :? TypeError as e -> 
         let trace, message = e.Data0, e.Data1
         on_fail <| print_type_error code trace message
-    | e ->
-        //printfn "%s" e.StackTrace
-        on_fail <| print_type_error code [] e.Message

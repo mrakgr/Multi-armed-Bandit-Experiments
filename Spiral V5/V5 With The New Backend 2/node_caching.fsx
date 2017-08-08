@@ -5,9 +5,9 @@ open System.Collections.Generic
 
 type ListDictionaryNode<'K, 'T> = 
   { mutable Result : 'T option
-    Nested : Dictionary<'K, ListDictionaryNode<'K, 'T>> }
+    Nested : ListDictionary<'K, 'T> }
 
-type ListDictionary<'K, 'V> = Dictionary<'K, ListDictionaryNode<'K, 'V>>
+and ListDictionary<'K, 'V> = Dictionary<'K, ListDictionaryNode<'K, 'V>>
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module ListDictionary = 
