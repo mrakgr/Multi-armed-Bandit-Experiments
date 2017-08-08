@@ -204,19 +204,19 @@ and Ty =
     | DotNetAssemblyT of Node<Type>
 
 and TypedExpr =
-    | TyTag of Node<TyTag>
-    | TyV of Node<TypedExpr * Ty>
+    | TyTag of TyTag
+    | TyV of TypedExpr * Ty
     | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
-    | TyLit of Node<Value>
+    | TyLit of Value
     
-    | TyVV of Node<TypedExpr list * Ty>
-    | TyEnv of Node<EnvTerm * Ty>
+    | TyVV of TypedExpr list * Ty
+    | TyEnv of EnvTerm * Ty
     | TyOp of Op * TypedExpr list * Ty
     | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
 
 and Tag = int64
-and TyTag = Node<Tag * Ty>
-and EnvTerm = Node<Map<string, TypedExpr>>
+and TyTag = Tag * Ty
+and EnvTerm = Map<string, TypedExpr>
 and EnvTy = Node<Map<string, Ty>>
 and FunctionCore = Node<string * Expr>
 and MemoKey = Node<Expr * EnvTerm>
@@ -264,7 +264,7 @@ let get_type_of_value = function
     | LitChar _ -> PrimT CharT
 
 let get_type = function
-    | TyLit x -> get_type_of_value x.Expression
+    | TyLit x -> get_type_of_value x
     | TyTag(_,t) | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
 
