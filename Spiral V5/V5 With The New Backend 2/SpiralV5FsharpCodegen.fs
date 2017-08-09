@@ -80,7 +80,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         | TyEnvT env -> print_env_ty env
         | VVT (N t) -> print_tuple t
         | UnionT (N t) -> print_union_ty t
-        | RecT' t -> print_rec_ty t
+        | RecT t -> print_rec_ty t.Symbol
         | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
         | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
         | ArrayT _ -> failwith "Not implemented."
@@ -292,16 +292,16 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             if fv.IsEmpty then method_name
             else sprintf "%s(%s)" method_name (print_args fv)
         | TyV(x & TyType t, UnionT (N tys)) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
-        | TyV(x & TyType t, RecT' rect_Symbol & RecT rect_Expression) ->
-            match rect_Expression with
-            | UnionT (N tys) -> union_process_var (print_rec_case rect_Symbol) (x,t) tys
+        | TyV(x & TyType t, RecT rect) ->
+            match rect.Expression with
+            | UnionT (N tys) -> union_process_var (print_rec_case rect.Symbol) (x,t) tys
             | _ -> failwith "Only UnionT can be a recursive var type."
         | TyVV(l,VVT (N t)) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_tuple t) args)
         | TyVV(l,UnionT (N tys)) -> union_process_tuple (print_union_case (union_ty_tag tys)) l tys
-        | TyVV(l,RecT' rect_Symbol & RecT rect_Expression) -> 
-            match rect_Expression with
-            | VVT _ -> print_case_tuple l (print_rec_tuple rect_Symbol)
-            | UnionT (N tys) -> union_process_tuple (print_rec_case rect_Symbol) l tys
+        | TyVV(l,RecT rect) -> 
+            match rect.Expression with
+            | VVT _ -> print_case_tuple l (print_rec_tuple rect.Symbol)
+            | UnionT (N tys) -> union_process_tuple (print_rec_case rect.Symbol) l tys
             | _ -> failwith "Only VVT and UnionT are recursive tuple types."
         | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
         | TyEnv(env_term, TyEnvT env_ty) ->
@@ -321,7 +321,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                 print_if t <| fun _ ->
                     let print_case = 
                         match get_type v with
-                        | RecT' rect_Symbol & RecT rect_Expression -> print_rec_case rect_Symbol
+                        | RecT rect -> print_rec_case rect.Symbol
                         | UnionT (N tys) -> print_union_case (union_ty_tag tys)
                         | _ -> failwith "impossible"
 
@@ -484,8 +484,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
     for x in globals.memoized_methods do
         match x.Value with
-        | MemoType (RecT' rect_Symbol & RecT rect_Expression) ->
-            let tag, ty = rect_Symbol, rect_Expression
+        | MemoType (RecT rect) ->
+            let tag, ty = rect.Symbol, rect.Expression
             print_rec_definition (type_prefix()) definitions_buffer ty tag
         | _ -> ()
 
@@ -1264,7 +1264,7 @@ inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 8 |>> f) 
 parse_3 <| inl _ -> ()
     """
 
-let x = spiral_codegen [tuple;parsing] test34
+let x = spiral_codegen [] test1
 //printfn "%A" x
 
 

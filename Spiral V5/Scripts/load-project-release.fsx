@@ -2,6 +2,6 @@
 #I __SOURCE_DIRECTORY__
 #load "load-references-release.fsx"
 #load "../AssemblyInfo.fs"
-      "../V5 With The New Backend 2/SpiralV5Language_v10e.fs"
-      "../V5 With The New Backend 2/SpiralV5Parser_v3a.fs"
-      "../V5 With The New Backend 2/SpiralV5FsharpCodegen_v1a.fs"
+      "../V5 With The New Backend 2/SpiralV5Language.fs"
+      "../V5 With The New Backend 2/SpiralV5Parser.fs"
+      "../V5 With The New Backend 2/SpiralV5FsharpCodegen.fs"

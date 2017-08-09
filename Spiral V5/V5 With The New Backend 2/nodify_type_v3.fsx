@@ -20,9 +20,8 @@ type Ty =
     | Int
     | String
     | Tuple of Ty list
-    | Rec of Node<Ty>
+    | Rec of Node<Lazy<Ty>>
     | Union of Ty list
-    | Delayed of Lazy<Ty>
 
 type NodeDict<'a> = Dictionary<'a,Node<'a>>
 
@@ -42,27 +41,13 @@ let d = Dictionary(HashIdentity.Structural)
 let nodify_ty x = nodify d x
 
 let rec int_string_stream = 
-    Delayed <| lazy
+    lazy 
         Union 
             [
             Tuple [Int; Rec (nodify_ty (int_string_stream))]
             Tuple [String; Rec (nodify_ty (int_string_stream))]
             ]
-
-let rec int_string_stream2 = 
-    Delayed <| lazy
-        Union 
-            [
-            Tuple [Int; Rec (nodify_ty (int_string_stream2))]
-            Tuple [String; Rec (nodify_ty (int_string_stream2))]
-            ]
     
-let x =
-    match int_string_stream2 with
-    | Delayed x -> 
-        match x.Value with
-        | Union [_;Tuple [_; Rec x]] -> x
+int_string_stream.Value
 
-match x.Expression with
-| Delayed x -> x.Value
-
+        Tuple [Int; Rec (nodify_ty (lazy int_string_stream))]; Tuple [String; Rec (nodify_ty (lazy int_string_stream))]

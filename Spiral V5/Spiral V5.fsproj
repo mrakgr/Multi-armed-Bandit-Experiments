@@ -182,6 +182,7 @@
     <None Include="V5 With The New Backend 2\node_caching_testing.fsx" />
     <None Include="V5 With The New Backend 2\nodify_type_v1.fsx" />
     <None Include="V5 With The New Backend 2\nodify_type_v2.fsx" />
+    <None Include="V5 With The New Backend 2\nodify_type_v3.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

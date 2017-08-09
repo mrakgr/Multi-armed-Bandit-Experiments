@@ -194,8 +194,8 @@ and Ty =
     | RecFunctionT of Node<EnvTy * FunctionCore * string>
     | ModuleT of EnvTy
     | UnionT of Node<Set<Ty>>
-    | RecT' of int
-    | TypeConstructorT of Node<Ty>
+    | RecT of Node<Ty>
+    | TypeConstructorT of Node<Lazy<Ty>>
     | ClosureT of Node<Ty * Ty>
     | ArrayT of Node<ArrayType * Ty>
     | ForCastT of Node<Ty> // For casting type level function to term (ClosureT) level ones.
@@ -235,7 +235,7 @@ and LetType =
 and MemoCases =
     | MemoMethodInEvaluation of Tag
     | MemoMethodDone of MemoExprType * TypedExpr * Tag * Arguments
-    | MemoTypeInEvaluation
+    | MemoTypeInEvaluation of Ty
     | MemoType of Ty
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
@@ -270,6 +270,10 @@ let get_type = function
 
 let n (x: Node<_>) = x.Expression
 let (|N|) x = n x
+let (|TyTypeC|_|) x =
+    match x with
+    | TypeConstructorT x -> Some x.Expression.Value
+    | _ -> None
 
 let get_subtype x = 
     match get_type x with
@@ -392,7 +396,7 @@ let nodify_funt = nodify <| d0()
 let nodify_recfunt = nodify <| d0()
 let nodify_env_ty = nodify <| d0()
 let nodify_uniont = nodify <| d0()
-//let nodify_rect = nodify <| d0()
+let nodify_rect = nodify <| d0()
 let nodify_typect = nodify <| d0()
 let nodify_closuret = nodify <| d0()
 let nodify_arrayt = nodify <| d0()
@@ -407,7 +411,7 @@ let funt x = nodify_funt x |> FunctionT
 let recfunt x = nodify_recfunt x |> RecFunctionT
 let modulet x = nodify_env_ty x |> ModuleT
 let uniont x = nodify_uniont x |> UnionT
-//let rect x = nodify_rect x |> RecT
+let rect x = nodify_rect x |> RecT
 let typect x = nodify_typect x |> TypeConstructorT
 let closuret x = nodify_closuret x |> ClosureT
 let arrayt x = nodify_arrayt x |> ArrayT
@@ -415,13 +419,6 @@ let for_castt x = nodify_for_castt x |> ForCastT
 let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
 let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
 let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
-
-let rect_dict: Dictionary<int,Ty> = d0()
-let rect' x = RecT' x
-let (|RecT|_|) x = 
-    match x with
-    | RecT' x -> Some rect_dict.[x]
-    | _ -> None 
 
 let lit_int i = LitInt32 i |> lit
 let lit_string x = LitString x |> lit
@@ -649,7 +646,7 @@ let typed_expr_optimization_pass num_passes (memo: MemoDict) typed_exp =
         Seq.choose (function
             | MemoMethodDone (_, e, tag, args) -> Some (tag,(e,args))
             | MemoType t -> None
-            | _ -> failwith "impossible") memo.Values |> Map
+            | x -> failwithf "impossible=%A" x) memo.Values |> Map
     
     typed_expr_free_variables_template (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo) typed_exp
     |> ignore
@@ -873,7 +870,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             tev_rec d expr, tag
         | true, MemoMethodDone (memo_type, typed_expr, tag, used_vars) -> 
             typed_expr, tag
-        | true, (MemoTypeInEvaluation | MemoType _) ->
+        | true, (MemoTypeInEvaluation _ | MemoType _) ->
             failwith "Expected a method, not a recursive type."
 
     let eval_renaming memo_type d expr =
@@ -911,7 +908,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                     | UnionT (N l) -> Set.toList l |> List.collect (case_destructure d)
                     | _ -> [f args_ty]
                 match args_ty with
-                | RecT t -> union_case t
+                | RecT (N t) -> union_case t
                 | x -> union_case x
 
             let rec map_cases l =
@@ -932,33 +929,35 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let typec_union d a b =
         let a, b = tev2 d a b
         match get_type a, get_type b with
-        | TypeConstructorT (N a), TypeConstructorT (N b) -> set_field a + set_field b |> uniont |> typect |> make_tyv_and_push_ty d
+        | TyTypeC a, TyTypeC b -> lazy (set_field a + set_field b |> uniont) |> typect |> make_tyv_and_push_ty d
         | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
     let rec typec_strip = function 
-        | TypeConstructorT (N x) -> x
+        | TyTypeC x -> x
         | VVT (N l) -> vvt (List.map typec_strip l)
         | x -> x
 
     let typec_create d x = 
         let key = nodify_memo_key (x, d.env)
-        let ret_tyv x = typect x |> make_tyv_and_push_ty d
 
         let add_to_memo_dict x = 
-            match x with
-            | RecT' _ | UnionT _ -> globals.memoized_methods.[key] <- MemoType x
-            | _ -> ()
+            globals.memoized_methods.[key] <- MemoType x
             x
 
         match globals.memoized_methods.TryGetValue key with
-        | true, MemoType ty -> ret_tyv ty
-        | true, MemoTypeInEvaluation -> key.Symbol |> rect' |> add_to_memo_dict |> ret_tyv
+        | true, MemoType ty -> make_tyv_and_push_ty d ty
+        | true, MemoTypeInEvaluation ty -> add_to_memo_dict ty |> make_tyv_and_push_ty d
         | true, _ -> failwith "Expected a type in the dictionary."
         | false, _ -> 
-            globals.memoized_methods.[key] <- MemoTypeInEvaluation
+            let typec_body = lazy (tev_seq d x |> get_type |> typec_strip |> add_to_memo_dict)
+            let tyc = typect typec_body
+            
+            globals.memoized_methods.[key] <- MemoTypeInEvaluation tyc
             // After the evaluation, if the type is recursive the dictionary should have its key.
             // If present it will return that instead.
-            tev_seq d x |> get_type |> typec_strip |> add_to_memo_dict |> ret_tyv
+            typec_body.Value |> ignore
+            make_tyv_and_push_ty d tyc
+            
 
     let inline wrap_exception d f =
         try f()
@@ -1062,7 +1061,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                         else
                             on_type_er d.trace "Cannot call a private constructor."    
         | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
-        | typec & TyType(TypeConstructorT (N ty)), args -> 
+        | typec & TyType(TyTypeC ty), args -> 
             let substitute_ty = function 
                 | TyVV(l,_) -> TyVV(l,ty)
                 | TyV(x,_) -> TyV(x,ty) 
@@ -1070,7 +1069,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
             let (|TyRecUnion|_|) = function
                 | UnionT (N ty') -> Some ty'
-                | RecT t -> Some (set_field t)
+                | RecT (N t) -> Some (set_field t)
                 | _ -> None
 
             match ty, args with
@@ -1119,7 +1118,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let vv_is = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false))
 
     let eq_type d a b =
-        let f x = match get_type x with TypeConstructorT (N x) -> x | x -> x
+        let f x = match get_type x with TyTypeC x -> x | x -> x
         let a, b = tev2 d a b 
         LitBool (f a = f b) |> TyLit
     
@@ -1328,8 +1327,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let array_create d size typ =
         let typ = tev_seq d typ |> function 
-            | TyType (TypeConstructorT (N x)) -> x 
-            | TyType x -> x
+            | TyType (TyTypeC x | x) -> x 
 
         let size, array_type =
             match tev d size with
@@ -1546,6 +1544,7 @@ let spiral_typecheck code body on_fail ret =
     try
         let watch = System.Diagnostics.Stopwatch.StartNew()
         let x = !d.seq (expr_prepass input |> snd |> expr_typecheck globals d)
+        printfn "%A" x
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
         printfn "Time for parsing + typechecking was: %A" watch.Elapsed
         ret (x, globals)
