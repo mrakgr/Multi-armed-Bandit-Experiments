@@ -180,7 +180,7 @@ and Expr =
     | V of Node<string>
     | Lit of Node<Value>
     | Pattern of Node<Pattern>
-    | Function of Node<FunctionCore>
+    | Function of FunctionCore
     | FunctionFilt of Node<Set<string> * FunctionCore>
     | VV of Node<Expr list>
     | Op of Node<Op * Expr list>
@@ -268,9 +268,12 @@ let get_type = function
     | TyTag(_,t) | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
     | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
 
+let n (x: Node<_>) = x.Expression
+let (|N|) x = n x
+
 let get_subtype x = 
     match get_type x with
-    | ForCastT x -> x
+    | ForCastT (N x) -> x
     | x -> x
 
 /// Wraps the argument in a list if not a tuple.
@@ -282,19 +285,19 @@ let (|TyTuple|) x = tuple_field x
 
 /// Wraps the argument in a set if not a UnionT.
 let set_field = function
-    | UnionT t -> t
+    | UnionT (N t) -> t
     | t -> Set.singleton t
 
 let (|TySet|) x = set_field x
 
 /// Wraps the argument in a list if not a tuple type.
 let tuple_field_ty = function 
-    | VVT x -> x
+    | VVT (N x) -> x
     | x -> [x]
 
 let (|TyType|) x = get_type x
 let (|TypeLit|_|) = function
-    | TyType (LitT x) -> Some x
+    | TyType (LitT (N x)) -> Some x
     | _ -> None
 let (|TypeString|_|) = function
     | TypeLit (LitString x) -> Some x
@@ -349,121 +352,133 @@ let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 let sd0() = SortedDictionary()
 
-let lit_int i = Lit (LitInt32 i)
-let lit_string x = Lit (LitString x)
+type NodeDict<'a> = Dictionary<'a,Node<'a>>
+
+let get_nodify_tag =
+    let mutable i = 0
+    fun () -> i <- i+1; i
+
+let nodify (dict: NodeDict<_>) x =
+    match dict.TryGetValue x with
+    | true, x -> x
+    | false, _ ->
+        let x' = Node(x,get_nodify_tag())
+        dict.[x] <- x'
+        x'
+
+let nodify_memo_key = nodify <| d0()
+
+// nodify_expr variants.
+let nodify_v = nodify <| d0()
+let nodify_lit = nodify <| d0()
+let nodify_pattern = nodify <| d0()
+let nodify_func = nodify <| d0()
+let nodify_func_filt = nodify <| d0()
+let nodify_vv = nodify <| d0()
+let nodify_op = nodify <| d0()
+
+let v x = nodify_v x |> V
+let lit x = nodify_lit x |> Lit
+let op x = nodify_op x |> Op
+let pattern x = nodify_pattern x |> Pattern
+let func x = nodify_func x |> Function
+let func_filt x = nodify_func_filt x |> FunctionFilt
+let vv x = nodify_vv x |> VV
+let op x = nodify_op x |> Op
+
+// nodify_ty variants
+let nodify_vvt = nodify <| d0()
+let nodify_litt = nodify <| d0()
+let nodify_funt = nodify <| d0()
+let nodify_recfunt = nodify <| d0()
+let nodify_modulet = nodify <| d0()
+let nodify_primt = nodify <| d0()
+let nodify_uniont = nodify <| d0()
+let nodify_rect = nodify <| d0()
+let nodify_typect = nodify <| d0()
+let nodify_closuret = nodify <| d0()
+let nodify_arrayt = nodify <| d0()
+let nodify_for_castt = nodify <| d0()
+let nodify_dotnet_type_runtimet = nodify <| d0()
+let nodify_dotnet_type_instancet = nodify <| d0()
+let nodify_dotnet_assemblyt = nodify <| d0()
+
+let vvt x = nodify_vvt x |> VVT
+let litt x = nodify_litt x |> LitT
+let funt x = nodify_funt x |> FunctionT
+let recfunt x = nodify_recfunt x |> RecFunctionT
+let modulet x = nodify_modulet x |> ModuleT
+let uniont x = nodify_uniont x |> UnionT
+let rect x = nodify_rect x |> RecT
+let typect x = nodify_typect x |> TypeConstructorT
+let closuret x = nodify_closuret x |> ClosureT
+let arrayt x = nodify_arrayt x |> ArrayT
+let for_castt x = nodify_for_castt x |> ForCastT
+let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
+let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
+let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
+
+let lit_int i = LitInt32 i |> lit
+let lit_string x = LitString x |> lit
+
 let fix name x =
     match name with
     | "" -> x
-    | _ -> Op(Fix,[lit_string name; x])
-let inl x y = Function(x,y)
-let inl_pat x y = Pattern(PatClauses([x,y]))
-let ap x y = Op(Apply,[x;y])
-let for_cast x = Op(ForCast,[x])
+    | _ -> (Fix,[lit_string name; x]) |> op
+let inl x y = (x,y) |> func
+let inl_pat x y = (PatClauses([x,y])) |> pattern
+let ap x y = (Apply,[x;y]) |> op
+let for_cast x = (ForCast,[x]) |> op
 let lp v b e = ap (inl_pat v e) b
 let l v b e = ap (inl v e) b
 let l_rec v b e = ap (inl v e) (fix v b)
 
 let inl' args body = List.foldBack inl args body
     
-let meth_memo y = Op(MethodMemoize,[y])
+let meth_memo y = (MethodMemoize,[y]) |> op
 let meth x y = inl x (meth_memo y)
 
-let module_create l = Op(ModuleCreate,[l])
-let module_open a b = Op(ModuleOpen,[a;b])
+let module_create l = (ModuleCreate,[l]) |> op
+let module_open a b = (ModuleOpen,[a;b]) |> op
 
-let B = VV ([])
-let BVVT = VVT []
+let B = [] |> vv
+let BVVT = [] |> vvt
 let TyB = TyVV ([], BVVT)
 
-let v x = V(x)
-let cons a b = Op(VVCons,[a;b])
+let cons a b = (VVCons,[a;b]) |> op
 
 let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
 let rec ap' f l = List.fold ap f l
 
-let vv x = VV(x)
-let tuple_index' v i = Op(VVIndex,[v; i])
+let tuple_index' v i = (VVIndex,[v; i]) |> op
 let tuple_index v i = tuple_index' v (lit_int i)
-let tuple_length v = Op(VVLength,[v])
-let tuple_slice_from v i = Op(VVSliceFrom,[v; lit_int i])
-let tuple_is v = Op(VVIs,[v])
+let tuple_length v = (VVLength,[v]) |> op
+let tuple_slice_from v i = (VVSliceFrom,[v; lit_int i]) |> op
+let tuple_is v = (VVIs,[v]) |> op
 
-let error_type x = Op(ErrorType,[x])
-let print_static x = Op(PrintStatic,[x])
-let print_env x = Op(PrintEnv,[x])
-let print_expr x = Op(PrintExpr,[x])
-let dynamize x = Op(Dynamize,[x])
+let error_type x = (ErrorType,[x]) |> op
+let print_static x = (PrintStatic,[x]) |> op
+let print_env x = (PrintEnv,[x]) |> op
+let print_expr x = (PrintExpr,[x]) |> op
+let dynamize x = (Dynamize,[x]) |> op
 
-let if_static cond tr fl = Op(IfStatic,[cond;tr;fl])
-let case arg case = Op(Case,[arg;case])
-let private binop op a b = Op(op,[a;b])
+let if_static cond tr fl = (IfStatic,[cond;tr;fl]) |> op
+let case arg case = (Case,[arg;case]) |> op
+let private binop op' a b = (op',[a;b]) |> op
 let eq_type a b = binop EqType a b
 let eq a b = binop EQ a b
 let lt a b = binop LT a b
 let gte a b = binop GTE a b
 
-let error_non_unit x = Op(ErrorNonUnit, [x])
-let type_lit_create x = Op(TypeLitCreate,[Lit x])
+let error_non_unit x = (ErrorNonUnit, [x]) |> op
+let type_lit_create x = (TypeLitCreate,[lit x]) |> op
 let expr_pos pos x = ExprPos(Pos(pos,x))
 let pat_pos pos x = PatPos(Pos(pos,x))
-let expr_node sym x = ExprNode(Node(x,sym))
 
-let get_tag =
+let get_pattern_tag =
     let mutable i = 0
     fun () -> i <- i+1; i
-
-type NodeDict<'a when 'a: comparison> = Dictionary<'a,Node<'a>>
-
-// Not to be without the subnodes being processed first.
-let nodify (dict: NodeDict<_>) x =
-    match dict.TryGetValue x with
-    | true, x -> x
-    | false, _ ->
-        let x' = Node(x,get_tag())
-        dict.[x] <- x'
-        x'
-
-type NodeDicts =
-    {
-    dict_pat: NodeDict<Pattern>
-    dict_expr: NodeDict<Expr>
-    }
-
-let rec expr_nodify (d: NodeDicts) l = 
-    let f l = expr_nodify d l
-    let nodify = nodify d.dict_expr >> ExprNode
-    match l with
-    | ExprNode _ | Lit _ | V _ as x -> x
-    | Op(op,l) -> nodify <| Op(op,List.map f l)
-    | VV l -> nodify <| VV (List.map f l)
-    | FunctionFilt(vars,(name,body)) -> nodify <| FunctionFilt (vars,(name,f body))
-    | Function(name,body) -> nodify <| Function(name,f body)
-    | ExprPos p -> expr_pos p.Pos (f p.Expression)
-    | Pattern pat -> nodify <| Pattern (pattern_nodify d pat)
-
-and pattern_nodify d l =
-    let f l = pattern_nodify d l
-    let g l = expr_nodify d l
-    match l with
-    | PatTypeLit _ | PatLit _ | PatVar _ | E as x -> x
-    | PatCons l -> PatCons (List.map f l)
-    | PatTuple l -> PatTuple (List.map f l)
-    | PatType (exp,typ) -> PatType (f exp, f typ)
-    | PatActive (a,b) -> PatActive (a, f b)
-    | PatOr l -> PatOr (List.map f l)
-    | PatAnd l -> PatAnd (List.map f l)
-    | PatClauses l -> PatClauses (List.map (fun (a,b) -> f a, g b) l)
-    | PatPos p -> PatPos (Pos(p.Pos,f p.Expression))
-    | PatWhen (p, e) -> PatWhen(f p, g e)
-
-//let rec typed_expr_nodify = function
-//    | TyTag (v,t) -> [1L;v] @ ty_nodify t
-//    | TyV (a,t) -> 2L :: typed_expr_nodify a @ ty_nodify t
-//    | TyLit v -> 3L :: value_nodify v
-//    | TyVV (l,t) -> 4L :: List.collect (fun x -> -1L :: typed_expr_nodify x) l @ [0L]
-//    | TyEnv (e,_) -> 5L :: env_term_nodify e @ [0L]
-
 
 let rec pattern_compile arg pat =
     let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
@@ -507,7 +522,7 @@ let rec pattern_compile arg pat =
         match pat with
         | E -> on_succ.Value
         | PatVar x -> 
-            if flag_is_var_type then if_static (eq_type arg (V x)) on_succ.Value on_fail.Value
+            if flag_is_var_type then if_static (eq_type arg (v x)) on_succ.Value on_fail.Value
             else l x arg on_succ.Value
         | PatTuple l -> pat_tuple l
         | PatCons l -> pat_cons l
@@ -515,50 +530,47 @@ let rec pattern_compile arg pat =
             let on_succ = cp arg exp on_succ on_fail
             pattern_compile true arg typ on_succ on_fail |> case arg
         | PatActive (a,b) ->
-            let pat_var = sprintf " pat_var_%i" (get_tag())
-            l pat_var (ap (V a) arg) (cp' (v pat_var) b on_succ on_fail)
+            let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+            l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
         | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
         | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
         | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
         | PatTypeLit x -> if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value |> case arg
         | PatLit x -> 
-            let x = Lit x
+            let x = lit x
             let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
             if_static (eq_type arg x) on_succ on_fail.Value |> case arg
         | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
         | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
 
     let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
-    let pattern_compile_def_on_fail = lazy error_type (Lit(LitString <| "Pattern matching cases are inexhaustive."))
+    let pattern_compile_def_on_fail = lazy error_type (lit (LitString <| "Pattern matching cases are inexhaustive."))
     pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
 and pattern_compile_single pat =
     let main_arg = " main_arg"
-    inl main_arg (pattern_compile (V main_arg) pat) |> expr_prepass
+    inl main_arg (pattern_compile (v main_arg) pat) |> expr_prepass
 
 and expr_prepass e =
     let f e = expr_prepass e
     match e with
-    | V n -> Set.singleton n, e
-    | Op(op,l) ->
+    | V (N n) -> Set.singleton n, e
+    | Op(N(op',l)) ->
         let l,l' = List.map f l |> List.unzip
-        Set.unionMany l, Op(op,l')
-    | VV l -> 
+        Set.unionMany l, op(op',l')
+    | VV (N l) -> 
         let l,l' = List.map f l |> List.unzip
-        Set.unionMany l, VV l'
-    | FunctionFilt(vars,(name,body)) ->
+        Set.unionMany l, vv l'
+    | FunctionFilt(N (vars,N(name,body))) ->
         Set.remove name vars, e
-    | Function(name,body) ->
+    | Function(N(name,body)) ->
         let vars,body = f body
-        Set.remove name vars, FunctionFilt(vars,(name,body))
+        Set.remove name vars, func_filt(vars,nodify_func(name,body))
     | Lit _ -> Set.empty, e
-    | Pattern pat -> pattern_compile_single pat
+    | Pattern (N pat) -> pattern_compile_single pat
     | ExprPos p -> 
         let vars, body = f p.Expression
         vars, expr_pos p.Pos body
-    | ExprNode p ->
-        let vars, body = f p.Expression
-        vars, expr_node p.Symbol body
 
 let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
 let renamer_apply_pool r s = 
@@ -643,17 +655,7 @@ let env_num_args env =
         let f = typed_expr_free_variables v
         if Set.isEmpty f then s else s+1) 0 env
 
-let map_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x =
-    match d.TryGetValue x with
-    | true, x -> x
-    | false, _ ->
-        let v = d.Count |> int64
-        d.Add(x,v); dr.Add(v,x)
-        v
-
-let map_rev_dotnet (d: Dictionary<_,Tag>, dr: Dictionary<Tag,_>) x = dr.[x]
-
-let rec dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
+let rec dotnet_type_to_ty (x: System.Type) =
     if x = typeof<int8> then PrimT Int8T
     elif x = typeof<int16> then PrimT Int16T
     elif x = typeof<int32> then PrimT Int32T
@@ -669,12 +671,12 @@ let rec dotnet_type_to_ty memoized_dotnet_types (x: System.Type) =
     elif x = typeof<string> then PrimT StringT
     elif x = typeof<char> then PrimT CharT
     elif x = typeof<unit> || x = typeof<System.Void> then BVVT
-    elif x.IsArray then ArrayT(DotNetHeap,dotnet_type_to_ty memoized_dotnet_types (x.GetElementType()))
+    elif x.IsArray then arrayt(DotNetHeap,dotnet_type_to_ty (x.GetElementType()))
     // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
-    elif x.IsByRef then ArrayT(DotNetReference, dotnet_type_to_ty memoized_dotnet_types (x.GetElementType())) // Incorrect, but useful
-    else map_dotnet memoized_dotnet_types x |> DotNetTypeRuntimeT
+    elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
+    else dotnet_type_runtimet x
 
-let rec dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
+let rec dotnet_ty_to_type (x: Ty) =
     match x with
     | PrimT Int8T -> typeof<int8>
     | PrimT Int16T -> typeof<int16>
@@ -690,9 +692,9 @@ let rec dotnet_ty_to_type memoized_dotnet_types (x: Ty) =
     | PrimT Float64T -> typeof<float>
     | PrimT StringT -> typeof<string>
     | PrimT CharT -> typeof<char>
-    | ArrayT(DotNetHeap,t) -> (dotnet_ty_to_type memoized_dotnet_types t).MakeArrayType()
-    | ArrayT(DotNetReference,t) -> (dotnet_ty_to_type memoized_dotnet_types t).MakeByRefType() // Incorrect, but useful
-    | DotNetTypeInstanceT x | DotNetTypeRuntimeT x -> map_rev_dotnet memoized_dotnet_types x
+    | ArrayT(N(DotNetHeap,t)) -> (dotnet_ty_to_type t).MakeArrayType()
+    | ArrayT(N(DotNetReference,t)) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
+    | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
     | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
 type Trace = PosKey list
@@ -715,19 +717,15 @@ type LangGlobals =
     {
     method_tag: Tag ref
     memoized_methods: MemoDict
-    type_tag: Tag ref
-    memoized_types: Dictionary<Tag,Ty>
-    memoized_dotnet_assemblies: Dictionary<System.Reflection.Assembly,Tag> * Dictionary<Tag,System.Reflection.Assembly>
-    memoized_dotnet_types: Dictionary<System.Type,Tag> * Dictionary<Tag,System.Type>
     }
 
 let (|TyEnvT|_|) = function
-    | ModuleT env | RecFunctionT (env,_,_) | FunctionT(env,_) -> Some env
+    | ModuleT (N env) | RecFunctionT (N (N (env),_,_)) | FunctionT(N(N(env),_)) -> Some env
     | _ -> None
 
 let is_all_int64 size = List.forall is_int64 (tuple_field size)
 let (|TyArray|_|) = function
-    | TyTuple [size; ar & TyType (ArrayT (ar_type,ret_type))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
+    | TyTuple [size; ar & TyType (ArrayT (N (ar_type,ret_type)))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
     | _ -> None
 
 exception TypeError of Trace * string
@@ -795,7 +793,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                 Map.map unseal x
             let r_ty = get_type r
             match r_ty with
-            | VVT tuple_types -> TyVV(index_tuple_args tuple_types, r_ty)
+            | VVT (N tuple_types) -> TyVV(index_tuple_args tuple_types, r_ty)
             | TyEnvT env -> TyEnv(env_unseal env, r_ty)
             | _ -> chase_recurse r
            
@@ -852,10 +850,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         tag
 
     let method_tag () = tag globals.method_tag
-    let type_tag () = tag globals.type_tag
+//    let type_tag () = tag globals.type_tag
 
     let eval_method memo_type used_vars d expr =
-        let key_args = expr, d.env
+        let key_args = (expr, d.env) |> nodify_memo_key
         let memoized_methods = globals.memoized_methods
 
         match memoized_methods.TryGetValue key_args with
@@ -896,7 +894,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         let fv, arg_ty = typed_expr_free_variables arg, get_type arg
         let memo_type r = MemoClosure (renamer_apply_pool r fv)
         memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
-            TyMemoizedExpr(memo_type,args,rev_renamer,tag,ClosureT(arg_ty,ret_ty))) d x
+            TyMemoizedExpr(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
 
     let case_ d v case =
         let assume d v x branch = tev_assume (cse_add' d v x) d branch
@@ -905,10 +903,10 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             let rec case_destructure d args_ty =
                 let f x = make_tyv_and_push_ty d x
                 let union_case = function
-                    | UnionT l -> Set.toList l |> List.collect (case_destructure d)
+                    | UnionT (N l) -> Set.toList l |> List.collect (case_destructure d)
                     | _ -> [f args_ty]
                 match args_ty with
-                | RecT tag -> union_case globals.memoized_types.[tag]
+                | RecT (N t) -> union_case t
                 | x -> union_case x
 
             let rec map_cases l =
@@ -929,17 +927,17 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let typec_union d a b =
         let a, b = tev2 d a b
         match get_type a, get_type b with
-        | TypeConstructorT a, TypeConstructorT b -> set_field a + set_field b |> UnionT |> TypeConstructorT |> make_tyv_and_push_ty d
+        | TypeConstructorT (N a), TypeConstructorT (N b) -> set_field a + set_field b |> uniont |> typect |> make_tyv_and_push_ty d
         | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
     let rec typec_strip = function 
-        | TypeConstructorT x -> x
-        | VVT l -> VVT (List.map typec_strip l)
+        | TypeConstructorT (N x) -> x
+        | VVT (N l) -> vvt (List.map typec_strip l)
         | x -> x
 
     let typec_create d x =
-        let key = x, d.env
-        let ret_tyv x = TypeConstructorT x |> make_tyv_and_push_ty d
+        let key = nodify_memo_key (x, d.env)
+        let ret_tyv x = typect x |> make_tyv_and_push_ty d
 
         let add_to_memo_dict x = 
             globals.memoized_methods.[key] <- MemoType x
