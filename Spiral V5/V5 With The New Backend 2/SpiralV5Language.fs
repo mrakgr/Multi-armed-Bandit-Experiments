@@ -194,14 +194,14 @@ and Ty =
     | RecFunctionT of Node<EnvTy * FunctionCore * string>
     | ModuleT of EnvTy
     | UnionT of Node<Set<Ty>>
-    | RecT of Node<Ty>
+    | RecT' of int
     | TypeConstructorT of Node<Ty>
     | ClosureT of Node<Ty * Ty>
     | ArrayT of Node<ArrayType * Ty>
     | ForCastT of Node<Ty> // For casting type level function to term (ClosureT) level ones.
     | DotNetTypeRuntimeT of Node<Type> 
     | DotNetTypeInstanceT of Node<Type>
-    | DotNetAssemblyT of Node<Type>
+    | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
     | TyTag of TyTag
@@ -384,17 +384,15 @@ let pattern x = nodify_pattern x |> Pattern
 let func x = nodify_func x |> Function
 let func_filt x = nodify_func_filt x |> FunctionFilt
 let vv x = nodify_vv x |> VV
-let op x = nodify_op x |> Op
 
 // nodify_ty variants
 let nodify_vvt = nodify <| d0()
 let nodify_litt = nodify <| d0()
 let nodify_funt = nodify <| d0()
 let nodify_recfunt = nodify <| d0()
-let nodify_modulet = nodify <| d0()
-let nodify_primt = nodify <| d0()
+let nodify_env_ty = nodify <| d0()
 let nodify_uniont = nodify <| d0()
-let nodify_rect = nodify <| d0()
+//let nodify_rect = nodify <| d0()
 let nodify_typect = nodify <| d0()
 let nodify_closuret = nodify <| d0()
 let nodify_arrayt = nodify <| d0()
@@ -407,9 +405,9 @@ let vvt x = nodify_vvt x |> VVT
 let litt x = nodify_litt x |> LitT
 let funt x = nodify_funt x |> FunctionT
 let recfunt x = nodify_recfunt x |> RecFunctionT
-let modulet x = nodify_modulet x |> ModuleT
+let modulet x = nodify_env_ty x |> ModuleT
 let uniont x = nodify_uniont x |> UnionT
-let rect x = nodify_rect x |> RecT
+//let rect x = nodify_rect x |> RecT
 let typect x = nodify_typect x |> TypeConstructorT
 let closuret x = nodify_closuret x |> ClosureT
 let arrayt x = nodify_arrayt x |> ArrayT
@@ -417,6 +415,13 @@ let for_castt x = nodify_for_castt x |> ForCastT
 let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
 let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
 let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
+
+let rect_dict: Dictionary<int,Ty> = d0()
+let rect' x = RecT' x
+let (|RecT|_|) x = 
+    match x with
+    | RecT' x -> Some rect_dict.[x]
+    | _ -> None 
 
 let lit_int i = LitInt32 i |> lit
 let lit_string x = LitString x |> lit
@@ -906,7 +911,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                     | UnionT (N l) -> Set.toList l |> List.collect (case_destructure d)
                     | _ -> [f args_ty]
                 match args_ty with
-                | RecT (N t) -> union_case t
+                | RecT t -> union_case t
                 | x -> union_case x
 
             let rec map_cases l =
@@ -935,29 +940,25 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | VVT (N l) -> vvt (List.map typec_strip l)
         | x -> x
 
-    let typec_create d x =
+    let typec_create d x = 
         let key = nodify_memo_key (x, d.env)
         let ret_tyv x = typect x |> make_tyv_and_push_ty d
 
         let add_to_memo_dict x = 
-            globals.memoized_methods.[key] <- MemoType x
+            match x with
+            | RecT' _ | UnionT _ -> globals.memoized_methods.[key] <- MemoType x
+            | _ -> ()
             x
-
-        let add_recursive_type_to_type_dict x =
-            match globals.memoized_methods.TryGetValue key with
-            | true, MemoType (RecT tag & t) -> globals.memoized_types.[tag] <- x; t
-            | true, MemoType _ -> failwith "Only recursive types allowed."
-            | _ -> x
 
         match globals.memoized_methods.TryGetValue key with
         | true, MemoType ty -> ret_tyv ty
-        | true, MemoTypeInEvaluation -> type_tag() |> RecT |> add_to_memo_dict |> ret_tyv
+        | true, MemoTypeInEvaluation -> key.Symbol |> rect' |> add_to_memo_dict |> ret_tyv
         | true, _ -> failwith "Expected a type in the dictionary."
         | false, _ -> 
             globals.memoized_methods.[key] <- MemoTypeInEvaluation
             // After the evaluation, if the type is recursive the dictionary should have its key.
             // If present it will return that instead.
-            tev_seq d x |> get_type |> typec_strip |> add_recursive_type_to_type_dict |> add_to_memo_dict |> ret_tyv
+            tev_seq d x |> get_type |> typec_strip |> add_to_memo_dict |> ret_tyv
 
     let inline wrap_exception d f =
         try f()
@@ -969,28 +970,12 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         match tev d x with
         | TypeString x ->
             wrap_exception d <| fun _ ->
-                System.Reflection.Assembly.Load(x) |> map_dotnet globals.memoized_dotnet_assemblies 
-                |> DotNetAssemblyT |> make_tyv_and_push_ty d
+                System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> make_tyv_and_push_ty d
         | _ -> on_type_er d.trace "Expected a type level string."
 
-    let (|TyAssembly|_|) = function
-        | TyType (DotNetAssemblyT x) -> map_rev_dotnet globals.memoized_dotnet_assemblies x |> Some
-        | _ -> None
-
-    let (|TyDotNetTypeRuntime|_|) = function
-        | TyType (DotNetTypeRuntimeT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
-        | _ -> None
-
-    let (|TyDotNetTypeInstance|_|) = function
-        | TyType (DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
-        | _ -> None
-
     let (|TyDotNetType|_|) = function
-        | TyType (DotNetTypeRuntimeT x | DotNetTypeInstanceT x) -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
+        | TyType (DotNetTypeRuntimeT (N x) | DotNetTypeInstanceT (N x)) -> Some x
         | _ -> None
-
-    let dotnet_type_to_ty (x: System.Type) = dotnet_type_to_ty globals.memoized_dotnet_types x
-    let dotnet_ty_to_type (x: Ty) = dotnet_ty_to_type globals.memoized_dotnet_types x
 
     let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
 
@@ -1020,11 +1005,11 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let rec apply d a b = apply_template tev d (a, b)
     and apply_template tev d = function
-        | closure & TyEnv(env_term,(FunctionT(env_ty,x) | RecFunctionT(env_ty,x,_))), TyType (ForCastT args_ty) -> 
+        | closure & TyEnv(env_term,(FunctionT(N(N env_ty,x)) | RecFunctionT(N(N env_ty,x,_)))), TyType (ForCastT (N args_ty)) -> 
             let instantiate_type_as_variable d args_ty =
                 let f x = make_tyv_and_push_ty d x
                 match args_ty with
-                | VVT l -> TyVV(List.map f l, args_ty)
+                | VVT (N l) -> TyVV(List.map f l, args_ty)
                 | x -> f x
             
             let args = instantiate_type_as_variable d args_ty
@@ -1033,24 +1018,23 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
         | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
         | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
-        | recf & TyEnv(env_term,RecFunctionT (env_ty, (pat,body), name)), args -> 
+        | recf & TyEnv(env_term,RecFunctionT (N (_, N (pat,body), name))), args -> 
             let env = if pat <> "" then Map.add pat args env_term else env_term
             tev {d with env = Map.add name recf env} body
-        | TyEnv(env_term,FunctionT (env_ty, (pat,body))), args -> 
+        | TyEnv(env_term,FunctionT (N (_, N (pat,body)))), args -> 
             tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
-        | TyAssembly a, TypeString name -> 
+        | TyType (DotNetAssemblyT (N a)), TypeString name -> 
                 wrap_exception d <| fun _ ->
                     match a.GetType(name) with
                     | null -> on_type_er d.trace "A type cannot be found inside the assembly."
                     | x -> 
                         if x.IsPublic then
-                            x |> map_dotnet globals.memoized_dotnet_types
-                            |> DotNetTypeRuntimeT |> make_tyv_and_push_ty d
+                            x |> dotnet_type_runtimet |> make_tyv_and_push_ty d
                         else
                             on_type_er d.trace "Cannot load a private type from an assembly."
-        | TyAssembly _, _ -> on_type_er d.trace "Expected a type level string as the second argument."
-        | dotnet_type & TyDotNetType _, method_name & TypeString _ ->
-            let lam = inl' ["instance";"method_name";"args"] (ap (V "instance") (VV [V "method_name"; V "args"]))
+        | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
+        | dotnet_type & TyType (DotNetTypeRuntimeT _ | DotNetTypeInstanceT _), method_name & TypeString _ ->
+            let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
                       |> inner_compile
             apply d (apply d lam dotnet_type) method_name
         | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
@@ -1063,36 +1047,36 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
                         |> make_tyv_and_push_typed_expr d
                     else
                         on_type_er d.trace "Cannot call a private method."
-        | TyDotNetTypeRuntime runtime_type, args & TyTuple (TySystemTypeArgs system_type_args) ->
+        | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TyTuple (TySystemTypeArgs system_type_args) ->
             wrap_exception d <| fun _ ->
                 if runtime_type.ContainsGenericParameters then // instantiate generic type params
-                    runtime_type.MakeGenericType system_type_args |> map_dotnet globals.memoized_dotnet_types
-                    |> DotNetTypeRuntimeT |> make_tyv_and_push_ty d
+                    runtime_type.MakeGenericType system_type_args 
+                    |> dotnet_type_runtimet |> make_tyv_and_push_ty d
                 else // construct the type
                     match runtime_type.GetConstructor system_type_args with
                     | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
                     | con -> 
                         if con.IsPublic then
-                            let instance_type = map_dotnet globals.memoized_dotnet_types runtime_type |> DotNetTypeInstanceT
+                            let instance_type = dotnet_type_instancet runtime_type
                             TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
                         else
                             on_type_er d.trace "Cannot call a private constructor."    
-        | TyType(DotNetTypeInstanceT tag), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
-        | typec & TyType(TypeConstructorT ty), args -> 
+        | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
+        | typec & TyType(TypeConstructorT (N ty)), args -> 
             let substitute_ty = function 
                 | TyVV(l,_) -> TyVV(l,ty)
                 | TyV(x,_) -> TyV(x,ty) 
                 | x -> TyV(x,ty) 
 
             let (|TyRecUnion|_|) = function
-                | UnionT ty' -> Some ty'
-                | RecT tag -> Some (globals.memoized_types.[tag] |> set_field)
+                | UnionT (N ty') -> Some ty'
+                | RecT t -> Some (set_field t)
                 | _ -> None
 
             match ty, args with
             | x, TyType r when x = r -> args
-            | TyRecUnion ty', TyType (UnionT ty_args) when Set.isSubset ty_args ty' -> 
-                let lam = inl' ["args"; "typec"] (Op(Case,[V "args"; ap (V "typec") (V "args")])) |> inner_compile
+            | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' -> 
+                let lam = inl' ["args"; "typec"] (op(Case,[v "args"; ap (v "typec") (v "args")])) |> inner_compile
                 apply d (apply d lam typec) args
             | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args                
             | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
@@ -1102,7 +1086,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | TyType(PrimT StringT) & str, idx -> 
             if is_int idx = false then on_type_er d.trace "Expected an int as the second argument to string index."
             TyOp(StringIndex,[str;idx],PrimT CharT)
-        | closure & TyType(ClosureT(clo_arg_ty,clo_ret_ty)), args -> 
+        | closure & TyType(ClosureT(N (clo_arg_ty,clo_ret_ty))), args -> 
             let arg_ty = get_type args
             if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
             else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
@@ -1121,7 +1105,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
         | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
     let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
-    let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,VVT (List.map get_type l))) d v i
+    let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,vvt (List.map get_type l))) d v i
 
     let inline vv_unop_template on_succ on_fail d v =
         match tev d v with
@@ -1135,17 +1119,17 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let vv_is = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false))
 
     let eq_type d a b =
-        let f x = match get_type x with TypeConstructorT x -> x | x -> x
+        let f x = match get_type x with TypeConstructorT (N x) -> x | x -> x
         let a, b = tev2 d a b 
         LitBool (f a = f b) |> TyLit
     
     let vv_cons d a b =
         let a, b = tev2 d a b
         match b with
-        | TyVV(b, VVT bt) -> TyVV(a::b, VVT (get_type a :: bt))
+        | TyVV(b, VVT (N bt)) -> TyVV(a::b, vvt (get_type a :: bt))
         | _ -> on_type_er d.trace "Expected a tuple on the right is in VVCons."
 
-    let type_lit_create' d x = LitT x |> make_tyv_and_push_ty d
+    let type_lit_create' d x = litt x |> make_tyv_and_push_ty d
 
     let module_open d a b =
         let a = tev d a
@@ -1158,7 +1142,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let module_with_f_extend d (module_,module_type) name arg =
         let x = Map.add name arg module_
         let x_ty = Map.add name (get_type arg) module_type
-        TyEnv(x, ModuleT x_ty)
+        TyEnv(x, modulet x_ty)
 
     let module_with_f d (module_,module_type) name arg =
         match Map.tryFind name module_ with
@@ -1170,8 +1154,8 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let module_with_template f d module_ name arg =
         let module_, name, arg = tev3 d module_ name arg
         match module_, name with
-        | TyEnv(module_,ModuleT module_type), TypeString name -> f d (module_,module_type) name arg
-        | TyEnv(module_,ModuleT module_type), _ -> on_type_er d.trace "Expected a type level string as the second argument."
+        | TyEnv(module_,ModuleT (N module_type)), TypeString name -> f d (module_,module_type) name arg
+        | TyEnv(module_,ModuleT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
         | _ -> on_type_er d.trace "Expected a module as the first argument."
 
     let module_with = module_with_template module_with_f
@@ -1316,7 +1300,7 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
             | _ -> prim_un_op_helper t a
             )
 
-    let for_cast d x = tev_seq d x |> get_type |> typec_strip |> ForCastT |> make_tyv_and_push_ty d
+    let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> make_tyv_and_push_ty d
     let error_non_unit d a =
         let x = tev d a 
         if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
@@ -1334,33 +1318,32 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
 
     let module_create d l =
         let rec loop acc = function
-            | V x -> x :: acc
-            | VV l -> List.fold loop acc l
+            | V (N x) -> x :: acc
+            | VV (N l) -> List.fold loop acc l
             | ExprPos p -> loop acc p.Expression
-            | ExprNode p -> loop acc p.Expression
             | _ -> on_type_er d.trace "Only variable names are allowed in module create."
         let er _ = on_type_er d.trace "In module create, the variable was not found."
         let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
-        TyEnv(env, ModuleT <| env_to_ty env)
+        TyEnv(env, modulet <| env_to_ty env)
 
     let array_create d size typ =
         let typ = tev_seq d typ |> function 
-            | TyType (TypeConstructorT x) -> x 
+            | TyType (TypeConstructorT (N x)) -> x 
             | TyType x -> x
 
         let size, array_type =
             match tev d size with
-            | size when is_all_int64 size -> size, ArrayT(DotNetHeap,typ)
+            | size when is_all_int64 size -> size, arrayt(DotNetHeap,typ)
             | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
 
         let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
-        let l = [size;array] in TyVV(l,VVT <| List.map get_type l)
+        let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
 
     let reference_create d x =
         let x = tev d x
-        let size, array_type = TyB, ArrayT(DotNetReference, get_type x)
+        let size, array_type = TyB, arrayt(DotNetReference, get_type x)
         let array = TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
-        let l = [size;array] in TyVV(l,VVT <| List.map get_type l)
+        let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
 
     let array_set d ar idx r =
         match array_index d ar idx, tev d r with
@@ -1370,27 +1353,26 @@ let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
     let add_trace d x = {d with trace = x :: d.trace}
 
     match expr with
-    | Lit value -> TyLit value
-    | V x -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
-    | FunctionFilt(vars, (pat, body)) -> 
+    | Lit (N value) -> TyLit value
+    | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
+    | FunctionFilt(N (vars,N (pat, body))) -> 
         let env = Map.filter (fun k _ -> Set.contains k vars) d.env
-        let env_ty = env_to_ty env
+        let env_ty = env_to_ty env |> nodify_env_ty
         let pat = if vars.Contains pat then pat else ""
-        TyEnv(env, FunctionT(env_ty, (pat, body)))
+        TyEnv(env, funt(env_ty, nodify_func (pat, body)))
     | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
     | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
     | ExprPos p -> tev (add_trace d p.Pos) p.Expression
-    | ExprNode p -> tev d p.Expression
-    | VV vars ->
+    | VV (N vars) ->
         let vv = List.map (tev d) vars 
-        TyVV(vv, VVT(List.map get_type vv))
-    | Op(op,vars) ->
+        TyVV(vv, vvt(List.map get_type vv))
+    | Op(N (op,vars)) ->
         match op, vars with
         | StringLength,[a] -> string_length d a
         | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
-        | Fix,[Lit (LitString name); body] ->
+        | Fix,[Lit (N (LitString name)); body] ->
             match tev d body with
-            | TyEnv(env_term,FunctionT(env_ty,core)) -> TyEnv(env_term,RecFunctionT(env_ty,core,name))  
+            | TyEnv(env_term,FunctionT(N (env_ty,core))) -> TyEnv(env_term,recfunt(env_ty,core,name))  
             | x -> failwithf "Invalid use of Fix. Got: %A" x
         | Case,[v;case] -> case_ d v case
         | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -1495,57 +1477,52 @@ let data_empty () =
 let globals_empty (): LangGlobals =
     {
     method_tag = ref 0L
-    memoized_methods = sd0()
-    type_tag = ref 0L
-    memoized_types = d0()
-    memoized_dotnet_assemblies = d0(), d0()
-    memoized_dotnet_types = d0(), d0()
+    memoized_methods = d0()
     }
 
-let array_index op a b = Op(op,[a;b])
-let type_create a = Op(TypeConstructorCreate,[a])
-let type_union a b = Op(TypeConstructorUnion,[a;b])
+let array_index op' a b = op(op',[a;b])
+let type_create a = op(TypeConstructorCreate,[a])
+let type_union a b = op(TypeConstructorUnion,[a;b])
 
 let core_functions =
     let p f = inl "x" (f (v "x"))
     let p2 f = inl' ["x"; "y"] (f (v "x") (v "y"))
     let p3 f = inl' ["x"; "y"; "z"] (f (v "x") (v "y") (v "z"))
-    let binop' op a b = Op(op,[a;b])
+    let binop' op' a b = op(op',[a;b])
     let binop op = p2 (binop' op)
     let b str op = l str (binop op)
     let apply a b = binop' Apply a b
     let compose a b c = apply a (apply b c)
-    let con x = Op(x,[])
-    let lit x = Lit (x)
+    let con x = op(x,[])
     s  [l "error_type" (p error_type)
         l "print_static" (p print_static)
         l "dyn" (p dynamize)
         l "union" (p2 type_union)
 
-        l "int64" (Op(TypeConstructorCreate,[Lit <| LitInt64 0L]))
-        l "int32" (Op(TypeConstructorCreate,[Lit <| LitInt32 0]))
-        l "int16" (Op(TypeConstructorCreate,[Lit <| LitInt16 0s]))
-        l "int8" (Op(TypeConstructorCreate,[Lit <| LitInt8 0y]))
-        l "uint64" (Op(TypeConstructorCreate,[Lit <| LitUInt64 0UL]))
-        l "uint32" (Op(TypeConstructorCreate,[Lit <| LitUInt32 0u]))
-        l "uint16" (Op(TypeConstructorCreate,[Lit <| LitUInt16 0us]))
-        l "uint8" (Op(TypeConstructorCreate,[Lit <| LitUInt8 0uy]))
-        l "float64" (Op(TypeConstructorCreate,[Lit <| LitFloat64 0.0]))
-        l "float32" (Op(TypeConstructorCreate,[Lit <| LitFloat32 0.0f]))
-        l "string" (Op(TypeConstructorCreate,[Lit <| LitString ""]))
-        l "char" (Op(TypeConstructorCreate,[Lit <| LitChar ' ']))
-        l "unit" (Op(TypeConstructorCreate,[B]))
+        l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
+        l "int32" (op(TypeConstructorCreate,[lit <| LitInt32 0]))
+        l "int16" (op(TypeConstructorCreate,[lit <| LitInt16 0s]))
+        l "int8" (op(TypeConstructorCreate,[lit <| LitInt8 0y]))
+        l "uint64" (op(TypeConstructorCreate,[lit <| LitUInt64 0UL]))
+        l "uint32" (op(TypeConstructorCreate,[lit <| LitUInt32 0u]))
+        l "uint16" (op(TypeConstructorCreate,[lit <| LitUInt16 0us]))
+        l "uint8" (op(TypeConstructorCreate,[lit <| LitUInt8 0uy]))
+        l "float64" (op(TypeConstructorCreate,[lit <| LitFloat64 0.0]))
+        l "float32" (op(TypeConstructorCreate,[lit <| LitFloat32 0.0f]))
+        l "string" (op(TypeConstructorCreate,[lit <| LitString ""]))
+        l "char" (op(TypeConstructorCreate,[lit <| LitChar ' ']))
+        l "unit" (op(TypeConstructorCreate,[B]))
 
-        l "lit_lift" (p <| fun x -> Op(TypeLitCreate,[x]))
+        l "lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
         l "for_cast" (p for_cast)
-        l "negate" (p <| fun x -> Op(Neg,[x]))
+        l "negate" (p <| fun x -> op(Neg,[x]))
         
-        l "load_assembly" (p <| fun x -> Op(DotNetLoadAssembly,[x]))
-        l "mscorlib" (ap (V "load_assembly") (ap (V "lit_lift") (lit_string "mscorlib")))
+        l "load_assembly" (p <| fun x -> op(DotNetLoadAssembly,[x]))
+        l "mscorlib" (ap (v "load_assembly") (ap (v "lit_lift") (lit_string "mscorlib")))
         l "ignore" (inl "" B)
         l "id" (p <| id)
-        l "ref" (p <| fun x -> Op(ReferenceCreate,[x]))
-        l "array_create" (p2 <| fun size typ -> Op(ArrayCreate,[size;typ]))
+        l "ref" (p <| fun x -> op(ReferenceCreate,[x]))
+        l "array_create" (p2 <| fun size typ -> op(ArrayCreate,[size;typ]))
 
         b "+" Add; b "-" Sub; b "*" Mult; b "/" Div
         b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
@@ -1556,20 +1533,19 @@ let core_functions =
         l "fst" (p <| fun x -> tuple_index x 0)
         l "snd" (p <| fun x -> tuple_index x 1)
 
-        l "tuple_length" (p <| fun x -> Op(VVLength,[x]))
+        l "tuple_length" (p <| fun x -> op(VVLength,[x]))
         l "tuple_index" (p2 tuple_index')
-        l "not" (p <| fun x -> eq x (Lit <| LitBool false))
-        l "string_length" (p <| fun x -> Op(StringLength,[x]))
+        l "not" (p <| fun x -> eq x (lit <| LitBool false))
+        l "string_length" (p <| fun x -> op(StringLength,[x]))
         ]
 
 let spiral_typecheck code body on_fail ret = 
     let globals = globals_empty()
     let d = data_empty()
-    let dn = {dict_expr = d0(); dict_pat = d0()}
     let input = core_functions body
     try
         let watch = System.Diagnostics.Stopwatch.StartNew()
-        let x = !d.seq (expr_nodify dn input |> expr_prepass |> snd |> expr_typecheck globals d)
+        let x = !d.seq (expr_prepass input |> snd |> expr_typecheck globals d)
         typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
         printfn "Time for parsing + typechecking was: %A" watch.Elapsed
         ret (x, globals)

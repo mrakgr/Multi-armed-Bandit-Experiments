@@ -67,27 +67,25 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             | s -> state buffer s
 
     let rec is_unit = function
-        | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+        | VVT (N []) | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
-        | ArrayT(_,t) -> is_unit t
+        | ArrayT(N(_,t)) -> is_unit t
         | TyEnvT env -> Map.forall (fun _ -> is_unit) env
-        | VVT t -> List.forall is_unit t
+        | VVT (N t) -> List.forall is_unit t
 
     let (|Unit|_|) x = if is_unit x then Some () else None
 
     let rec print_type = function
         | Unit -> "unit"
         | TyEnvT env -> print_env_ty env
-        | VVT t -> print_tuple t
-        | UnionT t -> print_union_ty t
-        | RecT t -> print_rec_ty t
-        | ArrayT(DotNetReference,t) -> sprintf "%s ref" (print_type t)
-        | ArrayT(DotNetHeap,t) -> sprintf "%s []" (print_type t)
+        | VVT (N t) -> print_tuple t
+        | UnionT (N t) -> print_union_ty t
+        | RecT' t -> print_rec_ty t
+        | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
+        | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
         | ArrayT _ -> failwith "Not implemented."
-        | DotNetTypeInstanceT t ->
-            globals.memoized_dotnet_types |> snd |> fun x -> x.[t]
-            |> print_dotnet_instance_type
-        | ClosureT(a,b) -> 
+        | DotNetTypeInstanceT (N t) -> print_dotnet_instance_type t
+        | ClosureT(N(a,b)) -> 
             let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
             sprintf "(%s) -> %s" a (print_type b)
         | PrimT x ->
@@ -116,7 +114,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             "." 
             x.Name.Split '`' |> Array.head
             "<"
-            Array.map (dotnet_type_to_ty globals.memoized_dotnet_types >> print_type) x.GenericTypeArguments |> String.concat ","
+            Array.map (dotnet_type_to_ty >> print_type) x.GenericTypeArguments |> String.concat ","
             ">"
             |] |> String.concat null
         else
@@ -201,7 +199,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
         let union_process_tuple f l (tys: Set<_>) =
             let l_tys = List.map get_type l
-            let l_vvt = VVT l_tys
+            let l_vvt = vvt l_tys
             let i = Seq.findIndex ((=) l_vvt) tys
             print_case_tuple' l_tys l (f i)
 
@@ -210,19 +208,11 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let i = Seq.findIndex ((=) v_ty) tys
             print_case_var [v] (f i)
 
-        let (|DotNetTypeRuntime|_|) = function
-            | DotNetTypeRuntimeT x -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
-            | _ -> None
-
-        let (|DotNetTypeInstance|_|) = function
-            | DotNetTypeInstanceT x -> map_rev_dotnet globals.memoized_dotnet_types x |> Some
-            | _ -> None
-
         let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
         let array_create (TyTuple size) = function
             | Unit -> ""
-            | ArrayT(_,t) ->
+            | ArrayT(N(_,t)) ->
                 let x = List.map codegen size |> String.concat "*"
                 sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) x
             | _ -> failwith "impossible"
@@ -284,8 +274,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             match b with
             | TyOp(ArraySet,[TyOp(ArrayIndex,[size;ar;idx],_);b],_) ->
                 match get_type ar with
-                | ArrayT(DotNetReference,_) -> reference_set ar b
-                | ArrayT(DotNetHeap,_) -> array_set size ar idx b
+                | ArrayT(N(DotNetReference,_)) -> reference_set ar b
+                | ArrayT(N(DotNetHeap,_)) -> array_set size ar idx b
                 | _ -> failwith "impossible"
             | _ ->
                 let b = codegen b
@@ -301,17 +291,17 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
             let fv = !fv - (renamer_apply_pool rev_renamer args)
             if fv.IsEmpty then method_name
             else sprintf "%s(%s)" method_name (print_args fv)
-        | TyV(x & TyType t, UnionT tys) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
-        | TyV(x & TyType t, RecT tag) ->
-            match globals.memoized_types.[tag] with
-            | UnionT tys -> union_process_var (print_rec_case tag) (x,t) tys
+        | TyV(x & TyType t, UnionT (N tys)) -> union_process_var (print_union_case (union_ty_tag tys)) (x,t) tys
+        | TyV(x & TyType t, RecT' rect_Symbol & RecT rect_Expression) ->
+            match rect_Expression with
+            | UnionT (N tys) -> union_process_var (print_rec_case rect_Symbol) (x,t) tys
             | _ -> failwith "Only UnionT can be a recursive var type."
-        | TyVV(l,VVT t) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_tuple t) args)
-        | TyVV(l,UnionT tys) -> union_process_tuple (print_union_case (union_ty_tag tys)) l tys
-        | TyVV(l,RecT tag) -> 
-            match globals.memoized_types.[tag] with
-            | VVT _ -> print_case_tuple l (print_rec_tuple tag)
-            | UnionT tys -> union_process_tuple (print_rec_case tag) l tys
+        | TyVV(l,VVT (N t)) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_tuple t) args)
+        | TyVV(l,UnionT (N tys)) -> union_process_tuple (print_union_case (union_ty_tag tys)) l tys
+        | TyVV(l,RecT' rect_Symbol & RecT rect_Expression) -> 
+            match rect_Expression with
+            | VVT _ -> print_case_tuple l (print_rec_tuple rect_Symbol)
+            | UnionT (N tys) -> union_process_tuple (print_rec_case rect_Symbol) l tys
             | _ -> failwith "Only VVT and UnionT are recursive tuple types."
         | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
         | TyEnv(env_term, TyEnvT env_ty) ->
@@ -331,8 +321,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
                 print_if t <| fun _ ->
                     let print_case = 
                         match get_type v with
-                        | RecT tag -> print_rec_case tag
-                        | UnionT tys -> print_union_case (union_ty_tag tys)
+                        | RecT' rect_Symbol & RecT rect_Expression -> print_rec_case rect_Symbol
+                        | UnionT (N tys) -> print_union_case (union_ty_tag tys)
                         | _ -> failwith "impossible"
 
                     sprintf "match %s with" (codegen v) |> state
@@ -350,8 +340,8 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
             | ArrayCreate,[a] -> array_create a t
             | ReferenceCreate,[a] -> reference_create a
-            | ArrayIndex,[a;b & TyType(ArrayT(DotNetHeap,_));c] -> array_index a b c
-            | ArrayIndex,[a;b & TyType(ArrayT(DotNetReference,_));c] -> reference_index b
+            | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index a b c
+            | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetReference,_)));c] -> reference_index b
             | StringIndex,[str;idx] -> string_index str idx
             | StringLength,[str] -> string_length str
 
@@ -387,11 +377,11 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
 
             | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] ->
                 match t with 
-                | DotNetTypeInstance instance_type -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
+                | DotNetTypeInstanceT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
                 | _ -> failwith "impossible"
             | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
                 match v with
-                | TyType (DotNetTypeRuntime t) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
+                | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
                 | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
             // Cuda kernel constants
     //        | Syncthreads,[],_) -> state "syncthreads();"; ""
@@ -408,7 +398,7 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         match ty with
         | VVT _ & Unit -> "| " + print_rec_tuple tag |> state
         | VVT _ -> sprintf "| %s of %s" (print_rec_tuple tag) (print_type ty) |> state
-        | UnionT tys ->
+        | UnionT (N tys) ->
             let tys = Set.toList tys
             enter' <| fun _ ->
                 List.iteri (fun i -> function
@@ -492,9 +482,12 @@ let print_program ((main, globals): TypedExpr * LangGlobals) =
         let mutable prefix = false
         fun () -> if prefix then "and" else prefix <- true; "type"
 
-    for x in globals.memoized_types do
-        let tag,ty = x.Key, x.Value
-        print_rec_definition (type_prefix()) definitions_buffer ty tag
+    for x in globals.memoized_methods do
+        match x.Value with
+        | MemoType (RecT' rect_Symbol & RecT rect_Expression) ->
+            let tag, ty = rect_Symbol, rect_Expression
+            print_rec_definition (type_prefix()) definitions_buffer ty tag
+        | _ -> ()
 
     for x in union_ty_definitions do
         let tys,tag = x.Key, x.Value

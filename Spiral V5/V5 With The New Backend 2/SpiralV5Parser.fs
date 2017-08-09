@@ -151,7 +151,7 @@ let quoted_string =
             (manyChars (normalChar <|> escapedChar))
     |>> LitString
 
-let lit s = 
+let lit_ s = 
     choice 
         [|
         pbool
@@ -170,8 +170,8 @@ let pat_type pattern = tuple2 pattern (opt (pp >>. pattern)) |>> function a,Some
 let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> pattern
 let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
 let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
-let pat_type_lit = dot >>. (lit <|> (var_name |>> LitString)) |>> PatTypeLit
-let pat_lit = lit |>> PatLit
+let pat_type_lit = dot >>. (lit_ <|> (var_name |>> LitString)) |>> PatTypeLit
+let pat_lit = lit_ |>> PatLit
 let pat_when expr pattern = pattern .>>. (opt (when_ >>. expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
 let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
 
@@ -194,7 +194,7 @@ let if_then_else expr (s: CharStream<_>) =
         (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
         (fun cond tr fl -> 
             let fl = match fl with Some x -> x | None -> B
-            Op(If,[cond;tr;fl]))
+            op(If,[cond;tr;fl]))
     <| s
 
 let is_operator c = (is_identifier_char c || isAnyOf [|' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
@@ -228,10 +228,10 @@ let statements expr =
 let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (lam >>. expr) inl_pat'
 let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. expr) meth_pat'
 
-let case_lit expr = lit |>> Lit
+let case_lit expr = lit_ |>> lit
 let case_if_then_else expr = if_then_else expr 
 let case_rounds expr s = rounds (expr <|>% B) s
-let case_var expr = name |>> V
+let case_var expr = name |>> v
 
 let inline case_typex match_type expr (s: CharStream<_>) =
     let mutable i = None
@@ -252,7 +252,7 @@ let inline case_typex match_type expr (s: CharStream<_>) =
             
     let set_col (s: CharStream<_>) = i <- Some ((col s)); Reply(())
 
-    let pat_function l = Pattern (PatClauses l)
+    let pat_function l = pattern (PatClauses l)
     let pat_match x l = ap (pat_function l) x
 
     match match_type with
@@ -270,7 +270,7 @@ let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 let case_module expr = module_ >>. expr |>> module_create
 let case_for_cast expr = grave >>. expr |>> ap (v "for_cast")
 let case_lit_lift expr = 
-    let var = var_name |>> (LitString >> Lit >> ap (v "lit_lift"))
+    let var = var_name |>> (LitString >> lit >> ap (v "lit_lift"))
     let lit = expr |>> ap (v "lit_lift")
     dot >>. (var <|> lit)
 
@@ -344,12 +344,11 @@ let mset statements expressions (s: CharStream<_>) =
     let i = (col s)
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
     let op =
-        (set_ref >>% fun l r -> Op(ArraySet,[l;B;r]) |> preturn)
+        (set_ref >>% fun l r -> op(ArraySet,[l;B;r]) |> preturn)
         <|> (set_array >>% fun l r -> 
                 let rec loop = function
                     | ExprPos p -> loop p.Expression
-                    | ExprNode p -> loop p.Expression
-                    | Op(Apply,[a;b]) -> Op(ArraySet,[a;b;r]) |> preturn
+                    | Op(N(Apply,[a;b])) -> op(ArraySet,[a;b;r]) |> preturn
                     | _ -> fail "Expected two arguments on the left of <-."
                 loop l)
 
@@ -363,7 +362,7 @@ let annotations expr (s: CharStream<_>) =
     let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
     pipe2 (expr_indent expr) (opt (expr_indent pp >>. expr_indent expr))
         (fun a -> function
-            | Some b -> Op(TypeAnnot,[a;b])
+            | Some b -> op(TypeAnnot,[a;b])
             | None -> a) s
 
 let inbuilt_operators =
