@@ -3,6 +3,7 @@
 open ManagedCuda.VectorTypes
 open System
 open System.Collections.Generic
+open FParsec
 
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
@@ -18,6 +19,8 @@ type Node<'a>(expr:'a, symbol:int) =
             match y with
             | :? Node<'a> as y -> compare symbol y.Symbol
             | _ -> failwith "Invalid comparison for Node."
+
+type NodeDict<'a> = Dictionary<'a,Node<'a>>
 
 type PosKey = string * int64 * int64
 
@@ -214,7 +217,7 @@ and TypedExpr =
     | TyOp of Op * TypedExpr list * Ty
     | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
 
-and Tag = int64
+and Tag = int
 and TyTag = Tag * Ty
 and EnvTerm = Map<string, TypedExpr>
 and EnvTy = Node<Map<string, Ty>>
@@ -240,11 +243,33 @@ and MemoCases =
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
 and MemoDict = Dictionary<MemoKey, MemoCases>
-and ClosureDict = Dictionary<Tag, TypedExpr> 
 // For Common Subexpression Elimination. I need it not for its own sake, but to enable other PE based optimizations.
 and CSEDict = Map<TypedExpr,TypedExpr> ref
 
+type Trace = PosKey list
+
+type RecursiveBehavior =
+| AnnotationDive
+| AnnotationReturn
+
+type LangEnv =
+    {
+    rbeh: RecursiveBehavior
+    ltag : int ref
+    seq : (TypedExpr -> TypedExpr) ref
+    env : EnvTerm
+    cse_env : CSEDict
+    trace : Trace
+    }
+
+exception TypeError of Trace * string
+
 type Result<'a,'b> = Succ of 'a | Fail of 'b
+
+type Userstate = Dictionary<string, int * Associativity>
+type ParserExpr =
+| ParserStatement of (Expr -> Expr)
+| ParserExpr of Expr
 
 let flip f a b = f b a
 
@@ -274,11 +299,6 @@ let (|TyTypeC|_|) x =
     match x with
     | TypeConstructorT x -> Some x.Expression.Value
     | _ -> None
-
-let get_subtype x = 
-    match get_type x with
-    | ForCastT (N x) -> x
-    | x -> x
 
 /// Wraps the argument in a list if not a tuple.
 let tuple_field = function 
@@ -354,1201 +374,1585 @@ let is_int64 a = is_int64' (get_type a)
 
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
-let sd0() = SortedDictionary()
 
-type NodeDict<'a> = Dictionary<'a,Node<'a>>
-
-let get_nodify_tag =
-    let mutable i = 0
-    fun () -> i <- i+1; i
-
-let nodify (dict: NodeDict<_>) x =
-    match dict.TryGetValue x with
-    | true, x -> x
-    | false, _ ->
-        let x' = Node(x,get_nodify_tag())
-        dict.[x] <- x'
-        x'
-
-let nodify_memo_key = nodify <| d0()
-
-// nodify_expr variants.
-let nodify_v = nodify <| d0()
-let nodify_lit = nodify <| d0()
-let nodify_pattern = nodify <| d0()
-let nodify_func = nodify <| d0()
-let nodify_func_filt = nodify <| d0()
-let nodify_vv = nodify <| d0()
-let nodify_op = nodify <| d0()
-
-let v x = nodify_v x |> V
-let lit x = nodify_lit x |> Lit
-let op x = nodify_op x |> Op
-let pattern x = nodify_pattern x |> Pattern
-let func x = nodify_func x |> Function
-let func_filt x = nodify_func_filt x |> FunctionFilt
-let vv x = nodify_vv x |> VV
-
-// nodify_ty variants
-let nodify_vvt = nodify <| d0()
-let nodify_litt = nodify <| d0()
-let nodify_funt = nodify <| d0()
-let nodify_recfunt = nodify <| d0()
-let nodify_env_ty = nodify <| d0()
-let nodify_uniont = nodify <| d0()
-let nodify_rect = nodify <| d0()
-let nodify_typect = nodify <| d0()
-let nodify_closuret = nodify <| d0()
-let nodify_arrayt = nodify <| d0()
-let nodify_for_castt = nodify <| d0()
-let nodify_dotnet_type_runtimet = nodify <| d0()
-let nodify_dotnet_type_instancet = nodify <| d0()
-let nodify_dotnet_assemblyt = nodify <| d0()
-
-let vvt x = nodify_vvt x |> VVT
-let litt x = nodify_litt x |> LitT
-let funt x = nodify_funt x |> FunctionT
-let recfunt x = nodify_recfunt x |> RecFunctionT
-let modulet x = nodify_env_ty x |> ModuleT
-let uniont x = nodify_uniont x |> UnionT
-let rect x = nodify_rect x |> RecT
-let typect x = nodify_typect x |> TypeConstructorT
-let closuret x = nodify_closuret x |> ClosureT
-let arrayt x = nodify_arrayt x |> ArrayT
-let for_castt x = nodify_for_castt x |> ForCastT
-let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
-let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
-let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
-
-let lit_int i = LitInt32 i |> lit
-let lit_string x = LitString x |> lit
-
-let fix name x =
-    match name with
-    | "" -> x
-    | _ -> (Fix,[lit_string name; x]) |> op
-let inl x y = (x,y) |> func
-let inl_pat x y = (PatClauses([x,y])) |> pattern
-let ap x y = (Apply,[x;y]) |> op
-let for_cast x = (ForCast,[x]) |> op
-let lp v b e = ap (inl_pat v e) b
-let l v b e = ap (inl v e) b
-let l_rec v b e = ap (inl v e) (fix v b)
-
-let inl' args body = List.foldBack inl args body
-    
-let meth_memo y = (MethodMemoize,[y]) |> op
-let meth x y = inl x (meth_memo y)
-
-let module_create l = (ModuleCreate,[l]) |> op
-let module_open a b = (ModuleOpen,[a;b]) |> op
-
-let B = [] |> vv
-let BVVT = [] |> vvt
-let TyB = TyVV ([], BVVT)
-
-let cons a b = (VVCons,[a;b]) |> op
-
-let s l fin = List.foldBack (fun x rest -> x rest) l fin
-
-let rec ap' f l = List.fold ap f l
-
-let tuple_index' v i = (VVIndex,[v; i]) |> op
-let tuple_index v i = tuple_index' v (lit_int i)
-let tuple_length v = (VVLength,[v]) |> op
-let tuple_slice_from v i = (VVSliceFrom,[v; lit_int i]) |> op
-let tuple_is v = (VVIs,[v]) |> op
-
-let error_type x = (ErrorType,[x]) |> op
-let print_static x = (PrintStatic,[x]) |> op
-let print_env x = (PrintEnv,[x]) |> op
-let print_expr x = (PrintExpr,[x]) |> op
-let dynamize x = (Dynamize,[x]) |> op
-
-let if_static cond tr fl = (IfStatic,[cond;tr;fl]) |> op
-let case arg case = (Case,[arg;case]) |> op
-let private binop op' a b = (op',[a;b]) |> op
-let eq_type a b = binop EqType a b
-let eq a b = binop EQ a b
-let lt a b = binop LT a b
-let gte a b = binop GTE a b
-
-let error_non_unit x = (ErrorNonUnit, [x]) |> op
-let type_lit_create x = (TypeLitCreate,[lit x]) |> op
-let expr_pos pos x = ExprPos(Pos(pos,x))
-let pat_pos pos x = PatPos(Pos(pos,x))
-
-let get_pattern_tag =
-    let mutable i = 0
-    fun () -> i <- i+1; i
-
-let rec pattern_compile arg pat =
-    let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
-        let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
-        let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
-
-        let pat_foldbacki f s l =
-            let mutable len = 0
-            let rec loop i l =
-                match l with
-                | x :: xs -> f (x,i) (loop (i+1) xs)
-                | [] -> len <- i; s
-            loop 0 l, len
-            
-        let pat_tuple l =
-            pat_foldbacki
-                (fun (pat,i) on_succ ->
-                    let arg = tuple_index arg i
-                    cp arg pat on_succ on_fail)
-                on_succ
-                l
-            |> fun (on_succ,len) -> 
-                if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
-                |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
-                |> case arg
-
-        let pat_cons l = 
-            pat_foldbacki
-                (fun (pat,i) (on_succ, tuple_index') ->
-                    let arg = tuple_index' arg i
-                    cp arg pat on_succ on_fail, tuple_index)
-                (on_succ, tuple_slice_from)
-                l
-            |> fun ((on_succ,_),len) -> 
-                if_static (gte (tuple_length arg) (lit_int (len-1))) on_succ.Value on_fail.Value
-                |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
-                |> case arg
-
-        let inline force (x: Lazy<_>) = x.Value
-
-        match pat with
-        | E -> on_succ.Value
-        | PatVar x -> 
-            if flag_is_var_type then if_static (eq_type arg (v x)) on_succ.Value on_fail.Value
-            else l x arg on_succ.Value
-        | PatTuple l -> pat_tuple l
-        | PatCons l -> pat_cons l
-        | PatType (exp,typ) ->
-            let on_succ = cp arg exp on_succ on_fail
-            pattern_compile true arg typ on_succ on_fail |> case arg
-        | PatActive (a,b) ->
-            let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
-            l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
-        | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
-        | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
-        | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
-        | PatTypeLit x -> if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value |> case arg
-        | PatLit x -> 
-            let x = lit x
-            let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
-            if_static (eq_type arg x) on_succ on_fail.Value |> case arg
-        | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
-        | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
-
-    let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
-    let pattern_compile_def_on_fail = lazy error_type (lit (LitString <| "Pattern matching cases are inexhaustive."))
-    pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
-
-and pattern_compile_single pat =
-    let main_arg = " main_arg"
-    inl main_arg (pattern_compile (v main_arg) pat) |> expr_prepass
-
-and expr_prepass e =
-    let f e = expr_prepass e
-    match e with
-    | V (N n) -> Set.singleton n, e
-    | Op(N(op',l)) ->
-        let l,l' = List.map f l |> List.unzip
-        Set.unionMany l, op(op',l')
-    | VV (N l) -> 
-        let l,l' = List.map f l |> List.unzip
-        Set.unionMany l, vv l'
-    | FunctionFilt(N (vars,N(name,body))) ->
-        Set.remove name vars, e
-    | Function(N(name,body)) ->
-        let vars,body = f body
-        Set.remove name vars, func_filt(vars,nodify_func(name,body))
-    | Lit _ -> Set.empty, e
-    | Pattern (N pat) -> pattern_compile_single pat
-    | ExprPos p -> 
-        let vars, body = f p.Expression
-        vars, expr_pos p.Pos body
-
-let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1L) (Map.empty,0L) s |> fst
-let renamer_apply_pool r s = 
-    Set.map (fun (tag,ty) -> 
-        match Map.tryFind tag r with
-        | Some x -> x, ty
-        | None -> failwith "renamer no key") s
-let renamer_apply_renamer r m = Map.map (fun _ v -> Map.find v r) m
-
-let renamer_reverse r = 
-    Map.fold (fun s k v -> Map.add v k s) Map.empty r
-    |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
-
-let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e
-and renamer_apply_typedexpr r e =
-    let f e = renamer_apply_typedexpr r e
-    match e with
-    | TyTag (n,t) -> TyTag (Map.find n r,t)
-    | TyV (n,t) -> TyV(f n,t)
-    | TyLit _ -> e
-    | TyVV(l,t) -> TyVV(List.map f l,t)
-    | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
-    | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
-        let renamer = renamer_apply_renamer r renamer
-        let used_vars = ref <| renamer_apply_pool r !used_vars
-        TyMemoizedExpr(typ,used_vars,renamer,tag,t)
-    | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
-    | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
-
-let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
-let inline vars_union f l = vars_union' Set.empty f l
-
-let rec typed_expr_free_variables_template on_memo e =
-    let inline f e = typed_expr_free_variables_template on_memo e
-    match e with
-    | TyV (n,t) -> f n
-    | TyTag (n,t) -> Set.singleton (n, t)
-    | TyLit _ -> Set.empty
-    | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
-    | TyEnv(l,_) -> env_free_variables_template on_memo l
-    | TyMemoizedExpr(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
-    // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
-    // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
-    | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
-
-and env_free_variables_template on_memo env = 
-    Map.fold (fun s _ v -> typed_expr_free_variables_template on_memo v + s) Set.empty env
-
-let private typed_expr_std_pass (typ,fv,renamer,tag) = !fv
-let rec typed_expr_free_variables e = typed_expr_free_variables_template typed_expr_std_pass e
-and env_free_variables env = env_free_variables_template typed_expr_std_pass env
-
-/// Optimizes the free variables for the sake of tuple deforestation.
-/// It needs at least two passes to converge properly. And probably exactly two.
-let typed_expr_optimization_pass num_passes (memo: MemoDict) typed_exp =
-    let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (_, fv, renamer, tag) =
-        let vars,counter = memo.[int tag]
-        let set_vars vars = renamer_apply_pool renamer vars |> fun x -> fv := x; x
-        if counter < num_passes then
-            let counter = counter + 1
-            memo.[int tag] <- vars, counter
-            let ty_expr, arguments = expr_map.[tag]
-            let vars = typed_expr_free_variables_template (on_method_call_optimization_pass memo expr_map) ty_expr
-            arguments := vars
-            memo.[int tag] <- vars, counter
-            set_vars vars
-        else
-            set_vars vars
-
-    let memo = 
-        Seq.choose (function
-            | MemoMethodDone (_, e, tag, args) -> Some (tag,(e,args))
-            | MemoType t -> None
-            | x -> failwithf "impossible=%A" x) memo.Values |> Map
-    
-    typed_expr_free_variables_template (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo) typed_exp
-    |> ignore
-
-let env_to_ty env = Map.map (fun _ -> get_type) env
-let env_num_args env = 
-    Map.fold (fun s k v -> 
-        let f = typed_expr_free_variables v
-        if Set.isEmpty f then s else s+1) 0 env
-
-let rec dotnet_type_to_ty (x: System.Type) =
-    if x = typeof<int8> then PrimT Int8T
-    elif x = typeof<int16> then PrimT Int16T
-    elif x = typeof<int32> then PrimT Int32T
-    elif x = typeof<int64> then PrimT Int64T
-
-    elif x = typeof<uint8> then PrimT UInt8T
-    elif x = typeof<uint16> then PrimT UInt16T
-    elif x = typeof<uint32> then PrimT UInt32T
-    elif x = typeof<uint64> then PrimT UInt64T
-
-    elif x = typeof<float32> then PrimT Float32T
-    elif x = typeof<float> then PrimT Float64T
-    elif x = typeof<string> then PrimT StringT
-    elif x = typeof<char> then PrimT CharT
-    elif x = typeof<unit> || x = typeof<System.Void> then BVVT
-    elif x.IsArray then arrayt(DotNetHeap,dotnet_type_to_ty (x.GetElementType()))
-    // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
-    elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
-    else dotnet_type_runtimet x
-
-let rec dotnet_ty_to_type (x: Ty) =
-    match x with
-    | PrimT Int8T -> typeof<int8>
-    | PrimT Int16T -> typeof<int16>
-    | PrimT Int32T -> typeof<int32>
-    | PrimT Int64T -> typeof<int64>
-
-    | PrimT UInt8T -> typeof<uint8>
-    | PrimT UInt16T -> typeof<uint16>
-    | PrimT UInt32T -> typeof<uint32>
-    | PrimT UInt64T -> typeof<uint64>
-
-    | PrimT Float32T -> typeof<float32>
-    | PrimT Float64T -> typeof<float>
-    | PrimT StringT -> typeof<string>
-    | PrimT CharT -> typeof<char>
-    | ArrayT(N(DotNetHeap,t)) -> (dotnet_ty_to_type t).MakeArrayType()
-    | ArrayT(N(DotNetReference,t)) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
-    | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
-    | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
-
-type Trace = PosKey list
-
-type RecursiveBehavior =
-| AnnotationDive
-| AnnotationReturn
-
-type LangEnv =
-    {
-    rbeh: RecursiveBehavior
-    ltag : int64 ref
-    seq : (TypedExpr -> TypedExpr) ref
-    env : EnvTerm
-    cse_env : CSEDict
-    trace : Trace
-    }
-
-type LangGlobals =
-    {
-    method_tag: Tag ref
-    memoized_methods: MemoDict
-    }
-
-let (|TyEnvT|_|) = function
-    | ModuleT (N env) | RecFunctionT (N (N (env),_,_)) | FunctionT(N(N(env),_)) -> Some env
-    | _ -> None
-
-let is_all_int64 size = List.forall is_int64 (tuple_field size)
-let (|TyArray|_|) = function
-    | TyTuple [size; ar & TyType (ArrayT (N (ar_type,ret_type)))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
-    | _ -> None
-
-exception TypeError of Trace * string
-
-let rec expr_typecheck (globals: LangGlobals) (d : LangEnv) (expr: Expr) =
-    let inline tev d expr = expr_typecheck globals d expr
-    let inline apply_seq d x = !d.seq x
-    let inline tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
-    let inline tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
-    let inline tev_method d expr = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr |> apply_seq d
-    let inline tev_rec d expr = tev_method {d with rbeh=AnnotationReturn} expr
-    let on_type_er trace message = TypeError(trace,message) |> raise
-
-    let tev2 d a b = tev d a, tev d b
-    let tev3 d a b c = tev d a, tev d b, tev d c
-
-    let inner_compile x = expr_prepass x |> snd |> tev d
-
-    let v_find env x on_fail = 
-        match Map.tryFind x env with
-        | Some v -> v
-        | None -> on_fail()
-
-    let get_tag d = 
-        let t = !d.ltag
-        d.ltag := t + 1L
-        t
-
-    let inline make_tyv_ty d ty = get_tag d, ty
-    let inline make_tyv_typed_expr d ty_exp = make_tyv_ty d (get_type ty_exp)
-
-    let make_tyv_and_push_typed_expr d ty_exp =
-        let v = make_tyv_typed_expr d ty_exp
-        let seq = !d.seq
-        d.seq := fun rest -> TyLet(LetStd,v,ty_exp,rest,get_type rest) |> seq
-        TyTag v
-
-    let make_tyv_and_push_ty d ty =
-        let v = make_tyv_ty d ty
-        let v' = TyTag v
-        let seq = !d.seq
-        d.seq := fun rest -> TyLet(LetInvisible,v,v',rest,get_type rest) |> seq
-        v'
-
-    let cse_add' d r x = let e = !d.cse_env in if r <> x then Map.add r x e else e
-    let cse_add d r x = d.cse_env := cse_add' d r x
-
-    // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
-    // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
-    let rec destructure d r = 
-        let inline destructure r = destructure d r
-
-        let chase_cse on_succ on_fail r = 
-            match Map.tryFind r !d.cse_env with
-            | Some x -> on_succ x
-            | None -> on_fail r
-        let chase_recurse r = chase_cse destructure id r
-
-        let destructure_var r =
-            let index_tuple_args tuple_types = 
-                List.mapi (fun i typ -> 
-                    destructure <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
-            let env_unseal x =
-                let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
-                Map.map unseal x
-            let r_ty = get_type r
-            match r_ty with
-            | VVT (N tuple_types) -> TyVV(index_tuple_args tuple_types, r_ty)
-            | TyEnvT env -> TyEnv(env_unseal env, r_ty)
-            | _ -> chase_recurse r
-           
-        let destructure_cse r = 
-            chase_cse 
-                chase_recurse
-                (fun r ->
-                    let x = make_tyv_and_push_typed_expr d r
-                    cse_add d r x
-                    x)
-                r
-            
-        match r with
-        | TyV _ | TyEnv _ | TyVV _ | TyLit _ -> r
-        | TyTag _ -> destructure_var r
-        | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
-
-    let if_is_returnable (TyType r & x) =
-        if is_returnable' r then x
-        else on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" r
-
-    let if_body d cond tr fl =
-        let b x = cse_add' d cond (TyLit <| LitBool x)
-        let tr = 
-            match cond with
-            | TyOp(EQ,[b & TyLit _; a & TyTag _],_) | TyOp(EQ,[a & TyTag _; b & TyLit _],_) -> tev_assume (cse_add' d a b) d tr
-            | _ -> tev_assume (b true) d tr
-        let fl = tev_assume (b false) d fl
-        let type_tr, type_fl = get_type tr, get_type fl
-        if type_tr = type_fl then
-            match cond with
-            | TyLit(LitBool true) -> tr
-            | TyLit(LitBool false) -> fl
-            | _ -> TyOp(If,[cond;tr;fl],type_tr)
-            |> if_is_returnable
-        else on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
-
-    let if_cond d tr fl cond =
-        if is_bool cond = false then on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
-        else if_body d cond tr fl
-
-    let if_static d cond tr fl =
-        match tev d cond with
-        | TyLit (LitBool cond) -> 
-            let branch = if cond then tr else fl
-            tev d branch |> if_is_returnable
-        | cond -> if_cond d tr fl cond
-
-    let if_ d cond tr fl = tev d cond |> if_cond d tr fl
-
-    let tag r =
-        let tag = !r
-        r := tag + 1L
-        tag
-
-    let method_tag () = tag globals.method_tag
-//    let type_tag () = tag globals.type_tag
-
-    let eval_method memo_type used_vars d expr =
-        let key_args = (expr, d.env) |> nodify_memo_key
-        let memoized_methods = globals.memoized_methods
-
-        match memoized_methods.TryGetValue key_args with
+let spiral_typecheck code body on_fail ret = 
+    let nodify (dict: NodeDict<_>) x =
+        match dict.TryGetValue x with
+        | true, x -> x
         | false, _ ->
-            let tag = method_tag ()
+            let x' = Node(x,dict.Count)
+            dict.[x] <- x'
+            x'
 
-            memoized_methods.[key_args] <- MemoMethodInEvaluation tag
-            let typed_expr = tev_method d expr
-            memoized_methods.[key_args] <- MemoMethodDone (memo_type, typed_expr, tag, used_vars)
-            typed_expr, tag
-        | true, MemoMethodInEvaluation tag -> 
-            tev_rec d expr, tag
-        | true, MemoMethodDone (memo_type, typed_expr, tag, used_vars) -> 
-            typed_expr, tag
-        | true, (MemoTypeInEvaluation _ | MemoType _) ->
-            failwith "Expected a method, not a recursive type."
+    let nodify_memo_key = nodify <| d0()
 
-    let eval_renaming memo_type d expr =
-        let env = d.env
-        let fv = env_free_variables env
-        let renamer = renamer_make fv
-        let renamed_env = renamer_apply_env renamer env
+    // nodify_expr variants.
+    let nodify_v = nodify <| d0()
+    let nodify_lit = nodify <| d0()
+    let nodify_pattern = nodify <| d0()
+    let nodify_func = nodify <| d0()
+    let nodify_func_filt = nodify <| d0()
+    let nodify_vv = nodify <| d0()
+    let nodify_op = nodify <| d0()
 
-        let memo_type = memo_type renamer
-        let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref <| int64 renamer.Count} expr
+    let v x = nodify_v x |> V
+    let lit x = nodify_lit x |> Lit
+    let op x = nodify_op x |> Op
+    let pattern x = nodify_pattern x |> Pattern
+    let func x = nodify_func x |> Function
+    let func_filt x = nodify_func_filt x |> FunctionFilt
+    let vv x = nodify_vv x |> VV
 
-        let typed_expr_ty = get_type typed_expr
-        if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-        else memo_type, ref fv, renamer_reverse renamer, tag, typed_expr_ty
+    // nodify_ty variants
+    let vvt_dict = d0()
+    let nodify_vvt = nodify vvt_dict
+    let nodify_litt = nodify <| d0()
+    let nodify_funt = nodify <| d0()
+    let nodify_recfunt = nodify <| d0()
+    let nodify_env_ty = nodify <| d0()
+    let uniont_dict = d0()
+    let nodify_uniont = nodify uniont_dict
+    let rect_dict = d0()
+    let nodify_rect = nodify rect_dict
+    let nodify_typect = nodify <| d0()
+    let nodify_closuret = nodify <| d0()
+    let nodify_arrayt = nodify <| d0()
+    let nodify_for_castt = nodify <| d0()
+    let nodify_dotnet_type_runtimet = nodify <| d0()
+    let nodify_dotnet_type_instancet = nodify <| d0()
+    let nodify_dotnet_assemblyt = nodify <| d0()
 
-    let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
-    let memoize_method d x = 
-        let memo_type _ = MemoMethod
-        memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
-            TyMemoizedExpr(memo_type,args,rev_renamer,tag,ret_ty)) d x
+    let vvt x = nodify_vvt x |> VVT
+    let litt x = nodify_litt x |> LitT
+    let funt x = nodify_funt x |> FunctionT
+    let recfunt x = nodify_recfunt x |> RecFunctionT
+    let modulet x = nodify_env_ty x |> ModuleT
+    let uniont x = nodify_uniont x |> UnionT
+    let rect x = nodify_rect x |> RecT
+    let typect x = nodify_typect x |> TypeConstructorT
+    let closuret x = nodify_closuret x |> ClosureT
+    let arrayt x = nodify_arrayt x |> ArrayT
+    let for_castt x = nodify_for_castt x |> ForCastT
+    let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
+    let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
+    let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
 
-    let memoize_closure arg d x =
-        let fv, arg_ty = typed_expr_free_variables arg, get_type arg
-        let memo_type r = MemoClosure (renamer_apply_pool r fv)
-        memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
-            TyMemoizedExpr(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
+    let lit_int i = LitInt32 i |> lit
+    let lit_string x = LitString x |> lit
 
-    let case_ d v case =
-        let assume d v x branch = tev_assume (cse_add' d v x) d branch
-        match tev d v with
-        | TyTag(_, t & (UnionT _ | RecT _)) as v ->
-            let rec case_destructure d args_ty =
-                let f x = make_tyv_and_push_ty d x
-                let union_case = function
-                    | UnionT (N l) -> Set.toList l |> List.collect (case_destructure d)
-                    | _ -> [f args_ty]
-                match args_ty with
-                | RecT (N t) -> union_case t
-                | x -> union_case x
+    let fix name x =
+        match name with
+        | "" -> x
+        | _ -> (Fix,[lit_string name; x]) |> op
+    let inl x y = (x,y) |> func
+    let inl_pat x y = (PatClauses([x,y])) |> pattern
+    let ap x y = (Apply,[x;y]) |> op
+    let for_cast x = (ForCast,[x]) |> op
+    let lp v b e = ap (inl_pat v e) b
+    let l v b e = ap (inl v e) b
+    let l_rec v b e = ap (inl v e) (fix v b)
 
-            let rec map_cases l =
-                match l with
-                | x :: xs -> (x, assume d v x case) :: map_cases xs
-                | _ -> []
-                            
-            match map_cases (case_destructure d t) with
-            | (_, TyType p) :: _ as cases -> 
-                if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
-                else 
-                    let l = List.map (snd >> get_type) cases
-                    on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
-            | _ -> failwith "There should always be at least one clause here."
-        | a & TyV(b,_) -> assume d a b case
-        | _ -> tev d case
+    let inl' args body = List.foldBack inl args body
+    
+    let meth_memo y = (MethodMemoize,[y]) |> op
+    let meth x y = inl x (meth_memo y)
+
+    let module_create l = (ModuleCreate,[l]) |> op
+    let module_open a b = (ModuleOpen,[a;b]) |> op
+
+    let B = [] |> vv
+    let BVVT = [] |> vvt
+    let TyB = TyVV ([], BVVT)
+
+    let cons a b = (VVCons,[a;b]) |> op
+
+    let s l fin = List.foldBack (fun x rest -> x rest) l fin
+
+    let rec ap' f l = List.fold ap f l
+
+    let tuple_index' v i = (VVIndex,[v; i]) |> op
+    let tuple_index v i = tuple_index' v (lit_int i)
+    let tuple_length v = (VVLength,[v]) |> op
+    let tuple_slice_from v i = (VVSliceFrom,[v; lit_int i]) |> op
+    let tuple_is v = (VVIs,[v]) |> op
+
+    let error_type x = (ErrorType,[x]) |> op
+    let print_static x = (PrintStatic,[x]) |> op
+    let print_env x = (PrintEnv,[x]) |> op
+    let print_expr x = (PrintExpr,[x]) |> op
+    let dynamize x = (Dynamize,[x]) |> op
+
+    let if_static cond tr fl = (IfStatic,[cond;tr;fl]) |> op
+    let case arg case = (Case,[arg;case]) |> op
+    let binop op' a b = (op',[a;b]) |> op
+    let eq_type a b = binop EqType a b
+    let eq a b = binop EQ a b
+    let lt a b = binop LT a b
+    let gte a b = binop GTE a b
+
+    let error_non_unit x = (ErrorNonUnit, [x]) |> op
+    let type_lit_create x = (TypeLitCreate,[lit x]) |> op
+    let expr_pos pos x = ExprPos(Pos(pos,x))
+    let pat_pos pos x = PatPos(Pos(pos,x))
+
+    let type_create a = op(TypeConstructorCreate,[a])
+    let type_union a b = op(TypeConstructorUnion,[a;b])
+
+    let spiral_parse (module_name, module_code) = 
+        let pos' (s: CharStream<_>) = s.Name, s.Line, s.Column
+        let pos expr (s: CharStream<_>) = (expr |>> expr_pos (pos' s)) s
+
+        let patpos expr (s: CharStream<_>) = 
+            let p = pos' s
+            (expr |>> fun expr -> pat_pos p expr) s
+
+        let rec spaces_template spaces s = spaces >>. optional (followedByString "//" >>. skipRestOfLine true >>. spaces_template spaces) <| s
+        let spaces, spaces1 = spaces_template spaces, spaces_template spaces1
+    
+        let is_identifier_starting_char c = isAsciiLetter c || c = '_'
+        let is_identifier_char c = is_identifier_starting_char c || c = ''' || isDigit c 
+
+        let var_name =
+            many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
+            >>=? function
+                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env"
+                | "print_expr"
+                | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
+                    fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
+                | x -> preturn x
+
+        let between_brackets l p r = between (skipChar l .>> spaces) (skipChar r .>> spaces) p
+        let rounds p = between_brackets '(' p ')'
+        let curlies p = between_brackets '{' p '}'
+        let quares p = between_brackets '[' p ']'
+
+        let keywordChar x = skipChar x .>> spaces
+        let keywordString x = skipString x .>> spaces
+        let keywordString1 x = skipString x .>> spaces1
+
+        let when_ = keywordString "when"
+        let as_ = keywordString "as"
+        let negate_ = keywordChar '-'
+        let comma = keywordChar ','
+        let dot = keywordChar '.'
+        let grave = keywordChar '`' 
+        let pp = keywordChar ':'
+        let semicolon = keywordChar ';' 
+        let eq = keywordChar '=' 
+        let bar = keywordChar '|' 
+        let amphersand = keywordChar '&'
+        let barbar = keywordString "||" 
+        let lam = keywordString "->"
+        let set_ref = keywordString ":="
+        let set_array = keywordString "<-"
+        let inl_ = keywordString "inl"
+        let met_ = keywordString "met"
+        let inl_rec = keywordString1 "inl" .>> keywordString "rec"
+        let met_rec = keywordString1 "met" .>> keywordString "rec"
+        let match_ = keywordString "match"
+        let function_ = keywordString "function"
+        let module_ = keywordString "module"
+        let with_ = keywordString "with"
+        let open_ = keywordString "open"
+        let cons = keywordString "::"
+        let active = keywordChar '^'
+        let type_' = keywordString "type"
+        let wildcard = keywordChar '_'
+
+        let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
+        let pnumber : Parser<_,_> =
+            let numberFormat =  NumberLiteralOptions.AllowFraction
+                                ||| NumberLiteralOptions.AllowExponent
+                                ||| NumberLiteralOptions.AllowHexadecimal
+                                ||| NumberLiteralOptions.AllowBinary
+                                ||| NumberLiteralOptions.AllowInfinity
+                                ||| NumberLiteralOptions.AllowNaN
+
+            let parser = numberLiteral numberFormat "number"
+
+            let default_int x _ = int64 x |> LitInt64 |> Reply
+            let default_float x _ = float32 x |> LitFloat32 |> Reply
+
+            let followedBySuffix x default_ =
+                let f c l = 
+                    let l = Array.map (fun (k,m) -> skipString k |>> fun _ -> m x) l
+                    skipChar c >>. choice l
+                choice
+                    [|
+                    f 'i'
+                        [|
+                        "8", int8 >> LitInt8
+                        "16", int16 >> LitInt16
+                        "32", int32 >> LitInt32
+                        "64", int64 >> LitInt64
+                        |]
+
+                    f 'u'
+                        [|
+                        "8", uint8 >> LitUInt8
+                        "16", uint16 >> LitUInt16
+                        "32", uint32 >> LitUInt32
+                        "64", uint64 >> LitUInt64
+                        |]
+
+                    f 'f'
+                        [|
+                        "32", float32 >> LitFloat32
+                        "64", float >> LitFloat64
+                        |]
+                    default_ x
+                    |]
+
+            fun s ->
+                let reply = parser s
+                if reply.Status = Ok then
+                    let nl = reply.Result // the parsed NumberLiteral
+                    try 
+                        if nl.IsInteger then followedBySuffix nl.String default_int s
+                        else followedBySuffix nl.String default_float s
+                    with
+                    | :? System.OverflowException as e ->
+                        s.Skip(-nl.String.Length)
+                        Reply(FatalError, messageError e.Message)
+                else // reconstruct error reply
+                    Reply(reply.Status, reply.Error)
+
+        let quoted_char = 
+            let normalChar = satisfy (fun c -> c <> '\\' && c <> ''')
+            let unescape c = match c with
+                             | 'n' -> '\n'
+                             | 'r' -> '\r'
+                             | 't' -> '\t'
+                             | c   -> c
+            let escapedChar = pchar '\\' >>. (anyOf "\\nrt'" |>> unescape)
+            let a = (normalChar <|> escapedChar) .>> pchar ''' |>> LitChar
+            let b = pstring "''" >>% LitChar '''
+            pchar ''' >>. (a <|> b)
+
+        let quoted_string =
+            let normalChar = satisfy (fun c -> c <> '\\' && c <> '"')
+            let unescape c = match c with
+                             | 'n' -> '\n'
+                             | 'r' -> '\r'
+                             | 't' -> '\t'
+                             | c   -> c
+            let escapedChar = pchar '\\' >>. (anyOf "\\nrt\"" |>> unescape)
+            between (pchar '"') (pchar '"')
+                    (manyChars (normalChar <|> escapedChar))
+            |>> LitString
+
+        let lit_ s = 
+            choice 
+                [|
+                pbool
+                pnumber .>> notFollowedBy (satisfy is_identifier_char)
+                quoted_string
+                quoted_char
+                |] .>> spaces
+            <| s
+
+        let pat_e = wildcard >>% E
+        let pat_var = var_name |>> PatVar
+        let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
+        let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
+        let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
+        let pat_type pattern = tuple2 pattern (opt (pp >>. pattern)) |>> function a,Some b -> PatType(a,b) | a, None -> a
+        let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> pattern
+        let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
+        let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
+        let pat_type_lit = dot >>. (lit_ <|> (var_name |>> LitString)) |>> PatTypeLit
+        let pat_lit = lit_ |>> PatLit
+        let pat_when expr pattern = pattern .>>. (opt (when_ >>. expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
+        let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
+
+        let (^<|) a b = a b // High precedence, right associative <| operator
+        let rec patterns expr s = // The order the pattern parsers are chained determines their precedence.
+            pat_when expr ^<| pat_as ^<| pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type ^<| pat_cons ^<| pat_active 
+            ^<| choice [|pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds (patterns expr)|] <| s
+    
+        let pattern_list expr = many (patterns expr)
+    
+        let col (s: CharStream<_>) = s.Column
+
+        let expr_indent i op expr (s: CharStream<_>) = if op i (col s) then expr s else pzero s
+        let if_then_else expr (s: CharStream<_>) =
+            let i = (col s)
+            let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+            pipe3
+                (skipString "if" >>. spaces1 >>. expr)
+                (expr_indent (skipString "then" >>. spaces1 >>. expr))
+                (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
+                (fun cond tr fl -> 
+                    let fl = match fl with Some x -> x | None -> B
+                    op(If,[cond;tr;fl]))
+            <| s
+
+        let is_operator c = (is_identifier_char c || isAnyOf [|' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
+        let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator .>> spaces <| s
+
+        let name = var_name <|> rounds poperator
+
+        let inl_pat' (args: Pattern list) body = List.foldBack inl_pat args body
+        let meth_pat' args body = inl_pat' args (meth_memo body)
+    
+        let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (eq >>. expr) lp
+        let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
+        let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
+
+        let case_met_pat_statement expr = 
+            pipe2 (met_ >>. patterns expr) (eq >>. expr) <| fun pattern body -> 
+                let filter_env x = ap (inl "" x) B
+                lp pattern (filter_env (meth_memo body))
+        let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
+        let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
+
+        let case_open expr = open_ >>. expr |>> module_open
+
+        let statements expr = 
+            [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
+             case_met_pat_statement; case_met_name_pat_list_statement; case_met_rec_name_pat_list_statement
+             case_open]
+            |> List.map (fun x -> x expr |> attempt)
+            |> choice
+
+        let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (lam >>. expr) inl_pat'
+        let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. expr) meth_pat'
+
+        let case_lit expr = lit_ |>> lit
+        let case_if_then_else expr = if_then_else expr 
+        let case_rounds expr s = rounds (expr <|>% B) s
+        let case_var expr = name |>> v
+
+        let inline case_typex match_type expr (s: CharStream<_>) =
+            let mutable i = None
+            let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
+    
+            let clause = 
+                let clause_template is_meth = 
+                    pipe2 (many1 (patterns expr) .>> lam) expr <| fun pat body ->
+                        match pat with
+                        | x :: xs -> x, if is_meth then meth_pat' xs body else inl_pat' xs body
+                        | _ -> failwith "impossible"
+
+                poperator >>=? function
+                    | "|" -> clause_template false
+                    | "||" -> clause_template true
+                    | _ -> fail "not a pattern matching clause"
+                |> expr_indent (<=) 
+            
+            let set_col (s: CharStream<_>) = i <- Some ((col s)); Reply(())
+
+            let pat_function l = pattern (PatClauses l)
+            let pat_match x l = ap (pat_function l) x
+
+            match match_type with
+            | true -> // function
+                (function_ >>. set_col >>. many1 clause
+                |>> pat_function) s    
+            | false -> // match
+                pipe2 (match_ >>. expr .>> with_ .>> set_col)
+                    (many1 clause)
+                    pat_match s
+
+        let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
+        let case_typecase expr (s: CharStream<_>) = case_typex false expr s
+
+        let case_module expr = module_ >>. expr |>> module_create
+        let case_for_cast expr = grave >>. expr |>> ap (v "for_cast")
+        let case_lit_lift expr = 
+            let var = var_name |>> (LitString >> lit >> ap (v "lit_lift"))
+            let lit = expr |>> ap (v "lit_lift")
+            dot >>. (var <|> lit)
+
+        let case_print_env expr s = 
+            let i = col s
+            keywordString "print_env" >>. expr_indent i (<=) expr |>> print_env
+            <| s
+
+        let case_print_expr expr s = 
+            let i = col s
+            keywordString "print_expr" >>. expr_indent i (<=) expr |>> print_expr
+            <| s
+
+        let rec expressions expr s =
+            let unary_ops = 
+                [case_for_cast; case_lit_lift]
+                |> List.map (fun x -> x (expressions expr))
+                |> choice
+            let rest = 
+                [case_print_env; case_print_expr
+                 case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
+                 case_rounds; case_typecase; case_typeinl; case_module; case_var]
+                |> List.map (fun x -> x expr |> attempt)
+                |> choice
+            unary_ops <|> rest <| s
+ 
+        let process_parser_exprs exprs = 
+            let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")
+            let rec process_parser_exprs on_succ = function
+                | [ParserExpr a] -> on_succ a
+                | [ParserStatement _] -> error_statement_in_last_pos
+                | ParserStatement a :: xs -> process_parser_exprs (a >> on_succ) xs
+                | ParserExpr a :: xs -> process_parser_exprs (l "" (error_non_unit a) >> on_succ) xs
+                | [] -> preturn B
+            
+            process_parser_exprs preturn exprs
+
+        let indentations statements expressions (s: CharStream<Userstate>) =
+            let i = (col s)
+            let inline if_ op tr (s: CharStream<_>) = expr_indent i op tr s
+            let expr_indent expr =
+                let mutable op = (=)
+                let set_op op' x = op <- op'; x
+                let semicolon s = if_ (<) (semicolon |>> set_op (<=)) s
+                let expr s = if_ op (expr |>> set_op (=)) s
+                many1 (expr .>> optional semicolon)
+
+            expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs <| s
+
+        let application expr (s: CharStream<_>) =
+            let i = (col s)
+            let expr_up (s: CharStream<_>) = expr_indent i (<) expr s
+    
+            pipe2 expr (many expr_up) (List.fold ap) s
+
+        let tuple expr (s: CharStream<_>) =
+            let i = (col s)
+            let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+            sepBy1 (expr_indent expr) (expr_indent comma)
+            |>> function [x] -> x | x -> vv x
+            <| s
+
+        let type_ expr =
+            let type_parse (s: CharStream<_>) = 
+                let i = (col s)
+                let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
+                many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
+            (type_' >>. type_parse) <|> expr
+
+        let mset statements expressions (s: CharStream<_>) = 
+            let i = (col s)
+            let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
+            let op =
+                (set_ref >>% fun l r -> op(ArraySet,[l;B;r]) |> preturn)
+                <|> (set_array >>% fun l r -> 
+                        let rec loop = function
+                            | ExprPos p -> loop p.Expression
+                            | Op(N(Apply,[a;b])) -> op(ArraySet,[a;b;r]) |> preturn
+                            | _ -> fail "Expected two arguments on the left of <-."
+                        loop l)
+
+            (tuple2 expressions (opt (expr_indent op .>>. expr_indent statements))
+            >>= function 
+                | a,Some(f,b) -> f a b
+                | a,None -> preturn a) s
+
+        let annotations expr (s: CharStream<_>) = 
+            let i = (col s)
+            let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+            pipe2 (expr_indent expr) (opt (expr_indent pp >>. expr_indent expr))
+                (fun a -> function
+                    | Some b -> op(TypeAnnot,[a;b])
+                    | None -> a) s
+
+        let inbuilt_operators =
+            let dict_operator = d0()
+            let add_infix_operator assoc str prec = dict_operator.Add(str, (prec, assoc))
+
+            let left_assoc_ops = 
+                let f = add_infix_operator Associativity.Left
+                f "+" 60; f "-" 60; f "*" 70; f "/" 70
+                f "<|" 10; f "|>" 10; f "<<" 10; f ">>" 10
+
+            let no_assoc_ops =
+                let f str = add_infix_operator Associativity.None str 40
+                f "<="; f "<"; f "="; f ">"; f ">="
+
+            let right_associative_ops =
+                let f str prec = add_infix_operator Associativity.Right str prec
+                f "||" 20; f "&&" 30; f "::" 50
+         
+            dict_operator
+
+        let negate expr = attempt (negate_ >>. expr |>> (ap (v "negate"))) <|> expr
+
+        let operators expr (s: CharStream<_>) =
+            let poperator (s: CharStream<Userstate>) =
+                let dict_operator = s.UserState
+                let p = pos' s
+                let rec calculate on_fail on_succ op = 
+                        match dict_operator.TryGetValue op with
+                        | true, (prec,asoc) -> on_succ (prec,asoc)
+                        | false, _ -> on_fail op
+                let on_succ orig_op (prec,asoc) = preturn (prec,asoc,fun a b -> expr_pos p (ap' (v orig_op) [a; b]))
+                let on_fail (orig_op: string) =
+                    let x = orig_op.TrimStart [|'.'|]
+                    let fail _ = fail "unknown operator"
+                    let on_succ = on_succ orig_op
+                    let rec on_fail i _ = if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i] else fail ()
+                    calculate (on_fail (x.Length-1)) on_succ x
+                (poperator >>=? function
+                    | "->" -> fail "forbidden operator"
+                    | orig_op -> calculate on_fail (on_succ orig_op) orig_op) s
+
+            let rec led poperator term left (prec,asoc,m) =
+                match asoc with
+                | Associativity.Left | Associativity.None -> tdop poperator term prec |>> m left
+                | Associativity.Right -> tdop poperator term (prec-1) |>> m left
+                | _ -> failwith "impossible"
+
+            and tdop poperator term rbp =
+                let rec f left =
+                    poperator >>= fun (prec,asoc,m as v) ->
+                        if rbp < prec then led poperator term left v >>= loop
+                        else pzero
+                and loop left = attempt (f left) <|>% left
+                term >>= loop
+
+            let i = (col s)
+            let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+            let op s = expr_indent poperator s
+            let term s = expr_indent expr s
+            tdop op term 0 s
+
+        let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
+
+        runParserOnString (spaces >>. expr .>> eof) inbuilt_operators module_name module_code
+
+
+    let get_pattern_tag =
+        let mutable i = 0
+        fun () -> i <- i+1; i
+
+    let rec pattern_compile arg pat =
+        let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
+            let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
+            let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
+
+            let pat_foldbacki f s l =
+                let mutable len = 0
+                let rec loop i l =
+                    match l with
+                    | x :: xs -> f (x,i) (loop (i+1) xs)
+                    | [] -> len <- i; s
+                loop 0 l, len
+            
+            let pat_tuple l =
+                pat_foldbacki
+                    (fun (pat,i) on_succ ->
+                        let arg = tuple_index arg i
+                        cp arg pat on_succ on_fail)
+                    on_succ
+                    l
+                |> fun (on_succ,len) -> 
+                    if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
+                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                    |> case arg
+
+            let pat_cons l = 
+                pat_foldbacki
+                    (fun (pat,i) (on_succ, tuple_index') ->
+                        let arg = tuple_index' arg i
+                        cp arg pat on_succ on_fail, tuple_index)
+                    (on_succ, tuple_slice_from)
+                    l
+                |> fun ((on_succ,_),len) -> 
+                    if_static (gte (tuple_length arg) (lit_int (len-1))) on_succ.Value on_fail.Value
+                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                    |> case arg
+
+            let inline force (x: Lazy<_>) = x.Value
+
+            match pat with
+            | E -> on_succ.Value
+            | PatVar x -> 
+                if flag_is_var_type then if_static (eq_type arg (v x)) on_succ.Value on_fail.Value
+                else l x arg on_succ.Value
+            | PatTuple l -> pat_tuple l
+            | PatCons l -> pat_cons l
+            | PatType (exp,typ) ->
+                let on_succ = cp arg exp on_succ on_fail
+                pattern_compile true arg typ on_succ on_fail |> case arg
+            | PatActive (a,b) ->
+                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
+            | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
+            | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
+            | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
+            | PatTypeLit x -> if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value |> case arg
+            | PatLit x -> 
+                let x = lit x
+                let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
+                if_static (eq_type arg x) on_succ on_fail.Value |> case arg
+            | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
+            | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
+
+        let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
+        let pattern_compile_def_on_fail = lazy error_type (lit (LitString <| "Pattern matching cases are inexhaustive."))
+        pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
+
+    and pattern_compile_single pat =
+        let main_arg = " main_arg"
+        inl main_arg (pattern_compile (v main_arg) pat) |> expr_prepass
+
+    and expr_prepass e =
+        let f e = expr_prepass e
+        match e with
+        | V (N n) -> Set.singleton n, e
+        | Op(N(op',l)) ->
+            let l,l' = List.map f l |> List.unzip
+            Set.unionMany l, op(op',l')
+        | VV (N l) -> 
+            let l,l' = List.map f l |> List.unzip
+            Set.unionMany l, vv l'
+        | FunctionFilt(N (vars,N(name,body))) ->
+            Set.remove name vars, e
+        | Function(N(name,body)) ->
+            let vars,body = f body
+            Set.remove name vars, func_filt(vars,nodify_func(name,body))
+        | Lit _ -> Set.empty, e
+        | Pattern (N pat) -> pattern_compile_single pat
+        | ExprPos p -> 
+            let vars, body = f p.Expression
+            vars, expr_pos p.Pos body
+
+    let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1) (Map.empty,0) s |> fst
+    let renamer_apply_pool r s = 
+        Set.map (fun (tag,ty) -> 
+            match Map.tryFind tag r with
+            | Some x -> x, ty
+            | None -> failwith "renamer no key") s
+    let renamer_apply_renamer r m = Map.map (fun _ v -> Map.find v r) m
+
+    let renamer_reverse r = 
+        Map.fold (fun s k v -> Map.add v k s) Map.empty r
+        |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
+
+    let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e
+    and renamer_apply_typedexpr r e =
+        let f e = renamer_apply_typedexpr r e
+        match e with
+        | TyTag (n,t) -> TyTag (Map.find n r,t)
+        | TyV (n,t) -> TyV(f n,t)
+        | TyLit _ -> e
+        | TyVV(l,t) -> TyVV(List.map f l,t)
+        | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
+        | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
+            let renamer = renamer_apply_renamer r renamer
+            let used_vars = ref <| renamer_apply_pool r !used_vars
+            TyMemoizedExpr(typ,used_vars,renamer,tag,t)
+        | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
+        | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
+
+    let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
+    let inline vars_union f l = vars_union' Set.empty f l
+
+    let rec typed_expr_free_variables_template on_memo e =
+        let inline f e = typed_expr_free_variables_template on_memo e
+        match e with
+        | TyV (n,t) -> f n
+        | TyTag (n,t) -> Set.singleton (n, t)
+        | TyLit _ -> Set.empty
+        | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
+        | TyEnv(l,_) -> env_free_variables_template on_memo l
+        | TyMemoizedExpr(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
+        // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
+        // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
+        | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
+
+    and env_free_variables_template on_memo env = 
+        Map.fold (fun s _ v -> typed_expr_free_variables_template on_memo v + s) Set.empty env
+
+    let typed_expr_std_pass (typ,fv,renamer,tag) = !fv
+    let rec typed_expr_free_variables e = typed_expr_free_variables_template typed_expr_std_pass e
+    and env_free_variables env = env_free_variables_template typed_expr_std_pass env
+
+    let memoized_methods: MemoDict = d0()
+
+    /// Optimizes the free variables for the sake of tuple deforestation.
+    /// It needs at least two passes to converge properly. And probably exactly two.
+    let typed_expr_optimization_pass num_passes typed_exp =
+        let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (_, fv, renamer, tag) =
+            let vars,counter = memo.[int tag]
+            let set_vars vars = renamer_apply_pool renamer vars |> fun x -> fv := x; x
+            if counter < num_passes then
+                let counter = counter + 1
+                memo.[int tag] <- vars, counter
+                let ty_expr, arguments = expr_map.[tag]
+                let vars = typed_expr_free_variables_template (on_method_call_optimization_pass memo expr_map) ty_expr
+                arguments := vars
+                memo.[int tag] <- vars, counter
+                set_vars vars
+            else
+                set_vars vars
+
+        let memo = 
+            Seq.choose (function
+                | MemoMethodDone (_, e, tag, args) -> Some (tag,(e,args))
+                | MemoType t -> None
+                | x -> failwithf "impossible=%A" x) memoized_methods.Values |> Map
+    
+        typed_expr_free_variables_template (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo) typed_exp
+        |> ignore
+
+    let env_to_ty env = Map.map (fun _ -> get_type) env
+    let env_num_args env = 
+        Map.fold (fun s k v -> 
+            let f = typed_expr_free_variables v
+            if Set.isEmpty f then s else s+1) 0 env
+
+    let rec dotnet_type_to_ty (x: System.Type) =
+        if x = typeof<int8> then PrimT Int8T
+        elif x = typeof<int16> then PrimT Int16T
+        elif x = typeof<int32> then PrimT Int32T
+        elif x = typeof<int64> then PrimT Int64T
+
+        elif x = typeof<uint8> then PrimT UInt8T
+        elif x = typeof<uint16> then PrimT UInt16T
+        elif x = typeof<uint32> then PrimT UInt32T
+        elif x = typeof<uint64> then PrimT UInt64T
+
+        elif x = typeof<float32> then PrimT Float32T
+        elif x = typeof<float> then PrimT Float64T
+        elif x = typeof<string> then PrimT StringT
+        elif x = typeof<char> then PrimT CharT
+        elif x = typeof<unit> || x = typeof<System.Void> then BVVT
+        elif x.IsArray then arrayt(DotNetHeap,dotnet_type_to_ty (x.GetElementType()))
+        // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
+        elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
+        else dotnet_type_runtimet x
+
+    let rec dotnet_ty_to_type (x: Ty) =
+        match x with
+        | PrimT Int8T -> typeof<int8>
+        | PrimT Int16T -> typeof<int16>
+        | PrimT Int32T -> typeof<int32>
+        | PrimT Int64T -> typeof<int64>
+
+        | PrimT UInt8T -> typeof<uint8>
+        | PrimT UInt16T -> typeof<uint16>
+        | PrimT UInt32T -> typeof<uint32>
+        | PrimT UInt64T -> typeof<uint64>
+
+        | PrimT Float32T -> typeof<float32>
+        | PrimT Float64T -> typeof<float>
+        | PrimT StringT -> typeof<string>
+        | PrimT CharT -> typeof<char>
+        | ArrayT(N(DotNetHeap,t)) -> (dotnet_ty_to_type t).MakeArrayType()
+        | ArrayT(N(DotNetReference,t)) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
+        | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
+        | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
+
+    let (|TyEnvT|_|) = function
+        | ModuleT (N env) | RecFunctionT (N (N (env),_,_)) | FunctionT(N(N(env),_)) -> Some env
+        | _ -> None
+
+    let is_all_int64 size = List.forall is_int64 (tuple_field size)
+    let (|TyArray|_|) = function
+        | TyTuple [size; ar & TyType (ArrayT (N (ar_type,ret_type)))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
+        | _ -> None
+
+    let rec expr_typecheck (d : LangEnv) (expr: Expr) =
+        let inline tev d expr = expr_typecheck d expr
+        let inline apply_seq d x = !d.seq x
+        let inline tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
+        let inline tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
+        let inline tev_method d expr = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr |> apply_seq d
+        let inline tev_rec d expr = tev_method {d with rbeh=AnnotationReturn} expr
+        let on_type_er trace message = TypeError(trace,message) |> raise
+
+        let tev2 d a b = tev d a, tev d b
+        let tev3 d a b c = tev d a, tev d b, tev d c
+
+        let inner_compile x = expr_prepass x |> snd |> tev d
+
+        let v_find env x on_fail = 
+            match Map.tryFind x env with
+            | Some v -> v
+            | None -> on_fail()
+
+        let get_tag d = 
+            let t = !d.ltag
+            d.ltag := t + 1
+            t
+
+        let inline make_tyv_ty d ty = get_tag d, ty
+        let inline make_tyv_typed_expr d ty_exp = make_tyv_ty d (get_type ty_exp)
+
+        let make_tyv_and_push_typed_expr d ty_exp =
+            let v = make_tyv_typed_expr d ty_exp
+            let seq = !d.seq
+            d.seq := fun rest -> TyLet(LetStd,v,ty_exp,rest,get_type rest) |> seq
+            TyTag v
+
+        let make_tyv_and_push_ty d ty =
+            let v = make_tyv_ty d ty
+            let v' = TyTag v
+            let seq = !d.seq
+            d.seq := fun rest -> TyLet(LetInvisible,v,v',rest,get_type rest) |> seq
+            v'
+
+        let cse_add' d r x = let e = !d.cse_env in if r <> x then Map.add r x e else e
+        let cse_add d r x = d.cse_env := cse_add' d r x
+
+        // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
+        // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
+        let rec destructure d r = 
+            let inline destructure r = destructure d r
+
+            let chase_cse on_succ on_fail r = 
+                match Map.tryFind r !d.cse_env with
+                | Some x -> on_succ x
+                | None -> on_fail r
+            let chase_recurse r = chase_cse destructure id r
+
+            let destructure_var r =
+                let index_tuple_args tuple_types = 
+                    List.mapi (fun i typ -> 
+                        destructure <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
+                let env_unseal x =
+                    let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
+                    Map.map unseal x
+                let r_ty = get_type r
+                match r_ty with
+                | VVT (N tuple_types) -> TyVV(index_tuple_args tuple_types, r_ty)
+                | TyEnvT env -> TyEnv(env_unseal env, r_ty)
+                | _ -> chase_recurse r
            
-    let typec_union d a b =
-        let a, b = tev2 d a b
-        match get_type a, get_type b with
-        | TyTypeC a, TyTypeC b -> lazy (set_field a + set_field b |> uniont) |> typect |> make_tyv_and_push_ty d
-        | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
-
-    let rec typec_strip = function 
-        | TyTypeC x -> x
-        | VVT (N l) -> vvt (List.map typec_strip l)
-        | x -> x
-
-    let typec_create d x = 
-        let key = nodify_memo_key (x, d.env)
-
-        let add_to_memo_dict x = 
-            globals.memoized_methods.[key] <- MemoType x
-            x
-
-        match globals.memoized_methods.TryGetValue key with
-        | true, MemoType ty -> make_tyv_and_push_ty d ty
-        | true, MemoTypeInEvaluation ty -> add_to_memo_dict ty |> make_tyv_and_push_ty d
-        | true, _ -> failwith "Expected a type in the dictionary."
-        | false, _ -> 
-            let typec_body = lazy (tev_seq d x |> get_type |> typec_strip |> add_to_memo_dict)
-            let tyc = typect typec_body
+            let destructure_cse r = 
+                chase_cse 
+                    chase_recurse
+                    (fun r ->
+                        let x = make_tyv_and_push_typed_expr d r
+                        cse_add d r x
+                        x)
+                    r
             
-            globals.memoized_methods.[key] <- MemoTypeInEvaluation tyc
-            // After the evaluation, if the type is recursive the dictionary should have its key.
-            // If present it will return that instead.
-            typec_body.Value |> ignore
-            make_tyv_and_push_ty d tyc
+            match r with
+            | TyV _ | TyEnv _ | TyVV _ | TyLit _ -> r
+            | TyTag _ -> destructure_var r
+            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
+
+        let if_is_returnable (TyType r & x) =
+            if is_returnable' r then x
+            else on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" r
+
+        let if_body d cond tr fl =
+            let b x = cse_add' d cond (TyLit <| LitBool x)
+            let tr = 
+                match cond with
+                | TyOp(EQ,[b & TyLit _; a & TyTag _],_) | TyOp(EQ,[a & TyTag _; b & TyLit _],_) -> tev_assume (cse_add' d a b) d tr
+                | _ -> tev_assume (b true) d tr
+            let fl = tev_assume (b false) d fl
+            let type_tr, type_fl = get_type tr, get_type fl
+            if type_tr = type_fl then
+                match cond with
+                | TyLit(LitBool true) -> tr
+                | TyLit(LitBool false) -> fl
+                | _ -> TyOp(If,[cond;tr;fl],type_tr)
+                |> if_is_returnable
+            else on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+
+        let if_cond d tr fl cond =
+            if is_bool cond = false then on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+            else if_body d cond tr fl
+
+        let if_static d cond tr fl =
+            match tev d cond with
+            | TyLit (LitBool cond) -> 
+                let branch = if cond then tr else fl
+                tev d branch |> if_is_returnable
+            | cond -> if_cond d tr fl cond
+
+        let if_ d cond tr fl = tev d cond |> if_cond d tr fl
+
+        let tag r =
+            let tag = !r
+            r := tag + 1L
+            tag
+
+        let eval_method memo_type used_vars d expr =
+            let key_args = (expr, d.env) |> nodify_memo_key
+
+            match memoized_methods.TryGetValue key_args with
+            | false, _ ->
+                let tag = memoized_methods.Count
+
+                memoized_methods.[key_args] <- MemoMethodInEvaluation tag
+                let typed_expr = tev_method d expr
+                memoized_methods.[key_args] <- MemoMethodDone (memo_type, typed_expr, tag, used_vars)
+                typed_expr, tag
+            | true, MemoMethodInEvaluation tag -> 
+                tev_rec d expr, tag
+            | true, MemoMethodDone (memo_type, typed_expr, tag, used_vars) -> 
+                typed_expr, tag
+            | true, (MemoTypeInEvaluation _ | MemoType _) ->
+                failwith "Expected a method, not a recursive type."
+
+        let eval_renaming memo_type d expr =
+            let env = d.env
+            let fv = env_free_variables env
+            let renamer = renamer_make fv
+            let renamed_env = renamer_apply_env renamer env
+
+            let memo_type = memo_type renamer
+            let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref renamer.Count} expr
+
+            let typed_expr_ty = get_type typed_expr
+            if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
+            else memo_type, ref fv, renamer_reverse renamer, tag, typed_expr_ty
+
+        let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
+        let memoize_method d x = 
+            let memo_type _ = MemoMethod
+            memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
+                TyMemoizedExpr(memo_type,args,rev_renamer,tag,ret_ty)) d x
+
+        let memoize_closure arg d x =
+            let fv, arg_ty = typed_expr_free_variables arg, get_type arg
+            let memo_type r = MemoClosure (renamer_apply_pool r fv)
+            memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
+                TyMemoizedExpr(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
+
+        let case_ d v case =
+            let assume d v x branch = tev_assume (cse_add' d v x) d branch
+            match tev d v with
+            | TyTag(_, t & (UnionT _ | RecT _)) as v ->
+                let rec case_destructure d args_ty =
+                    let f x = make_tyv_and_push_ty d x
+                    let union_case = function
+                        | UnionT (N l) -> Set.toList l |> List.collect (case_destructure d)
+                        | _ -> [f args_ty]
+                    match args_ty with
+                    | RecT (N t) -> union_case t
+                    | x -> union_case x
+
+                let rec map_cases l =
+                    match l with
+                    | x :: xs -> (x, assume d v x case) :: map_cases xs
+                    | _ -> []
+                            
+                match map_cases (case_destructure d t) with
+                | (_, TyType p) :: _ as cases -> 
+                    if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
+                    else 
+                        let l = List.map (snd >> get_type) cases
+                        on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
+                | _ -> failwith "There should always be at least one clause here."
+            | a & TyV(b,_) -> assume d a b case
+            | _ -> tev d case
+           
+        let typec_union d a b =
+            let a, b = tev2 d a b
+            match get_type a, get_type b with
+            | TyTypeC a, TyTypeC b -> lazy (set_field a + set_field b |> uniont) |> typect |> make_tyv_and_push_ty d
+            | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
+
+        let rec typec_strip = function 
+            | TyTypeC x -> x
+            | VVT (N l) -> vvt (List.map typec_strip l)
+            | x -> x
+
+        let typec_create d x = 
+            let key = nodify_memo_key (x, d.env)
+
+            let add_to_memo_dict x = 
+                memoized_methods.[key] <- MemoType x
+                x
+
+            match memoized_methods.TryGetValue key with
+            | true, MemoType ty -> make_tyv_and_push_ty d ty
+            | true, MemoTypeInEvaluation ty -> add_to_memo_dict ty |> make_tyv_and_push_ty d
+            | true, _ -> failwith "Expected a type in the dictionary."
+            | false, _ -> 
+                let typec_body = lazy (tev_seq d x |> get_type |> typec_strip |> add_to_memo_dict)
+                let tyc = typect typec_body
+            
+                memoized_methods.[key] <- MemoTypeInEvaluation tyc
+                // After the evaluation, if the type is recursive the dictionary should have its key.
+                // If present it will return that instead.
+                typec_body.Value |> ignore
+                make_tyv_and_push_ty d tyc
             
 
-    let inline wrap_exception d f =
-        try f()
-        with 
-        | :? TypeError as e -> reraise()
-        | e -> on_type_er d.trace e.Message
+        let inline wrap_exception d f =
+            try f()
+            with 
+            | :? TypeError as e -> reraise()
+            | e -> on_type_er d.trace e.Message
 
-    let dotnet_load_assembly d x =
-        match tev d x with
-        | TypeString x ->
-            wrap_exception d <| fun _ ->
-                System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> make_tyv_and_push_ty d
-        | _ -> on_type_er d.trace "Expected a type level string."
-
-    let (|TyDotNetType|_|) = function
-        | TyType (DotNetTypeRuntimeT (N x) | DotNetTypeInstanceT (N x)) -> Some x
-        | _ -> None
-
-    let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
-
-    let array_index' d = function
-        | ar, idx when is_all_int64 idx ->
-            match ar with
-            | TyArray (size,ar,_,t) ->
-                if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
-                else on_type_er d.trace "Array index does not match the number of dimensions in the array."
-            | _ -> on_type_er d.trace "Trying to index into a non-array."
-        | _ -> on_type_er d.trace "One of the index arguments in array index is not an int64."
-    
-    let array_index d ar idx = array_index' d (tev2 d ar idx)
-
-    let (|TyLitIndex|_|) = function
-        | TyLit (LitInt32 i) -> Some i
-        | TyLit (LitInt64 i) -> Some (int i)
-        | TyLit (LitUInt32 i) -> Some (int i)
-        | TyLit (LitUInt64 i) -> Some (int i)
-        | _ -> None
-
-    let string_length d a = 
-        match tev d a with
-        | TyLit (LitString str) -> TyLit (LitInt64 (int64 str.Length))
-        | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
-        | _ -> on_type_er d.trace "Expected a string."
-
-    let rec apply d a b = apply_template tev d (a, b)
-    and apply_template tev d = function
-        | closure & TyEnv(env_term,(FunctionT(N(N env_ty,x)) | RecFunctionT(N(N env_ty,x,_)))), TyType (ForCastT (N args_ty)) -> 
-            let instantiate_type_as_variable d args_ty =
-                let f x = make_tyv_and_push_ty d x
-                match args_ty with
-                | VVT (N l) -> TyVV(List.map f l, args_ty)
-                | x -> f x
-            
-            let args = instantiate_type_as_variable d args_ty
-            apply_template (memoize_closure args) d (closure, args)
-        | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
-        | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
-        | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
-        | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
-        | recf & TyEnv(env_term,RecFunctionT (N (_, N (pat,body), name))), args -> 
-            let env = if pat <> "" then Map.add pat args env_term else env_term
-            tev {d with env = Map.add name recf env} body
-        | TyEnv(env_term,FunctionT (N (_, N (pat,body)))), args -> 
-            tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
-        | TyType (DotNetAssemblyT (N a)), TypeString name -> 
+        let dotnet_load_assembly d x =
+            match tev d x with
+            | TypeString x ->
                 wrap_exception d <| fun _ ->
-                    match a.GetType(name) with
-                    | null -> on_type_er d.trace "A type cannot be found inside the assembly."
-                    | x -> 
-                        if x.IsPublic then
-                            x |> dotnet_type_runtimet |> make_tyv_and_push_ty d
-                        else
-                            on_type_er d.trace "Cannot load a private type from an assembly."
-        | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
-        | dotnet_type & TyType (DotNetTypeRuntimeT _ | DotNetTypeInstanceT _), method_name & TypeString _ ->
-            let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
-                      |> inner_compile
-            apply d (apply d lam dotnet_type) method_name
-        | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
-            wrap_exception d <| fun _ ->
-                match typ.GetMethod(method_name, method_args) with
-                | null -> on_type_er d.trace "Cannot find a method with matching arguments."
-                | meth -> 
-                    if meth.IsPublic then
-                        TyOp(DotNetTypeCallMethod,[dotnet_type;args],meth.ReturnType |> dotnet_type_to_ty)
-                        |> make_tyv_and_push_typed_expr d
-                    else
-                        on_type_er d.trace "Cannot call a private method."
-        | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TyTuple (TySystemTypeArgs system_type_args) ->
-            wrap_exception d <| fun _ ->
-                if runtime_type.ContainsGenericParameters then // instantiate generic type params
-                    runtime_type.MakeGenericType system_type_args 
-                    |> dotnet_type_runtimet |> make_tyv_and_push_ty d
-                else // construct the type
-                    match runtime_type.GetConstructor system_type_args with
-                    | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
-                    | con -> 
-                        if con.IsPublic then
-                            let instance_type = dotnet_type_instancet runtime_type
-                            TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
-                        else
-                            on_type_er d.trace "Cannot call a private constructor."    
-        | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
-        | typec & TyType(TyTypeC ty), args -> 
-            let substitute_ty = function 
-                | TyVV(l,_) -> TyVV(l,ty)
-                | TyV(x,_) -> TyV(x,ty) 
-                | x -> TyV(x,ty) 
+                    System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> make_tyv_and_push_ty d
+            | _ -> on_type_er d.trace "Expected a type level string."
 
-            let (|TyRecUnion|_|) = function
-                | UnionT (N ty') -> Some ty'
-                | RecT (N t) -> Some (set_field t)
-                | _ -> None
+        let (|TyDotNetType|_|) = function
+            | TyType (DotNetTypeRuntimeT (N x) | DotNetTypeInstanceT (N x)) -> Some x
+            | _ -> None
 
-            match ty, args with
-            | x, TyType r when x = r -> args
-            | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' -> 
-                let lam = inl' ["args"; "typec"] (op(Case,[v "args"; ap (v "typec") (v "args")])) |> inner_compile
-                apply d (apply d lam typec) args
-            | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args                
-            | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
-        | TyLit (LitString str), TyLitIndex x -> 
-            if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
-            else on_type_er d.trace "The index into a string literal is out of bounds."
-        | TyType(PrimT StringT) & str, idx -> 
-            if is_int idx = false then on_type_er d.trace "Expected an int as the second argument to string index."
-            TyOp(StringIndex,[str;idx],PrimT CharT)
-        | closure & TyType(ClosureT(N (clo_arg_ty,clo_ret_ty))), args -> 
-            let arg_ty = get_type args
-            if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
-            else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
-        | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
+        let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
 
-    let apply_tev d expr args = apply d (tev d expr) (tev d args)
-
-    let vv_index_template f d v i =
-        let v,i = tev2 d v i
-        match v, i with
-        | TyVV(l,_), TyLitIndex i ->
-            if i >= 0 || i < List.length l then f l i
-            else on_type_er d.trace "Tuple index not within bounds."
-        | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should ways be destructured."
-        | v, TyLitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
-        | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
-
-    let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
-    let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,vvt (List.map get_type l))) d v i
-
-    let inline vv_unop_template on_succ on_fail d v =
-        match tev d v with
-        | TyVV(l,_) -> on_succ l
-        | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
-        | v -> on_fail()
-
-    let vv_length = 
-        vv_unop_template (fun l -> TyLit (LitInt32 l.Length)) 
-            (fun _ -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v)
-    let vv_is = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false))
-
-    let eq_type d a b =
-        let f x = match get_type x with TyTypeC x -> x | x -> x
-        let a, b = tev2 d a b 
-        LitBool (f a = f b) |> TyLit
+        let array_index' d = function
+            | ar, idx when is_all_int64 idx ->
+                match ar with
+                | TyArray (size,ar,_,t) ->
+                    if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
+                    else on_type_er d.trace "Array index does not match the number of dimensions in the array."
+                | _ -> on_type_er d.trace "Trying to index into a non-array."
+            | _ -> on_type_er d.trace "One of the index arguments in array index is not an int64."
     
-    let vv_cons d a b =
-        let a, b = tev2 d a b
-        match b with
-        | TyVV(b, VVT (N bt)) -> TyVV(a::b, vvt (get_type a :: bt))
-        | _ -> on_type_er d.trace "Expected a tuple on the right is in VVCons."
+        let array_index d ar idx = array_index' d (tev2 d ar idx)
 
-    let type_lit_create' d x = litt x |> make_tyv_and_push_ty d
+        let (|TyLitIndex|_|) = function
+            | TyLit (LitInt32 i) -> Some i
+            | TyLit (LitInt64 i) -> Some (int i)
+            | TyLit (LitUInt32 i) -> Some (int i)
+            | TyLit (LitUInt64 i) -> Some (int i)
+            | _ -> None
 
-    let module_open d a b =
-        let a = tev d a
-        match a with
-        | TyEnv(env_term, ModuleT env_ty) -> 
-            let env = Map.fold (fun s k v -> Map.add k v s) d.env env_term
-            tev {d with env = env} b
-        | x -> on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
+        let string_length d a = 
+            match tev d a with
+            | TyLit (LitString str) -> TyLit (LitInt64 (int64 str.Length))
+            | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
+            | _ -> on_type_er d.trace "Expected a string."
 
-    let module_with_f_extend d (module_,module_type) name arg =
-        let x = Map.add name arg module_
-        let x_ty = Map.add name (get_type arg) module_type
-        TyEnv(x, modulet x_ty)
+        let rec apply d a b = apply_template tev d (a, b)
+        and apply_template tev d = function
+            | closure & TyEnv(env_term,(FunctionT(N(N env_ty,x)) | RecFunctionT(N(N env_ty,x,_)))), TyType (ForCastT (N args_ty)) -> 
+                let instantiate_type_as_variable d args_ty =
+                    let f x = make_tyv_and_push_ty d x
+                    match args_ty with
+                    | VVT (N l) -> TyVV(List.map f l, args_ty)
+                    | x -> f x
+            
+                let args = instantiate_type_as_variable d args_ty
+                apply_template (memoize_closure args) d (closure, args)
+            | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+            | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
+            | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
+            | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
+            | recf & TyEnv(env_term,RecFunctionT (N (_, N (pat,body), name))), args -> 
+                let env = if pat <> "" then Map.add pat args env_term else env_term
+                tev {d with env = Map.add name recf env} body
+            | TyEnv(env_term,FunctionT (N (_, N (pat,body)))), args -> 
+                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
+            | TyType (DotNetAssemblyT (N a)), TypeString name -> 
+                    wrap_exception d <| fun _ ->
+                        match a.GetType(name) with
+                        | null -> on_type_er d.trace "A type cannot be found inside the assembly."
+                        | x -> 
+                            if x.IsPublic then
+                                x |> dotnet_type_runtimet |> make_tyv_and_push_ty d
+                            else
+                                on_type_er d.trace "Cannot load a private type from an assembly."
+            | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
+            | dotnet_type & TyType (DotNetTypeRuntimeT _ | DotNetTypeInstanceT _), method_name & TypeString _ ->
+                let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
+                          |> inner_compile
+                apply d (apply d lam dotnet_type) method_name
+            | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
+                wrap_exception d <| fun _ ->
+                    match typ.GetMethod(method_name, method_args) with
+                    | null -> on_type_er d.trace "Cannot find a method with matching arguments."
+                    | meth -> 
+                        if meth.IsPublic then
+                            TyOp(DotNetTypeCallMethod,[dotnet_type;args],meth.ReturnType |> dotnet_type_to_ty)
+                            |> make_tyv_and_push_typed_expr d
+                        else
+                            on_type_er d.trace "Cannot call a private method."
+            | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TyTuple (TySystemTypeArgs system_type_args) ->
+                wrap_exception d <| fun _ ->
+                    if runtime_type.ContainsGenericParameters then // instantiate generic type params
+                        runtime_type.MakeGenericType system_type_args 
+                        |> dotnet_type_runtimet |> make_tyv_and_push_ty d
+                    else // construct the type
+                        match runtime_type.GetConstructor system_type_args with
+                        | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
+                        | con -> 
+                            if con.IsPublic then
+                                let instance_type = dotnet_type_instancet runtime_type
+                                TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
+                            else
+                                on_type_er d.trace "Cannot call a private constructor."    
+            | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
+            | typec & TyType(TyTypeC ty), args -> 
+                let substitute_ty = function 
+                    | TyVV(l,_) -> TyVV(l,ty)
+                    | TyV(x,_) -> TyV(x,ty) 
+                    | x -> TyV(x,ty) 
 
-    let module_with_f d (module_,module_type) name arg =
-        match Map.tryFind name module_ with
-        | Some arg' ->
-            if get_type arg = get_type arg' then module_with_f_extend d (module_,module_type) name arg
-            else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `with` if that is the desired behavior." name
-        | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `with` if that is the desired behavior." name
+                let (|TyRecUnion|_|) = function
+                    | UnionT (N ty') -> Some ty'
+                    | RecT (N t) -> Some (set_field t)
+                    | _ -> None
 
-    let module_with_template f d module_ name arg =
-        let module_, name, arg = tev3 d module_ name arg
-        match module_, name with
-        | TyEnv(module_,ModuleT (N module_type)), TypeString name -> f d (module_,module_type) name arg
-        | TyEnv(module_,ModuleT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
-        | _ -> on_type_er d.trace "Expected a module as the first argument."
+                match ty, args with
+                | x, TyType r when x = r -> args
+                | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' -> 
+                    let lam = inl' ["args"; "typec"] (op(Case,[v "args"; ap (v "typec") (v "args")])) |> inner_compile
+                    apply d (apply d lam typec) args
+                | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args                
+                | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
+            | TyLit (LitString str), TyLitIndex x -> 
+                if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
+                else on_type_er d.trace "The index into a string literal is out of bounds."
+            | TyType(PrimT StringT) & str, idx -> 
+                if is_int idx = false then on_type_er d.trace "Expected an int as the second argument to string index."
+                TyOp(StringIndex,[str;idx],PrimT CharT)
+            | closure & TyType(ClosureT(N (clo_arg_ty,clo_ret_ty))), args -> 
+                let arg_ty = get_type args
+                if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
+                else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
+            | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
-    let module_with = module_with_template module_with_f
-    let module_with_extend = module_with_template module_with_f_extend
+        let apply_tev d expr args = apply d (tev d expr) (tev d args)
 
-    let type_annot d a b =
-        match d.rbeh with
-        | AnnotationReturn -> tev d b |> get_type |> typec_strip |> make_tyv_and_push_ty d
-        | AnnotationDive ->
-            let a, b = tev d a, tev_seq d b
-            let ta, tb = get_type a, get_type b |> typec_strip
-            if ta = tb then a else on_type_er d.trace <| sprintf "%A <> %A" ta tb
+        let vv_index_template f d v i =
+            let v,i = tev2 d v i
+            match v, i with
+            | TyVV(l,_), TyLitIndex i ->
+                if i >= 0 || i < List.length l then f l i
+                else on_type_er d.trace "Tuple index not within bounds."
+            | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should ways be destructured."
+            | v, TyLitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
+            | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
-    let prim_bin_op_template d check_error is_check k a b t =
-        let a, b = tev2 d a b
-        if is_check a b then k t a b
-        else on_type_er d.trace (check_error a b)
+        let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
+        let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,vvt (List.map get_type l))) d v i
 
-    let prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
-    let prim_un_op_helper t a = TyOp(t,[a],get_type a)
-    let bool_helper t a b = TyOp(t,[a;b],PrimT BoolT)
+        let inline vv_unop_template on_succ on_fail d v =
+            match tev d v with
+            | TyVV(l,_) -> on_succ l
+            | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
+            | v -> on_fail()
 
-    let prim_arith_op d = 
-        let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
-        let check a b = is_numeric a && get_type a = get_type b
-        prim_bin_op_template d er check (fun t a b ->
-            let inline op_arith a b =
-                match t with
-                | Add -> a + b
-                | Sub -> a - b
-                | Mult -> a * b
-                | Div -> a / b
-                | Mod -> a % b
-                | _ -> failwith "Expected an arithmetic operation."
-            match a, b with
-            | TyLit a', TyLit b' ->
-                match a', b' with
-                | LitInt8 a, LitInt8 b -> op_arith a b |> LitInt8 |> TyLit
-                | LitInt16 a, LitInt16 b -> op_arith a b |> LitInt16 |> TyLit
-                | LitInt32 a, LitInt32 b -> op_arith a b |> LitInt32 |> TyLit
-                | LitInt64 a, LitInt64 b -> op_arith a b |> LitInt64 |> TyLit
-                | LitUInt8 a, LitUInt8 b -> op_arith a b |> LitUInt8 |> TyLit
-                | LitUInt16 a, LitUInt16 b -> op_arith a b |> LitUInt16 |> TyLit
-                | LitUInt32 a, LitUInt32 b -> op_arith a b |> LitUInt32 |> TyLit
-                | LitUInt64 a, LitUInt64 b -> op_arith a b |> LitUInt64 |> TyLit
-                | LitFloat32 a, LitFloat32 b -> op_arith a b |> LitFloat32 |> TyLit
-                | LitFloat64 a, LitFloat64 b -> op_arith a b |> LitFloat64 |> TyLit
-                | _ -> prim_bin_op_helper t a b
-            | _ -> prim_bin_op_helper t a b
-            )
+        let vv_length = 
+            vv_unop_template (fun l -> TyLit (LitInt32 l.Length)) 
+                (fun _ -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v)
+        let vv_is = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false))
 
-    let prim_comp_op d = 
-        let er = sprintf "(is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
-        let check a b = (is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b
-        prim_bin_op_template d er check (fun t a b ->
-            let inline eq_op a b = LitBool (a = b) |> TyLit
-            match t, a, b with
-            | EQ, TyTag (a,_), TyTag (b,_) when a = b -> LitBool true |> TyLit
-            | EQ, TyLit (LitBool a), TyLit (LitBool b) -> eq_op a b
-            | EQ, TyLit (LitString a), TyLit (LitString b) -> eq_op a b
-            | _ ->
-                let inline op a b =
+        let eq_type d a b =
+            let f x = match get_type x with TyTypeC x -> x | x -> x
+            let a, b = tev2 d a b 
+            LitBool (f a = f b) |> TyLit
+    
+        let vv_cons d a b =
+            let a, b = tev2 d a b
+            match b with
+            | TyVV(b, VVT (N bt)) -> TyVV(a::b, vvt (get_type a :: bt))
+            | _ -> on_type_er d.trace "Expected a tuple on the right is in VVCons."
+
+        let type_lit_create' d x = litt x |> make_tyv_and_push_ty d
+
+        let module_open d a b =
+            let a = tev d a
+            match a with
+            | TyEnv(env_term, ModuleT env_ty) -> 
+                let env = Map.fold (fun s k v -> Map.add k v s) d.env env_term
+                tev {d with env = env} b
+            | x -> on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
+
+        let module_with_f_extend d (module_,module_type) name arg =
+            let x = Map.add name arg module_
+            let x_ty = Map.add name (get_type arg) module_type
+            TyEnv(x, modulet x_ty)
+
+        let module_with_f d (module_,module_type) name arg =
+            match Map.tryFind name module_ with
+            | Some arg' ->
+                if get_type arg = get_type arg' then module_with_f_extend d (module_,module_type) name arg
+                else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `with` if that is the desired behavior." name
+            | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `with` if that is the desired behavior." name
+
+        let module_with_template f d module_ name arg =
+            let module_, name, arg = tev3 d module_ name arg
+            match module_, name with
+            | TyEnv(module_,ModuleT (N module_type)), TypeString name -> f d (module_,module_type) name arg
+            | TyEnv(module_,ModuleT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
+            | _ -> on_type_er d.trace "Expected a module as the first argument."
+
+        let module_with = module_with_template module_with_f
+        let module_with_extend = module_with_template module_with_f_extend
+
+        let type_annot d a b =
+            match d.rbeh with
+            | AnnotationReturn -> tev d b |> get_type |> typec_strip |> make_tyv_and_push_ty d
+            | AnnotationDive ->
+                let a, b = tev d a, tev_seq d b
+                let ta, tb = get_type a, get_type b |> typec_strip
+                if ta = tb then a else on_type_er d.trace <| sprintf "%A <> %A" ta tb
+
+        let prim_bin_op_template d check_error is_check k a b t =
+            let a, b = tev2 d a b
+            if is_check a b then k t a b
+            else on_type_er d.trace (check_error a b)
+
+        let prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
+        let prim_un_op_helper t a = TyOp(t,[a],get_type a)
+        let bool_helper t a b = TyOp(t,[a;b],PrimT BoolT)
+
+        let prim_arith_op d = 
+            let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
+            let check a b = is_numeric a && get_type a = get_type b
+            prim_bin_op_template d er check (fun t a b ->
+                let inline op_arith a b =
                     match t with
-                    | LT -> a < b
-                    | LTE -> a <= b
-                    | EQ -> a = b
-                    | GT -> a > b
-                    | GTE -> a >= b 
-                    | _ -> failwith "Expected a comparison operation."
+                    | Add -> a + b
+                    | Sub -> a - b
+                    | Mult -> a * b
+                    | Div -> a / b
+                    | Mod -> a % b
+                    | _ -> failwith "Expected an arithmetic operation."
                 match a, b with
                 | TyLit a', TyLit b' ->
                     match a', b' with
-                    | LitInt8 a, LitInt8 b -> op a b |> LitBool |> TyLit
-                    | LitInt16 a, LitInt16 b -> op a b |> LitBool |> TyLit
-                    | LitInt32 a, LitInt32 b -> op a b |> LitBool |> TyLit
-                    | LitInt64 a, LitInt64 b -> op a b |> LitBool |> TyLit
-                    | LitUInt8 a, LitUInt8 b -> op a b |> LitBool |> TyLit
-                    | LitUInt16 a, LitUInt16 b -> op a b |> LitBool |> TyLit
-                    | LitUInt32 a, LitUInt32 b -> op a b |> LitBool |> TyLit
-                    | LitUInt64 a, LitUInt64 b -> op a b |> LitBool |> TyLit
-                    | LitFloat32 a, LitFloat32 b -> op a b |> LitBool |> TyLit
-                    | LitFloat64 a, LitFloat64 b -> op a b |> LitBool |> TyLit
-                    | LitString a, LitString b -> op a b |> LitBool |> TyLit
-                    | LitChar a, LitChar b -> op a b |> LitBool |> TyLit
-                    | _ -> bool_helper t a b
-                | _ -> bool_helper t a b
+                    | LitInt8 a, LitInt8 b -> op_arith a b |> LitInt8 |> TyLit
+                    | LitInt16 a, LitInt16 b -> op_arith a b |> LitInt16 |> TyLit
+                    | LitInt32 a, LitInt32 b -> op_arith a b |> LitInt32 |> TyLit
+                    | LitInt64 a, LitInt64 b -> op_arith a b |> LitInt64 |> TyLit
+                    | LitUInt8 a, LitUInt8 b -> op_arith a b |> LitUInt8 |> TyLit
+                    | LitUInt16 a, LitUInt16 b -> op_arith a b |> LitUInt16 |> TyLit
+                    | LitUInt32 a, LitUInt32 b -> op_arith a b |> LitUInt32 |> TyLit
+                    | LitUInt64 a, LitUInt64 b -> op_arith a b |> LitUInt64 |> TyLit
+                    | LitFloat32 a, LitFloat32 b -> op_arith a b |> LitFloat32 |> TyLit
+                    | LitFloat64 a, LitFloat64 b -> op_arith a b |> LitFloat64 |> TyLit
+                    | _ -> prim_bin_op_helper t a b
+                | _ -> prim_bin_op_helper t a b
                 )
 
-    let prim_bool_op d = 
-        let er = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A"
-        let check a b = is_bool a && get_type a = get_type b
-        prim_bin_op_template d er check (fun t a b ->
-            let inline op a b =
-                match t with
-                | And -> a && b
-                | Or -> a || b
-                | _ -> failwith "Expected a comparison operation."
-            match a, b with
-            | TyLit (LitBool a), TyLit (LitBool b) -> op a b |> LitBool |> TyLit
-            | _ -> bool_helper t a b            
-            )
+        let prim_comp_op d = 
+            let er = sprintf "(is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
+            let check a b = (is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b
+            prim_bin_op_template d er check (fun t a b ->
+                let inline eq_op a b = LitBool (a = b) |> TyLit
+                match t, a, b with
+                | EQ, TyTag (a,_), TyTag (b,_) when a = b -> LitBool true |> TyLit
+                | EQ, TyLit (LitBool a), TyLit (LitBool b) -> eq_op a b
+                | EQ, TyLit (LitString a), TyLit (LitString b) -> eq_op a b
+                | _ ->
+                    let inline op a b =
+                        match t with
+                        | LT -> a < b
+                        | LTE -> a <= b
+                        | EQ -> a = b
+                        | GT -> a > b
+                        | GTE -> a >= b 
+                        | _ -> failwith "Expected a comparison operation."
+                    match a, b with
+                    | TyLit a', TyLit b' ->
+                        match a', b' with
+                        | LitInt8 a, LitInt8 b -> op a b |> LitBool |> TyLit
+                        | LitInt16 a, LitInt16 b -> op a b |> LitBool |> TyLit
+                        | LitInt32 a, LitInt32 b -> op a b |> LitBool |> TyLit
+                        | LitInt64 a, LitInt64 b -> op a b |> LitBool |> TyLit
+                        | LitUInt8 a, LitUInt8 b -> op a b |> LitBool |> TyLit
+                        | LitUInt16 a, LitUInt16 b -> op a b |> LitBool |> TyLit
+                        | LitUInt32 a, LitUInt32 b -> op a b |> LitBool |> TyLit
+                        | LitUInt64 a, LitUInt64 b -> op a b |> LitBool |> TyLit
+                        | LitFloat32 a, LitFloat32 b -> op a b |> LitBool |> TyLit
+                        | LitFloat64 a, LitFloat64 b -> op a b |> LitBool |> TyLit
+                        | LitString a, LitString b -> op a b |> LitBool |> TyLit
+                        | LitChar a, LitChar b -> op a b |> LitBool |> TyLit
+                        | _ -> bool_helper t a b
+                    | _ -> bool_helper t a b
+                    )
 
-    let prim_shift_op d =
-        let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
-        let check a b = is_int a && is_int b
-        prim_bin_op_template d er check prim_bin_op_helper
+        let prim_bool_op d = 
+            let er = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A"
+            let check a b = is_bool a && get_type a = get_type b
+            prim_bin_op_template d er check (fun t a b ->
+                let inline op a b =
+                    match t with
+                    | And -> a && b
+                    | Or -> a || b
+                    | _ -> failwith "Expected a comparison operation."
+                match a, b with
+                | TyLit (LitBool a), TyLit (LitBool b) -> op a b |> LitBool |> TyLit
+                | _ -> bool_helper t a b            
+                )
 
-    let prim_shuffle_op d =
-        let er = sprintf "`is_int b` is false.\na=%A, b=%A"
-        let check a b = is_int b
-        prim_bin_op_template d er check prim_bin_op_helper
+        let prim_shift_op d =
+            let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
+            let check a b = is_int a && is_int b
+            prim_bin_op_template d er check prim_bin_op_helper
 
-    let prim_un_op_template d check_error is_check k a t =
-        let a = tev d a
-        if is_check a then k t a
-        else on_type_er d.trace (check_error a)
+        let prim_shuffle_op d =
+            let er = sprintf "`is_int b` is false.\na=%A, b=%A"
+            let check a b = is_int b
+            prim_bin_op_template d er check prim_bin_op_helper
 
-    let prim_un_floating d =
-        let er = sprintf "`is_float a` is false.\na=%A"
-        let check a = is_float a
-        prim_un_op_template d er check prim_un_op_helper
+        let prim_un_op_template d check_error is_check k a t =
+            let a = tev d a
+            if is_check a then k t a
+            else on_type_er d.trace (check_error a)
 
-    let prim_un_numeric d =
-        let er = sprintf "`is_numeric a` is false.\na=%A"
-        let check a = is_numeric a
-        prim_un_op_template d er check (fun t a -> 
-            let inline op a = 
-                match t with
-                | Neg -> -a
-                | _ -> failwithf "Unexpected operation %A." t
+        let prim_un_floating d =
+            let er = sprintf "`is_float a` is false.\na=%A"
+            let check a = is_float a
+            prim_un_op_template d er check prim_un_op_helper
 
-            match a with
-            | TyLit a' ->
-                match a' with
-                | LitInt8 a -> op a |> LitInt8 |> TyLit
-                | LitInt16 a -> op a |> LitInt16 |> TyLit
-                | LitInt32 a -> op a |> LitInt32 |> TyLit
-                | LitInt64 a -> op a |> LitInt64 |> TyLit
-                | LitFloat32 a -> op a |> LitFloat32 |> TyLit
-                | LitFloat64 a -> op a |> LitFloat64 |> TyLit
+        let prim_un_numeric d =
+            let er = sprintf "`is_numeric a` is false.\na=%A"
+            let check a = is_numeric a
+            prim_un_op_template d er check (fun t a -> 
+                let inline op a = 
+                    match t with
+                    | Neg -> -a
+                    | _ -> failwithf "Unexpected operation %A." t
+
+                match a with
+                | TyLit a' ->
+                    match a' with
+                    | LitInt8 a -> op a |> LitInt8 |> TyLit
+                    | LitInt16 a -> op a |> LitInt16 |> TyLit
+                    | LitInt32 a -> op a |> LitInt32 |> TyLit
+                    | LitInt64 a -> op a |> LitInt64 |> TyLit
+                    | LitFloat32 a -> op a |> LitFloat32 |> TyLit
+                    | LitFloat64 a -> op a |> LitFloat64 |> TyLit
+                    | _ -> prim_un_op_helper t a
                 | _ -> prim_un_op_helper t a
-            | _ -> prim_un_op_helper t a
-            )
+                )
 
-    let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> make_tyv_and_push_ty d
-    let error_non_unit d a =
-        let x = tev d a 
-        if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
-        else x
+        let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> make_tyv_and_push_ty d
+        let error_non_unit d a =
+            let x = tev d a 
+            if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
+            else x
 
-    let type_lit_create d a =
-        match tev d a with
-        | TyLit a -> type_lit_create' d a
-        | _ -> on_type_er d.trace "Expected a literal in type literal create."
+        let type_lit_create d a =
+            match tev d a with
+            | TyLit a -> type_lit_create' d a
+            | _ -> on_type_er d.trace "Expected a literal in type literal create."
 
-    let dynamize d a =
-        match tev d a with
-        | TyV(_, (UnionT _ | RecT _)) | TyVV(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
-        | a -> a
+        let dynamize d a =
+            match tev d a with
+            | TyV(_, (UnionT _ | RecT _)) | TyVV(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+            | a -> a
 
-    let module_create d l =
-        let rec loop acc = function
-            | V (N x) -> x :: acc
-            | VV (N l) -> List.fold loop acc l
-            | ExprPos p -> loop acc p.Expression
-            | _ -> on_type_er d.trace "Only variable names are allowed in module create."
-        let er _ = on_type_er d.trace "In module create, the variable was not found."
-        let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
-        TyEnv(env, modulet <| env_to_ty env)
+        let module_create d l =
+            let rec loop acc = function
+                | V (N x) -> x :: acc
+                | VV (N l) -> List.fold loop acc l
+                | ExprPos p -> loop acc p.Expression
+                | _ -> on_type_er d.trace "Only variable names are allowed in module create."
+            let er _ = on_type_er d.trace "In module create, the variable was not found."
+            let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
+            TyEnv(env, modulet <| env_to_ty env)
 
-    let array_create d size typ =
-        let typ = tev_seq d typ |> function 
-            | TyType (TyTypeC x | x) -> x 
+        let array_create d size typ =
+            let typ = tev_seq d typ |> function 
+                | TyType (TyTypeC x | x) -> x 
 
-        let size, array_type =
-            match tev d size with
-            | size when is_all_int64 size -> size, arrayt(DotNetHeap,typ)
-            | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
+            let size, array_type =
+                match tev d size with
+                | size when is_all_int64 size -> size, arrayt(DotNetHeap,typ)
+                | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
 
-        let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
-        let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
+            let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
+            let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
 
-    let reference_create d x =
-        let x = tev d x
-        let size, array_type = TyB, arrayt(DotNetReference, get_type x)
-        let array = TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
-        let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
+        let reference_create d x =
+            let x = tev d x
+            let size, array_type = TyB, arrayt(DotNetReference, get_type x)
+            let array = TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
+            let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
 
-    let array_set d ar idx r =
-        match array_index d ar idx, tev d r with
-        | l, r when get_type l = get_type r -> make_tyv_and_push_typed_expr d (TyOp(ArraySet,[l;r],BVVT))
-        | _ -> on_type_er d.trace "The two sides in array set have different types."
+        let array_set d ar idx r =
+            match array_index d ar idx, tev d r with
+            | l, r when get_type l = get_type r -> make_tyv_and_push_typed_expr d (TyOp(ArraySet,[l;r],BVVT))
+            | _ -> on_type_er d.trace "The two sides in array set have different types."
 
-    let add_trace d x = {d with trace = x :: d.trace}
+        let add_trace d x = {d with trace = x :: d.trace}
 
-    match expr with
-    | Lit (N value) -> TyLit value
-    | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
-    | FunctionFilt(N (vars,N (pat, body))) -> 
-        let env = Map.filter (fun k _ -> Set.contains k vars) d.env
-        let env_ty = env_to_ty env |> nodify_env_ty
-        let pat = if vars.Contains pat then pat else ""
-        TyEnv(env, funt(env_ty, nodify_func (pat, body)))
-    | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
-    | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
-    | ExprPos p -> tev (add_trace d p.Pos) p.Expression
-    | VV (N vars) ->
-        let vv = List.map (tev d) vars 
-        TyVV(vv, vvt(List.map get_type vv))
-    | Op(N (op,vars)) ->
-        match op, vars with
-        | StringLength,[a] -> string_length d a
-        | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
-        | Fix,[Lit (N (LitString name)); body] ->
-            match tev d body with
-            | TyEnv(env_term,FunctionT(N (env_ty,core))) -> TyEnv(env_term,recfunt(env_ty,core,name))  
-            | x -> failwithf "Invalid use of Fix. Got: %A" x
-        | Case,[v;case] -> case_ d v case
-        | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
-        | If,[cond;tr;fl] -> if_ d cond tr fl
-        | Apply,[a;b] -> apply_tev d a b
-        | MethodMemoize,[a] -> memoize_method d a
-        | ForCast,[x] -> for_cast d x
+        match expr with
+        | Lit (N value) -> TyLit value
+        | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
+        | FunctionFilt(N (vars,N (pat, body))) -> 
+            let env = Map.filter (fun k _ -> Set.contains k vars) d.env
+            let env_ty = env_to_ty env |> nodify_env_ty
+            let pat = if vars.Contains pat then pat else ""
+            TyEnv(env, funt(env_ty, nodify_func (pat, body)))
+        | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
+        | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
+        | ExprPos p -> tev (add_trace d p.Pos) p.Expression
+        | VV (N vars) ->
+            let vv = List.map (tev d) vars 
+            TyVV(vv, vvt(List.map get_type vv))
+        | Op(N (op,vars)) ->
+            match op, vars with
+            | StringLength,[a] -> string_length d a
+            | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
+            | Fix,[Lit (N (LitString name)); body] ->
+                match tev d body with
+                | TyEnv(env_term,FunctionT(N (env_ty,core))) -> TyEnv(env_term,recfunt(env_ty,core,name))  
+                | x -> failwithf "Invalid use of Fix. Got: %A" x
+            | Case,[v;case] -> case_ d v case
+            | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
+            | If,[cond;tr;fl] -> if_ d cond tr fl
+            | Apply,[a;b] -> apply_tev d a b
+            | MethodMemoize,[a] -> memoize_method d a
+            | ForCast,[x] -> for_cast d x
         
-        | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
-        | PrintEnv,[a] -> printfn "%A" d.env; tev d a
-        | PrintExpr,[a] -> printfn "%A" a; tev d a
-        | ModuleOpen,[a;b] -> module_open d a b
-        | ModuleCreate,[l] -> module_create d l
-        | ModuleWith,[a;b;c] -> module_with d a b c
-        | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c
-        | TypeLitCreate,[a] -> type_lit_create d a
-        | Dynamize,[a] -> dynamize d a
+            | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
+            | PrintEnv,[a] -> printfn "%A" d.env; tev d a
+            | PrintExpr,[a] -> printfn "%A" a; tev d a
+            | ModuleOpen,[a;b] -> module_open d a b
+            | ModuleCreate,[l] -> module_create d l
+            | ModuleWith,[a;b;c] -> module_with d a b c
+            | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c
+            | TypeLitCreate,[a] -> type_lit_create d a
+            | Dynamize,[a] -> dynamize d a
 
-        | ArrayCreate,[a;b] -> array_create d a b
-        | ReferenceCreate,[a] -> reference_create d a
-        | ArrayIndex,[a;b] -> array_index d a b
-        | ArraySet,[a;b;c] -> array_set d a b c
+            | ArrayCreate,[a;b] -> array_create d a b
+            | ReferenceCreate,[a] -> reference_create d a
+            | ArrayIndex,[a;b] -> array_index d a b
+            | ArraySet,[a;b;c] -> array_set d a b c
 
-        // Primitive operations on expressions.
-        | Add,[a;b] -> prim_arith_op d a b Add
-        | Sub,[a;b] -> prim_arith_op d a b Sub 
-        | Mult,[a;b] -> prim_arith_op d a b Mult
-        | Div,[a;b] -> prim_arith_op d a b Div
-        | Mod,[a;b] -> prim_arith_op d a b Mod
+            // Primitive operations on expressions.
+            | Add,[a;b] -> prim_arith_op d a b Add
+            | Sub,[a;b] -> prim_arith_op d a b Sub 
+            | Mult,[a;b] -> prim_arith_op d a b Mult
+            | Div,[a;b] -> prim_arith_op d a b Div
+            | Mod,[a;b] -> prim_arith_op d a b Mod
 
-        | LT,[a;b] -> prim_comp_op d a b LT
-        | LTE,[a;b] -> prim_comp_op d a b LTE
-        | EQ,[a;b] -> prim_comp_op d a b EQ
-        | NEQ,[a;b] -> prim_comp_op d a b NEQ 
-        | GT,[a;b] -> prim_comp_op d a b GT
-        | GTE,[a;b] -> prim_comp_op d a b GTE
+            | LT,[a;b] -> prim_comp_op d a b LT
+            | LTE,[a;b] -> prim_comp_op d a b LTE
+            | EQ,[a;b] -> prim_comp_op d a b EQ
+            | NEQ,[a;b] -> prim_comp_op d a b NEQ 
+            | GT,[a;b] -> prim_comp_op d a b GT
+            | GTE,[a;b] -> prim_comp_op d a b GTE
     
-        | And,[a;b] -> prim_bool_op d a b And
-        | Or,[a;b] -> prim_bool_op d a b Or
+            | And,[a;b] -> prim_bool_op d a b And
+            | Or,[a;b] -> prim_bool_op d a b Or
 
-        | ShiftLeft,[a;b] -> prim_shift_op d a b ShiftLeft
-        | ShiftRight,[a;b] -> prim_shift_op d a b ShiftRight
+            | ShiftLeft,[a;b] -> prim_shift_op d a b ShiftLeft
+            | ShiftRight,[a;b] -> prim_shift_op d a b ShiftRight
 
-        | ShuffleXor,[a;b] -> prim_shuffle_op d a b ShuffleXor
-        | ShuffleUp,[a;b] -> prim_shuffle_op d a b ShuffleUp
-        | ShuffleDown,[a;b] -> prim_shuffle_op d a b ShuffleDown
-        | ShuffleIndex,[a;b] -> prim_shuffle_op d a b ShuffleIndex
+            | ShuffleXor,[a;b] -> prim_shuffle_op d a b ShuffleXor
+            | ShuffleUp,[a;b] -> prim_shuffle_op d a b ShuffleUp
+            | ShuffleDown,[a;b] -> prim_shuffle_op d a b ShuffleDown
+            | ShuffleIndex,[a;b] -> prim_shuffle_op d a b ShuffleIndex
 
-        | VVIndex,[a;b] -> vv_index d a b
-        | VVLength,[a] -> vv_length d a
-        | VVIs,[a] -> vv_is d a
-        | VVSliceFrom,[a;b] -> vv_slice_from d a b
-        | VVCons,[a;b] -> vv_cons d a b
+            | VVIndex,[a;b] -> vv_index d a b
+            | VVLength,[a] -> vv_length d a
+            | VVIs,[a] -> vv_is d a
+            | VVSliceFrom,[a;b] -> vv_slice_from d a b
+            | VVCons,[a;b] -> vv_cons d a b
 
-        | TypeAnnot,[a;b] -> type_annot d a b
-        | TypeConstructorUnion,[a;b] -> typec_union d a b
-        | EqType,[a;b] -> eq_type d a b
+            | TypeAnnot,[a;b] -> type_annot d a b
+            | TypeConstructorUnion,[a;b] -> typec_union d a b
+            | EqType,[a;b] -> eq_type d a b
 
-        | Neg,[a] -> prim_un_numeric d a Neg
-        | ErrorType,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "%A" a
-        | ErrorNonUnit,[a] -> error_non_unit d a
+            | Neg,[a] -> prim_un_numeric d a Neg
+            | ErrorType,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "%A" a
+            | ErrorNonUnit,[a] -> error_non_unit d a
 
-        | Log,[a] -> prim_un_floating d a Log
-        | Exp,[a] -> prim_un_floating d a Exp
-        | Tanh,[a] -> prim_un_floating d a Tanh
+            | Log,[a] -> prim_un_floating d a Log
+            | Exp,[a] -> prim_un_floating d a Exp
+            | Tanh,[a] -> prim_un_floating d a Tanh
 
-        // Constants
-        | TypeConstructorCreate,[a] -> typec_create d a
-        | _ -> failwith "Missing Op case."
-    |> destructure d
+            // Constants
+            | TypeConstructorCreate,[a] -> typec_create d a
+            | _ -> failwith "Missing Op case."
+        |> destructure d
 
 
-/// Reasonable default for the dims.
-let default_dims = dim3(256), dim3(20)
+    /// Reasonable default for the dims.
+    let default_dims = dim3(256), dim3(20)
 
-let print_type_error (code: Dictionary<string, string []>) (trace: Trace) message = 
-    let error = System.Text.StringBuilder(1024)
-    error.AppendLine message |> ignore
-    let rec loop prev_file prev_line i (trace: _[]) = 
-        if i > 0 then
-            let (file, line: int64, col: int64) = trace.[i-1]
-            if prev_file <> file || prev_line <> line then
-                let er_code = code.[file].[int line - 1]
-                let er_file = if file <> "" then sprintf " in file \"%s\"." file else file
-                error.AppendLine <| sprintf "Error trace on line: %i, column: %i%s" line col er_file |> ignore
-                error.AppendLine er_code |> ignore
-                let col = int (col - 1L)
-                for i=1 to col do error.Append(' ') |> ignore
-                error.AppendLine "^" |> ignore
-            loop file line (i-1) trace
-        else
-            error.ToString()
-    let trace = List.toArray trace
-    loop "" -1L trace.Length trace
+    let print_type_error (code: Dictionary<string, string []>) (trace: Trace) message = 
+        let error = System.Text.StringBuilder(1024)
+        error.AppendLine message |> ignore
+        let rec loop prev_file prev_line i (trace: _[]) = 
+            if i > 0 then
+                let (file, line: int64, col: int64) = trace.[i-1]
+                if prev_file <> file || prev_line <> line then
+                    let er_code = code.[file].[int line - 1]
+                    let er_file = if file <> "" then sprintf " in file \"%s\"." file else file
+                    error.AppendLine <| sprintf "Error trace on line: %i, column: %i%s" line col er_file |> ignore
+                    error.AppendLine er_code |> ignore
+                    let col = int (col - 1L)
+                    for i=1 to col do error.Append(' ') |> ignore
+                    error.AppendLine "^" |> ignore
+                loop file line (i-1) trace
+            else
+                error.ToString()
+        let trace = List.toArray trace
+        loop "" -1L trace.Length trace
 
-let data_empty () =
-    {ltag = ref 0L; seq=ref id; trace=[]; rbeh=AnnotationDive
-     env = Map.empty
-     cse_env = ref Map.empty
-     }
+    let data_empty () =
+        {ltag = ref 0; seq=ref id; trace=[]; rbeh=AnnotationDive
+         env = Map.empty
+         cse_env = ref Map.empty
+         }
 
-let globals_empty (): LangGlobals =
-    {
-    method_tag = ref 0L
-    memoized_methods = d0()
-    }
+    let core_functions =
+        let p f = inl "x" (f (v "x"))
+        let p2 f = inl' ["x"; "y"] (f (v "x") (v "y"))
+        let p3 f = inl' ["x"; "y"; "z"] (f (v "x") (v "y") (v "z"))
+        let binop' op' a b = op(op',[a;b])
+        let binop op = p2 (binop' op)
+        let b str op = l str (binop op)
+        let apply a b = binop' Apply a b
+        let compose a b c = apply a (apply b c)
+        let con x = op(x,[])
+        s  [l "error_type" (p error_type)
+            l "print_static" (p print_static)
+            l "dyn" (p dynamize)
+            l "union" (p2 type_union)
 
-let array_index op' a b = op(op',[a;b])
-let type_create a = op(TypeConstructorCreate,[a])
-let type_union a b = op(TypeConstructorUnion,[a;b])
+            l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
+            l "int32" (op(TypeConstructorCreate,[lit <| LitInt32 0]))
+            l "int16" (op(TypeConstructorCreate,[lit <| LitInt16 0s]))
+            l "int8" (op(TypeConstructorCreate,[lit <| LitInt8 0y]))
+            l "uint64" (op(TypeConstructorCreate,[lit <| LitUInt64 0UL]))
+            l "uint32" (op(TypeConstructorCreate,[lit <| LitUInt32 0u]))
+            l "uint16" (op(TypeConstructorCreate,[lit <| LitUInt16 0us]))
+            l "uint8" (op(TypeConstructorCreate,[lit <| LitUInt8 0uy]))
+            l "float64" (op(TypeConstructorCreate,[lit <| LitFloat64 0.0]))
+            l "float32" (op(TypeConstructorCreate,[lit <| LitFloat32 0.0f]))
+            l "string" (op(TypeConstructorCreate,[lit <| LitString ""]))
+            l "char" (op(TypeConstructorCreate,[lit <| LitChar ' ']))
+            l "unit" (op(TypeConstructorCreate,[B]))
 
-let core_functions =
-    let p f = inl "x" (f (v "x"))
-    let p2 f = inl' ["x"; "y"] (f (v "x") (v "y"))
-    let p3 f = inl' ["x"; "y"; "z"] (f (v "x") (v "y") (v "z"))
-    let binop' op' a b = op(op',[a;b])
-    let binop op = p2 (binop' op)
-    let b str op = l str (binop op)
-    let apply a b = binop' Apply a b
-    let compose a b c = apply a (apply b c)
-    let con x = op(x,[])
-    s  [l "error_type" (p error_type)
-        l "print_static" (p print_static)
-        l "dyn" (p dynamize)
-        l "union" (p2 type_union)
-
-        l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
-        l "int32" (op(TypeConstructorCreate,[lit <| LitInt32 0]))
-        l "int16" (op(TypeConstructorCreate,[lit <| LitInt16 0s]))
-        l "int8" (op(TypeConstructorCreate,[lit <| LitInt8 0y]))
-        l "uint64" (op(TypeConstructorCreate,[lit <| LitUInt64 0UL]))
-        l "uint32" (op(TypeConstructorCreate,[lit <| LitUInt32 0u]))
-        l "uint16" (op(TypeConstructorCreate,[lit <| LitUInt16 0us]))
-        l "uint8" (op(TypeConstructorCreate,[lit <| LitUInt8 0uy]))
-        l "float64" (op(TypeConstructorCreate,[lit <| LitFloat64 0.0]))
-        l "float32" (op(TypeConstructorCreate,[lit <| LitFloat32 0.0f]))
-        l "string" (op(TypeConstructorCreate,[lit <| LitString ""]))
-        l "char" (op(TypeConstructorCreate,[lit <| LitChar ' ']))
-        l "unit" (op(TypeConstructorCreate,[B]))
-
-        l "lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
-        l "for_cast" (p for_cast)
-        l "negate" (p <| fun x -> op(Neg,[x]))
+            l "lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
+            l "for_cast" (p for_cast)
+            l "negate" (p <| fun x -> op(Neg,[x]))
         
-        l "load_assembly" (p <| fun x -> op(DotNetLoadAssembly,[x]))
-        l "mscorlib" (ap (v "load_assembly") (ap (v "lit_lift") (lit_string "mscorlib")))
-        l "ignore" (inl "" B)
-        l "id" (p <| id)
-        l "ref" (p <| fun x -> op(ReferenceCreate,[x]))
-        l "array_create" (p2 <| fun size typ -> op(ArrayCreate,[size;typ]))
+            l "load_assembly" (p <| fun x -> op(DotNetLoadAssembly,[x]))
+            l "mscorlib" (ap (v "load_assembly") (ap (v "lit_lift") (lit_string "mscorlib")))
+            l "ignore" (inl "" B)
+            l "id" (p <| id)
+            l "ref" (p <| fun x -> op(ReferenceCreate,[x]))
+            l "array_create" (p2 <| fun size typ -> op(ArrayCreate,[size;typ]))
 
-        b "+" Add; b "-" Sub; b "*" Mult; b "/" Div
-        b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
+            b "+" Add; b "-" Sub; b "*" Mult; b "/" Div
+            b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
 
-        b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
-        b "||" Or; b "&&" And; b "::" VVCons
+            b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
+            b "||" Or; b "&&" And; b "::" VVCons
 
-        l "fst" (p <| fun x -> tuple_index x 0)
-        l "snd" (p <| fun x -> tuple_index x 1)
+            l "fst" (p <| fun x -> tuple_index x 0)
+            l "snd" (p <| fun x -> tuple_index x 1)
 
-        l "tuple_length" (p <| fun x -> op(VVLength,[x]))
-        l "tuple_index" (p2 tuple_index')
-        l "not" (p <| fun x -> eq x (lit <| LitBool false))
-        l "string_length" (p <| fun x -> op(StringLength,[x]))
-        ]
+            l "tuple_length" (p <| fun x -> op(VVLength,[x]))
+            l "tuple_index" (p2 tuple_index')
+            l "not" (p <| fun x -> eq x (lit <| LitBool false))
+            l "string_length" (p <| fun x -> op(StringLength,[x]))
+            ]
 
-let spiral_typecheck code body on_fail ret = 
-    let globals = globals_empty()
-    let d = data_empty()
-    let input = core_functions body
-    try
-        let watch = System.Diagnostics.Stopwatch.StartNew()
-        let x = !d.seq (expr_prepass input |> snd |> expr_typecheck globals d)
-        printfn "%A" x
-        typed_expr_optimization_pass 2 globals.memoized_methods x // Is mutable
-        printfn "Time for parsing + typechecking was: %A" watch.Elapsed
-        ret (x, globals)
-    with 
-    | :? TypeError as e -> 
-        let trace, message = e.Data0, e.Data1
-        on_fail <| print_type_error code trace message
+    let spiral_typecheck code body on_fail ret = 
+        let d = data_empty()
+        let input = core_functions body
+        try
+            let watch = System.Diagnostics.Stopwatch.StartNew()
+            let x = !d.seq (expr_prepass input |> snd |> expr_typecheck d)
+            typed_expr_optimization_pass 2 x // Is mutable
+            printfn "Time for parsing + typechecking was: %A" watch.Elapsed
+            ret (x,memoized_methods,vvt_dict,uniont_dict,rect_dict)
+        with 
+        | :? TypeError as e -> 
+            let trace, message = e.Data0, e.Data1
+            on_fail <| print_type_error code trace message

@@ -50,4 +50,3 @@ let rec int_string_stream =
     
 int_string_stream.Value
 
-        Tuple [Int; Rec (nodify_ty (lazy int_string_stream))]; Tuple [String; Rec (nodify_ty (lazy int_string_stream))]
