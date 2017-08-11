@@ -176,8 +176,6 @@
     <None Include="V5 With The New Backend 2\patterns_v0.fsx" />
     <None Include="V5 With The New Backend 2\hosting_v0.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v0.fsx" />
-    <None Include="V5 With The New Backend 2\Tests.fs_" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
     <None Include="V5 With The New Backend 2\SpiralV5Language.fs_" />
     <None Include="V5 With The New Backend 2\SpiralV5Parser.fs_" />
     <None Include="V5 With The New Backend 2\SpiralV5FsharpCodegen.fs_" />
@@ -186,6 +184,9 @@
     <None Include="V5 With The New Backend 2\nodify_type_v1.fsx" />
     <None Include="V5 With The New Backend 2\nodify_type_v2.fsx" />
     <None Include="V5 With The New Backend 2\nodify_type_v3.fsx" />
+    <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
+    <Compile Include="V5 With The New Backend 2\Tests.fs" />
+    <None Include="V5 With The New Backend 2\Script1.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

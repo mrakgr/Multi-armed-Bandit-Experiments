@@ -1,4 +1,4 @@
-﻿module SpiralV5
+﻿module Spiral.Main
 
 // Global open
 open System
@@ -17,6 +17,7 @@ type ModuleCode = string
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
     member x.Symbol = symbol
+    override x.ToString() = sprintf "%A" expr
     override x.GetHashCode() = symbol
     override x.Equals(y) = 
         match y with 
@@ -205,8 +206,8 @@ and Ty =
     | RecFunctionT of Node<EnvTy * FunctionCore * string>
     | ModuleT of EnvTy
     | UnionT of Node<Set<Ty>>
-    | RecT of Node<Ty>
-    | TypeConstructorT of Node<Lazy<Ty>>
+    | RecT of int
+    | TypeConstructorT of Node<Ty>
     | ClosureT of Node<Ty * Ty>
     | ArrayT of Node<ArrayType * Ty>
     | ForCastT of Node<Ty> // For casting type level function to term (ClosureT) level ones.
@@ -245,8 +246,8 @@ and LetType =
 
 and MemoCases =
     | MemoMethodInEvaluation of Tag
-    | MemoMethodDone of MemoExprType * TypedExpr * Tag * Arguments
-    | MemoTypeInEvaluation of Ty
+    | MemoMethodDone of MemoExprType * TypedExpr * Tag * Arguments * optimization_pass_count: int ref
+    | MemoTypeInEvaluation
     | MemoType of Ty
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
@@ -288,122 +289,120 @@ and ProgramNode =
     | Dedent
     | Statements of Buf
 
-// Aux outer functions
-let flip f a b = f b a
-
-let get_type_of_value = function
-    | LitUInt8 _ -> PrimT UInt8T
-    | LitUInt16 _ -> PrimT UInt16T
-    | LitUInt32 _ -> PrimT UInt32T
-    | LitUInt64 _ -> PrimT UInt64T
-    | LitInt8 _ -> PrimT Int8T
-    | LitInt16 _ -> PrimT Int16T
-    | LitInt32 _ -> PrimT Int32T
-    | LitInt64 _ -> PrimT Int64T
-    | LitFloat32 _ -> PrimT Float32T
-    | LitFloat64 _ -> PrimT Float64T   
-    | LitBool _ -> PrimT BoolT
-    | LitString _ -> PrimT StringT
-    | LitChar _ -> PrimT CharT
-
-let get_type = function
-    | TyLit x -> get_type_of_value x
-    | TyTag(_,t) | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
-    | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
-
-let (|N|) (x: Node<_>) = x.Expression
-let (|S|) (x: Node<_>) = x.Symbol
-let (|TyTypeC|_|) x =
-    match x with
-    | TypeConstructorT x -> Some x.Expression.Value
-    | _ -> None
-
-/// Wraps the argument in a list if not a tuple.
-let tuple_field = function 
-    | TyVV(args,_) -> args
-    | x -> [x]
-
-let (|TyTuple|) x = tuple_field x
-
-/// Wraps the argument in a set if not a UnionT.
-let set_field = function
-    | UnionT (N t) -> t
-    | t -> Set.singleton t
-
-let (|TySet|) x = set_field x
-
-/// Wraps the argument in a list if not a tuple type.
-let tuple_field_ty = function 
-    | VVT (N x) -> x
-    | x -> [x]
-
-let (|TyType|) x = get_type x
-let (|TypeLit|_|) = function
-    | TyType (LitT (N x)) -> Some x
-    | _ -> None
-let (|TypeString|_|) = function
-    | TypeLit (LitString x) -> Some x
-    | _ -> None
-
-let rec is_returnable' _ = true
-let is_returnable a = is_returnable' (get_type a)
-
-let is_numeric' = function
-    | PrimT (UInt8T | UInt16T | UInt32T | UInt64T 
-        | Int8T | Int16T | Int32T | Int64T 
-        | Float32T | Float64T) -> true
-    | _ -> false
-let is_numeric a = is_numeric' (get_type a)
-
-let is_string' = function
-    | PrimT StringT -> true
-    | _ -> false
-let is_string a = is_string' (get_type a)
-
-let is_char' = function
-    | PrimT CharT -> true
-    | _ -> false
-let is_char a = is_char' (get_type a)
-
-let is_primt' = function
-    | PrimT x -> true
-    | _ -> false
-let is_primt a = is_primt' (get_type a)
-
-let is_float' = function
-    | PrimT (Float32T | Float64T) -> true
-    | _ -> false
-let is_float a = is_float' (get_type a)
-
-let rec is_bool' = function
-    | PrimT BoolT -> true
-    | _ -> false
-let is_bool a = is_bool' (get_type a)
-
-let rec is_int' = function
-    | PrimT (UInt32T | UInt64T | Int32T | Int64T) -> true
-    | _ -> false
-let is_int a = is_int' (get_type a)
-
-let rec is_int64' = function
-    | PrimT Int64T -> true
-    | _ -> false
-let is_int64 a = is_int64' (get_type a)
-
-let h0() = HashSet(HashIdentity.Structural)
-let d0() = Dictionary(HashIdentity.Structural)
-
-let nodify (dict: NodeDict<_>) x =
-    match dict.TryGetValue x with
-    | true, x -> x
-    | false, _ ->
-        let x' = Node(x,dict.Count)
-        dict.[x] <- x'
-        x'
-
 // #Main
-let spiral_typecheck aux_modules main_module on_fail ret = 
+let spiral_peval aux_modules main_module = 
+    let d0() = Dictionary(HashIdentity.Structural)
     let memoized_methods: MemoDict = d0()
+
+    // Aux outer functions
+    let flip f a b = f b a
+
+    let get_type_of_value = function
+        | LitUInt8 _ -> PrimT UInt8T
+        | LitUInt16 _ -> PrimT UInt16T
+        | LitUInt32 _ -> PrimT UInt32T
+        | LitUInt64 _ -> PrimT UInt64T
+        | LitInt8 _ -> PrimT Int8T
+        | LitInt16 _ -> PrimT Int16T
+        | LitInt32 _ -> PrimT Int32T
+        | LitInt64 _ -> PrimT Int64T
+        | LitFloat32 _ -> PrimT Float32T
+        | LitFloat64 _ -> PrimT Float64T   
+        | LitBool _ -> PrimT BoolT
+        | LitString _ -> PrimT StringT
+        | LitChar _ -> PrimT CharT
+
+    let get_type = function
+        | TyLit x -> get_type_of_value x
+        | TyTag(_,t) | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
+        | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
+
+    let (|N|) (x: Node<_>) = x.Expression
+    let (|S|) (x: Node<_>) = x.Symbol
+    let (|TyTypeC|_|) x =
+        match x with
+        | TypeConstructorT x -> Some x.Expression
+        | _ -> None
+
+    /// Wraps the argument in a list if not a tuple.
+    let tuple_field = function 
+        | TyVV(args,_) -> args
+        | x -> [x]
+
+    let (|TyTuple|) x = tuple_field x
+
+    /// Wraps the argument in a set if not a UnionT.
+    let set_field = function
+        | UnionT (N t) -> t
+        | t -> Set.singleton t
+
+    let (|TySet|) x = set_field x
+
+    /// Wraps the argument in a list if not a tuple type.
+    let tuple_field_ty = function 
+        | VVT (N x) -> x
+        | x -> [x]
+
+    let (|TyType|) x = get_type x
+    let (|TypeLit|_|) = function
+        | TyType (LitT (N x)) -> Some x
+        | _ -> None
+    let (|TypeString|_|) = function
+        | TypeLit (LitString x) -> Some x
+        | _ -> None
+
+    let rec is_returnable' _ = true
+    let is_returnable a = is_returnable' (get_type a)
+
+    let is_numeric' = function
+        | PrimT (UInt8T | UInt16T | UInt32T | UInt64T 
+            | Int8T | Int16T | Int32T | Int64T 
+            | Float32T | Float64T) -> true
+        | _ -> false
+    let is_numeric a = is_numeric' (get_type a)
+
+    let is_string' = function
+        | PrimT StringT -> true
+        | _ -> false
+    let is_string a = is_string' (get_type a)
+
+    let is_char' = function
+        | PrimT CharT -> true
+        | _ -> false
+    let is_char a = is_char' (get_type a)
+
+    let is_primt' = function
+        | PrimT x -> true
+        | _ -> false
+    let is_primt a = is_primt' (get_type a)
+
+    let is_float' = function
+        | PrimT (Float32T | Float64T) -> true
+        | _ -> false
+    let is_float a = is_float' (get_type a)
+
+    let rec is_bool' = function
+        | PrimT BoolT -> true
+        | _ -> false
+    let is_bool a = is_bool' (get_type a)
+
+    let rec is_int' = function
+        | PrimT (UInt32T | UInt64T | Int32T | Int64T) -> true
+        | _ -> false
+    let is_int a = is_int' (get_type a)
+
+    let rec is_int64' = function
+        | PrimT Int64T -> true
+        | _ -> false
+    let is_int64 a = is_int64' (get_type a)
+
+    let nodify (dict: NodeDict<_>) x =
+        match dict.TryGetValue x with
+        | true, x -> x
+        | false, _ ->
+            let x' = Node(x,dict.Count)
+            dict.[x] <- x'
+            x'
     
     // #Smart constructors
 
@@ -437,7 +436,9 @@ let spiral_typecheck aux_modules main_module on_fail ret =
     let uniont_dict = d0()
     let nodify_uniont = nodify uniont_dict
     let rect_dict = d0()
-    let nodify_rect = nodify rect_dict
+    let (|TyRec|_|) = function
+        | RecT x -> Some rect_dict.[x]
+        | _ -> None
     let nodify_typect = nodify <| d0()
     let nodify_closuret = nodify <| d0()
     let nodify_arrayt = nodify <| d0()
@@ -452,7 +453,6 @@ let spiral_typecheck aux_modules main_module on_fail ret =
     let recfunt x = nodify_recfunt x |> RecFunctionT
     let modulet x = nodify_env_ty x |> ModuleT
     let uniont x = nodify_uniont x |> UnionT
-    let rect x = nodify_rect x |> RecT
     let typect x = nodify_typect x |> TypeConstructorT
     let closuret x = nodify_closuret x |> ClosureT
     let arrayt x = nodify_arrayt x |> ArrayT
@@ -676,28 +676,29 @@ let spiral_typecheck aux_modules main_module on_fail ret =
     /// Optimizes the free variables for the sake of tuple deforestation.
     /// It needs at least two passes to converge properly. And probably exactly two.
     let typed_expr_optimization_pass num_passes typed_exp =
-        let rec on_method_call_optimization_pass (memo: (Set<Tag * Ty> * int) []) (expr_map: Map<Tag,TypedExpr * Arguments>) (_, fv, renamer, tag) =
-            let vars,counter = memo.[int tag]
-            let set_vars vars = renamer_apply_pool renamer vars |> fun x -> fv := x; x
-            if counter < num_passes then
-                let counter = counter + 1
-                memo.[int tag] <- vars, counter
-                let ty_expr, arguments = expr_map.[tag]
-                let vars = typed_expr_free_variables_template (on_method_call_optimization_pass memo expr_map) ty_expr
-                arguments := vars
-                memo.[int tag] <- vars, counter
-                set_vars vars
-            else
-                set_vars vars
+        let link_memo = 
+            memoized_methods 
+            |> Seq.choose (fun x -> 
+                match x.Value with
+                | MemoMethodDone(_,_,tag,_,_) -> Some (tag, x.Key)
+                | _ -> None)
+            |> dict
 
-        let memo = 
-            Seq.choose (function
-                | MemoMethodDone (_, e, tag, args) -> Some (tag,(e,args))
-                | MemoType t -> None
-                | x -> failwithf "impossible=%A" x) memoized_methods.Values |> Map
-    
-        typed_expr_free_variables_template (on_method_call_optimization_pass (Array.init memo.Count (fun _ -> Set.empty,0)) memo) typed_exp
-        |> ignore
+        let rec on_method_call_optimization_pass (_, method_call_args, renamer, tag) =
+            let set_method_call_args vars = renamer_apply_pool renamer vars |> fun x -> method_call_args := x; x
+            
+            match memoized_methods.[link_memo.[tag]] with
+            | MemoMethodDone(_,ty_expr,_,method_definition_args,counter) -> 
+                if !counter < num_passes then
+                    counter := !counter + 1
+                    let vars = typed_expr_free_variables_template on_method_call_optimization_pass ty_expr
+                    method_definition_args := vars
+                    set_method_call_args vars
+                else
+                    set_method_call_args !method_definition_args
+            | _ -> failwith "impossible"
+            
+        typed_expr_free_variables_template on_method_call_optimization_pass typed_exp |> ignore
 
     // #Conversion
     let env_to_ty env = Map.map (fun _ -> get_type) env
@@ -882,18 +883,18 @@ let spiral_typecheck aux_modules main_module on_fail ret =
 
             match memoized_methods.TryGetValue key_args with
             | false, _ ->
-                let tag = memoized_methods.Count
+                let tag = key_args.Symbol
 
                 memoized_methods.[key_args] <- MemoMethodInEvaluation tag
                 let typed_expr = tev_method d expr
-                memoized_methods.[key_args] <- MemoMethodDone (memo_type, typed_expr, tag, used_vars)
+                memoized_methods.[key_args] <- MemoMethodDone (memo_type, typed_expr, tag, used_vars, ref 0)
                 typed_expr, tag
             | true, MemoMethodInEvaluation tag -> 
                 tev_rec d expr, tag
-            | true, MemoMethodDone (memo_type, typed_expr, tag, used_vars) -> 
+            | true, MemoMethodDone (memo_type, typed_expr, tag, used_vars, _) -> 
                 typed_expr, tag
-            | true, (MemoTypeInEvaluation _ | MemoType _) ->
-                failwith "Expected a method, not a recursive type."
+            | true, _->
+                failwith "Expected a method."
 
         let eval_renaming memo_type d expr =
             let env = d.env
@@ -930,7 +931,7 @@ let spiral_typecheck aux_modules main_module on_fail ret =
                         | UnionT (N l) -> Set.toList l |> List.collect (case_destructure d)
                         | _ -> [f args_ty]
                     match args_ty with
-                    | RecT (N t) -> union_case t
+                    | TyRec t -> union_case t
                     | x -> union_case x
 
                 let rec map_cases l =
@@ -951,7 +952,7 @@ let spiral_typecheck aux_modules main_module on_fail ret =
         let typec_union d a b =
             let a, b = tev2 d a b
             match get_type a, get_type b with
-            | TyTypeC a, TyTypeC b -> lazy (set_field a + set_field b |> uniont) |> typect |> make_tyv_and_push_ty d
+            | TyTypeC a, TyTypeC b -> set_field a + set_field b |> uniont |> typect |> make_tyv_and_push_ty d
             | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
         let rec typec_strip = function 
@@ -961,24 +962,25 @@ let spiral_typecheck aux_modules main_module on_fail ret =
 
         let typec_create d x = 
             let key = nodify_memo_key (x, d.env)
+            let ret x = make_tyv_and_push_ty d (typect x)
 
             let add_to_memo_dict x = 
                 memoized_methods.[key] <- MemoType x
                 x
 
+            let add_recursive_type_to_type_dict x =
+                match memoized_methods.TryGetValue key with
+                | true, MemoType ty -> rect_dict.[key.Symbol] <- x; ty
+                | _ -> x
+
             match memoized_methods.TryGetValue key with
-            | true, MemoType ty -> make_tyv_and_push_ty d ty
-            | true, MemoTypeInEvaluation ty -> add_to_memo_dict ty |> make_tyv_and_push_ty d
+            | true, MemoType ty -> ret ty
+            | true, MemoTypeInEvaluation -> RecT key.Symbol |> add_to_memo_dict |> ret
             | true, _ -> failwith "Expected a type in the dictionary."
             | false, _ -> 
-                let typec_body = lazy (tev_seq d x |> get_type |> typec_strip |> add_to_memo_dict)
-                let tyc = typect typec_body
-            
-                memoized_methods.[key] <- MemoTypeInEvaluation tyc
-                // After the evaluation, if the type is recursive the dictionary should have its key.
-                // If present it will return that instead.
-                typec_body.Value |> ignore
-                make_tyv_and_push_ty d tyc
+                memoized_methods.[key] <- MemoTypeInEvaluation
+                tev_seq d x |> get_type |> typec_strip |> add_recursive_type_to_type_dict |> add_to_memo_dict |> ret
+                
             
 
         let inline wrap_exception d f =
@@ -1091,7 +1093,7 @@ let spiral_typecheck aux_modules main_module on_fail ret =
 
                 let (|TyRecUnion|_|) = function
                     | UnionT (N ty') -> Some ty'
-                    | RecT (N t) -> Some (set_field t)
+                    | TyRec t -> Some (set_field t)
                     | _ -> None
 
                 match ty, args with
@@ -1910,12 +1912,14 @@ let spiral_typecheck aux_modules main_module on_fail ret =
                 | "" -> ()
                 | s -> state s
 
-        let rec is_unit = function
+        let rec is_unit_tuple t = List.forall is_unit t
+        and is_unit_env env = Map.forall (fun _ -> is_unit) env
+        and is_unit = function
             | VVT (N []) | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
             | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
             | ArrayT(N(_,t)) -> is_unit t
-            | TyEnvT env -> Map.forall (fun _ -> is_unit) env
-            | VVT (N t) -> List.forall is_unit t
+            | TyEnvT env -> is_unit_env env
+            | VVT (N t) -> is_unit_tuple t
             | _ -> failwith "Should have been covered in TyEnvT."
 
         let (|Unit|_|) x = if is_unit x then Some () else None
@@ -1930,7 +1934,7 @@ let spiral_typecheck aux_modules main_module on_fail ret =
             | ModuleT (S s) | FunctionT (N (S s,_)) | RecFunctionT (N (S s,_,_)) -> print_tag_env_ty s
             | VVT (S s) -> print_tag_tuple s
             | UnionT (S s) -> print_tag_union s
-            | RecT (S s) -> print_tag_rec s
+            | RecT s -> print_tag_rec s
             | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
             | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
             | ArrayT _ -> failwith "Not implemented."
@@ -2135,15 +2139,15 @@ let spiral_typecheck aux_modules main_module on_fail ret =
                 if fv.IsEmpty then method_name
                 else sprintf "%s(%s)" method_name (print_args fv)
             | TyV(x & TyType t, UnionT (S s & N tys)) -> union_process_var (print_union_case s) (x,t) tys
-            | TyV(x & TyType t, RecT (S s & N rect)) ->
-                match rect with
+            | TyV(x & TyType t, RecT s) ->
+                match rect_dict.[s] with
                 | UnionT (N tys) -> union_process_var (print_rec_case s) (x,t) tys
                 | _ -> failwith "Only UnionT can be a recursive var type."
             | TyVV(l,VVT _ & t) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_type t) args)
             | TyVV(l,UnionT (S s & N tys)) -> union_process_tuple (print_union_case s) l tys
-            | TyVV(l,RecT (S s & N rect)) -> 
-                match rect with
-                | VVT _ -> print_case_tuple rect l (print_rec_tuple s)
+            | TyVV(l,RecT s) -> 
+                match rect_dict.[s] with
+                | VVT _ as rect -> print_case_tuple rect l (print_rec_tuple s)
                 | UnionT (N tys) -> union_process_tuple (print_rec_case s) l tys
                 | _ -> failwith "Only VVT and UnionT are recursive tuple types."
             | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
@@ -2164,7 +2168,7 @@ let spiral_typecheck aux_modules main_module on_fail ret =
                     print_if t <| fun _ ->
                         let print_case =
                             match get_type v with
-                            | RecT (S s) -> print_rec_case s
+                            | RecT s -> print_rec_case s
                             | UnionT (S s) -> print_union_case s
                             | _ -> failwith "impossible"
 
@@ -2248,13 +2252,13 @@ let spiral_typecheck aux_modules main_module on_fail ret =
             | VVT _ & Unit -> "| " + print_rec_tuple tag |> state
             | VVT _ -> sprintf "| %s of %s" (print_rec_tuple tag) (print_type ty) |> state
             | UnionT (N tys) -> print_union_cases print_rec_case (Set.toList tys) tag
-            | _ -> failwith "Only VVT and UnionT are recursive types."
+            | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
 
         let print_union_definition tys tag =
             let tys = Set.toList tys
 
             sprintf "%s %s =" (prefix()) (print_tag_union tag) |> state
-            enter' <| fun _ -> print_union_cases print_union_case tys tag
+            print_union_cases print_union_case tys tag
 
         let print_struct_definition iter fold name tys =
             let args sep f =
@@ -2300,11 +2304,12 @@ let spiral_typecheck aux_modules main_module on_fail ret =
 
         for x in env_ty_dict do
             let tys, tag = x.Value.Expression, x.Value.Symbol
-            let tuple_name = print_tag_env_ty tag
-            print_struct_definition Map.iter Map.fold tuple_name tys
+            if is_unit_env tys = false then
+                let tuple_name = print_tag_env_ty tag
+                print_struct_definition Map.iter Map.fold tuple_name tys
 
         for x in rect_dict do
-            let tys,tag = x.Value.Expression, x.Value.Symbol
+            let tys,tag = x.Value, x.Key
             print_rec_definition tys tag
 
         for x in uniont_dict do
@@ -2313,14 +2318,15 @@ let spiral_typecheck aux_modules main_module on_fail ret =
 
         for x in vvt_dict do
             let tys, tag = x.Value.Expression, x.Value.Symbol
-            let tuple_name = print_tag_tuple tag
-            let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-            let iter f l = List.iteri (fun i x -> f (string i) x) l
-            print_struct_definition iter fold tuple_name tys
+            if is_unit_tuple tys = false then
+                let tuple_name = print_tag_tuple tag
+                let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+                let iter f l = List.iteri (fun i x -> f (string i) x) l
+                print_struct_definition iter fold tuple_name tys
 
         memoized_methods |> Seq.fold (fun is_first x -> 
             match x.Value with
-            | MemoMethodDone (memo_type, e, tag, args) -> print_method_definition is_first (memo_type, e, tag, args); false
+            | MemoMethodDone (memo_type, e, tag, args, _) -> print_method_definition is_first (memo_type, e, tag, args); false
             | _ -> is_first) true |> ignore
         codegen main |> state // Can't forget the non-method
    
@@ -2441,8 +2447,8 @@ let spiral_typecheck aux_modules main_module on_fail ret =
             let x = !d.seq (expr_prepass input |> snd |> expr_peval d)
             typed_expr_optimization_pass 2 x // Is mutable
             printfn "Time for parsing + typechecking was: %A" watch.Elapsed
-            ret (spiral_codegen x)
+            Succ (spiral_codegen x)
         with 
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1
-            on_fail <| print_type_error code trace message
+            Fail <| print_type_error code trace message

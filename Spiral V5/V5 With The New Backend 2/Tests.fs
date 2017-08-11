@@ -1,4 +1,5 @@
-﻿module Tests
+﻿module Spiral.Tests
+open Main
 
 let test1 = // Does it run?
     "test1",
@@ -711,6 +712,6 @@ inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 8 |>> f) 
 parse_3 <| inl _ -> ()
     """
 
-let x = spiral_codegen [] test1
-//printfn "%A" x
+let x = spiral_peval [] test13
+printfn "%A" x
 
