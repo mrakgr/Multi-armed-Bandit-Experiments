@@ -108,6 +108,7 @@
     <None Include="V5 With The New Backend\SpiralV5Language_v9c.fsx" />
     <None Include="V5 With The New Backend\SpiralV5Parser_v2b.fsx" />
     <None Include="V5 With The New Backend\SpiralV5CudaCodegen_v3d.fsx" />
+    <None Include="V5 With The New Backend\active_pattern_bug.fsx" />
     <None Include="y-comb.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-references-release.fsx" />
     <None Include="Cuda Compiler Failed Attempts\load-project-release.fsx" />
@@ -175,9 +176,11 @@
     <None Include="V5 With The New Backend 2\patterns_v0.fsx" />
     <None Include="V5 With The New Backend 2\hosting_v0.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v0.fsx" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5Language.fs" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5Parser.fs" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5FsharpCodegen.fs" />
+    <None Include="V5 With The New Backend 2\Tests.fs_" />
+    <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
+    <None Include="V5 With The New Backend 2\SpiralV5Language.fs_" />
+    <None Include="V5 With The New Backend 2\SpiralV5Parser.fs_" />
+    <None Include="V5 With The New Backend 2\SpiralV5FsharpCodegen.fs_" />
     <None Include="V5 With The New Backend 2\node_caching.fsx" />
     <None Include="V5 With The New Backend 2\node_caching_testing.fsx" />
     <None Include="V5 With The New Backend 2\nodify_type_v1.fsx" />

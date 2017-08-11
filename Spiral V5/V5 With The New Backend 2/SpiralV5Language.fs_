@@ -4,6 +4,13 @@ open ManagedCuda.VectorTypes
 open System
 open System.Collections.Generic
 open FParsec
+open System.Text
+
+type ProgramNode =
+| Statement of string
+| Indent
+| Dedent
+| Statements of ResizeArray<ProgramNode>
 
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
@@ -64,7 +71,7 @@ type ArrayType =
     | CudaLocal
     | CudaReference
 
-and Value = 
+type Value = 
     | LitUInt8 of uint8
     | LitUInt16 of uint16
     | LitUInt32 of uint32
@@ -79,7 +86,7 @@ and Value =
     | LitString of string
     | LitChar of char
 
-and Op =
+type Op =
     // StringOps
     | StringLength
     | StringIndex
@@ -164,7 +171,7 @@ and Op =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
 
-and Pattern =
+type Pattern =
     | E
     | PatVar of string
     | PatTuple of Pattern list
@@ -375,7 +382,7 @@ let is_int64 a = is_int64' (get_type a)
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
-let spiral_typecheck code body on_fail ret = 
+let spiral_typecheck aux_modules main_module on_fail ret = 
     let nodify (dict: NodeDict<_>) x =
         match dict.TryGetValue x with
         | true, x -> x
@@ -1943,7 +1950,7 @@ let spiral_typecheck code body on_fail ret =
             l "string_length" (p <| fun x -> op(StringLength,[x]))
             ]
 
-    let spiral_typecheck code body on_fail ret = 
+    let spiral_typecheck code body = 
         let d = data_empty()
         let input = core_functions body
         try
