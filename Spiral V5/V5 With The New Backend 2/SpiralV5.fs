@@ -30,13 +30,12 @@ type Node<'a>(expr:'a, symbol:int) =
             | :? Node<'a> as y -> compare symbol y.Symbol
             | _ -> failwith "Invalid comparison for Node."
 
-type NodeDict<'a> = Dictionary<'a,Node<'a>>
-
 type PosKey = string * int64 * int64
 
 type Pos<'a when 'a: equality and 'a: comparison>(pos:PosKey, expr:'a) = 
     member x.Expression = expr
     member x.Pos = pos
+    override x.ToString() = sprintf "%A" expr
     override x.GetHashCode() = expr.GetHashCode()
     override x.Equals(y) = 
         match y with 
@@ -278,8 +277,8 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 // Parser types
 type Userstate = Dictionary<string, int * Associativity>
 type ParserExpr =
-| ParserStatement of (Expr -> Expr)
-| ParserExpr of Expr
+| ParserStatement of PosKey * (Expr -> Expr)
+| ParserExpr of PosKey * Expr
 
 // Codegen types
 type Buf = ResizeArray<ProgramNode>
@@ -291,6 +290,7 @@ and ProgramNode =
 
 // #Main
 let spiral_peval aux_modules main_module = 
+    let h0() = HashSet(HashIdentity.Structural)
     let d0() = Dictionary(HashIdentity.Structural)
     let memoized_methods: MemoDict = d0()
 
@@ -396,12 +396,13 @@ let spiral_peval aux_modules main_module =
         | _ -> false
     let is_int64 a = is_int64' (get_type a)
 
-    let nodify (dict: NodeDict<_>) x =
+    let nodify (dict: Dictionary<_,_>) x =
         match dict.TryGetValue x with
-        | true, x -> x
+        | true, id -> Node(x,id)
         | false, _ ->
-            let x' = Node(x,dict.Count)
-            dict.[x] <- x'
+            let id = dict.Count
+            let x' = Node(x,id)
+            dict.[x] <- id
             x'
     
     // #Smart constructors
@@ -836,8 +837,8 @@ let spiral_peval aux_modules main_module =
                     r
             
             match r with
-            | TyV _ | TyEnv _ | TyVV _ | TyLit _ -> r
-            | TyTag _ -> destructure_var r
+            | TyEnv _ | TyVV _ | TyLit _ -> r
+            | TyV _ | TyTag _ -> destructure_var r
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
 
         let if_is_returnable (TyType r & x) =
@@ -1027,7 +1028,9 @@ let spiral_peval aux_modules main_module =
             | _ -> on_type_er d.trace "Expected a string."
 
         let rec apply d a b = apply_template tev d (a, b)
-        and apply_template tev d = function
+        and apply_template tev d ab = 
+            //printfn "ab=%A" ab
+            match ab with
             | closure & TyEnv(env_term,(FunctionT(N(N env_ty,x)) | RecFunctionT(N(N env_ty,x,_)))), TyType (ForCastT (N args_ty)) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
@@ -1115,7 +1118,10 @@ let spiral_peval aux_modules main_module =
                 else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
             | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
-        let apply_tev d expr args = apply d (tev d expr) (tev d args)
+        let apply_tev d expr args = 
+//            printfn "expr = %A" expr
+//            printfn "args = %A" args
+            apply d (tev d expr) (tev d args)
 
         let vv_index_template f d v i =
             let v,i = tev2 d v i
@@ -1746,7 +1752,7 @@ let spiral_peval aux_modules main_module =
         let rec expressions expr s =
             let unary_ops = 
                 [case_for_cast; case_lit_lift]
-                |> List.map (fun x -> x (expressions expr))
+                |> List.map (fun x -> x (expressions expr) |> attempt)
                 |> choice
             let rest = 
                 [case_print_env; case_print_expr
@@ -1759,10 +1765,10 @@ let spiral_peval aux_modules main_module =
         let process_parser_exprs exprs = 
             let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")
             let rec process_parser_exprs on_succ = function
-                | [ParserExpr a] -> on_succ a
+                | [ParserExpr (p,a)] -> on_succ (expr_pos p a)
                 | [ParserStatement _] -> error_statement_in_last_pos
-                | ParserStatement a :: xs -> process_parser_exprs (a >> on_succ) xs
-                | ParserExpr a :: xs -> process_parser_exprs (l "" (error_non_unit a) >> on_succ) xs
+                | ParserStatement (p,a) :: xs -> process_parser_exprs (expr_pos p >> a >> on_succ) xs
+                | ParserExpr (p,a) :: xs -> process_parser_exprs (l "" (error_non_unit (expr_pos p a)) >> on_succ) xs
                 | [] -> preturn B
             
             process_parser_exprs preturn exprs
@@ -1777,7 +1783,8 @@ let spiral_peval aux_modules main_module =
                 let expr s = if_ op (expr |>> set_op (=)) s
                 many1 (expr .>> optional semicolon)
 
-            expr_indent ((statements |>> ParserStatement) <|> (expressions |>> ParserExpr)) >>= process_parser_exprs <| s
+            let pos' s = Reply(pos' s)
+            expr_indent ((tuple2 pos' statements |>> ParserStatement) <|> (tuple2 pos' expressions |>> ParserExpr)) >>= process_parser_exprs <| s
 
         let application expr (s: CharStream<_>) =
             let i = (col s)
@@ -1849,20 +1856,22 @@ let spiral_peval aux_modules main_module =
             let poperator (s: CharStream<Userstate>) =
                 let dict_operator = s.UserState
                 let p = pos' s
-                let rec calculate on_fail on_succ op = 
-                        match dict_operator.TryGetValue op with
-                        | true, (prec,asoc) -> on_succ (prec,asoc)
-                        | false, _ -> on_fail op
-                let on_succ orig_op (prec,asoc) = preturn (prec,asoc,fun a b -> expr_pos p (ap' (v orig_op) [a; b]))
-                let on_fail (orig_op: string) =
-                    let x = orig_op.TrimStart [|'.'|]
-                    let fail _ = fail "unknown operator"
-                    let on_succ = on_succ orig_op
-                    let rec on_fail i _ = if i < x.Length && i >= 0 then calculate (on_fail (i-1)) on_succ x.[0..i] else fail ()
-                    calculate (on_fail (x.Length-1)) on_succ x
                 (poperator >>=? function
                     | "->" -> fail "forbidden operator"
-                    | orig_op -> calculate on_fail (on_succ orig_op) orig_op) s
+                    | orig_op -> 
+                        let rec calculate on_fail op = 
+                            match dict_operator.TryGetValue op with
+                            | true, (prec,asoc) -> preturn (prec,asoc,fun a b -> expr_pos p (ap' (v orig_op) [a; b]))
+                            | false, _ -> on_fail ()
+
+                        let on_fail () =
+                            let x = orig_op.TrimStart [|'.'|]
+                            let rec on_fail i () = 
+                                if i >= 0 then calculate (on_fail (i-1)) x.[0..i] 
+                                else fail "unknown operator"
+                            calculate (on_fail (x.Length-1)) x
+
+                        calculate on_fail orig_op) s
 
             let rec led poperator term left (prec,asoc,m) =
                 match asoc with
@@ -1884,11 +1893,13 @@ let spiral_peval aux_modules main_module =
             let term s = expr_indent expr s
             tdop op term 0 s
 
-        let rec expr s = pos ^<| annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
+        let rec expr s = annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
         runParserOnString (spaces >>. expr .>> eof) inbuilt_operators module_name module_code
 
     // #Codegen
     let spiral_codegen main =
+        let buffer_type_definitions = ResizeArray()
+        let buffer_code = ResizeArray()
         let buffer = ResizeArray()
         let exp x = String.concat "" x
 
@@ -1924,16 +1935,31 @@ let spiral_peval aux_modules main_module =
 
         let (|Unit|_|) x = if is_unit x then Some () else None
 
-        let print_tag_tuple s = sprintf "Tuple%i" s
-        let print_tag_union s = sprintf "UnionTy%i" s
-        let print_tag_rec s = sprintf "RecTy%i" s
-        let print_tag_env_ty s = sprintf "Env%i" s
+        let definitions_set = h0()
+        let definictions_queue = Queue()
+
+        let print_tag_tuple (x: Node<_>) = 
+            let t = VVT x
+            if definitions_set.Add t then definictions_queue.Enqueue t
+            sprintf "Tuple%i" x.Symbol
+        let print_tag_union (x: Node<_>) = 
+            let t = UnionT x
+            if definitions_set.Add t then definictions_queue.Enqueue t
+            sprintf "Union%i" x.Symbol
+        let print_tag_rec s = 
+            let t = RecT s
+            if definitions_set.Add t then definictions_queue.Enqueue t
+            sprintf "Rec%i" s
+        let print_tag_env_ty (x: Node<_>) = 
+            let t = ModuleT x
+            if definitions_set.Add t then definictions_queue.Enqueue t
+            sprintf "Env%i" x.Symbol
 
         let rec print_type = function
             | Unit -> "unit"
-            | ModuleT (S s) | FunctionT (N (S s,_)) | RecFunctionT (N (S s,_,_)) -> print_tag_env_ty s
-            | VVT (S s) -> print_tag_tuple s
-            | UnionT (S s) -> print_tag_union s
+            | ModuleT x | FunctionT (N (x,_)) | RecFunctionT (N (x,_,_)) -> print_tag_env_ty x
+            | VVT x -> print_tag_tuple x
+            | UnionT x -> print_tag_union x
             | RecT s -> print_tag_rec s
             | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
             | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
@@ -2254,11 +2280,11 @@ let spiral_peval aux_modules main_module =
             | UnionT (N tys) -> print_union_cases print_rec_case (Set.toList tys) tag
             | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
 
-        let print_union_definition tys tag =
-            let tys = Set.toList tys
+        let print_union_definition (x: Node<_>) =
+            let tys = Set.toList x.Expression
 
-            sprintf "%s %s =" (prefix()) (print_tag_union tag) |> state
-            print_union_cases print_union_case tys tag
+            sprintf "%s %s =" (prefix()) (print_tag_union x) |> state
+            print_union_cases print_union_case tys x.Symbol
 
         let print_struct_definition iter fold name tys =
             let args sep f =
@@ -2302,34 +2328,42 @@ let spiral_peval aux_modules main_module =
                 | Unit -> "()" |> state
                 | _ -> ()
 
-        for x in env_ty_dict do
-            let tys, tag = x.Value.Expression, x.Value.Symbol
-            if is_unit_env tys = false then
-                let tuple_name = print_tag_env_ty tag
-                print_struct_definition Map.iter Map.fold tuple_name tys
-
-        for x in rect_dict do
-            let tys,tag = x.Value, x.Key
-            print_rec_definition tys tag
-
-        for x in uniont_dict do
-            let tys,tag = x.Value.Expression, x.Value.Symbol
-            print_union_definition tys tag
-
-        for x in vvt_dict do
-            let tys, tag = x.Value.Expression, x.Value.Symbol
-            if is_unit_tuple tys = false then
-                let tuple_name = print_tag_tuple tag
-                let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-                let iter f l = List.iteri (fun i x -> f (string i) x) l
-                print_struct_definition iter fold tuple_name tys
-
         memoized_methods |> Seq.fold (fun is_first x -> 
             match x.Value with
             | MemoMethodDone (memo_type, e, tag, args, _) -> print_method_definition is_first (memo_type, e, tag, args); false
             | _ -> is_first) true |> ignore
         codegen main |> state // Can't forget the non-method
-   
+
+        buffer_code.AddRange(buffer)
+        buffer.Clear()
+
+        while definictions_queue.Count > 0 do
+            match definictions_queue.Dequeue() with
+            | ModuleT x ->
+                let tys = x.Expression
+                if is_unit_env tys = false then
+                    let tuple_name = print_tag_env_ty x
+                    print_struct_definition Map.iter Map.fold tuple_name tys
+            | RecT s ->
+                let tys,tag = rect_dict.[s], s
+                print_rec_definition tys tag
+            | UnionT x ->
+                print_union_definition x
+            | VVT x ->
+                let tys = x.Expression
+                if is_unit_tuple tys = false then
+                    let tuple_name = print_tag_tuple x
+                    let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+                    let iter f l = List.iteri (fun i x -> f (string i) x) l
+                    print_struct_definition iter fold tuple_name tys
+            | _ -> failwith "impossible"
+
+        buffer_type_definitions.AddRange(buffer)
+        buffer.Clear()
+
+        buffer.AddRange(buffer_type_definitions)
+        buffer.AddRange(buffer_code)
+  
         process_statements buffer
 
     // #Run

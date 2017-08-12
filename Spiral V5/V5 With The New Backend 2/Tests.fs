@@ -291,6 +291,7 @@ let test20 = // Does pattern matching on union non-tuple types work? Do type ann
     """
 inl t = union (type int64) (type float32)
 inl x = t 3.5
+print_static x
 match x with
 | q : float32 -> x + x
 | q : int64 -> x * x
@@ -300,7 +301,7 @@ let test21 = // Does defining user operators work?
     "test21",
     """
 inl (.+) a b = a + b
-2 * 22 .+ 33 |> ignore
+inl x = 2 * 22 .+ 33
 
 inl f op a b = op a b
 f (*) 2 x
@@ -309,13 +310,10 @@ f (*) 2 x
 let test22 = // Do unary operators work?
     "test22",
     """
-inl lit_lift x =
-    print_static "I am in lit_lift."
-    lit_lift x
 inl t1 x = -x
 inl t2 x = `x
 inl t3 x = .(x)
-t1 2.2, t2 true, t3 "asd"
+t2 true, t3 "asd", t1 2.2
     """
 
 let test23 = // Do when and as patterns work?
@@ -519,8 +517,9 @@ inl b =
     type 
         a
         .Hello
-
-a (.A, (2,3)) |> dyn |> b
+inl x () = b (dyn (a (.A, (2,3))))
+b (dyn (a (.A, (2,3))))
+//print_static (inl _ -> b x)
     """
 
 let test32 = // Do the .NET methods work inside methods?
@@ -712,6 +711,6 @@ inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 8 |>> f) 
 parse_3 <| inl _ -> ()
     """
 
-let x = spiral_peval [] test13
+let x = spiral_peval [] test31 // tuple;parsing
 printfn "%A" x
 
