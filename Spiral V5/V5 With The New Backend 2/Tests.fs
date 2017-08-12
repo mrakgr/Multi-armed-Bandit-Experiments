@@ -561,7 +561,7 @@ inl rec loop = function
         console.WriteLine "Hello."
         loop (i-1)
     | 0 -> ()
-loop 8000
+loop 500
     """
 
 let parsing =
@@ -713,7 +713,7 @@ open System.Threading
 let run f = Thread(ThreadStart f,134217728).Start() // It stack overflows without being spun on a separate thread.
     
 run <| fun _ ->
-    let x = spiral_peval [tuple;parsing] test34
+    let x = spiral_peval [tuple;parsing] test33
     //printfn "%A" x
     ()
 
