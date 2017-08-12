@@ -552,7 +552,7 @@ console.Write ' '
 bob() |> console.Write
     """
 
-let test33 = // How long does it take to produce Hello 2000x times? 0.27s. More than that and it overflows. TODO: Fix the stale comment.
+let test33 = // How long does it take to produce Hello 2000x times? 0.8s.
     "test33",
     """
 inl console = mscorlib."System.Console"
@@ -561,7 +561,7 @@ inl rec loop = function
         console.WriteLine "Hello."
         loop (i-1)
     | 0 -> ()
-loop 500
+loop 8000
     """
 
 let parsing =
@@ -704,12 +704,19 @@ let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
     """
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
-inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 15 |>> f) (inl _ -> ())
+inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 30 |>> f) (inl _ -> ())
 
 parse_3 <| inl _ -> ()
     """
 
-let x = spiral_peval [tuple;parsing] test34
-//printfn "%A" x
+open System.Threading
+let run f = Thread(ThreadStart f,134217728).Start() // It stack overflows without being spun on a separate thread.
+    
+run <| fun _ ->
+    let x = spiral_peval [tuple;parsing] test34
+    //printfn "%A" x
+    ()
 
-//
+    
+
+

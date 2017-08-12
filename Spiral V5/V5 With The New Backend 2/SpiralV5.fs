@@ -2478,7 +2478,7 @@ let spiral_peval aux_modules main_module =
             let x = !d.seq (expr_prepass input |> snd |> expr_peval d)
             typed_expr_optimization_pass 2 x // Is mutable
             printfn "Time for parsing + typechecking was: %A" watch.Elapsed
-            Succ (spiral_codegen x)
+            Succ (spiral_codegen x |> copy_to_clipboard)
         with 
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1
