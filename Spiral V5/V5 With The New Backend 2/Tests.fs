@@ -517,9 +517,7 @@ inl b =
     type 
         a
         .Hello
-inl x () = b (dyn (a (.A, (2,3))))
-b (dyn (a (.A, (2,3))))
-//print_static (inl _ -> b x)
+(.A, (2,3)) |> a |> dyn |> b
     """
 
 let test32 = // Do the .NET methods work inside methods?
@@ -554,8 +552,8 @@ console.Write ' '
 bob() |> console.Write
     """
 
-let test35 = // How long does it take to produce Hello 2000x times? 0.27s. More than that and it overflows.
-    "test35",
+let test33 = // How long does it take to produce Hello 2000x times? 0.27s. More than that and it overflows. TODO: Fix the stale comment.
+    "test33",
     """
 inl console = mscorlib."System.Console"
 inl rec loop = function
@@ -563,7 +561,7 @@ inl rec loop = function
         console.WriteLine "Hello."
         loop (i-1)
     | 0 -> ()
-loop 2000
+loop 500
     """
 
 let parsing =
@@ -706,11 +704,11 @@ let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
     """
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
-inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 8 |>> f) (inl _ -> ())
+inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 15 |>> f) (inl _ -> ())
 
 parse_3 <| inl _ -> ()
     """
 
-let x = spiral_peval [] test31 // tuple;parsing
-printfn "%A" x
+let x = spiral_peval [tuple;parsing] test34
+//printfn "%A" x
 

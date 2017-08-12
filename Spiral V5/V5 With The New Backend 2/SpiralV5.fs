@@ -1102,7 +1102,7 @@ let spiral_peval aux_modules main_module =
                 match ty, args with
                 | x, TyType r when x = r -> args
                 | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' -> 
-                    let lam = inl' ["args"; "typec"] (op(Case,[v "args"; ap (v "typec") (v "args")])) |> inner_compile
+                    let lam = inl' ["typec"; "args"] (op(Case,[v "args"; ap (v "typec") (v "args")])) |> inner_compile
                     apply d (apply d lam typec) args
                 | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args                
                 | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
@@ -1118,10 +1118,7 @@ let spiral_peval aux_modules main_module =
                 else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
             | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
-        let apply_tev d expr args = 
-//            printfn "expr = %A" expr
-//            printfn "args = %A" args
-            apply d (tev d expr) (tev d args)
+        let apply_tev d expr args = apply d (tev d expr) (tev d args)
 
         let vv_index_template f d v i =
             let v,i = tev2 d v i
