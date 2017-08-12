@@ -704,7 +704,7 @@ let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
     """
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 20 |>> f) (inl _ -> ())
+inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 2 |>> f) (inl _ -> ())
 
 parse <| inl _ -> ()
     """
