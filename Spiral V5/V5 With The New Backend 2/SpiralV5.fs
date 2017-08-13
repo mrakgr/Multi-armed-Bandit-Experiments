@@ -2468,9 +2468,27 @@ let spiral_peval aux_modules main_module =
 
     parse_modules aux_modules Fail <| fun body -> 
         let d = data_empty()
-        let input = core_functions body
+        //let input = core_functions body
         try
-            let x = expr_prepass input |> snd
+//            let x' = 
+//                l_rec "loop" (
+//                    inl "i" (
+//                        if_static (op (GTE,[v "i";lit_int 0]))
+//                            (ap (v "loop") (op (Sub,[v "i";lit_int 1])))
+//                            B)
+//                        )
+//                    (ap (v "loop") (lit_int 2000))
+//                |> expr_prepass |> snd
+
+            let x =
+                let rec add n =
+                    if n > 0 then op (Add,[lit_int 1; add (n - 1)])
+                    else v "i"
+                l "i" (lit_int 0)
+                    (add 20000)
+                |> expr_prepass |> snd
+
+            //printfn "x=%A" x
             let watch = System.Diagnostics.Stopwatch.StartNew()
             let x = !d.seq (expr_peval d x)
             typed_expr_optimization_pass 2 x // Is mutable

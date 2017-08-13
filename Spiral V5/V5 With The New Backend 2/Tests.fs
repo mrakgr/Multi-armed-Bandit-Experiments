@@ -703,7 +703,7 @@ let test33 = // Does a simple loop have superlinear scaling?
 inl rec loop = function
     | i when i > 0 -> loop (i-1)
     | 0 -> ()
-loop 10000
+loop 1000
     """
 
 open System.Threading
@@ -711,7 +711,7 @@ let run f = Thread(ThreadStart f,134217728).Start() // It stack overflows withou
     
 run <| fun _ ->
     let x = spiral_peval [] test33
-    //printfn "%A" x
+    printfn "%A" x
     ()
 
 
