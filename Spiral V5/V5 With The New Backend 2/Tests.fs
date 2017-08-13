@@ -704,7 +704,7 @@ let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
     """
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 15 |>> f) (inl _ -> ())
+inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 25 |>> f) (inl _ -> ())
 
 parse <| inl _ -> ()
     """
@@ -713,9 +713,10 @@ open System.Threading
 let run f = Thread(ThreadStart f,134217728).Start() // It stack overflows without being spun on a separate thread.
     
 run <| fun _ ->
-    let x = spiral_peval [tuple;parsing] test34
+    let x = spiral_peval [tuple;parsing] test33
     //printfn "%A" x
     ()
+
 
     
 
