@@ -552,18 +552,6 @@ console.Write ' '
 bob() |> console.Write
     """
 
-let test33 = // How long does it take to produce Hello 2000x times? 0.8s.
-    "test33",
-    """
-inl console = mscorlib."System.Console"
-inl rec loop = function
-    | i when i > 0 -> 
-        console.WriteLine "Hello."
-        loop (i-1)
-    | 0 -> ()
-loop 5000
-    """
-
 let parsing =
     "Parsing",
     """
@@ -709,11 +697,20 @@ inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 25 |>> f) (
 parse <| inl _ -> ()
     """
 
+let test33 = // Does a simple loop have superlinear scaling?
+    "test33",
+    """
+inl rec loop = function
+    | i when i > 0 -> loop (i-1)
+    | 0 -> ()
+loop 10000
+    """
+
 open System.Threading
 let run f = Thread(ThreadStart f,134217728).Start() // It stack overflows without being spun on a separate thread.
     
 run <| fun _ ->
-    let x = spiral_peval [tuple;parsing] test34
+    let x = spiral_peval [] test33
     //printfn "%A" x
     ()
 

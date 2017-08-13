@@ -530,8 +530,8 @@ let spiral_peval aux_modules main_module =
 
     let rec pattern_compile arg pat =
         let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
-            let inline cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
-            let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
+            let cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
+            let cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
 
             let pat_foldbacki f s l =
                 let mutable len = 0
@@ -565,7 +565,7 @@ let spiral_peval aux_modules main_module =
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
                     |> case arg
 
-            let inline force (x: Lazy<_>) = x.Value
+            let force (x: Lazy<_>) = x.Value
 
             match pat with
             | E -> on_succ.Value
@@ -650,11 +650,11 @@ let spiral_peval aux_modules main_module =
         | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
 
     // #Free vars
-    let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
-    let inline vars_union f l = vars_union' Set.empty f l
+    let vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
+    let vars_union f l = vars_union' Set.empty f l
 
     let rec typed_expr_free_variables_template on_memo e =
-        let inline f e = typed_expr_free_variables_template on_memo e
+        let f e = typed_expr_free_variables_template on_memo e
         match e with
         | TyV (n,t) -> f n
         | TyTag (n,t) -> Set.singleton (n, t)
@@ -761,12 +761,12 @@ let spiral_peval aux_modules main_module =
 
     // #Type directed partial evaluation
     let rec expr_peval (d : LangEnv) (expr: Expr) =
-        let inline tev d expr = expr_peval d expr
-        let inline apply_seq d x = !d.seq x
-        let inline tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
-        let inline tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
-        let inline tev_method d expr = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr |> apply_seq d
-        let inline tev_rec d expr = tev_method {d with rbeh=AnnotationReturn} expr
+        let tev d expr = expr_peval d expr
+        let apply_seq d x = !d.seq x
+        let tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
+        let tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
+        let tev_method d expr = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr |> apply_seq d
+        let tev_rec d expr = tev_method {d with rbeh=AnnotationReturn} expr
         let on_type_er trace message = TypeError(trace,message) |> raise
 
         let tev2 d a b = tev d a, tev d b
@@ -784,8 +784,8 @@ let spiral_peval aux_modules main_module =
             d.ltag := t + 1
             t
 
-        let inline make_tyv_ty d ty = get_tag d, ty
-        let inline make_tyv_typed_expr d ty_exp = make_tyv_ty d (get_type ty_exp)
+        let make_tyv_ty d ty = get_tag d, ty
+        let make_tyv_typed_expr d ty_exp = make_tyv_ty d (get_type ty_exp)
 
         let make_tyv_and_push_typed_expr d ty_exp =
             let v = make_tyv_typed_expr d ty_exp
@@ -806,7 +806,7 @@ let spiral_peval aux_modules main_module =
         // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
         // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
         let rec destructure d r = 
-            let inline destructure r = destructure d r
+            let destructure r = destructure d r
 
             let chase_cse on_succ on_fail r = 
                 match Map.tryFind r !d.cse_env with
@@ -905,7 +905,7 @@ let spiral_peval aux_modules main_module =
             if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else memo_type, ref fv, renamer_reverse renamer, tag, typed_expr_ty
 
-        let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
+        let memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
         let memoize_method d x = 
             let memo_type _ = MemoMethod
             memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
@@ -979,7 +979,7 @@ let spiral_peval aux_modules main_module =
                 
             
 
-        let inline wrap_exception d f =
+        let wrap_exception d f =
             try f()
             with 
             | :? TypeError as e -> reraise()
@@ -1128,7 +1128,7 @@ let spiral_peval aux_modules main_module =
         let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
         let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,vvt (List.map get_type l))) d v i
 
-        let inline vv_unop_template on_succ on_fail d v =
+        let vv_unop_template on_succ on_fail d v =
             match tev d v with
             | TyVV(l,_) -> on_succ l
             | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
@@ -1691,7 +1691,7 @@ let spiral_peval aux_modules main_module =
         let case_rounds expr s = rounds (expr <|>% B) s
         let case_var expr = name |>> v
 
-        let inline case_typex match_type expr (s: CharStream<_>) =
+        let case_typex match_type expr (s: CharStream<_>) =
             let mutable i = None
             let expr_indent op expr (s: CharStream<_>) = expr_indent i.Value op expr s
     
@@ -1768,7 +1768,7 @@ let spiral_peval aux_modules main_module =
 
         let indentations statements expressions (s: CharStream<Userstate>) =
             let i = (col s)
-            let inline if_ op tr (s: CharStream<_>) = expr_indent i op tr s
+            let if_ op tr (s: CharStream<_>) = expr_indent i op tr s
             let expr_indent expr =
                 let mutable op = (=)
                 let set_op op' x = op <- op'; x
@@ -2470,10 +2470,11 @@ let spiral_peval aux_modules main_module =
         let d = data_empty()
         let input = core_functions body
         try
+            let x = expr_prepass input |> snd
             let watch = System.Diagnostics.Stopwatch.StartNew()
-            let x = !d.seq (expr_prepass input |> snd |> expr_peval d)
+            let x = !d.seq (expr_peval d x)
             typed_expr_optimization_pass 2 x // Is mutable
-            printfn "Time for parsing + typechecking was: %A" watch.Elapsed
+            printfn "Time for peval was: %A" watch.Elapsed
             Succ (spiral_codegen x |> copy_to_clipboard)
         with 
         | :? TypeError as e -> 
