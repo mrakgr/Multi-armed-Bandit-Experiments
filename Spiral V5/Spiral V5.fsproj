@@ -187,6 +187,7 @@
     <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
     <Compile Include="V5 With The New Backend 2\Tests.fs" />
     <None Include="V5 With The New Backend 2\typed_expr_hashing_benchmark.fsx" />
+    <None Include="V5 With The New Backend 2\add_interpreter.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
