@@ -874,11 +874,6 @@ let spiral_peval aux_modules main_module =
 
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
-        let tag r =
-            let tag = !r
-            r := tag + 1L
-            tag
-
         let eval_method memo_type used_vars d expr =
             let key_args = (expr, d.env) |> nodify_memo_key
 
@@ -1139,10 +1134,11 @@ let spiral_peval aux_modules main_module =
             | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
             | v -> on_fail()
 
-        let vv_length = 
+        let vv_length x = 
             vv_unop_template (fun l -> TyLit (LitInt32 l.Length)) 
-                (fun _ -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v)
-        let vv_is = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false))
+                (fun _ -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v) x
+                
+        let vv_is x = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false)) x
 
         let eq_type d a b =
             let f x = match get_type x with TyTypeC x -> x | x -> x
@@ -1184,8 +1180,8 @@ let spiral_peval aux_modules main_module =
             | TyEnv(module_,ModuleT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
             | _ -> on_type_er d.trace "Expected a module as the first argument."
 
-        let module_with = module_with_template module_with_f
-        let module_with_extend = module_with_template module_with_f_extend
+        let module_with x = module_with_template module_with_f x
+        let module_with_extend x = module_with_template module_with_f_extend x
 
         let type_annot d a b =
             match d.rbeh with
