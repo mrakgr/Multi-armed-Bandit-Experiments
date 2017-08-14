@@ -551,16 +551,12 @@ let spiral_peval aux_modules main_module =
                 pat_foldbacki
                     (fun (pat,i) on_succ ->
                         let arg = tuple_index arg i
-                        printfn "arg=%A" arg
                         cp arg pat on_succ on_fail)
                     on_succ
                     l'
                 |> fun (on_succ,len) -> 
-                    l "" (print_static (tuple_length arg)) on_succ.Value
-                    |> fun on_succ -> if_static (eq (tuple_length arg) (lit_int len)) on_succ on_fail.Value
-                    |> l "" (print_static (lit_string "Is a tuple"))
+                    if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
-                    |> l "" (print_static arg)
                     |> case arg
                     
 
@@ -594,10 +590,7 @@ let spiral_peval aux_modules main_module =
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
             | PatTypeLit x -> 
                 if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value 
-                |> l "" (print_static arg)
                 |> case arg
-                |> l "" (print_static arg)
-                |> l "" (print_static (lit_string "I am going into PatTypeLit."))
             | PatLit x -> 
                 let x = lit x
                 let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
@@ -818,8 +811,6 @@ let spiral_peval aux_modules main_module =
             let destructure r = destructure d r
 
             let chase_cse on_succ on_fail r = 
-                printfn "I am in chase_cse. r = %A" r
-                printfn "!d.cse_env = %A" !d.cse_env
                 match Map.tryFind r !d.cse_env with
                 | Some x -> on_succ x
                 | None -> on_fail r
@@ -928,11 +919,8 @@ let spiral_peval aux_modules main_module =
                 TyMemoizedExpr(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
 
         let case_ d v case =
-            printfn "v (expr) = %A" v
             let assume d v x branch = tev_assume (cse_add' d v x) d branch
-            let v = tev d v
-            printfn "v=%A" v
-            match v with
+            match tev d v with
             | TyTag(_, t & (UnionT _ | RecT _)) as v ->
                 let rec case_destructure d args_ty =
                     let f x = make_tyv_and_push_ty d x
@@ -945,12 +933,9 @@ let spiral_peval aux_modules main_module =
 
                 let rec map_cases l =
                     match l with
-                    | x :: xs -> 
-                        printfn "x=%A" x
-                        (x, assume d v x case) :: map_cases xs
+                    | x :: xs -> (x, assume d v x case) :: map_cases xs
                     | _ -> []
                             
-//                printfn "t=%A" t
                 match map_cases (case_destructure d t) with
                 | (_, TyType p) :: _ as cases -> 
                     if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
@@ -1139,7 +1124,7 @@ let spiral_peval aux_modules main_module =
             | v, TyLitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
             | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
-        let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
+        let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i |> destructure d
         let vv_slice_from d v i = vv_index_template (fun l i -> TyVV l.[i..]) d v i
 
         let vv_unop_template on_succ on_fail d v =

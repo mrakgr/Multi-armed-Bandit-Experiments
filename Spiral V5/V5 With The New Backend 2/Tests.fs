@@ -129,7 +129,7 @@ inl ab =
          .B
 met x = (ab .A, ab .A, ab .A, ab .A)
 match x with
-| .A, .A, _ -> 1
+| .A, .A, _, _ -> 1
 | _, _, .A, .A -> 2
 | .A, .B, .A, .B -> 3
 | _ -> 4
@@ -704,24 +704,11 @@ inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 40 |>> f) (
 parse <| inl _ -> ()
     """
 
-let test35 = // Pattern matching redux
-    "test35",
-    """
-inl ab = 
-    type .A
-         .B
-met a = ab .A
-met b = ab .A
-match a,b with
-| .A, _ -> 1
-| .B, _ -> 2
-    """
-
 open System.Threading
 let run f = Thread(ThreadStart f,1024*1024*8).Start() // It stack overflows without being spun on a separate thread.
     
 run <| fun _ ->
-    let x = spiral_peval [] test35
+    let x = spiral_peval [] test10
     printfn "%A" x
     ()
 
