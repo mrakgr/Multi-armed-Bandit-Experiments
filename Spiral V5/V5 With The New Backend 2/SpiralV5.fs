@@ -1022,14 +1022,13 @@ let spiral_peval aux_modules main_module =
             | _ -> on_type_er d.trace "Expected a string."
 
         let rec apply d a b = apply_template tev d (a, b)
-        and apply_template tev d ab = 
-            //printfn "ab=%A" ab
-            match ab with
+        and apply_template tev d (a, b) = 
+            match destructure d a, destructure d b with
             | recf & TyFun(env_term,FunTypeRecFunction ((pat,body),name)), args -> 
-                let env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term
+                let env = if pat <> "" then Map.add pat args env_term else env_term
                 tev {d with env = Map.add name recf env} body
             | TyFun(env_term,FunTypeFunction (pat,body)), args -> 
-                tev {d with env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term} body
+                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
             | closure & TyFun(env_term,(FunTypeFunction _ | FunTypeRecFunction _)), TyType (ForCastT args_ty) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
@@ -2032,8 +2031,8 @@ let spiral_peval aux_modules main_module =
                 match t with
                 | Unit -> f (); ""
                 | t ->
-                    let if_var = sprintf "(if_var_%i: %s)" (get_tag()) (print_type t)
-                    sprintf "let %s =" if_var |> state
+                    let if_var = sprintf "if_var_%i" (get_tag())
+                    sprintf "let (%s: %s) =" if_var (print_type t) |> state
                     enter' <| fun _ -> f()
                     if_var
         
@@ -2153,12 +2152,13 @@ let spiral_peval aux_modules main_module =
                         | UnionT (N s) -> print_case_rec t (union_idx s)
                         | _ -> failwith "Only VVT and UnionT can be recursive types."
                     | _ -> failwith "Only VVT and UnionT can be boxed types."
-                let x = codegen x
-                if String.IsNullOrEmpty x then sprintf "%s(%s)" case_name x else case_name
-            | TyFun(env_term, _) & TyType t ->
+                if is_unit (get_type x) then case_name else sprintf "%s(%s)" case_name (codegen x)
+            | TyFun(env_term, _) ->
+                let t = get_type expr
                 Map.toArray env_term
                 |> Array.map snd
                 |> fun x -> make_struct x "" (fun args -> sprintf "%s(%s)" (print_tag_env_ty t) args)
+            | TyVV l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
             | TyOp(op,args,t) ->
                 match op, args with
                 | Apply,[a;b] ->
@@ -2238,7 +2238,6 @@ let spiral_peval aux_modules main_module =
         //        | Syncthreads,[],_) -> state "syncthreads();"; ""
 
                 | x -> failwithf "Missing TyOp case. %A" x
-            | x -> failwithf "The match cases were incomplete. Got: %A" x
 
         let prefix =
             let mutable prefix = false

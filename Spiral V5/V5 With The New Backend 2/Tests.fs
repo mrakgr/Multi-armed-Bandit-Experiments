@@ -705,10 +705,10 @@ parse <| inl _ -> ()
     """
 
 open System.Threading
-let run f = Thread(ThreadStart f,1024*1024*512).Start() // It stack overflows without being spun on a separate thread.
+let run f = Thread(ThreadStart f,1024*1024*8).Start() // It stack overflows without being spun on a separate thread.
     
 run <| fun _ ->
-    let x = spiral_peval [tuple;parsing] test34
-    //printfn "%A" x
+    let x = spiral_peval [tuple;parsing] test9
+    printfn "%A" x
     ()
 
