@@ -172,7 +172,14 @@ type Op =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
 
-type Pattern =
+type FunctionCore = string * Expr
+
+and FunType =
+    | FunTypeFunction of FunctionCore // Type level function. Can also be though of as a procedural macro.
+    | FunTypeRecFunction of FunctionCore * string
+    | FunTypeModule
+
+and Pattern =
     | E
     | PatVar of string
     | PatTuple of Pattern list
@@ -191,46 +198,43 @@ and Expr =
     | V of Node<string>
     | Lit of Node<Value>
     | Pattern of Node<Pattern>
-    | Function of FunctionCore
-    | FunctionFilt of Node<Set<string> * FunctionCore>
+    | Function of Node<FunctionCore>
+    | FunctionFilt of Node<Set<string> * Node<FunctionCore>>
     | VV of Node<Expr list>
     | Op of Node<Op * Expr list>
     | ExprPos of Pos<Expr>
 
 and Ty =
     | PrimT of PrimitiveType
-    | VVT of Node<Ty list>
-    | LitT of Node<Value>
-    | FunctionT of Node<EnvTy * FunctionCore> // Type level function. Can also be though of as a procedural macro.
-    | RecFunctionT of Node<EnvTy * FunctionCore * string>
-    | ModuleT of EnvTy
+    | VVT of Ty list
+    | LitT of Value
+    | FunT of EnvTy * FunType
     | UnionT of Node<Set<Ty>>
     | RecT of int
-    | TypeConstructorT of Node<Ty>
+    | TypeConstructorT of Ty
     | ClosureT of Node<Ty * Ty>
     | ArrayT of Node<ArrayType * Ty>
-    | ForCastT of Node<Ty> // For casting type level function to term (ClosureT) level ones.
+    | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
     | DotNetTypeRuntimeT of Node<Type> 
     | DotNetTypeInstanceT of Node<Type>
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
     | TyTag of TyTag
-    | TyV of TypedExpr * Ty
+    | TyVV of TypedExpr list
+    | TyFun of EnvTerm * FunType
+    | TyBoxed of TypedExpr * Ty
+
     | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
     | TyLit of Value
-    
-    | TyVV of TypedExpr list * Ty
-    | TyEnv of EnvTerm * Ty
     | TyOp of Op * TypedExpr list * Ty
     | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
 
 and Tag = int
 and TyTag = Tag * Ty
 and EnvTerm = Map<string, TypedExpr>
-and EnvTy = Node<Map<string, Ty>>
-and FunctionCore = Node<string * Expr>
-and MemoKey = Node<Expr * EnvTerm>
+and EnvTy = Map<string, Ty>
+and MemoKey = Expr * EnvTerm
 
 and Arguments = Set<TyTag> ref
 and Renamer = Map<Tag,Tag>
@@ -246,7 +250,7 @@ and LetType =
 and MemoCases =
     | MemoMethodInEvaluation of Tag
     | MemoMethodDone of MemoExprType * TypedExpr * Tag * Arguments * optimization_pass_count: int ref
-    | MemoTypeInEvaluation
+    | MemoTypeInEvaluation of Ty
     | MemoType of Ty
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
@@ -312,21 +316,27 @@ let spiral_peval aux_modules main_module =
         | LitString _ -> PrimT StringT
         | LitChar _ -> PrimT CharT
 
-    let get_type = function
+    let rec env_to_ty env = Map.map (fun _ -> get_type) env
+    and get_type = function
         | TyLit x -> get_type_of_value x
-        | TyTag(_,t) | TyV (_,t) | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
-        | TyVV(_,t) | TyEnv(_,t) | TyOp(_,_,t) -> t
+        | TyVV l -> List.map get_type l |> VVT
+        | TyFun (l, t) -> FunT (env_to_ty l, t)
+
+        | TyTag(_,t) 
+        | TyBoxed (_,t) 
+        | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
+        | TyOp(_,_,t) -> t
 
     let (|N|) (x: Node<_>) = x.Expression
     let (|S|) (x: Node<_>) = x.Symbol
     let (|TyTypeC|_|) x =
         match x with
-        | TypeConstructorT x -> Some x.Expression
+        | TypeConstructorT x -> Some x
         | _ -> None
 
     /// Wraps the argument in a list if not a tuple.
     let tuple_field = function 
-        | TyVV(args,_) -> args
+        | TyVV args -> args
         | x -> [x]
 
     let (|TyTuple|) x = tuple_field x
@@ -340,12 +350,12 @@ let spiral_peval aux_modules main_module =
 
     /// Wraps the argument in a list if not a tuple type.
     let tuple_field_ty = function 
-        | VVT (N x) -> x
+        | VVT x -> x
         | x -> [x]
 
     let (|TyType|) x = get_type x
     let (|TypeLit|_|) = function
-        | TyType (LitT (N x)) -> Some x
+        | TyType (LitT x) -> Some x
         | _ -> None
     let (|TypeString|_|) = function
         | TypeLit (LitString x) -> Some x
@@ -427,11 +437,6 @@ let spiral_peval aux_modules main_module =
     let vv x = nodify_vv x |> VV
 
     // nodify_ty variants
-    let vvt_dict = d0()
-    let nodify_vvt = nodify vvt_dict
-    let nodify_litt = nodify <| d0()
-    let nodify_funt = nodify <| d0()
-    let nodify_recfunt = nodify <| d0()
     let env_ty_dict = d0()
     let nodify_env_ty = nodify env_ty_dict
     let uniont_dict = d0()
@@ -448,16 +453,16 @@ let spiral_peval aux_modules main_module =
     let nodify_dotnet_type_instancet = nodify <| d0()
     let nodify_dotnet_assemblyt = nodify <| d0()
 
-    let vvt x = nodify_vvt x |> VVT
-    let litt x = nodify_litt x |> LitT
-    let funt x = nodify_funt x |> FunctionT
-    let recfunt x = nodify_recfunt x |> RecFunctionT
-    let modulet x = nodify_env_ty x |> ModuleT
+    let vvt x = VVT x
+    let litt x = LitT x
+    let funt (x, core) = FunT (x, FunTypeFunction core)
+    let recfunt (x, core) = FunT (x, FunTypeRecFunction core)
+    let modulet x = FunT (x, FunTypeModule)
     let uniont x = nodify_uniont x |> UnionT
-    let typect x = nodify_typect x |> TypeConstructorT
+    let typect x = TypeConstructorT x
     let closuret x = nodify_closuret x |> ClosureT
     let arrayt x = nodify_arrayt x |> ArrayT
-    let for_castt x = nodify_for_castt x |> ForCastT
+    let for_castt x = ForCastT x
     let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
     let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
     let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
@@ -487,7 +492,7 @@ let spiral_peval aux_modules main_module =
 
     let B = [] |> vv
     let BVVT = [] |> vvt
-    let TyB = TyVV ([], BVVT)
+    let TyB = TyVV []
 
     let cons a b = (VVCons,[a;b]) |> op
 
@@ -638,10 +643,10 @@ let spiral_peval aux_modules main_module =
         let f e = renamer_apply_typedexpr r e
         match e with
         | TyTag (n,t) -> TyTag (Map.find n r,t)
-        | TyV (n,t) -> TyV(f n,t)
+        | TyBoxed (n,t) -> TyBoxed(f n,t)
         | TyLit _ -> e
-        | TyVV(l,t) -> TyVV(List.map f l,t)
-        | TyEnv(l,t) -> TyEnv(renamer_apply_env r l, t)
+        | TyVV l -> TyVV(List.map f l)
+        | TyFun(l,t) -> TyFun(renamer_apply_env r l, t)
         | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
             let renamer = renamer_apply_renamer r renamer
             let used_vars = ref <| renamer_apply_pool r !used_vars
@@ -656,11 +661,11 @@ let spiral_peval aux_modules main_module =
     let rec typed_expr_free_variables_template on_memo e =
         let f e = typed_expr_free_variables_template on_memo e
         match e with
-        | TyV (n,t) -> f n
+        | TyBoxed (n,t) -> f n
         | TyTag (n,t) -> Set.singleton (n, t)
         | TyLit _ -> Set.empty
-        | TyVV(l,_) | TyOp(_,l,_) -> vars_union f l
-        | TyEnv(l,_) -> env_free_variables_template on_memo l
+        | TyVV l | TyOp(_,l,_) -> vars_union f l
+        | TyFun(l,_) -> env_free_variables_template on_memo l
         | TyMemoizedExpr(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
         // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
         // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
@@ -702,7 +707,6 @@ let spiral_peval aux_modules main_module =
         typed_expr_free_variables_template on_method_call_optimization_pass typed_exp |> ignore
 
     // #Conversion
-    let env_to_ty env = Map.map (fun _ -> get_type) env
     let env_num_args env = 
         Map.fold (fun s k v -> 
             let f = typed_expr_free_variables v
@@ -749,10 +753,6 @@ let spiral_peval aux_modules main_module =
         | ArrayT(N(DotNetReference,t)) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
         | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
-
-    let (|TyEnvT|_|) = function
-        | ModuleT (N env) | RecFunctionT ((N (N (env),_,_))) | FunctionT((N(N(env),_))) -> Some env
-        | _ -> None
 
     let is_all_int64 size = List.forall is_int64 (tuple_field size)
     let (|TyArray|_|) = function
@@ -821,10 +821,9 @@ let spiral_peval aux_modules main_module =
                 let env_unseal x =
                     let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
                     Map.map unseal x
-                let r_ty = get_type r
-                match r_ty with
-                | VVT (N tuple_types) -> TyVV(index_tuple_args tuple_types, r_ty)
-                | TyEnvT env -> TyEnv(env_unseal env, r_ty)
+                match get_type r with
+                | VVT tuple_types -> TyVV(index_tuple_args tuple_types)
+                | FunT (env,t) -> TyFun(env_unseal env, t)
                 | _ -> chase_recurse r
            
             let destructure_cse r = 
@@ -837,8 +836,8 @@ let spiral_peval aux_modules main_module =
                     r
             
             match r with
-            | TyEnv _ | TyVV _ | TyLit _ -> r
-            | TyV _ | TyTag _ -> destructure_var r
+            | TyFun _ | TyVV _ | TyLit _ -> r
+            | TyBoxed _ | TyTag _ -> destructure_var r
             | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
 
         let if_is_returnable (TyType r & x) =
@@ -875,11 +874,11 @@ let spiral_peval aux_modules main_module =
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
         let eval_method memo_type used_vars d expr =
-            let key_args = (expr, d.env) |> nodify_memo_key
+            let key_args = (expr, d.env) 
 
             match memoized_methods.TryGetValue key_args with
             | false, _ ->
-                let tag = key_args.Symbol
+                let tag = memoized_methods.Count
 
                 memoized_methods.[key_args] <- MemoMethodInEvaluation tag
                 let typed_expr = tev_method d expr
@@ -942,7 +941,7 @@ let spiral_peval aux_modules main_module =
                         let l = List.map (snd >> get_type) cases
                         on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
                 | _ -> failwith "There should always be at least one clause here."
-            | a & TyV(b,_) -> assume d a b case
+            | a & TyBoxed(b,_) -> assume d a b case
             | _ -> tev d case
            
         let typec_union d a b =
@@ -953,29 +952,29 @@ let spiral_peval aux_modules main_module =
 
         let rec typec_strip = function 
             | TyTypeC x -> x
-            | VVT (N l) -> vvt (List.map typec_strip l)
+            | VVT l -> vvt (List.map typec_strip l)
             | x -> x
 
         let typec_create d x = 
-            let key = nodify_memo_key (x, d.env)
+            let key = (x, d.env)
             let ret x = make_tyv_and_push_ty d (typect x)
 
             let add_to_memo_dict x = 
                 memoized_methods.[key] <- MemoType x
                 x
 
-            let add_recursive_type_to_type_dict x =
+            let if_recursive_type_add_to_type_dict x =
                 match memoized_methods.TryGetValue key with
-                | true, MemoType ty -> rect_dict.[key.Symbol] <- x; ty
+                | true, MemoType (RecT tag as ty) -> rect_dict.[tag] <- x; ty
                 | _ -> x
 
             match memoized_methods.TryGetValue key with
             | true, MemoType ty -> ret ty
-            | true, MemoTypeInEvaluation -> RecT key.Symbol |> add_to_memo_dict |> ret
+            | true, MemoTypeInEvaluation ty -> add_to_memo_dict ty |> ret
             | true, _ -> failwith "Expected a type in the dictionary."
             | false, _ -> 
-                memoized_methods.[key] <- MemoTypeInEvaluation
-                tev_seq d x |> get_type |> typec_strip |> add_recursive_type_to_type_dict |> add_to_memo_dict |> ret
+                memoized_methods.[key] <- MemoTypeInEvaluation (RecT memoized_methods.Count)
+                tev_seq d x |> get_type |> typec_strip |> if_recursive_type_add_to_type_dict |> add_to_memo_dict |> ret
                 
             
 
@@ -1026,24 +1025,24 @@ let spiral_peval aux_modules main_module =
         and apply_template tev d ab = 
             //printfn "ab=%A" ab
             match ab with
-            | closure & TyEnv(env_term,(FunctionT(N(N env_ty,x)) | RecFunctionT(N(N env_ty,x,_)))), TyType (ForCastT (N args_ty)) -> 
+            | recf & TyFun(env_term,FunTypeRecFunction ((pat,body),name)), args -> 
+                let env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term
+                tev {d with env = Map.add name recf env} body
+            | TyFun(env_term,FunTypeFunction (pat,body)), args -> 
+                tev {d with env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term} body
+            | closure & TyFun(env_term,(FunTypeFunction _ | FunTypeRecFunction _)), TyType (ForCastT args_ty) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
                     match args_ty with
-                    | VVT (N l) -> TyVV(List.map f l, args_ty)
+                    | VVT l -> TyVV(List.map f l)
                     | x -> f x
             
                 let args = instantiate_type_as_variable d args_ty
                 apply_template (memoize_closure args) d (closure, args)
             | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
             | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
-            | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
-            | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
-            | recf & TyEnv(env_term,RecFunctionT (N (_, N (pat,body), name))), args -> 
-                let env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term
-                tev {d with env = Map.add name recf env} body
-            | TyEnv(env_term,FunctionT (N (_, N (pat,body)))), args -> 
-                tev {d with env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term} body
+            | TyFun(env_term,FunTypeModule), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
+            | TyFun(env_term,FunTypeModule), _ -> on_type_er d.trace "Expected a type level string in module application."
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
                     wrap_exception d <| fun _ ->
                         match a.GetType(name) with
@@ -1085,9 +1084,8 @@ let spiral_peval aux_modules main_module =
             | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
             | typec & TyType(TyTypeC ty), args ->
                 let substitute_ty = function
-                    | TyVV(l,_) -> TyVV(l,ty)
-                    | TyV(x,_) -> TyV(x,ty)
-                    | x -> TyV(x,ty)
+                    | TyBoxed(x,_) -> TyBoxed(x,ty)
+                    | x -> TyBoxed(x,ty)
 
                 let (|TyRecUnion|_|) = function
                     | UnionT (N ty') -> Some ty'
@@ -1118,7 +1116,7 @@ let spiral_peval aux_modules main_module =
         let vv_index_template f d v i =
             let v,i = tev2 d v i
             match v, i with
-            | TyVV(l,_), TyLitIndex i ->
+            | TyVV l, TyLitIndex i ->
                 if i >= 0 || i < List.length l then f l i
                 else on_type_er d.trace "Tuple index not within bounds."
             | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should ways be destructured."
@@ -1126,11 +1124,11 @@ let spiral_peval aux_modules main_module =
             | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
         let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
-        let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,vvt (List.map get_type l))) d v i
+        let vv_slice_from d v i = vv_index_template (fun l i -> TyVV l.[i..]) d v i
 
         let vv_unop_template on_succ on_fail d v =
             match tev d v with
-            | TyVV(l,_) -> on_succ l
+            | TyVV l -> on_succ l
             | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
             | v -> on_fail()
 
@@ -1148,7 +1146,7 @@ let spiral_peval aux_modules main_module =
         let vv_cons d a b =
             let a, b = tev2 d a b
             match b with
-            | TyVV(b, VVT (N bt)) -> TyVV(a::b, vvt (get_type a :: bt))
+            | TyVV b -> TyVV(a::b)
             | _ -> on_type_er d.trace "Expected a tuple on the right is in VVCons."
 
         let type_lit_create' d x = litt x |> make_tyv_and_push_ty d
@@ -1156,28 +1154,27 @@ let spiral_peval aux_modules main_module =
         let module_open d a b =
             let a = tev d a
             match a with
-            | TyEnv(env_term, ModuleT env_ty) -> 
+            | TyFun(env_term, FunTypeModule) -> 
                 let env = Map.fold (fun s k v -> Map.add k v s) d.env env_term
                 tev {d with env = env} b
             | x -> on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
 
-        let module_with_f_extend d (module_,module_type) name arg =
+        let module_with_f_extend d module_ name arg =
             let x = Map.add name arg module_
-            let x_ty = Map.add name (get_type arg) module_type
-            TyEnv(x, modulet x_ty)
+            TyFun(x, FunTypeModule)
 
-        let module_with_f d (module_,module_type) name arg =
+        let module_with_f d module_ name arg =
             match Map.tryFind name module_ with
             | Some arg' ->
-                if get_type arg = get_type arg' then module_with_f_extend d (module_,module_type) name arg
+                if get_type arg = get_type arg' then module_with_f_extend d module_ name arg
                 else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `with` if that is the desired behavior." name
             | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `with` if that is the desired behavior." name
 
         let module_with_template f d module_ name arg =
             let module_, name, arg = tev3 d module_ name arg
             match module_, name with
-            | TyEnv(module_,ModuleT (N module_type)), TypeString name -> f d (module_,module_type) name arg
-            | TyEnv(module_,ModuleT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
+            | TyFun(module_,FunTypeModule), TypeString name -> f d module_ name arg
+            | TyFun(module_,FunTypeModule), _ -> on_type_er d.trace "Expected a type level string as the second argument."
             | _ -> on_type_er d.trace "Expected a module as the first argument."
 
         let module_with x = module_with_template module_with_f x
@@ -1335,7 +1332,7 @@ let spiral_peval aux_modules main_module =
 
         let dynamize d a =
             match tev d a with
-            | TyV(_, (UnionT _ | RecT _)) | TyVV(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+            | TyBoxed(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
             | a -> a
 
         let module_create d l =
@@ -1344,9 +1341,9 @@ let spiral_peval aux_modules main_module =
                 | VV (N l) -> List.fold loop acc l
                 | ExprPos p -> loop acc p.Expression
                 | _ -> on_type_er d.trace "Only variable names are allowed in module create."
-            let er _ = on_type_er d.trace "In module create, the variable was not found."
-            let env = List.map (fun n -> n, v_find d.env n er) (loop [] l) |> Map
-            TyEnv(env, modulet <| env_to_ty env)
+            let er n _ = on_type_er d.trace "In module create, the variable %s was not found." n
+            let env = List.map (fun n -> n, v_find d.env n (er n)) (loop [] l) |> Map
+            TyFun(env, FunTypeModule)
 
         let array_create d size typ =
             let typ = tev_seq d typ |> function 
@@ -1358,13 +1355,13 @@ let spiral_peval aux_modules main_module =
                 | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
 
             let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
-            let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
+            TyVV [size;array]
 
         let reference_create d x =
             let x = tev d x
             let size, array_type = TyB, arrayt(DotNetReference, get_type x)
             let array = TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
-            let l = [size;array] in TyVV(l,vvt <| List.map get_type l)
+            TyVV [size;array]
 
         let array_set d ar idx r =
             match array_index d ar idx, tev d r with
@@ -1378,22 +1375,19 @@ let spiral_peval aux_modules main_module =
         | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x) |> destructure d
         | FunctionFilt(N (vars,N (pat, body))) -> 
             let env = Map.filter (fun k _ -> Set.contains k vars) d.env
-            let env_ty = env_to_ty env |> nodify_env_ty
             let pat = if vars.Contains pat then pat else ""
-            TyEnv(env, funt(env_ty, nodify_func (pat, body)))
+            TyFun(env, FunTypeFunction (pat, body))
         | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
         | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
         | ExprPos p -> tev (add_trace d p.Pos) p.Expression
-        | VV (N vars) ->
-            let vv = List.map (tev d) vars 
-            TyVV(vv, vvt(List.map get_type vv))
+        | VV (N vars) -> List.map (tev d) vars |> TyVV
         | Op(N (op,vars)) ->
             match op, vars with
             | StringLength,[a] -> string_length d a
             | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
-                | TyEnv(env_term,FunctionT(N (env_ty,core))) -> TyEnv(env_term,recfunt(env_ty,core,name))  
+                | TyFun(env_term,FunTypeFunction core) -> TyFun(env_term,FunTypeRecFunction(core,name))
                 | x -> failwithf "Invalid use of Fix. Got: %A" x
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -1919,41 +1913,42 @@ let spiral_peval aux_modules main_module =
         let rec is_unit_tuple t = List.forall is_unit t
         and is_unit_env env = Map.forall (fun _ -> is_unit) env
         and is_unit = function
-            | VVT (N []) | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+            | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
             | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
             | ArrayT(N(_,t)) -> is_unit t
-            | TyEnvT env -> is_unit_env env
-            | VVT (N t) -> is_unit_tuple t
-            | _ -> failwith "Should have been covered in TyEnvT."
+            | FunT (env,_) -> is_unit_env env
+            | VVT t -> is_unit_tuple t
 
         let (|Unit|_|) x = if is_unit x then Some () else None
 
-        let definitions_set = h0()
-        let definictions_queue = Queue()
+        let definitions_dict = d0()
+        let definitions_queue = Queue()
 
-        let print_tag_tuple (x: Node<_>) = 
-            let t = VVT x
-            if definitions_set.Add t then definictions_queue.Enqueue t
-            sprintf "Tuple%i" x.Symbol
-        let print_tag_union (x: Node<_>) = 
-            let t = UnionT x
-            if definitions_set.Add t then definictions_queue.Enqueue t
-            sprintf "Union%i" x.Symbol
-        let print_tag_rec s = 
-            let t = RecT s
-            if definitions_set.Add t then definictions_queue.Enqueue t
-            sprintf "Rec%i" s
-        let print_tag_env_ty (x: Node<_>) = 
-            let t = ModuleT x
-            if definitions_set.Add t then definictions_queue.Enqueue t
-            sprintf "Env%i" x.Symbol
+        let def_tag t =
+            match definitions_dict.TryGetValue t with
+            | true, c -> c
+            | false, _ -> 
+                let c = definitions_dict.Count
+                definitions_dict.Add (t,c) 
+                definitions_queue.Enqueue t
+                c
+
+        let print_tag_tuple' t = sprintf "Tuple%i" t
+        let print_tag_union' t = sprintf "Union%i" t
+        let print_tag_rec' t = sprintf "Rec%i" t
+        let print_tag_env_ty' t = sprintf "Env%i" t
+
+        let print_tag_tuple t = print_tag_tuple' (def_tag t)
+        let print_tag_union t = print_tag_union' (def_tag t)
+        let print_tag_rec t = print_tag_rec' (def_tag t)
+        let print_tag_env_ty t = print_tag_env_ty' (def_tag t)
 
         let rec print_type = function
             | Unit -> "unit"
-            | ModuleT x | FunctionT (N (x,_)) | RecFunctionT (N (x,_,_)) -> print_tag_env_ty x
-            | VVT x -> print_tag_tuple x
-            | UnionT x -> print_tag_union x
-            | RecT s -> print_tag_rec s
+            | FunT _ as x -> print_tag_env_ty x
+            | VVT _ as x -> print_tag_tuple x
+            | UnionT _ as x -> print_tag_union x
+            | RecT _ as x -> print_tag_rec x
             | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
             | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
             | ArrayT _ -> failwith "Not implemented."
@@ -2001,13 +1996,15 @@ let spiral_peval aux_modules main_module =
             Set.toList args |> List.filter (snd >> is_unit >> not)
             |> List.map print_tyv_with_type |> String.concat ", "
 
-        let print_union_case tag i = sprintf "Union%iCase%i" tag i
-        let print_rec_tuple tag = sprintf "Rec%iTuple" tag
-        let print_rec_case tag i = sprintf "Rec%iCase%i" tag i
-
         let get_tag =
             let mutable i = 0
             fun () -> i <- i + 1; i
+
+        let print_case_rec' x i = print_tag_rec' x + sprintf "Case%i" i
+        let print_case_union' x i = print_tag_union' x + sprintf "Case%i" i
+
+        let print_case_rec x i = print_case_rec' (def_tag x) i
+        let print_case_union x i = print_case_union' (def_tag x) i
 
         let rec codegen expr =
             let print_value = function
@@ -2057,22 +2054,10 @@ let spiral_peval aux_modules main_module =
                 Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
                 |> String.concat ", "
                 |> function
-                    | "" -> on_empty()
+                    | "" -> on_empty
                     | x -> on_rest x
 
             let if_not_unit ty f = if is_unit ty then "" else f()
-
-            let print_case_tuple t l name = make_struct l (fun _ -> name) (sprintf "%s(%s(%s))" name (print_type t))
-
-            let union_process_tuple f l (tys: Set<_>) =
-                let l_vvt = vvt (List.map get_type l)
-                let i = Seq.findIndex ((=) l_vvt) tys
-                print_case_tuple l_vvt l (f i)
-
-            let print_case_var l name = make_struct l (fun _ -> name) (sprintf "%s(%s)" name)
-            let union_process_var f (v, v_ty) (tys: Set<_>) =
-                let i = Seq.findIndex ((=) v_ty) tys
-                print_case_var [v] (f i)
 
             let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
@@ -2132,7 +2117,7 @@ let spiral_peval aux_modules main_module =
             let string_index str idx = sprintf "%s.[int32 (%s)]" (codegen str) (codegen idx)
 
             match expr with
-            | TyTag (_, Unit) | TyV (_, Unit) -> ""
+            | TyTag (_, Unit) | TyBoxed (_, Unit) -> ""
             | TyTag v -> print_tyv v
             | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
             | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
@@ -2157,24 +2142,23 @@ let spiral_peval aux_modules main_module =
                 let fv = !fv - (renamer_apply_pool rev_renamer args)
                 if fv.IsEmpty then method_name
                 else sprintf "%s(%s)" method_name (print_args fv)
-            | TyV(x & TyType t, UnionT (S s & N tys)) -> union_process_var (print_union_case s) (x,t) tys
-            | TyV(x & TyType t, RecT s) ->
-                match rect_dict.[s] with
-                | UnionT (N tys) -> union_process_var (print_rec_case s) (x,t) tys
-                | _ -> failwith "Only UnionT can be a recursive var type."
-            | TyVV(l,VVT _ & t) -> make_struct l (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_type t) args)
-            | TyVV(l,UnionT (S s & N tys)) -> union_process_tuple (print_union_case s) l tys
-            | TyVV(l,RecT s) -> 
-                match rect_dict.[s] with
-                | VVT _ as rect -> print_case_tuple rect l (print_rec_tuple s)
-                | UnionT (N tys) -> union_process_tuple (print_rec_case s) l tys
-                | _ -> failwith "Only VVT and UnionT are recursive tuple types."
-            | TyVV(_,_) -> failwith "TyVV's type can only by VVT, UnionT and RecT."
-            | TyEnv(env_term, t) ->
+            | TyBoxed(x, t) ->
+                let case_name =
+                    let union_idx s = Seq.findIndex ((=) (get_type x)) s
+                    match t with
+                    | UnionT (N s) -> print_case_union t (union_idx s)
+                    | RecT tag -> 
+                        match rect_dict.[tag] with
+                        | VVT _ -> print_tag_rec t
+                        | UnionT (N s) -> print_case_rec t (union_idx s)
+                        | _ -> failwith "Only VVT and UnionT can be recursive types."
+                    | _ -> failwith "Only VVT and UnionT can be boxed types."
+                let x = codegen x
+                if String.IsNullOrEmpty x then sprintf "%s(%s)" case_name x else case_name
+            | TyFun(env_term, _) & TyType t ->
                 Map.toArray env_term
                 |> Array.map snd
-                |> fun x -> make_struct x (fun _ -> "") (fun args -> sprintf "%s(%s)" (print_type t) args)
-            | TyEnv(env_term,_) -> failwith "Can't be any other type."
+                |> fun x -> make_struct x "" (fun args -> sprintf "%s(%s)" (print_tag_env_ty t) args)
             | TyOp(op,args,t) ->
                 match op, args with
                 | Apply,[a;b] ->
@@ -2187,14 +2171,15 @@ let spiral_peval aux_modules main_module =
                     print_if t <| fun _ ->
                         let print_case =
                             match get_type v with
-                            | RecT s -> print_rec_case s
-                            | UnionT (S s) -> print_union_case s
+                            | RecT _ as x -> print_case_rec x
+                            | UnionT _ as x -> print_case_union x
                             | _ -> failwith "impossible"
 
                         sprintf "match %s with" (codegen v) |> state
-                        let print_case i = function
-                            | case & TyType Unit -> sprintf "| %s ->" (print_case i) |> state
-                            | case -> sprintf "| %s(%s) ->" (print_case i) (codegen case) |> state
+                        let print_case i case = 
+                            let case = codegen case
+                            if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state
+                            else sprintf "| %s(%s) ->" (print_case i) case |> state
                         let rec loop i = function
                             | case :: body :: rest -> 
                                 print_case i case
@@ -2259,25 +2244,23 @@ let spiral_peval aux_modules main_module =
             let mutable prefix = false
             fun () -> if prefix then "and" else prefix <- true; "type"
 
-        let print_union_cases print_case tys tag =
+        let print_union_cases print_case tys =
             enter' <| fun _ ->
                 List.iteri (fun i -> function
-                    | Unit -> "| " + print_case tag i |> state
-                    | x -> sprintf "| %s of %s" (print_case tag i) (print_type x) |> state) tys
+                    | Unit -> "| " + print_case i |> state
+                    | x -> sprintf "| %s of %s" (print_case i) (print_type x) |> state) tys
 
         let print_rec_definition ty tag =
-            sprintf "%s %s =" (prefix ()) (print_tag_rec tag) |> state
+            sprintf "%s %s =" (prefix ()) (print_tag_rec' tag) |> state
             match ty with
-            | VVT _ & Unit -> "| " + print_rec_tuple tag |> state
-            | VVT _ -> sprintf "| %s of %s" (print_rec_tuple tag) (print_type ty) |> state
-            | UnionT (N tys) -> print_union_cases print_rec_case (Set.toList tys) tag
+            | Unit -> "| " + print_tag_rec' tag |> state
+            | VVT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type ty) |> state
+            | UnionT (N tys) -> print_union_cases (print_case_rec' tag) (Set.toList tys)
             | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
 
-        let print_union_definition (x: Node<_>) =
-            let tys = Set.toList x.Expression
-
-            sprintf "%s %s =" (prefix()) (print_tag_union x) |> state
-            print_union_cases print_union_case tys x.Symbol
+        let print_union_definition tys tag =
+            sprintf "%s %s =" (prefix()) (print_tag_union' tag) |> state
+            print_union_cases (print_case_union' tag) (Set.toList tys)
 
         let print_struct_definition iter fold name tys =
             let args sep f =
@@ -2330,20 +2313,18 @@ let spiral_peval aux_modules main_module =
         buffer_code.AddRange(buffer)
         buffer.Clear()
 
-        while definictions_queue.Count > 0 do
-            match definictions_queue.Dequeue() with
-            | ModuleT x ->
-                let tys = x.Expression
+        while definitions_queue.Count > 0 do
+            match definitions_queue.Dequeue() with
+            | FunT(tys, _) as x ->
                 if is_unit_env tys = false then
                     let tuple_name = print_tag_env_ty x
                     print_struct_definition Map.iter Map.fold tuple_name tys
             | RecT s ->
                 let tys,tag = rect_dict.[s], s
                 print_rec_definition tys tag
-            | UnionT x ->
-                print_union_definition x
-            | VVT x ->
-                let tys = x.Expression
+            | UnionT (N tys) as x ->
+                print_union_definition tys (def_tag x)
+            | VVT tys as x ->
                 if is_unit_tuple tys = false then
                     let tuple_name = print_tag_tuple x
                     let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
