@@ -869,7 +869,7 @@ let spiral_peval aux_modules main_module =
             match tev d cond with
             | TyLit (LitBool cond) -> 
                 let branch = if cond then tr else fl
-                tev d branch |> if_is_returnable
+                tev d branch
             | cond -> if_cond d tr fl cond
 
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
@@ -1040,10 +1040,10 @@ let spiral_peval aux_modules main_module =
             | TyEnv(env_term,ModuleT env_ty), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
             | TyEnv(env_term,ModuleT env_ty), _ -> on_type_er d.trace "Expected a type level string in module application."
             | recf & TyEnv(env_term,RecFunctionT (N (_, N (pat,body), name))), args -> 
-                let env = if pat <> "" then Map.add pat args env_term else env_term
+                let env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term
                 tev {d with env = Map.add name recf env} body
             | TyEnv(env_term,FunctionT (N (_, N (pat,body)))), args -> 
-                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
+                tev {d with env = if pat <> "" then Map.add pat (destructure d args) env_term else env_term} body
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
                     wrap_exception d <| fun _ ->
                         match a.GetType(name) with
@@ -1076,18 +1076,18 @@ let spiral_peval aux_modules main_module =
                     else // construct the type
                         match runtime_type.GetConstructor system_type_args with
                         | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
-                        | con -> 
+                        | con ->
                             if con.IsPublic then
                                 let instance_type = dotnet_type_instancet runtime_type
                                 TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
                             else
                                 on_type_er d.trace "Cannot call a private constructor."    
             | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
-            | typec & TyType(TyTypeC ty), args -> 
-                let substitute_ty = function 
+            | typec & TyType(TyTypeC ty), args ->
+                let substitute_ty = function
                     | TyVV(l,_) -> TyVV(l,ty)
-                    | TyV(x,_) -> TyV(x,ty) 
-                    | x -> TyV(x,ty) 
+                    | TyV(x,_) -> TyV(x,ty)
+                    | x -> TyV(x,ty)
 
                 let (|TyRecUnion|_|) = function
                     | UnionT (N ty') -> Some ty'
@@ -1096,10 +1096,10 @@ let spiral_peval aux_modules main_module =
 
                 match ty, args with
                 | x, TyType r when x = r -> args
-                | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' -> 
+                | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' ->
                     let lam = inl' ["typec"; "args"] (op(Case,[v "args"; ap (v "typec") (v "args")])) |> inner_compile
                     apply d (apply d lam typec) args
-                | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args                
+                | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
                 | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
             | TyLit (LitString str), TyLitIndex x -> 
                 if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
@@ -1375,7 +1375,7 @@ let spiral_peval aux_modules main_module =
 
         match expr with
         | Lit (N value) -> TyLit value
-        | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x)
+        | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x) |> destructure d
         | FunctionFilt(N (vars,N (pat, body))) -> 
             let env = Map.filter (fun k _ -> Set.contains k vars) d.env
             let env_ty = env_to_ty env |> nodify_env_ty
@@ -1463,7 +1463,7 @@ let spiral_peval aux_modules main_module =
             // Constants
             | TypeConstructorCreate,[a] -> typec_create d a
             | _ -> failwith "Missing Op case."
-        |> destructure d
+       
 
     // #Parsing
     let spiral_parse (module_name, module_code) = 
@@ -2468,29 +2468,28 @@ let spiral_peval aux_modules main_module =
 
     parse_modules aux_modules Fail <| fun body -> 
         let d = data_empty()
-        //let input = core_functions body
+        let input = core_functions body |> expr_prepass |> snd
         try
-//            let x' = 
+//            let x = 
 //                l_rec "loop" (
 //                    inl "i" (
 //                        if_static (op (GTE,[v "i";lit_int 0]))
 //                            (ap (v "loop") (op (Sub,[v "i";lit_int 1])))
 //                            B)
 //                        )
-//                    (ap (v "loop") (lit_int 2000))
+//                    (ap (v "loop") (lit_int 400000))
 //                |> expr_prepass |> snd
 
-            let x =
-                let rec add n =
-                    if n > 0 then op (Add,[lit_int 1; add (n - 1)])
-                    else v "i"
-                l "i" (lit_int 0)
-                    (add 20000)
-                |> expr_prepass |> snd
+//            let x =
+//                let rec add n =
+//                    if n > 0 then op (Add,[lit_int 1; add (n - 1)])
+//                    else v "i"
+//                l "i" (lit_int 0)
+//                    (add 20000)
+//                |> expr_prepass |> snd
 
-            //printfn "x=%A" x
             let watch = System.Diagnostics.Stopwatch.StartNew()
-            let x = !d.seq (expr_peval d x)
+            let x = !d.seq (expr_peval d input)
             typed_expr_optimization_pass 2 x // Is mutable
             printfn "Time for peval was: %A" watch.Elapsed
             Succ (spiral_codegen x |> copy_to_clipboard)

@@ -669,8 +669,6 @@ inl run (^dyn data) parser ret =
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
-//inl parse_int = pint64
-//inl parse_int = spaces
 
 inl parse_n_ints n = 
     inl rec loop n = 
@@ -687,33 +685,30 @@ inl preturn x s ret = ret (.Succ, x)
 module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints)
     """
 
-let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
-    "test34",
-    """
-inl console = mscorlib."System.Console"
-inl (|>>) = Parsing."|>>"
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 25 |>> f) (inl _ -> ())
-
-parse <| inl _ -> ()
-    """
-
 let test33 = // Does a simple loop have superlinear scaling?
     "test33",
     """
 inl rec loop = function
     | i when i > 0 -> loop (i-1)
     | 0 -> ()
-loop 1000
+loop 100000
+    """
+
+let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
+    "test34",
+    """
+inl console = mscorlib."System.Console"
+inl (|>>) = Parsing."|>>"
+inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 40 |>> f) (inl _ -> ())
+
+parse <| inl _ -> ()
     """
 
 open System.Threading
-let run f = Thread(ThreadStart f,134217728).Start() // It stack overflows without being spun on a separate thread.
+let run f = Thread(ThreadStart f,1024*1024*512).Start() // It stack overflows without being spun on a separate thread.
     
 run <| fun _ ->
-    let x = spiral_peval [] test33
-    printfn "%A" x
+    let x = spiral_peval [tuple;parsing] test34
+    //printfn "%A" x
     ()
-
-
-    
 
