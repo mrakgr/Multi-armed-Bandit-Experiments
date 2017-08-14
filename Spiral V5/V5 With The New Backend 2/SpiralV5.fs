@@ -917,6 +917,7 @@ let spiral_peval aux_modules main_module =
                 TyMemoizedExpr(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
 
         let case_ d v case =
+            printfn "v=%A" v
             let assume d v x branch = tev_assume (cse_add' d v x) d branch
             match tev d v with
             | TyTag(_, t & (UnionT _ | RecT _)) as v ->
@@ -931,9 +932,13 @@ let spiral_peval aux_modules main_module =
 
                 let rec map_cases l =
                     match l with
-                    | x :: xs -> (x, assume d v x case) :: map_cases xs
+                    | x :: xs -> 
+                        printfn "x=%A" x
+                        //printfn "case=%A" case
+                        (x, assume d v x case) :: map_cases xs
                     | _ -> []
                             
+                printfn "t=%A" t
                 match map_cases (case_destructure d t) with
                 | (_, TyType p) :: _ as cases -> 
                     if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
