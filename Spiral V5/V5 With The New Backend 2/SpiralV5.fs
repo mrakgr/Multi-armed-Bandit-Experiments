@@ -296,6 +296,7 @@ and ProgramNode =
 let spiral_peval aux_modules main_module = 
     let h0() = HashSet(HashIdentity.Structural)
     let d0() = Dictionary(HashIdentity.Structural)
+    let force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
 
     // Aux outer functions
@@ -546,17 +547,22 @@ let spiral_peval aux_modules main_module =
                     | [] -> len <- i; s
                 loop 0 l, len
             
-            let pat_tuple l =
+            let pat_tuple l' =
                 pat_foldbacki
                     (fun (pat,i) on_succ ->
                         let arg = tuple_index arg i
+                        printfn "arg=%A" arg
                         cp arg pat on_succ on_fail)
                     on_succ
-                    l
+                    l'
                 |> fun (on_succ,len) -> 
-                    if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
+                    l "" (print_static (tuple_length arg)) on_succ.Value
+                    |> fun on_succ -> if_static (eq (tuple_length arg) (lit_int len)) on_succ on_fail.Value
+                    |> l "" (print_static (lit_string "Is a tuple"))
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                    |> l "" (print_static arg)
                     |> case arg
+                    
 
             let pat_cons l = 
                 pat_foldbacki
@@ -569,8 +575,6 @@ let spiral_peval aux_modules main_module =
                     if_static (gte (tuple_length arg) (lit_int (len-1))) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
                     |> case arg
-
-            let force (x: Lazy<_>) = x.Value
 
             match pat with
             | E -> on_succ.Value
@@ -588,7 +592,12 @@ let spiral_peval aux_modules main_module =
             | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
             | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
-            | PatTypeLit x -> if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value |> case arg
+            | PatTypeLit x -> 
+                if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value 
+                |> l "" (print_static arg)
+                |> case arg
+                |> l "" (print_static arg)
+                |> l "" (print_static (lit_string "I am going into PatTypeLit."))
             | PatLit x -> 
                 let x = lit x
                 let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
@@ -809,6 +818,8 @@ let spiral_peval aux_modules main_module =
             let destructure r = destructure d r
 
             let chase_cse on_succ on_fail r = 
+                printfn "I am in chase_cse. r = %A" r
+                printfn "!d.cse_env = %A" !d.cse_env
                 match Map.tryFind r !d.cse_env with
                 | Some x -> on_succ x
                 | None -> on_fail r
@@ -917,9 +928,11 @@ let spiral_peval aux_modules main_module =
                 TyMemoizedExpr(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
 
         let case_ d v case =
-            printfn "v=%A" v
+            printfn "v (expr) = %A" v
             let assume d v x branch = tev_assume (cse_add' d v x) d branch
-            match tev d v with
+            let v = tev d v
+            printfn "v=%A" v
+            match v with
             | TyTag(_, t & (UnionT _ | RecT _)) as v ->
                 let rec case_destructure d args_ty =
                     let f x = make_tyv_and_push_ty d x
@@ -934,11 +947,10 @@ let spiral_peval aux_modules main_module =
                     match l with
                     | x :: xs -> 
                         printfn "x=%A" x
-                        //printfn "case=%A" case
                         (x, assume d v x case) :: map_cases xs
                     | _ -> []
                             
-                printfn "t=%A" t
+//                printfn "t=%A" t
                 match map_cases (case_destructure d t) with
                 | (_, TyType p) :: _ as cases -> 
                     if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
@@ -1400,7 +1412,13 @@ let spiral_peval aux_modules main_module =
             | MethodMemoize,[a] -> memoize_method d a
             | ForCast,[x] -> for_cast d x
         
-            | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
+            | PrintStatic,[a] -> 
+                printfn "In print_static."
+                printfn "(expr) = %A" a
+                printfn "(typed_expr) = %A" (tev d a)
+                printfn "(typed_expr_destructured) = %A" (tev d a |> destructure d)
+                printfn "Print static over."
+                TyB
             | PrintEnv,[a] -> printfn "%A" d.env; tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | ModuleOpen,[a;b] -> module_open d a b

@@ -712,7 +712,7 @@ inl ab =
          .B
 met a = ab .A
 met b = ab .A
-match a, b with
+match a,b with
 | .A, _ -> 1
 | .B, _ -> 2
     """
@@ -721,7 +721,7 @@ open System.Threading
 let run f = Thread(ThreadStart f,1024*1024*8).Start() // It stack overflows without being spun on a separate thread.
     
 run <| fun _ ->
-    let x = spiral_peval [tuple;parsing] test35
+    let x = spiral_peval [] test35
     printfn "%A" x
     ()
 
