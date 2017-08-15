@@ -514,3 +514,4 @@ run <| fun _ ->
 //Microsoft.FSharp.Collections.MapTreeModule.foldOpt	0.94	204	68	2.81
 //Spiral.Main+TypedExpr.Equals	0.91	3,614	66	49.82
 //Spiral.Main.Equals$cont@177-2	0.81	141	59	1.94
+//
