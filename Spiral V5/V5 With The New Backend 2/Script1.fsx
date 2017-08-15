@@ -1,59 +1,34 @@
-﻿type Tuple0 =
+﻿type Rec0 =
+    | Rec0Case0 of Tuple2
+    | Rec0Case1
+and Tuple1 =
     struct
-    val mem_0: Union1
-    val mem_1: Union1
-    val mem_2: Union1
-    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    val mem_0: int64
+    val mem_1: Rec0
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
     end
-and Union1 =
-    | Union1Case0
-    | Union1Case1
-let rec method_16(): Tuple0 =
-    Tuple0(Union1Case0, Union1Case0, Union1Case0)
-let (var_24: Tuple0) = method_16()
-let (var_25: Union1) = var_24.mem_0
-let (var_26: Union1) = var_24.mem_1
-let (var_27: Union1) = var_24.mem_2
-let (if_var_1: int64) =
-    match var_25 with
-    | Union1Case0 ->
-        let (if_var_2: int64) =
-            match var_26 with
-            | Union1Case0 ->
-                let (if_var_3: int64) =
-                    match var_27 with
-                    | Union1Case0 ->
-                        4L
-                    | Union1Case1 ->
-                        4L
-                if_var_3
-            | Union1Case1 ->
-                let (if_var_4: int64) =
-                    match var_27 with
-                    | Union1Case0 ->
-                        4L
-                    | Union1Case1 ->
-                        4L
-                if_var_4
-        if_var_2
-    | Union1Case1 ->
-        let (if_var_5: int64) =
-            match var_26 with
-            | Union1Case0 ->
-                let (if_var_6: int64) =
-                    match var_27 with
-                    | Union1Case0 ->
-                        4L
-                    | Union1Case1 ->
-                        4L
-                if_var_6
-            | Union1Case1 ->
-                let (if_var_7: int64) =
-                    match var_27 with
-                    | Union1Case0 ->
-                        4L
-                    | Union1Case1 ->
-                        4L
-                if_var_7
-        if_var_5
-if_var_1
+and Tuple2 =
+    struct
+    val mem_1: Tuple1
+    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    end
+let rec method_13(): unit =
+    ()
+and method_17((var_1: Rec0), (var_2: int64)): int64 =
+    let (if_var_1: int64) =
+        match var_1 with
+        | Rec0Case0(var_3) ->
+            let (var_6: Tuple1) = var_3.mem_1
+            let (var_8: int64) = var_6.mem_0
+            let (var_9: Rec0) = var_6.mem_1
+            let (var_10: int64) = (var_2 + var_8)
+            let (var_11: int64) = method_17((var_9: Rec0), (var_10: int64))
+            var_11
+        | Rec0Case1 ->
+            var_2
+    if_var_1
+method_13()
+let (var_23: Rec0) = Rec0Case0(Tuple2(Tuple1(1L, Rec0Case0(Tuple2(Tuple1(2L, Rec0Case0(Tuple2(Tuple1(3L, Rec0Case1)))))))))
+let (var_24: int64) = 0L
+let (var_25: int64) = method_17((var_23: Rec0), (var_24: int64))
+var_25

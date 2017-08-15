@@ -557,6 +557,7 @@ let spiral_peval aux_modules main_module =
                 |> fun (on_succ,len) -> 
                     if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                    |> case arg
                     
 
             let pat_cons l = 
@@ -569,6 +570,7 @@ let spiral_peval aux_modules main_module =
                 |> fun ((on_succ,_),len) -> 
                     if_static (gte (tuple_length arg) (lit_int (len-1))) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                    |> case arg
 
             match pat with
             | E -> on_succ.Value
@@ -1024,12 +1026,9 @@ let spiral_peval aux_modules main_module =
         let rec apply d a b = apply_template tev d (a, b)
         and apply_template tev d (a, b) = 
             match destructure d a, destructure d b with
-            | recf & TyFun(env_term,FunTypeRecFunction ((pat,body),name)), args -> 
-                let env = if pat <> "" then Map.add pat args env_term else env_term
-                tev {d with env = Map.add name recf env} body
-            | TyFun(env_term,FunTypeFunction (pat,body)), args -> 
-                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
-            | closure & TyFun(env_term,(FunTypeFunction _ | FunTypeRecFunction _)), TyType (ForCastT args_ty) -> 
+            // It might make more sense to use TyType rather than TyTag here, but I do not want get_type to be triggered on everything here
+            // as it is an expensive operation.
+            | closure & TyFun(env_term,(FunTypeFunction _ | FunTypeRecFunction _)), TyTag (_,ForCastT args_ty) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
                     match args_ty with
@@ -1038,7 +1037,12 @@ let spiral_peval aux_modules main_module =
             
                 let args = instantiate_type_as_variable d args_ty
                 apply_template (memoize_closure args) d (closure, args)
-            | x, TyType (ForCastT t) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+            | x, TyTag (_,ForCastT args_ty) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+            | recf & TyFun(env_term,FunTypeRecFunction ((pat,body),name)), args -> 
+                let env = if pat <> "" then Map.add pat args env_term else env_term
+                tev {d with env = Map.add name recf env} body
+            | TyFun(env_term,FunTypeFunction (pat,body)), args -> 
+                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
             | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
             | TyFun(env_term,FunTypeModule), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
             | TyFun(env_term,FunTypeModule), _ -> on_type_er d.trace "Expected a type level string in module application."
@@ -1394,13 +1398,8 @@ let spiral_peval aux_modules main_module =
             | Apply,[a;b] -> apply_tev d a b
             | MethodMemoize,[a] -> memoize_method d a
             | ForCast,[x] -> for_cast d x
-        
             | PrintStatic,[a] -> 
-                printfn "In print_static."
-                printfn "(expr) = %A" a
-                printfn "(typed_expr) = %A" (tev d a)
-                printfn "(typed_expr_destructured) = %A" (tev d a |> destructure d)
-                printfn "Print static over."
+                printfn "%A" (tev d a)
                 TyB
             | PrintEnv,[a] -> printfn "%A" d.env; tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
@@ -1849,7 +1848,7 @@ let spiral_peval aux_modules main_module =
                 let dict_operator = s.UserState
                 let p = pos' s
                 (poperator >>=? function
-                    | "->" -> fail "forbidden operator"
+                    | "->" | ":=" | "<-" -> fail "forbidden operator"
                     | orig_op -> 
                         let rec calculate on_fail op = 
                             match dict_operator.TryGetValue op with
@@ -2189,7 +2188,9 @@ let spiral_peval aux_modules main_module =
                         let rec loop i = function
                             | case :: body :: rest -> 
                                 print_case i case
-                                enter <| fun _ -> codegen body
+                                enter <| fun _ -> 
+                                    let x = codegen body
+                                    if String.IsNullOrEmpty x then "()" else x
                                 loop (i+1) rest
                             | [] -> ()
                             | _ -> failwith "The cases should always be in pairs."
@@ -2301,13 +2302,9 @@ let spiral_peval aux_modules main_module =
             | MemoMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args !fv) (print_type (get_type body))
             |> state
 
-            enter' <| fun _ -> 
-                match codegen body with
-                | "" -> ()
-                | x -> state x
-                match get_type body with
-                | Unit -> "()" |> state
-                | _ -> ()
+            enter <| fun _ -> 
+                let x = codegen body
+                if String.IsNullOrEmpty x then "()" else x
 
         memoized_methods |> Seq.fold (fun is_first x -> 
             match x.Value with
@@ -2324,9 +2321,9 @@ let spiral_peval aux_modules main_module =
                 if is_unit_env tys = false then
                     let tuple_name = print_tag_env_ty x
                     print_struct_definition Map.iter Map.fold tuple_name tys
-            | RecT s ->
-                let tys,tag = rect_dict.[s], s
-                print_rec_definition tys tag
+            | RecT s as x ->
+                let tys = rect_dict.[s]
+                print_rec_definition tys (def_tag x)
             | UnionT (N tys) as x ->
                 print_union_definition tys (def_tag x)
             | VVT tys as x ->

@@ -188,7 +188,8 @@
     <None Include="V5 With The New Backend 2\add_interpreter.fsx" />
     <None Include="V5 With The New Backend 2\Script1.fsx" />
     <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
-    <Compile Include="V5 With The New Backend 2\Tests.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralV5Lib.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralV5Tests.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
