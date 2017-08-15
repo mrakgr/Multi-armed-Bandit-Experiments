@@ -557,7 +557,6 @@ let spiral_peval aux_modules main_module =
                 |> fun (on_succ,len) -> 
                     if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
-                    |> case arg
                     
 
             let pat_cons l = 
@@ -570,7 +569,6 @@ let spiral_peval aux_modules main_module =
                 |> fun ((on_succ,_),len) -> 
                     if_static (gte (tuple_length arg) (lit_int (len-1))) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
-                    |> case arg
 
             match pat with
             | E -> on_succ.Value
