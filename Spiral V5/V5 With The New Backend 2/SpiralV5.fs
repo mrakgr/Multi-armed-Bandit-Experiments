@@ -659,8 +659,8 @@ let spiral_peval aux_modules main_module =
         match e with
         | TyV (N(n,t)) -> tyv (Map.find n r,t)
         | TyBox (N(n,t)) -> tybox(f n,t)
-        | TyLit _ -> e
         | TyVV (N l) -> tyvv(List.map f l)
+        | TyLit _ -> e
         | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l |> nodify_env_term, t)
         | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
             let renamer = renamer_apply_renamer r renamer
