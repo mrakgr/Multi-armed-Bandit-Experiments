@@ -373,10 +373,23 @@ let spiral_peval aux_modules main_module =
     let nodify_memo_key = nodify <| d0()
     let nodify_env_term = nodify <| d0()
 
-    let nodify_tyv = nodify <| d0()
-    let nodify_tyvv = nodify <| d0()
-    let nodify_tyfun = nodify <| d0()
-    let nodify_tybox = nodify <| d0()
+    // This one is a duplicate of the standard nodify. I am merely testing whether most of the overhead is in the TyFun case.
+//    let nodify_tyvv (dict: Dictionary<_,_>) x =
+//        match dict.TryGetValue x with
+//        | true, x -> x
+//        | false, _ ->
+//            let id = dict.Count
+//            let x' = Node(x,id)
+//            dict.[x] <- x'
+//            x'
+
+//    let nodify_tyv = nodify <| d0()
+    let tyvv_dict = d0()
+    let nodify_tyvv x = nodify tyvv_dict x
+    let tyfun_dict = d0()
+    let nodify_tyfun x = nodify tyfun_dict x
+    let tybox_dict = d0()
+    let nodify_tybox x = nodify tybox_dict x
     
     let tyv x = x |> TyV
     let tyvv x = nodify_tyvv x |> TyVV
@@ -662,7 +675,7 @@ let spiral_peval aux_modules main_module =
         Map.fold (fun s k v -> Map.add v k s) Map.empty r
         |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
 
-    let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e
+    let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e |> nodify_env_term
     and renamer_apply_typedexpr r e =
         let f e = renamer_apply_typedexpr r e
         match e with
@@ -672,7 +685,7 @@ let spiral_peval aux_modules main_module =
         | TyBox (N(n,t)) -> tybox(f n,t)
         | TyVV (N l) -> tyvv(List.map f l)
         | TyLit _ -> e
-        | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l |> nodify_env_term, t)
+        | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
         | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
             let renamer = renamer_apply_renamer r renamer
             let used_vars = ref <| renamer_apply_pool r !used_vars
@@ -921,7 +934,7 @@ let spiral_peval aux_modules main_module =
             let env = d.env.Expression
             let fv = env_free_variables env
             let renamer = renamer_make fv
-            let renamed_env = renamer_apply_env renamer env |> nodify_env_term
+            let renamed_env = renamer_apply_env renamer env
 
             let memo_type = memo_type renamer
             let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref renamer.Count} expr
