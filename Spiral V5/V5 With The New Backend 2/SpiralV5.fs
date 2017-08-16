@@ -396,7 +396,7 @@ let spiral_peval aux_modules main_module =
         | _ -> false
     let is_int64 a = is_int64' (get_type a)
 
-    let nodify_expr (dict: Dictionary<_,_>) x =
+    let nodify (dict: Dictionary<_,_>) x =
         match dict.TryGetValue x with
         | true, id -> Node(x,id)
         | false, _ ->
@@ -404,28 +404,19 @@ let spiral_peval aux_modules main_module =
             let x' = Node(x,id)
             dict.[x] <- id
             x'
-
-    let nodify (dict: Dictionary<_,_>) x =
-        match dict.TryGetValue x with
-        | true, x -> x
-        | false, _ ->
-            let id = dict.Count
-            let x' = Node(x,id)
-            dict.[x] <- x'
-            x'
     
     // #Smart constructors
 
     let nodify_memo_key = nodify <| d0()
 
     // nodify_expr variants.
-    let nodify_v = nodify_expr <| d0()
-    let nodify_lit = nodify_expr <| d0()
-    let nodify_pattern = nodify_expr <| d0()
-    let nodify_func = nodify_expr <| d0()
-    let nodify_func_filt = nodify_expr <| d0()
-    let nodify_vv = nodify_expr <| d0()
-    let nodify_op = nodify_expr <| d0()
+    let nodify_v = nodify <| d0()
+    let nodify_lit = nodify <| d0()
+    let nodify_pattern = nodify <| d0()
+    let nodify_func = nodify <| d0()
+    let nodify_func_filt = nodify <| d0()
+    let nodify_vv = nodify <| d0()
+    let nodify_op = nodify <| d0()
 
     let v x = nodify_v x |> V
     let lit x = nodify_lit x |> Lit
@@ -646,9 +637,7 @@ let spiral_peval aux_modules main_module =
     and renamer_apply_typedexpr r e =
         let f e = renamer_apply_typedexpr r e
         match e with
-        | TyTag (n,t) -> 
-            let n' = Map.find n r
-            if n <> n' then TyTag (n',t) else e
+        | TyTag (n,t) -> TyTag (Map.find n r,t)
         | TyV (n,t) -> TyV(f n,t)
         | TyLit _ -> e
         | TyVV(l,t) -> TyVV(List.map f l,t)
