@@ -453,7 +453,7 @@ let test33 = // Does a simple loop have superlinear scaling?
 inl rec loop = function
     | i when i > 0 -> loop (i-1)
     | 0 -> ()
-loop 100000
+loop 50000
     """
 
 let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
