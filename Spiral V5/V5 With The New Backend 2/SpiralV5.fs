@@ -1125,7 +1125,7 @@ let spiral_peval aux_modules main_module =
             | v, TyLitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
             | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
-        let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i
+        let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i |> destructure d
         let vv_slice_from d v i = vv_index_template (fun l i -> let l = l.[i..] in TyVV(l,vvt (List.map get_type l))) d v i
 
         let vv_unop_template on_succ on_fail d v =
@@ -2466,9 +2466,14 @@ let spiral_peval aux_modules main_module =
         System.IO.File.WriteAllText(path,x)
         x
 
+    let watch = System.Diagnostics.Stopwatch.StartNew()
     parse_modules aux_modules Fail <| fun body -> 
+        printfn "Time for parse: %A" watch.Elapsed
+        watch.Restart()
         let d = data_empty()
         let input = core_functions body |> expr_prepass |> snd
+        printfn "Time for prepass: %A" watch.Elapsed
+        watch.Restart()
         try
 //            let x = 
 //                l_rec "loop" (
@@ -2488,11 +2493,15 @@ let spiral_peval aux_modules main_module =
 //                    (add 20000)
 //                |> expr_prepass |> snd
 
-            let watch = System.Diagnostics.Stopwatch.StartNew()
             let x = !d.seq (expr_peval d input)
-            typed_expr_optimization_pass 2 x // Is mutable
             printfn "Time for peval was: %A" watch.Elapsed
-            Succ (spiral_codegen x |> copy_to_clipboard)
+            watch.Restart()
+            typed_expr_optimization_pass 2 x // Is mutable
+            printfn "Time for optimization pass was: %A" watch.Elapsed
+            watch.Restart()
+            let x = Succ (spiral_codegen x |> copy_to_clipboard)
+            printfn "Time for codegen was: %A" watch.Elapsed
+            x
         with 
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1
