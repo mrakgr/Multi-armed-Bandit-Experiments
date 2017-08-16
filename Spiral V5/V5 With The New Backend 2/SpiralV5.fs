@@ -220,7 +220,7 @@ and Ty =
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
-    | TyV of Node<TyTag>
+    | TyV of TyTag
     | TyVV of Node<TypedExpr list>
     | TyFun of Node<EnvTerm * FunType>
     | TyBox of Node<TypedExpr * Ty>
@@ -373,12 +373,12 @@ let spiral_peval aux_modules main_module =
     let nodify_memo_key = nodify <| d0()
     let nodify_env_term = nodify <| d0()
 
-    let nodify_tytag = nodify <| d0()
+    let nodify_tyv = nodify <| d0()
     let nodify_tyvv = nodify <| d0()
     let nodify_tyfun = nodify <| d0()
     let nodify_tybox = nodify <| d0()
     
-    let tyv x = nodify_tytag x |> TyV
+    let tyv x = x |> TyV
     let tyvv x = nodify_tyvv x |> TyVV
     let tyfun x = nodify_tyfun x |> TyFun
     let tybox x = nodify_tybox x |> TyBox
@@ -468,7 +468,7 @@ let spiral_peval aux_modules main_module =
         | TyVV (N l) -> List.map get_type l |> vvt
         | TyFun (N(N l, t)) -> funt (env_to_ty l, t)
 
-        | TyV(N(_,t))
+        | TyV(_,t)
         | TyBox(N(_,t))
         | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
         | TyOp(_,_,t) -> t
@@ -666,7 +666,7 @@ let spiral_peval aux_modules main_module =
     and renamer_apply_typedexpr r e =
         let f e = renamer_apply_typedexpr r e
         match e with
-        | TyV (N(n,t)) -> 
+        | TyV (n,t) -> 
             let n' = Map.find n r
             if n' = n then e else tyv (n',t)
         | TyBox (N(n,t)) -> tybox(f n,t)
@@ -688,7 +688,7 @@ let spiral_peval aux_modules main_module =
         let f e = typed_expr_free_variables_template on_memo e
         match e with
         | TyBox(N(n,t)) -> f n
-        | TyV(N(n,t)) -> Set.singleton (n, t)
+        | TyV(n,t) -> Set.singleton (n, t)
         | TyLit _ -> Set.empty
         | TyVV (N l) | TyOp(_,l,_) -> vars_union f l
         | TyFun(N (N l,_)) -> env_free_variables_template on_memo l
@@ -945,7 +945,7 @@ let spiral_peval aux_modules main_module =
         let case_ d v case =
             let assume d v x branch = tev_assume (cse_add' d v x) d branch
             match tev d v with
-            | TyV(N(_, t & (UnionT _ | RecT _))) as v ->
+            | TyV(_, t & (UnionT _ | RecT _)) as v ->
                 let rec case_destructure d args_ty =
                     let f x = make_tyv_and_push_ty d x
                     let union_case = function
@@ -1052,7 +1052,7 @@ let spiral_peval aux_modules main_module =
             match destructure d a, destructure d b with
             // It might make more sense to use TyType rather than TyTag here, but I do not want get_type to be triggered on everything here
             // as it is an expensive operation.
-            | closure & TyFun(N(N env_term,(FunTypeFunction _ | FunTypeRecFunction _))), TyV (N (_,ForCastT (N args_ty))) -> 
+            | closure & TyFun(N(N env_term,(FunTypeFunction _ | FunTypeRecFunction _))), TyV (_,ForCastT (N args_ty)) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
                     match args_ty with
@@ -1061,7 +1061,7 @@ let spiral_peval aux_modules main_module =
             
                 let args = instantiate_type_as_variable d args_ty
                 apply_template (memoize_closure args) d (closure, args)
-            | x, TyV (N(_,ForCastT (args_ty))) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+            | x, TyV (_,ForCastT (args_ty)) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
             | recf & TyFun(N(N env_term,FunTypeRecFunction ((pat,body),name))), args -> 
                 let env = if pat <> "" then Map.add pat args env_term else env_term
                 tev {d with env = Map.add name recf env |> nodify_env_term} body
@@ -1259,7 +1259,7 @@ let spiral_peval aux_modules main_module =
             prim_bin_op_template d er check (fun t a b ->
                 let inline eq_op a b = LitBool (a = b) |> TyLit
                 match t, a, b with
-                | EQ, TyV(N(a,_)), TyV(N(b,_)) when a = b -> LitBool true |> TyLit
+                | EQ, TyV(a,_), TyV(b,_) when a = b -> LitBool true |> TyLit
                 | EQ, TyLit (LitBool a), TyLit (LitBool b) -> eq_op a b
                 | EQ, TyLit (LitString a), TyLit (LitString b) -> eq_op a b
                 | _ ->
@@ -2144,8 +2144,8 @@ let spiral_peval aux_modules main_module =
             let string_index str idx = sprintf "%s.[int32 (%s)]" (codegen str) (codegen idx)
 
             match expr with
-            | TyV (N (_, Unit)) | TyBox (N(_, Unit)) -> ""
-            | TyV (N v) -> print_tyv v
+            | TyV (_, Unit) | TyBox (N(_, Unit)) -> ""
+            | TyV v -> print_tyv v
             | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
             | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
             | TyLet(_,(_,Unit),b,rest,_) ->
