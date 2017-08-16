@@ -374,20 +374,29 @@ let spiral_peval aux_modules main_module =
     let nodify_env_term = nodify <| d0()
 
     // This one is a duplicate of the standard nodify. I am merely testing whether most of the overhead is in the TyFun case.
-//    let nodify_tyvv (dict: Dictionary<_,_>) x =
-//        match dict.TryGetValue x with
-//        | true, x -> x
-//        | false, _ ->
-//            let id = dict.Count
-//            let x' = Node(x,id)
-//            dict.[x] <- x'
-//            x'
+    let nodify_tyvv (dict: Dictionary<_,_>) x =
+        match dict.TryGetValue x with
+        | true, x -> x
+        | false, _ ->
+            let id = dict.Count
+            let x' = Node(x,id)
+            dict.[x] <- x'
+            x'
+
+    let nodify_tyfun (dict: Dictionary<_,_>) x =
+        match dict.TryGetValue x with
+        | true, x -> x
+        | false, _ ->
+            let id = dict.Count
+            let x' = Node(x,id)
+            dict.[x] <- x'
+            x'
 
 //    let nodify_tyv = nodify <| d0()
     let tyvv_dict = d0()
-    let nodify_tyvv x = nodify tyvv_dict x
+    let nodify_tyvv x = nodify_tyvv tyvv_dict x
     let tyfun_dict = d0()
-    let nodify_tyfun x = nodify tyfun_dict x
+    let nodify_tyfun x = nodify_tyfun tyfun_dict x
     let tybox_dict = d0()
     let nodify_tybox x = nodify tybox_dict x
     
