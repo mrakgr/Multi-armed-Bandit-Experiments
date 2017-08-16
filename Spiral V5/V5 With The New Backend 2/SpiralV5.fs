@@ -2449,9 +2449,14 @@ let spiral_peval aux_modules main_module =
         System.IO.File.WriteAllText(path,x)
         x
 
+    let watch = System.Diagnostics.Stopwatch.StartNew()
     parse_modules aux_modules Fail <| fun body -> 
+        printfn "Time for parse: %A" watch.Elapsed
+        watch.Restart()
         let d = data_empty()
         let input = core_functions body |> expr_prepass |> snd
+        printfn "Time for prepass: %A" watch.Elapsed
+        watch.Restart()
         try
 //            let x = 
 //                l_rec "loop" (
@@ -2471,11 +2476,16 @@ let spiral_peval aux_modules main_module =
 //                    (add 20000)
 //                |> expr_prepass |> snd
 
-            let watch = System.Diagnostics.Stopwatch.StartNew()
             let x = !d.seq (expr_peval d input)
-            typed_expr_optimization_pass 2 x // Is mutable
             printfn "Time for peval was: %A" watch.Elapsed
-            Succ (spiral_codegen x |> copy_to_clipboard)
+            watch.Restart()
+            typed_expr_optimization_pass 2 x // Is mutable
+            printfn "Time for optimization pass was: %A" watch.Elapsed
+            watch.Restart()
+            let x = Succ (spiral_codegen x |> copy_to_clipboard)
+            printfn "Time for codegen was: %A" watch.Elapsed
+            x
+
         with 
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1

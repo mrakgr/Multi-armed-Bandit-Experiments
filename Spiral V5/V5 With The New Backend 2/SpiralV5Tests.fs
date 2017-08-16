@@ -495,23 +495,11 @@ match result with
 | _ -> ()
     """
 
-open System.Threading
-let run f = Thread(ThreadStart f,1024*1024*8).Start() // It stack overflows without being spun on a separate thread.
-    
-run <| fun _ ->
-    let x = spiral_peval [tuple;parsing] test34
-    //printfn "%A" x
-    ()
+//open System.Threading
+//let run f = Thread(ThreadStart f,1024*1024*8).Start() // It stack overflows without being spun on a separate thread.
+//    
+//run <| fun _ ->
+let x = spiral_peval [tuple;parsing] test34
+//printfn "%A" x
+()
 
-//Function Name	Exclusive Samples %	Inclusive Samples	Exclusive Samples	Inclusive Samples %
-//Microsoft.FSharp.Collections.FSharpMap`2[System.__Canon,System.__Canon].Equals	43.26	3,614	3,138	49.82
-//Microsoft.FSharp.Collections.FSharpMap`2[System.__Canon,System.__Canon].ComputeHashCode	30.58	2,670	2,218	36.81
-//[clr.dll]	7.28	3,500	528	48.25
-//Microsoft.FSharp.Collections.FSharpMap`2[System.__Canon,System.__Canon].Map	2.89	462	210	6.37
-//Microsoft.FSharp.Core.LanguagePrimitives+HashCompare.GenericHashParamObj	2.73	198	198	2.73
-//Microsoft.FSharp.Core.LanguagePrimitives+HashCompare.GenericEqualityObj	1.87	136	136	1.87
-//[mscorlib.ni.dll]	1.39	6,297	101	86.81
-//Microsoft.FSharp.Collections.MapTreeModule.foldOpt	0.94	204	68	2.81
-//Spiral.Main+TypedExpr.Equals	0.91	3,614	66	49.82
-//Spiral.Main.Equals$cont@177-2	0.81	141	59	1.94
-//
