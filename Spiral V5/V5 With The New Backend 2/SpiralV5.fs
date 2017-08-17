@@ -206,9 +206,9 @@ and Expr =
 
 and Ty =
     | PrimT of PrimitiveType
-    | VVT of Node<Ty list>
+    | VVT of Ty list
     | LitT of Value
-    | FunT of Node<EnvTy * FunType>
+    | FunT of EnvTy * FunType
     | UnionT of Node<Set<Ty>>
     | RecT of int
     | TypeConstructorT of Node<Ty>
@@ -233,7 +233,7 @@ and TypedExpr =
 and Tag = int
 and TyTag = Tag * Ty
 and EnvTerm = Map<string, TypedExpr>
-and EnvTy = Node<Map<string, Ty>>
+and EnvTy = Map<string, Ty>
 and MemoKey = Node<Expr * EnvTerm>
 
 and Arguments = Set<TyTag> ref
@@ -359,9 +359,9 @@ let spiral_peval aux_modules main_module =
     let nodify_vvt = nodify <| d0()
     let nodify_funt = nodify <| d0()
 
-    let vvt x = nodify_vvt x |> VVT
+    let vvt x = x |> VVT
     let litt x = LitT x
-    let funt (x, core) = nodify_funt (x, core) |> FunT
+    let funt (x, core) = (x, core) |> FunT
     let uniont x = nodify_uniont x |> UnionT
     let typect x = nodify_typect x |> TypeConstructorT
     let closuret x = nodify_closuret x |> ClosureT
@@ -463,7 +463,7 @@ let spiral_peval aux_modules main_module =
         | LitString _ -> PrimT StringT
         | LitChar _ -> PrimT CharT
 
-    let rec env_to_ty env = Map.map (fun _ -> get_type) env |> nodify_env_ty
+    let rec env_to_ty env = Map.map (fun _ -> get_type) env
     and get_type = function
         | TyLit x -> get_type_of_value x
         | TyVV (l) -> List.map get_type l |> vvt
@@ -495,7 +495,7 @@ let spiral_peval aux_modules main_module =
 
     /// Wraps the argument in a list if not a tuple type.
     let tuple_field_ty = function 
-        | VVT (N x) -> x
+        | VVT x -> x
         | x -> [x]
 
     let (|TyType|) x = get_type x
@@ -849,8 +849,8 @@ let spiral_peval aux_modules main_module =
                     let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
                     Map.map unseal x
                 match get_type r with
-                | VVT (N tuple_types) -> tyvv(index_tuple_args tuple_types)
-                | FunT (N (N env,t)) -> tyfun(env_unseal env, t)
+                | VVT tuple_types -> tyvv(index_tuple_args tuple_types)
+                | FunT (env,t) -> tyfun(env_unseal env, t)
                 | _ -> chase_recurse r
            
             let destructure_cse r = 
@@ -979,7 +979,7 @@ let spiral_peval aux_modules main_module =
 
         let rec typec_strip = function 
             | TyTypeC (N x) -> x
-            | VVT (N l) -> vvt (List.map typec_strip l)
+            | VVT l -> vvt (List.map typec_strip l)
             | x -> x
 
         let typec_create d x = 
@@ -1057,7 +1057,7 @@ let spiral_peval aux_modules main_module =
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
                     match args_ty with
-                    | VVT (N l) -> tyvv(List.map f l)
+                    | VVT l -> tyvv(List.map f l)
                     | x -> f x
             
                 let args = instantiate_type_as_variable d args_ty
@@ -1941,11 +1941,11 @@ let spiral_peval aux_modules main_module =
         let rec is_unit_tuple t = List.forall is_unit t
         and is_unit_env env = Map.forall (fun _ -> is_unit) env
         and is_unit = function
-            | VVT (N []) | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+            | VVT [] | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
             | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
             | ArrayT(N(_,t)) -> is_unit t
-            | FunT (N(N env,_)) -> is_unit_env env
-            | VVT (N t) -> is_unit_tuple t
+            | FunT (env,_) -> is_unit_env env
+            | VVT t -> is_unit_tuple t
 
         let (|Unit|_|) x = if is_unit x then Some () else None
 
@@ -1958,7 +1958,7 @@ let spiral_peval aux_modules main_module =
         let print_tag_env_ty' t = sprintf "Env%i" t
 
         let sym = function
-            | VVT (S s) | UnionT (S s) | FunT(S s) | RecT s -> s
+//            | VVT (S s) | UnionT (S s) | FunT(S s) | RecT s -> s
             | _ -> failwith "Invalid input to sym."
 
         let def_enqueue f t =
@@ -2327,7 +2327,7 @@ let spiral_peval aux_modules main_module =
 
         while definitions_queue.Count > 0 do
             match definitions_queue.Dequeue() with
-            | FunT(N (N tys, _)) as x ->
+            | FunT(tys, _) as x ->
                 if is_unit_env tys = false then
                     let tuple_name = print_tag_env_ty x
                     print_struct_definition Map.iter Map.fold tuple_name tys
@@ -2342,7 +2342,7 @@ let spiral_peval aux_modules main_module =
             | UnionT (N tys) as x ->
                 sprintf "%s %s =" (prefix()) (print_tag_union x) |> state
                 print_union_cases (print_case_union x) (Set.toList tys)
-            | VVT (N tys) as x ->
+            | VVT tys as x ->
                 if is_unit_tuple tys = false then
                     let tuple_name = print_tag_tuple x
                     let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
@@ -2498,9 +2498,10 @@ let spiral_peval aux_modules main_module =
             typed_expr_optimization_pass 2 x // Is mutable
             printfn "Time for optimization pass was: %A" watch.Elapsed
             watch.Restart()
-            let x = Succ (spiral_codegen x |> copy_to_clipboard)
-            printfn "Time for codegen was: %A" watch.Elapsed
-            x
+            Succ()
+//            let x = Succ (spiral_codegen x |> copy_to_clipboard)
+//            printfn "Time for codegen was: %A" watch.Elapsed
+//            x
 
         with 
         | :? TypeError as e -> 
