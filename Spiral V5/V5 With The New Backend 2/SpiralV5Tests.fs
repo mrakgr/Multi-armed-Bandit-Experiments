@@ -485,16 +485,43 @@ inl result =
         | .FetchType -> t ""
         | x -> error_type "Got a strange input."
 
+inl t = Parsing.List int64
 match result with
-| .ListCons,(a,(.ListCons,(b,.ListNil))) as x ->
+| (.ListCons,(a,(.ListCons,(b,.ListNil)))): t as x ->
     console.Write a
     console.WriteLine()
     console.Write b
     console.WriteLine()
-    ()
-| _ -> ()
+    a+b
+| _ -> 
+    0
     """
 
+let test35 = // Does case on union types with recursive types work properly?
+    "test35",
+    """
+met rec List x = 
+    type
+        .Nil
+        .Cons, (x, List x)
+inl Res =
+    type
+        int64
+        int64, int64
+        List int64
 
-let x = spiral_peval [tuple;parsing] test34
-//printfn "%A" x
+match Res 1 |> dyn with
+| x : int64 -> 
+    print_static "I am in 1."
+    1
+| (a, b) as x -> 
+    print_static "I am in 2."
+    print_static x
+    2
+| _ -> 
+    print_static "I am in 3."
+    3
+    """
+
+let x = spiral_peval [] test35
+printfn "%A" x

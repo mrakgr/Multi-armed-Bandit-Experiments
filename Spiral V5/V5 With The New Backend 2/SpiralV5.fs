@@ -11,12 +11,6 @@ open FParsec
 open System.Text
 
 // Language types
-type ListDictionaryNode<'K, 'T> = 
-  { mutable Result : 'T option
-    Nested : Dictionary<'K, ListDictionaryNode<'K, 'T>> }
-
-type ListDictionary<'K, 'V> = Dictionary<'K, ListDictionaryNode<'K, 'V>>
-
 type ModuleName = string
 type ModuleCode = string
 
@@ -190,7 +184,7 @@ and Pattern =
     | PatVar of string
     | PatTuple of Pattern list
     | PatCons of Pattern list
-    | PatType of Pattern * Pattern
+    | PatType of Pattern * Expr
     | PatActive of string * Pattern
     | PatOr of Pattern list
     | PatAnd of Pattern list
@@ -564,8 +558,8 @@ let spiral_peval aux_modules main_module =
         fun () -> i <- i+1; i
 
     let rec pattern_compile arg pat =
-        let rec pattern_compile flag_is_var_type arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
-            let cp' arg pat on_succ on_fail = pattern_compile flag_is_var_type arg pat on_succ on_fail
+        let rec pattern_compile arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
+            let cp' arg pat on_succ on_fail = pattern_compile arg pat on_succ on_fail
             let cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
 
             let pat_foldbacki f s l =
@@ -603,14 +597,13 @@ let spiral_peval aux_modules main_module =
 
             match pat with
             | E -> on_succ.Value
-            | PatVar x -> 
-                if flag_is_var_type then if_static (eq_type arg (v x)) on_succ.Value on_fail.Value
-                else l x arg on_succ.Value
+            | PatVar x -> l x arg on_succ.Value
+            | PatType (exp,typ) ->
+                let on_succ = cp' arg exp on_succ on_fail
+                if_static (eq_type arg typ) on_succ on_fail.Value
+                |> case arg
             | PatTuple l -> pat_tuple l
             | PatCons l -> pat_cons l
-            | PatType (exp,typ) ->
-                let on_succ = cp arg exp on_succ on_fail
-                pattern_compile true arg typ on_succ on_fail |> case arg
             | PatActive (a,b) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
@@ -629,7 +622,7 @@ let spiral_peval aux_modules main_module =
 
         let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
         let pattern_compile_def_on_fail = lazy error_type (lit (LitString <| "Pattern matching cases are inexhaustive."))
-        pattern_compile false arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
+        pattern_compile arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
     and pattern_compile_single pat =
         let main_arg = " main_arg"
@@ -956,7 +949,7 @@ let spiral_peval aux_modules main_module =
                 let rec case_destructure d args_ty =
                     let f x = make_tyv_and_push_ty d x
                     let union_case = function
-                        | UnionT (N l) -> Set.toList l |> List.collect (case_destructure d)
+                        | UnionT (N l) -> Set.toList l |> List.map f
                         | _ -> [f args_ty]
                     match args_ty with
                     | TyRec t -> union_case t
@@ -1480,7 +1473,6 @@ let spiral_peval aux_modules main_module =
             | TypeAnnot,[a;b] -> type_annot d a b
             | TypeConstructorUnion,[a;b] -> typec_union d a b
             | EqType,[a;b] -> eq_type d a b
-
             | Neg,[a] -> prim_un_numeric d a Neg
             | ErrorType,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "%A" a
             | ErrorNonUnit,[a] -> error_non_unit d a
@@ -1513,8 +1505,7 @@ let spiral_peval aux_modules main_module =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
                 | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env"
-                | "print_expr"
-                | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
+                | "print_expr" | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
@@ -1653,7 +1644,7 @@ let spiral_peval aux_modules main_module =
         let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
         let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
         let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
-        let pat_type pattern = tuple2 pattern (opt (pp >>. pattern)) |>> function a,Some b -> PatType(a,b) | a, None -> a
+        let pat_type expr pattern = tuple2 pattern (opt (pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
         let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> pattern
         let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
         let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
@@ -1664,7 +1655,7 @@ let spiral_peval aux_modules main_module =
 
         let (^<|) a b = a b // High precedence, right associative <| operator
         let rec patterns expr s = // The order the pattern parsers are chained determines their precedence.
-            pat_when expr ^<| pat_as ^<| pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type ^<| pat_cons ^<| pat_active 
+            pat_when expr ^<| pat_as ^<| pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type expr ^<| pat_cons ^<| pat_active 
             ^<| choice [|pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds (patterns expr)|] <| s
     
         let pattern_list expr = many (patterns expr)
@@ -2034,11 +2025,8 @@ let spiral_peval aux_modules main_module =
             let mutable i = 0
             fun () -> i <- i + 1; i
 
-        let print_case_rec' x i = print_tag_rec x + sprintf "Case%i" i
-        let print_case_union' x i = print_tag_union x + sprintf "Case%i" i
-
-        let print_case_rec x i = print_case_rec' x i
-        let print_case_union x i = print_case_union' x i
+        let print_case_rec x i = print_tag_rec x + sprintf "Case%i" i
+        let print_case_union x i = print_tag_union x + sprintf "Case%i" i
 
         let rec codegen expr =
             let print_value = function
@@ -2340,11 +2328,11 @@ let spiral_peval aux_modules main_module =
                     print_struct_definition Map.iter Map.fold tuple_name tys
             | RecT tag as x ->
                 let tys = rect_dict.[tag]
-                sprintf "%s %s =" (prefix ()) (print_tag_rec' tag) |> state
+                sprintf "%s %s =" (prefix ()) (print_tag_rec x) |> state
                 match tys with
                 | Unit -> "| " + print_tag_rec' tag |> state
                 | VVT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
-                | UnionT (N tys) as x -> print_union_cases (print_case_rec x) (Set.toList tys)
+                | UnionT (N tys) -> print_union_cases (print_case_rec x) (Set.toList tys)
                 | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
             | UnionT (N tys) as x ->
                 sprintf "%s %s =" (prefix()) (print_tag_union x) |> state
@@ -2481,24 +2469,6 @@ let spiral_peval aux_modules main_module =
         printfn "Time for prepass: %A" watch.Elapsed
         watch.Restart()
         try
-//            let x = 
-//                l_rec "loop" (
-//                    inl "i" (
-//                        if_static (op (GTE,[v "i";lit_int 0]))
-//                            (ap (v "loop") (op (Sub,[v "i";lit_int 1])))
-//                            B)
-//                        )
-//                    (ap (v "loop") (lit_int 400000))
-//                |> expr_prepass |> snd
-
-//            let x =
-//                let rec add n =
-//                    if n > 0 then op (Add,[lit_int 1; add (n - 1)])
-//                    else v "i"
-//                l "i" (lit_int 0)
-//                    (add 20000)
-//                |> expr_prepass |> snd
-
             let x = !d.seq (expr_peval d input)
             printfn "Time for peval was: %A" watch.Elapsed
             watch.Restart()
