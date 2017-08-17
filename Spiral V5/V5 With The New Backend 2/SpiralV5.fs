@@ -11,6 +11,12 @@ open FParsec
 open System.Text
 
 // Language types
+type ListDictionaryNode<'K, 'T> = 
+  { mutable Result : 'T option
+    Nested : Dictionary<'K, ListDictionaryNode<'K, 'T>> }
+
+type ListDictionary<'K, 'V> = Dictionary<'K, ListDictionaryNode<'K, 'V>>
+
 type ModuleName = string
 type ModuleCode = string
 
@@ -292,10 +298,37 @@ and ProgramNode =
 let spiral_peval aux_modules main_module = 
     let h0() = HashSet(HashIdentity.Structural)
     let d0() = Dictionary(HashIdentity.Structural)
+    let node0 id = {Result=id; Nested=d0()}
     let memoized_methods: MemoDict = d0()
 
     // Aux outer functions
     let flip f a b = f b a
+
+    let get_list_dict_node init l =
+        Map.fold (fun (s: ListDictionaryNode<_,_>) k v ->
+            let x = k,v
+            match s.Nested.TryGetValue x with
+            | true, v -> v
+            | false, _ ->
+                let node = node0 None
+                s.Nested.[x] <- node
+                node
+            ) init l
+
+    let nodify_with_list_dict init = 
+        let id =
+            let mutable id = 0
+            fun () -> id <- id+1; id
+        let d = get_list_dict_node (node0 (Some (Node(init,0))))
+        fun x ->
+            let node = d x
+            match node with
+            | {Result = None} ->
+                let r = Node(x,id())
+                node.Result <- Some r
+                r
+            | {Result = Some r} ->
+                r
 
     let get_type_of_value = function
         | LitUInt8 _ -> PrimT UInt8T
@@ -427,15 +460,13 @@ let spiral_peval aux_modules main_module =
     let vv x = nodify_vv x |> VV
 
     // nodify_ty variants
-    let vvt_dict = d0()
-    let nodify_vvt = nodify vvt_dict
+
+    let nodify_vvt = nodify <| d0()
     let nodify_litt = nodify <| d0()
     let nodify_funt = nodify <| d0()
     let nodify_recfunt = nodify <| d0()
-    let env_ty_dict = d0()
-    let nodify_env_ty = nodify env_ty_dict
-    let uniont_dict = d0()
-    let nodify_uniont = nodify uniont_dict
+    let nodify_env_ty = nodify <| d0()
+    let nodify_uniont = nodify <| d0()
     let rect_dict = d0()
     let (|TyRec|_|) = function
         | RecT x -> Some rect_dict.[x]
