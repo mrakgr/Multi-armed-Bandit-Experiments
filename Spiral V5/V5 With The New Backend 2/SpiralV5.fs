@@ -302,37 +302,12 @@ and ProgramNode =
 let spiral_peval aux_modules main_module = 
     let h0() = HashSet(HashIdentity.Structural)
     let d0() = Dictionary(HashIdentity.Structural)
-    let node0 id = {Result=id; Nested= d0()}
+    let sd0() = SortedDictionary()
     let force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
 
     let (|N|) (x: Node<_>) = x.Expression
     let (|S|) (x: Node<_>) = x.Symbol
-
-    let get_list_dict_node init l =
-        Seq.fold (fun (s: ListDictionaryNode<_,_>) x ->
-            match s.Nested.TryGetValue x with
-            | true, v -> v
-            | false, _ ->
-                let node = node0 None
-                s.Nested.[x] <- node
-                node
-            ) init l
-
-    let nodify_with_list_dict init = 
-        let id =
-            let mutable id = 0
-            fun () -> id <- id+1; id
-        let d = get_list_dict_node (node0 (Some (Node(init,0))))
-        fun x ->
-            let node = d x
-            match node with
-            | {Result = None} ->
-                let r = Node(x,id())
-                node.Result <- Some r
-                r
-            | {Result = Some r} ->
-                r
 
     let nodify_expr (dict: Dictionary<_,_>) x =
         match dict.TryGetValue x with
@@ -351,7 +326,7 @@ let spiral_peval aux_modules main_module =
             let x' = Node(x,id)
             dict.[x] <- x'
             x'
-    
+   
     // #Smart constructors
 
     // nodify_expr variants.
