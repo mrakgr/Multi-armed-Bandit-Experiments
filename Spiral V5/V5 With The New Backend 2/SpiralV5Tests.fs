@@ -456,7 +456,7 @@ inl rec loop = function
 loop 50000
     """
 
-let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly.
+let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
     "test34",
     """
 inl console = mscorlib."System.Console"
@@ -504,6 +504,7 @@ met rec List x =
     type
         .Nil
         .Cons, (int64, List x)
+
 inl Res =
     type
         int64
@@ -516,6 +517,23 @@ match Res 1 |> dyn with
 | _ -> 3
     """
 
-let x = spiral_peval [tuple; parsing] test34
+let test36 = // Does parse_n_ints blow up the code size? Does it scale linearly? This is for the new parsing library that uses modules.
+    "test36",
+    """
+inl console = mscorlib."System.Console"
+
+inl ret = 
+    inl on_succ x = ()
+    inl on_fail x = ()
+    inl on_fatal_fail x = ()
+    inl on_type = ()
+    module (on_succ,on_fail,on_fatal_fail,on_type)
+
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 40) ret
+
+    """
+
+let x = spiral_peval [tuple; parsing2] test36
 //printfn "%A" x
 
+printfn "Total renaming time = %A" total_time

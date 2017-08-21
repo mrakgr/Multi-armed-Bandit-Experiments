@@ -4,6 +4,8 @@
 open System
 open System.Collections.Generic
 
+let mutable total_time = TimeSpan()
+
 // Parser open
 open FParsec
 
@@ -921,11 +923,13 @@ let spiral_peval aux_modules main_module =
             let env = d.env.Expression
             let fv = env_free_variables env
             let renamer = renamer_make fv
+
+            let stopwatch = Diagnostics.Stopwatch.StartNew()
             let renamed_env = renamer_apply_env renamer env
+            total_time <- total_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
             let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref renamer.Count} expr
-
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else memo_type, ref fv, renamer_reverse renamer, tag, typed_expr_ty
@@ -1194,15 +1198,15 @@ let spiral_peval aux_modules main_module =
             match Map.tryFind name module_ with
             | Some arg' ->
                 if get_type arg = get_type arg' then module_with_f_extend d module_ name arg
-                else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `with` if that is the desired behavior." name
-            | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `with` if that is the desired behavior." name
+                else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `upon'` if that is the desired behavior." name
+            | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `upon'` if that is the desired behavior." name
 
         let module_with_template f d module_ name arg =
             let module_, name, arg = tev3 d module_ name arg
             match module_, name with
             | TyFun(N(N module_,FunTypeModule)), TypeString name -> f d module_ name arg
             | TyFun(N(N module_,FunTypeModule)), _ -> on_type_er d.trace "Expected a type level string as the second argument."
-            | _ -> on_type_er d.trace "Expected a module as the first argument."
+            | x -> on_type_er d.trace (sprintf "Expected a module as the first argument. Got: %A" x)
 
         let module_with x = module_with_template module_with_f x
         let module_with_extend x = module_with_template module_with_f_extend x
@@ -1367,8 +1371,8 @@ let spiral_peval aux_modules main_module =
                 | V (N x) -> x :: acc
                 | VV (N l) -> List.fold loop acc l
                 | ExprPos p -> loop acc p.Expression
-                | _ -> on_type_er d.trace "Only variable names are allowed in module create."
-            let er n _ = on_type_er d.trace "In module create, the variable %s was not found." n
+                | x -> on_type_er d.trace <| sprintf "Only variable names are allowed in module create. Got: %A" x
+            let er n _ = on_type_er d.trace <| sprintf "In module create, the variable %s was not found." n
             let env = List.map (fun n -> n, v_find d.env.Expression n (er n)) (loop [] l) |> Map |> nodify_env_term
             tyfun(env, FunTypeModule)
 
@@ -1771,7 +1775,7 @@ let spiral_peval aux_modules main_module =
             let rest = 
                 [case_print_env; case_print_expr
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
-                 case_rounds; case_typecase; case_typeinl; case_module; case_var]
+                 case_rounds; case_typecase; case_typeinl; case_var; case_module]
                 |> List.map (fun x -> x expr |> attempt)
                 |> choice
             unary_ops <|> rest <| s
@@ -2434,6 +2438,8 @@ let spiral_peval aux_modules main_module =
             l "tuple_index" (p2 tuple_index')
             l "not" (p <| fun x -> eq x (lit <| LitBool false))
             l "string_length" (p <| fun x -> op(StringLength,[x]))
+            l "upon" (p3 <| fun a b c -> op(ModuleWith,[a;b;c]))
+            l "upon'" (p3 <| fun a b c -> op(ModuleWithExtend,[a;b;c]))
             ]
 
     let rec parse_modules xs on_fail ret =
@@ -2483,4 +2489,5 @@ let spiral_peval aux_modules main_module =
         with 
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1
+            let message = if message.Length > 300 then message.[0..299] else message
             Fail <| print_type_error code trace message
