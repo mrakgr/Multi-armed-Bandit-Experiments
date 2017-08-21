@@ -662,27 +662,30 @@ let spiral_peval aux_modules main_module =
         Map.fold (fun s k v -> Map.add v k s) Map.empty r
         |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
 
-    let rec renamer_apply_env memo r e = Map.map (fun _ v -> renamer_apply_typedexpr memo r v) e |> nodify_env_term
-    and renamer_apply_typedexpr (memo: Dictionary<_,_>) r e =
-        let f e = renamer_apply_typedexpr memo r e
-        match memo.TryGetValue e with
+    let inline memoize (memo_dict: Dictionary<_,_>) k f =
+        match memo_dict.TryGetValue k with
         | true, v -> v
-        | false, _ ->
+        | false, _ -> let v = f() in memo_dict.[k] <- v; v
+
+    let rec renamer_apply_env memo r e = Map.map (fun _ v -> renamer_apply_typedexpr memo r v) e |> nodify_env_term
+    and renamer_apply_typedexpr (memo_dict: Dictionary<_,_>) r e =
+        let f e = renamer_apply_typedexpr memo_dict r e
+        memoize memo_dict e <| fun () ->
             match e with
+            | TyBox (N(n,t)) -> tybox(f n,t)
+            | TyVV (N l) -> tyvv(List.map f l)
+            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env memo_dict r l, t)
             | TyV (n,t) -> 
                 let n' = Map.find n r
                 if n' = n then e else tyv (n',t)
-            | TyBox (N(n,t)) -> tybox(f n,t)
-            | TyVV (N l) -> tyvv(List.map f l)
             | TyLit _ -> e
-            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env memo r l, t)
             | TyJoinPoint(typ,used_vars,renamer,tag,t) -> 
                 let renamer = renamer_apply_renamer r renamer
                 let used_vars = ref <| renamer_apply_pool r !used_vars
                 TyJoinPoint(typ,used_vars,renamer,tag,t)
             | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
             | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
-            |> fun x -> memo.[e] <- x; x
+
     // #Free vars
     let vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
     let vars_union f l = vars_union' Set.empty f l
@@ -690,9 +693,7 @@ let spiral_peval aux_modules main_module =
     let rec typed_expr_free_variables_template (memo: Dictionary<_,_>) on_join_point e =
         let f e = typed_expr_free_variables_template memo on_join_point e
 
-        match memo.TryGetValue e with
-        | true, v -> v
-        | false, _ ->
+        memoize memo e <| fun () ->
             match e with
             | TyBox(N(n,t)) -> f n
             | TyV(n,t) -> Set.singleton (n, t)
@@ -703,14 +704,13 @@ let spiral_peval aux_modules main_module =
             // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
             // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
             | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
-            |> fun x -> memo.[e] <- x; x
 
     and env_free_variables_template memo on_join_point env = 
         Map.fold (fun s _ v -> typed_expr_free_variables_template memo on_join_point v + s) Set.empty env
 
     let typed_expr_std_pass (typ,fv,renamer,tag) = !fv
-    let rec typed_expr_free_variables e = typed_expr_free_variables_template (d0()) typed_expr_std_pass e
-    let rec env_free_variables env = env_free_variables_template (d0()) typed_expr_std_pass env
+    let inline typed_expr_free_variables e = typed_expr_free_variables_template (d0()) typed_expr_std_pass e
+    let inline env_free_variables env = env_free_variables_template (d0()) typed_expr_std_pass env
 
     // #Postpass
     /// Optimizes the free variables for the sake of tuple deforestation.
@@ -1039,7 +1039,7 @@ let spiral_peval aux_modules main_module =
                     if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
                     else on_type_er d.trace "Array index does not match the number of dimensions in the array."
                 | _ -> on_type_er d.trace "Trying to index into a non-array."
-            | _ -> on_type_er d.trace "One of the index arguments in array index is not an int64."
+            | x -> on_type_er d.trace <| sprintf "One of the index arguments in array index is not an int64. Got: %A" x
     
         let array_index d ar idx = array_index' d (tev2 d ar idx)
 
@@ -1183,7 +1183,7 @@ let spiral_peval aux_modules main_module =
             let a, b = tev2 d a b
             match b with
             | TyVV (N b) -> tyvv(a::b)
-            | _ -> on_type_er d.trace "Expected a tuple on the right is in VVCons."
+            | _ -> on_type_er d.trace "Expected a tuple on the right in VVCons."
 
         let type_lit_create' d x = litt x |> make_tyv_and_push_ty d
 
