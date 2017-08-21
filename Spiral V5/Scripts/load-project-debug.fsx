@@ -3,4 +3,5 @@
 #load "load-references-debug.fsx"
 #load "../AssemblyInfo.fs"
       "../V5 With The New Backend 2/SpiralV5.fs"
-      "../V5 With The New Backend 2/Tests.fs"
+      "../V5 With The New Backend 2/SpiralV5Lib.fs"
+      "../V5 With The New Backend 2/SpiralV5Tests.fs"
