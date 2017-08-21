@@ -122,7 +122,7 @@ type Op =
     | Fix
     | Apply
     | ForCast
-    | MethodMemoize
+    | JoinPoint
     | StructCreate
     | VVIndex
     | VVSliceFrom
@@ -172,11 +172,11 @@ type Op =
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
 
-type FunctionCore = string * Expr
+type FunctionCore = StringTag * Expr
 
 and FunType =
     | FunTypeFunction of FunctionCore // Type level function. Can also be though of as a procedural macro.
-    | FunTypeRecFunction of FunctionCore * string
+    | FunTypeRecFunction of FunctionCore * StringTag
     | FunTypeModule
 
 and Pattern =
@@ -193,13 +193,13 @@ and Pattern =
     | PatLit of Value
     | PatWhen of Pattern * Expr
     | PatPos of Pos<Pattern>
-
+and StringTag = int
 and Expr = 
-    | V of Node<string>
+    | V of StringTag
     | Lit of Node<Value>
     | Pattern of Node<Pattern>
     | Function of Node<FunctionCore>
-    | FunctionFilt of Node<Set<string> * Node<FunctionCore>>
+    | FunctionFilt of Node<Set<StringTag> * Node<FunctionCore>>
     | VV of Node<Expr list>
     | Op of Node<Op * Expr list>
     | ExprPos of Pos<Expr>
@@ -228,12 +228,12 @@ and TypedExpr =
     | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
     | TyLit of Value
     | TyOp of Op * TypedExpr list * Ty
-    | TyMemoizedExpr of MemoExprType * Arguments * Renamer * Tag * Ty
+    | TyJoinPoint of MemoExprType * Arguments * Renamer * Tag * Ty
 
 and Tag = int
 and TyTag = Tag * Ty
-and EnvTerm = Node<Map<string, TypedExpr>>
-and EnvTy = Node<Map<string, Ty>>
+and EnvTerm = Node<Map<StringTag, TypedExpr>>
+and EnvTy = Node<Map<StringTag, Ty>>
 and MemoKey = Node<Expr * EnvTerm>
 
 and Arguments = Set<TyTag> ref
@@ -324,7 +324,7 @@ let spiral_peval aux_modules main_module =
     // #Smart constructors
 
     // nodify_expr variants.
-    let nodify_v = nodify_expr <| d0()
+    //let nodify_v = nodify_expr <| d0()
     let nodify_lit = nodify_expr <| d0()
     let nodify_pattern = nodify_expr <| d0()
     let nodify_func = nodify_expr <| d0()
@@ -332,7 +332,18 @@ let spiral_peval aux_modules main_module =
     let nodify_vv = nodify_expr <| d0()
     let nodify_op = nodify_expr <| d0()
 
-    let v x = nodify_v x |> V
+    let string_dict = d0()
+    let string_rev_dict = d0()
+    let string_tag x = 
+        match string_dict.TryGetValue x with
+        | true, v -> v
+        | false, _ ->
+            let c = string_dict.Count
+            string_dict.[x] <- c
+            string_rev_dict.[c] <- x
+            c
+    let empty_string = string_tag ""
+    let v x = string_tag x |> V
     let lit x = nodify_lit x |> Lit
     let op x = nodify_op x |> Op
     let pattern x = nodify_pattern x |> Pattern
@@ -390,8 +401,8 @@ let spiral_peval aux_modules main_module =
     let fix name x =
         match name with
         | "" -> x
-        | _ -> (Fix,[lit_string name; x]) |> op
-    let inl x y = (x,y) |> func
+        | _ -> (Fix,[lit_int (string_tag name); x]) |> op
+    let inl x y = (string_tag x,y) |> func
     let inl_pat x y = (PatClauses([x,y])) |> pattern
     let ap x y = (Apply,[x;y]) |> op
     let for_cast x = (ForCast,[x]) |> op
@@ -401,7 +412,7 @@ let spiral_peval aux_modules main_module =
 
     let inl' args body = List.foldBack inl args body
     
-    let meth_memo y = (MethodMemoize,[y]) |> op
+    let meth_memo y = (JoinPoint,[y]) |> op
     let meth x y = inl x (meth_memo y)
 
     let module_create l = (ModuleCreate,[l]) |> op
@@ -471,7 +482,7 @@ let spiral_peval aux_modules main_module =
 
         | TyV(_,t)
         | TyBox(N(_,t))
-        | TyLet(_,_,_,_,t) | TyMemoizedExpr(_,_,_,_,t)
+        | TyLet(_,_,_,_,t) | TyJoinPoint(_,_,_,_,t)
         | TyOp(_,_,t) -> t
 
     let (|TyTypeC|_|) x =
@@ -631,7 +642,7 @@ let spiral_peval aux_modules main_module =
     and expr_prepass e =
         let f e = expr_prepass e
         match e with
-        | V (N n) -> Set.singleton n, e
+        | V n -> Set.singleton n, e
         | Op(N(op',l)) ->
             let l,l' = List.map f l |> List.unzip
             Set.unionMany l, op(op',l')
@@ -673,10 +684,10 @@ let spiral_peval aux_modules main_module =
         | TyVV (N l) -> tyvv(List.map f l)
         | TyLit _ -> e
         | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
-        | TyMemoizedExpr(typ,used_vars,renamer,tag,t) -> 
+        | TyJoinPoint(typ,used_vars,renamer,tag,t) -> 
             let renamer = renamer_apply_renamer r renamer
             let used_vars = ref <| renamer_apply_pool r !used_vars
-            TyMemoizedExpr(typ,used_vars,renamer,tag,t)
+            TyJoinPoint(typ,used_vars,renamer,tag,t)
         | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
         | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
 
@@ -692,7 +703,7 @@ let spiral_peval aux_modules main_module =
         | TyLit _ -> Set.empty
         | TyVV (N l) | TyOp(_,l,_) -> vars_union f l
         | TyFun(N (N l,_)) -> env_free_variables_template on_memo l
-        | TyMemoizedExpr(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
+        | TyJoinPoint(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
         // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
         // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
         | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
@@ -845,7 +856,7 @@ let spiral_peval aux_modules main_module =
                     List.mapi (fun i typ -> 
                         destructure <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
                 let env_unseal x =
-                    let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
+                    let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString string_rev_dict.[k])], v)
                     Map.map unseal x
                 match get_type r with
                 | VVT (N tuple_types) -> tyvv(index_tuple_args tuple_types)
@@ -864,7 +875,7 @@ let spiral_peval aux_modules main_module =
             match r with
             | TyFun _ | TyVV _ | TyLit _ -> r
             | TyBox _ | TyV _ -> destructure_var r
-            | TyMemoizedExpr _ | TyLet _ | TyOp _ -> destructure_cse r
+            | TyJoinPoint _ | TyLet _ | TyOp _ -> destructure_cse r
 
         let if_is_returnable (TyType r & x) =
             if is_returnable' r then x
@@ -934,13 +945,13 @@ let spiral_peval aux_modules main_module =
         let memoize_method d x = 
             let memo_type _ = MemoMethod
             memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
-                TyMemoizedExpr(memo_type,args,rev_renamer,tag,ret_ty)) d x
+                TyJoinPoint(memo_type,args,rev_renamer,tag,ret_ty)) d x
 
         let memoize_closure arg d x =
             let fv, arg_ty = typed_expr_free_variables arg, get_type arg
             let memo_type r = MemoClosure (renamer_apply_pool r fv)
             memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
-                TyMemoizedExpr(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
+                TyJoinPoint(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
 
         let case_ d v case =
             let assume d v x branch = tev_assume (cse_add' d v x) d branch
@@ -1063,12 +1074,12 @@ let spiral_peval aux_modules main_module =
                 apply_template (memoize_closure args) d (closure, args)
             | x, TyV (_,ForCastT (args_ty)) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
             | recf & TyFun(N(N env_term,FunTypeRecFunction ((pat,body),name))), args -> 
-                let env = if pat <> "" then Map.add pat args env_term else env_term
+                let env = if pat <> empty_string then Map.add pat args env_term else env_term
                 tev {d with env = Map.add name recf env |> nodify_env_term} body
             | TyFun(N(N env_term,FunTypeFunction (pat,body))), args -> 
-                tev {d with env = nodify_env_term <| if pat <> "" then Map.add pat args env_term else env_term} body
+                tev {d with env = nodify_env_term <| if pat <> empty_string then Map.add pat args env_term else env_term} body
             | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
-            | TyFun(N(N env_term,FunTypeModule)), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
+            | TyFun(N(N env_term,FunTypeModule)), TypeString n -> v_find env_term (string_tag n) (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
             | TyFun(N(env_term,FunTypeModule)), _ -> on_type_er d.trace "Expected a type level string in module application."
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
                     wrap_exception d <| fun _ ->
@@ -1194,13 +1205,13 @@ let spiral_peval aux_modules main_module =
             match Map.tryFind name module_ with
             | Some arg' ->
                 if get_type arg = get_type arg' then module_with_f_extend d module_ name arg
-                else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `with` if that is the desired behavior." name
-            | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `with` if that is the desired behavior." name
+                else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `with` if that is the desired behavior." string_rev_dict.[name]
+            | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `with` if that is the desired behavior." string_rev_dict.[name]
 
         let module_with_template f d module_ name arg =
             let module_, name, arg = tev3 d module_ name arg
             match module_, name with
-            | TyFun(N(N module_,FunTypeModule)), TypeString name -> f d module_ name arg
+            | TyFun(N(N module_,FunTypeModule)), TypeString name -> f d module_ (string_tag name) arg
             | TyFun(N(N module_,FunTypeModule)), _ -> on_type_er d.trace "Expected a type level string as the second argument."
             | _ -> on_type_er d.trace "Expected a module as the first argument."
 
@@ -1364,11 +1375,11 @@ let spiral_peval aux_modules main_module =
 
         let module_create d l =
             let rec loop acc = function
-                | V (N x) -> x :: acc
+                | V x -> x :: acc
                 | VV (N l) -> List.fold loop acc l
                 | ExprPos p -> loop acc p.Expression
                 | _ -> on_type_er d.trace "Only variable names are allowed in module create."
-            let er n _ = on_type_er d.trace "In module create, the variable %s was not found." n
+            let er n _ = on_type_er d.trace (sprintf "In module create, the variable %s was not found." string_rev_dict.[n])
             let env = List.map (fun n -> n, v_find d.env.Expression n (er n)) (loop [] l) |> Map |> nodify_env_term
             tyfun(env, FunTypeModule)
 
@@ -1399,10 +1410,10 @@ let spiral_peval aux_modules main_module =
 
         match expr with
         | Lit (N value) -> TyLit value
-        | V (N x) -> v_find d.env.Expression x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x) |> destructure d
+        | V x -> v_find d.env.Expression x (fun () -> on_type_er d.trace <| sprintf "Variable %s not bound." string_rev_dict.[x]) |> destructure d
         | FunctionFilt(N (vars,N (pat, body))) -> 
             let env = Map.filter (fun k _ -> Set.contains k vars) d.env.Expression |> nodify_env_term
-            let pat = if vars.Contains pat then pat else ""
+            let pat = if vars.Contains pat then pat else empty_string
             tyfun(env, FunTypeFunction (pat, body))
         | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
         | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
@@ -1412,7 +1423,7 @@ let spiral_peval aux_modules main_module =
             match op, vars with
             | StringLength,[a] -> string_length d a
             | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
-            | Fix,[Lit (N (LitString name)); body] ->
+            | Fix,[Lit (N (LitInt32 name)); body] ->
                 match tev d body with
                 | TyFun(N(env_term,FunTypeFunction core)) -> tyfun(env_term,FunTypeRecFunction(core,name))
                 | x -> failwithf "Invalid use of Fix. Got: %A" x
@@ -1420,7 +1431,7 @@ let spiral_peval aux_modules main_module =
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
             | If,[cond;tr;fl] -> if_ d cond tr fl
             | Apply,[a;b] -> apply_tev d a b
-            | MethodMemoize,[a] -> memoize_method d a
+            | JoinPoint,[a] -> memoize_method d a
             | ForCast,[x] -> for_cast d x
             | PrintStatic,[a] -> 
                 printfn "%A" (tev d a)
@@ -1680,19 +1691,20 @@ let spiral_peval aux_modules main_module =
 
         let name = var_name <|> rounds poperator
 
+        let filter_env x = ap (inl "" x) B
         let inl_pat' (args: Pattern list) body = List.foldBack inl_pat args body
-        let meth_pat' args body = inl_pat' args (meth_memo body)
+        let meth_pat' args body = 
+            let body = meth_memo body
+            if List.isEmpty args then filter_env body else body
+            |> inl_pat' args
     
         let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (eq >>. expr) lp
         let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
         let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
-
-        let case_met_pat_statement expr = 
-            pipe2 (met_ >>. patterns expr) (eq >>. expr) <| fun pattern body -> 
-                let filter_env x = ap (inl "" x) B
-                lp pattern (filter_env (meth_memo body))
+        
+        let case_met_pat_statement expr = pipe2 (met_ >>. patterns expr) (eq >>. expr) <| fun pattern body -> lp pattern (filter_env (meth_memo body))
         let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
-        let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (meth_pat' pattern body))
+        let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (eq >>. expr) <| fun name pattern body -> l_rec name (meth_pat' pattern body)
 
         let case_open expr = open_ >>. expr |>> module_open
 
@@ -2156,10 +2168,10 @@ let spiral_peval aux_modules main_module =
                 codegen rest
             | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
             | TyLit x -> print_value x
-            | TyMemoizedExpr(MemoMethod,fv,_,tag,_) ->
+            | TyJoinPoint(MemoMethod,fv,_,tag,_) ->
                 let method_name = print_method tag
                 sprintf "%s(%s)" method_name (print_args !fv)
-            | TyMemoizedExpr(MemoClosure args,fv,rev_renamer,tag,_) -> 
+            | TyJoinPoint(MemoClosure args,fv,rev_renamer,tag,_) -> 
                 let method_name = print_method tag
                 let fv = !fv - (renamer_apply_pool rev_renamer args)
                 if fv.IsEmpty then method_name
@@ -2273,12 +2285,12 @@ let spiral_peval aux_modules main_module =
                     | Unit -> "| " + print_case i |> state
                     | x -> sprintf "| %s of %s" (print_case i) (print_type x) |> state) tys
 
-        let print_struct_definition iter fold name tys =
+        let print_struct_definition iter fold name key_to_string tys =
             let args sep f =
                 fold (fun s k ty -> 
                     match ty with
                     | Unit -> s
-                    | _ -> f k :: s) [] tys
+                    | _ -> f (key_to_string k) :: s) [] tys
                 |> List.rev
                 |> String.concat sep
 
@@ -2291,7 +2303,7 @@ let spiral_peval aux_modules main_module =
                 iter (fun k ty -> 
                     match ty with
                     | Unit -> ()
-                    | _ -> sprintf "val mem_%s: %s" k (print_type ty) |> state) tys
+                    | _ -> sprintf "val mem_%s: %s" (key_to_string k) (print_type ty) |> state) tys
             
                 sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
                 "end" |> state
@@ -2325,7 +2337,8 @@ let spiral_peval aux_modules main_module =
             | FunT(N (N tys, _)) as x ->
                 if is_unit_env tys = false then
                     let tuple_name = print_tag_env_ty x
-                    print_struct_definition Map.iter Map.fold tuple_name tys
+                    print_struct_definition Map.iter Map.fold tuple_name (fun x -> string_rev_dict.[x]) tys
+
             | RecT tag as x ->
                 let tys = rect_dict.[tag]
                 sprintf "%s %s =" (prefix ()) (print_tag_rec x) |> state
@@ -2342,7 +2355,7 @@ let spiral_peval aux_modules main_module =
                     let tuple_name = print_tag_tuple x
                     let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
                     let iter f l = List.iteri (fun i x -> f (string i) x) l
-                    print_struct_definition iter fold tuple_name tys
+                    print_struct_definition iter fold tuple_name id tys
             | _ -> failwith "impossible"
 
         buffer_type_definitions.AddRange(buffer)

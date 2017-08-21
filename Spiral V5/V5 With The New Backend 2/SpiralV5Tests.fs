@@ -500,15 +500,15 @@ match result with
 let test35 = // Does case on union types with recursive types work properly?
     "test35",
     """
-met rec List = 
+met rec List x = 
     type
         .Nil
-        .Cons, (int64, List)
+        .Cons, (int64, List x)
 inl Res =
     type
         int64
         int64, int64
-        List
+        List int64
 
 match Res 1 |> dyn with
 | x : int64 -> 1
@@ -516,7 +516,5 @@ match Res 1 |> dyn with
 | _ -> 3
     """
 
-let x = spiral_peval [] test35
-printfn "%A" x
-
-
+let x = spiral_peval [tuple; parsing] test34
+//printfn "%A" x
