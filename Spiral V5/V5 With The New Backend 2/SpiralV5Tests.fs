@@ -518,7 +518,7 @@ inl ret =
     inl on_type = ()
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 40) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 160) ret
     """
 
 let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
@@ -527,12 +527,11 @@ let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
 inl end x = ()
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 40 |>> f) end
+inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 160 |>> f) end
 
 parse <| inl _ -> ()
     """
 
-let x = spiral_peval [tuple; parsing] test34
+let x = spiral_peval [tuple; parsing2] test36
 //printfn "%A" x
 
-printfn "Total renaming time = %A" total_time

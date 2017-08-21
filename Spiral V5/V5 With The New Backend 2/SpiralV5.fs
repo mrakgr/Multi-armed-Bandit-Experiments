@@ -4,8 +4,6 @@
 open System
 open System.Collections.Generic
 
-let mutable total_time = TimeSpan()
-
 // Parser open
 open FParsec
 
@@ -664,47 +662,55 @@ let spiral_peval aux_modules main_module =
         Map.fold (fun s k v -> Map.add v k s) Map.empty r
         |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
 
-    let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e |> nodify_env_term
-    and renamer_apply_typedexpr r e =
-        let f e = renamer_apply_typedexpr r e
-        match e with
-        | TyV (n,t) -> 
-            let n' = Map.find n r
-            if n' = n then e else tyv (n',t)
-        | TyBox (N(n,t)) -> tybox(f n,t)
-        | TyVV (N l) -> tyvv(List.map f l)
-        | TyLit _ -> e
-        | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
-        | TyJoinPoint(typ,used_vars,renamer,tag,t) -> 
-            let renamer = renamer_apply_renamer r renamer
-            let used_vars = ref <| renamer_apply_pool r !used_vars
-            TyJoinPoint(typ,used_vars,renamer,tag,t)
-        | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
-        | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
-
+    let rec renamer_apply_env memo r e = Map.map (fun _ v -> renamer_apply_typedexpr memo r v) e |> nodify_env_term
+    and renamer_apply_typedexpr (memo: Dictionary<_,_>) r e =
+        let f e = renamer_apply_typedexpr memo r e
+        match memo.TryGetValue e with
+        | true, v -> v
+        | false, _ ->
+            match e with
+            | TyV (n,t) -> 
+                let n' = Map.find n r
+                if n' = n then e else tyv (n',t)
+            | TyBox (N(n,t)) -> tybox(f n,t)
+            | TyVV (N l) -> tyvv(List.map f l)
+            | TyLit _ -> e
+            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env memo r l, t)
+            | TyJoinPoint(typ,used_vars,renamer,tag,t) -> 
+                let renamer = renamer_apply_renamer r renamer
+                let used_vars = ref <| renamer_apply_pool r !used_vars
+                TyJoinPoint(typ,used_vars,renamer,tag,t)
+            | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
+            | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
+            |> fun x -> memo.[e] <- x; x
     // #Free vars
     let vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
     let vars_union f l = vars_union' Set.empty f l
 
-    let rec typed_expr_free_variables_template on_memo e =
-        let f e = typed_expr_free_variables_template on_memo e
-        match e with
-        | TyBox(N(n,t)) -> f n
-        | TyV(n,t) -> Set.singleton (n, t)
-        | TyLit _ -> Set.empty
-        | TyVV (N l) | TyOp(_,l,_) -> vars_union f l
-        | TyFun(N (N l,_)) -> env_free_variables_template on_memo l
-        | TyJoinPoint(typ,used_vars,renamer,tag,ty) -> on_memo (typ,used_vars,renamer,tag)
-        // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
-        // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
-        | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
+    let rec typed_expr_free_variables_template (memo: Dictionary<_,_>) on_join_point e =
+        let f e = typed_expr_free_variables_template memo on_join_point e
 
-    and env_free_variables_template on_memo env = 
-        Map.fold (fun s _ v -> typed_expr_free_variables_template on_memo v + s) Set.empty env
+        match memo.TryGetValue e with
+        | true, v -> v
+        | false, _ ->
+            match e with
+            | TyBox(N(n,t)) -> f n
+            | TyV(n,t) -> Set.singleton (n, t)
+            | TyLit _ -> Set.empty
+            | TyVV (N l) | TyOp(_,l,_) -> vars_union f l
+            | TyFun(N (N l,_)) -> env_free_variables_template memo on_join_point l
+            | TyJoinPoint(typ,used_vars,renamer,tag,ty) -> on_join_point (typ,used_vars,renamer,tag)
+            // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
+            // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
+            | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
+            |> fun x -> memo.[e] <- x; x
+
+    and env_free_variables_template memo on_join_point env = 
+        Map.fold (fun s _ v -> typed_expr_free_variables_template memo on_join_point v + s) Set.empty env
 
     let typed_expr_std_pass (typ,fv,renamer,tag) = !fv
-    let rec typed_expr_free_variables e = typed_expr_free_variables_template typed_expr_std_pass e
-    and env_free_variables env = env_free_variables_template typed_expr_std_pass env
+    let rec typed_expr_free_variables e = typed_expr_free_variables_template (d0()) typed_expr_std_pass e
+    let rec env_free_variables env = env_free_variables_template (d0()) typed_expr_std_pass env
 
     // #Postpass
     /// Optimizes the free variables for the sake of tuple deforestation.
@@ -718,6 +724,8 @@ let spiral_peval aux_modules main_module =
                 | _ -> None)
             |> dict
 
+        let memo = d0()
+
         let rec on_method_call_optimization_pass (_, method_call_args, renamer, tag) =
             let set_method_call_args vars = renamer_apply_pool renamer vars |> fun x -> method_call_args := x; x
             
@@ -725,14 +733,14 @@ let spiral_peval aux_modules main_module =
             | MemoMethodDone(_,ty_expr,_,method_definition_args,counter) -> 
                 if !counter < num_passes then
                     counter := !counter + 1
-                    let vars = typed_expr_free_variables_template on_method_call_optimization_pass ty_expr
+                    let vars = typed_expr_free_variables_template memo on_method_call_optimization_pass ty_expr
                     method_definition_args := vars
                     set_method_call_args vars
                 else
                     set_method_call_args !method_definition_args
             | _ -> failwith "impossible"
             
-        typed_expr_free_variables_template on_method_call_optimization_pass typed_exp |> ignore
+        typed_expr_free_variables_template memo on_method_call_optimization_pass typed_exp |> ignore
 
     // #Conversion
     let env_num_args env = 
@@ -923,10 +931,7 @@ let spiral_peval aux_modules main_module =
             let env = d.env.Expression
             let fv = env_free_variables env
             let renamer = renamer_make fv
-
-            let stopwatch = Diagnostics.Stopwatch.StartNew()
-            let renamed_env = renamer_apply_env renamer env
-            total_time <- total_time + stopwatch.Elapsed
+            let renamed_env = renamer_apply_env (d0()) renamer env
 
             let memo_type = memo_type renamer
             let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref renamer.Count} expr
@@ -2479,9 +2484,9 @@ let spiral_peval aux_modules main_module =
             let x = !d.seq (expr_peval d input)
             printfn "Time for peval was: %A" watch.Elapsed
             watch.Restart()
-            typed_expr_optimization_pass 2 x // Is mutable
-            printfn "Time for optimization pass was: %A" watch.Elapsed
-            watch.Restart()
+//            typed_expr_optimization_pass 2 x // Is mutable
+//            printfn "Time for optimization pass was: %A" watch.Elapsed
+//            watch.Restart()
             let x = Succ (spiral_codegen x |> copy_to_clipboard)
             printfn "Time for codegen was: %A" watch.Elapsed
             x
