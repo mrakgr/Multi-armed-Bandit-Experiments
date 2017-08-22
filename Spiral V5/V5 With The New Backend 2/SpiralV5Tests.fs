@@ -536,9 +536,9 @@ parse <| inl _ -> ()
 let f () =
     let x = spiral_peval [tuple; parsing] test34
     //printfn "%A" x
+    printfn "%A" total_time
     ()
 System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*256).Start()
-
 
 
 

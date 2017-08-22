@@ -4,6 +4,8 @@
 open System
 open System.Collections.Generic
 
+let mutable total_time = TimeSpan()
+
 // Parser open
 open FParsec
 
@@ -236,11 +238,12 @@ and EnvTerm = Node<Map<string, TypedExpr>>
 and EnvTy = Node<Map<string, Ty>>
 and MemoKey = Node<Expr * EnvTerm>
 
-and Arguments = Set<TyTag> ref
-and Renamer = Map<Tag,Tag>
+and Pool = Node<HashSet<TyTag>>
+and Arguments = Pool ref
+and Renamer = Node<Dictionary<Tag,Tag>>
 
 and MemoExprType =
-    | MemoClosure of Set<TyTag>
+    | MemoClosure of Pool
     | MemoMethod
 
 and LetType =
@@ -296,11 +299,11 @@ and ProgramNode =
 let spiral_peval aux_modules main_module = 
     let h0() = HashSet(HashIdentity.Structural)
     let d0() = Dictionary(HashIdentity.Structural)
-    let sd0() = SortedDictionary()
     let force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
 
-    let (|N|) (x: Node<_>) = x.Expression
+    let inline n (x: Node<_>) = x.Expression 
+    let (|N|) x = n x
     let (|S|) (x: Node<_>) = x.Symbol
 
     let nodify_expr (dict: Dictionary<_,_>) x =
@@ -320,8 +323,14 @@ let spiral_peval aux_modules main_module =
             let x' = Node(x,id)
             dict.[x] <- x'
             x'
+
+    
    
     // #Smart constructors
+    
+    // Nodified mutable collections are not to be modified obviously.
+    let nodify_pool: _ -> Pool = nodify <| d0()
+    let nodify_renamer: _ -> Renamer = nodify <| d0()
 
     // nodify_expr variants.
     let nodify_v = nodify_expr <| d0()
@@ -650,17 +659,30 @@ let spiral_peval aux_modules main_module =
             vars, expr_pos p.Pos body
 
     // #Renaming
-    let renamer_make s = Set.fold (fun (s,i) (tag,ty) -> Map.add tag i s, i+1) (Map.empty,0) s |> fst
-    let renamer_apply_pool r s = 
-        Set.map (fun (tag,ty) -> 
-            match Map.tryFind tag r with
-            | Some x -> x, ty
-            | None -> failwith "renamer no key") s
-    let renamer_apply_renamer r m = Map.map (fun _ v -> Map.find v r) m
+    let renamer_make s = 
+        let renamer,renamer_reversed,renamed_fv,_ =
+            ((d0(),d0(),h0(),0), n s)
+            ||> Seq.fold (fun (renamer,renamer_reversed,renamed_fv,i) (tag,ty) -> 
+                renamer.Add(tag,i)
+                renamer_reversed.Add(tag,i)
+                renamed_fv.Add(i,ty) |> ignore
+                renamer, renamer_reversed, renamed_fv, i+1
+                ) 
+        nodify_renamer renamer, nodify_renamer renamer_reversed, nodify_pool renamed_fv
 
-    let renamer_reverse r = 
-        Map.fold (fun s k v -> Map.add v k s) Map.empty r
-        |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
+    let renamer_apply_pool (r: Dictionary<_,_>) (s: Pool) = 
+        let s' = h0()
+        s.Expression |> Seq.iter (fun (tag,ty) -> s'.Add(r.[tag],ty) |> ignore)
+        nodify_pool s' // Note: uses reference equality.
+
+    let renamer_apply_renamer (r: Dictionary<_,_>) (m: Renamer): Renamer = 
+        let m' = d0()
+        m.Expression |> Seq.iter (fun kv -> m'.[kv.Key] <- r.[kv.Value])
+        nodify_renamer m' // Note: uses reference equality.
+
+//    let renamer_reverse r = 
+//        Map.fold (fun s k v -> Map.add v k s) Map.empty r
+//        |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
 
     let inline memoize (memo_dict: Dictionary<_,_>) k f =
         match memo_dict.TryGetValue k with
@@ -669,31 +691,31 @@ let spiral_peval aux_modules main_module =
 
     let rec renamer_apply_env memo r e = Map.map (fun _ v -> renamer_apply_typedexpr memo r v) e |> nodify_env_term
     and renamer_apply_typedexpr (memo_dict: Dictionary<_,_>) r e =
-        let f e = renamer_apply_typedexpr memo_dict r e
+        let f e = renamer_apply_typedexpr memo_dict (r: Dictionary<_,_>) e
         memoize memo_dict e <| fun () ->
             match e with
             | TyBox (N(n,t)) -> tybox(f n,t)
             | TyVV (N l) -> tyvv(List.map f l)
             | TyFun(N(N l,t)) -> tyfun(renamer_apply_env memo_dict r l, t)
             | TyV (n,t) -> 
-                let n' = Map.find n r
+                let n' = r.[n]
                 if n' = n then e else tyv (n',t)
             | TyLit _ -> e
             | TyJoinPoint(typ,used_vars,renamer,tag,t) -> 
                 let renamer = renamer_apply_renamer r renamer
-                let used_vars = ref <| renamer_apply_pool r !used_vars
+                let used_vars = ref <| renamer_apply_pool r (!used_vars)
                 TyJoinPoint(typ,used_vars,renamer,tag,t)
             | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
-            | TyLet(le,(n,t),a,b,t') -> TyLet(le,(Map.find n r,t),f a,f b,t')
+            | TyLet(le,(n,t),a,b,t') -> TyLet(le,(r.[n],t),f a,f b,t')
 
     // #Free vars
     let vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
     let vars_union f l = vars_union' Set.empty f l
 
-    let rec typed_expr_free_variables_template (memo: Dictionary<_,_>) on_join_point e =
+    let rec typed_expr_free_variables_template (memo: HashSet<_>) on_join_point e =
         let f e = typed_expr_free_variables_template memo on_join_point e
 
-        memoize memo e <| fun () ->
+        if memo.Add e then
             match e with
             | TyBox(N(n,t)) -> f n
             | TyV(n,t) -> Set.singleton (n, t)
@@ -704,43 +726,44 @@ let spiral_peval aux_modules main_module =
             // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
             // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
             | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
+        else Set.empty
 
     and env_free_variables_template memo on_join_point env = 
         Map.fold (fun s _ v -> typed_expr_free_variables_template memo on_join_point v + s) Set.empty env
 
-    let typed_expr_std_pass (typ,fv,renamer,tag) = !fv
-    let inline typed_expr_free_variables e = typed_expr_free_variables_template (d0()) typed_expr_std_pass e
-    let inline env_free_variables env = env_free_variables_template (d0()) typed_expr_std_pass env
+    let typed_expr_std_pass (typ,fv: Arguments,renamer,tag) = fv.Value.Expression |> Set
+    let inline typed_expr_free_variables e = typed_expr_free_variables_template (h0()) typed_expr_std_pass e
+    let inline env_free_variables env = env_free_variables_template (h0()) typed_expr_std_pass env
 
     // #Postpass
     /// Optimizes the free variables for the sake of tuple deforestation.
     /// It needs at least two passes to converge properly. And probably exactly two.
-    let typed_expr_optimization_pass num_passes typed_exp =
-        let link_memo = 
-            memoized_methods 
-            |> Seq.choose (fun x -> 
-                match x.Value with
-                | MemoMethodDone(_,_,tag,_,_) -> Some (tag, x.Key)
-                | _ -> None)
-            |> dict
-
-        let memo = d0()
-
-        let rec on_method_call_optimization_pass (_, method_call_args, renamer, tag) =
-            let set_method_call_args vars = renamer_apply_pool renamer vars |> fun x -> method_call_args := x; x
-            
-            match memoized_methods.[link_memo.[tag]] with
-            | MemoMethodDone(_,ty_expr,_,method_definition_args,counter) -> 
-                if !counter < num_passes then
-                    counter := !counter + 1
-                    let vars = typed_expr_free_variables_template memo on_method_call_optimization_pass ty_expr
-                    method_definition_args := vars
-                    set_method_call_args vars
-                else
-                    set_method_call_args !method_definition_args
-            | _ -> failwith "impossible"
-            
-        typed_expr_free_variables_template memo on_method_call_optimization_pass typed_exp |> ignore
+//    let typed_expr_optimization_pass num_passes typed_exp =
+//        let link_memo = 
+//            memoized_methods 
+//            |> Seq.choose (fun x -> 
+//                match x.Value with
+//                | MemoMethodDone(_,_,tag,_,_) -> Some (tag, x.Key)
+//                | _ -> None)
+//            |> dict
+//
+//        let memo = h0()
+//
+//        let rec on_method_call_optimization_pass (_, method_call_args, renamer, tag) =
+//            let set_method_call_args vars = renamer_apply_pool renamer vars |> fun x -> method_call_args := x; x
+//            
+//            match memoized_methods.[link_memo.[tag]] with
+//            | MemoMethodDone(_,ty_expr,_,method_definition_args,counter) -> 
+//                if !counter < num_passes then
+//                    counter := !counter + 1
+//                    let vars = typed_expr_free_variables_template memo on_method_call_optimization_pass ty_expr
+//                    method_definition_args := vars
+//                    set_method_call_args vars
+//                else
+//                    set_method_call_args !method_definition_args
+//            | _ -> failwith "impossible"
+//            
+//        typed_expr_free_variables_template memo on_method_call_optimization_pass typed_exp |> ignore
 
     // #Conversion
     let env_num_args env = 
@@ -929,15 +952,17 @@ let spiral_peval aux_modules main_module =
 
         let eval_renaming memo_type d expr =
             let env = d.env.Expression
-            let fv = env_free_variables env
-            let renamer = renamer_make fv
-            let renamed_env = renamer_apply_env (d0()) renamer env
+            let stopwatch = Diagnostics.Stopwatch.StartNew()
+            let fv = env_free_variables env |> HashSet |> nodify_pool
+            let renamer, renamer_reversed, renamed_fv = renamer_make fv
+            let renamed_env = renamer_apply_env (d0()) renamer.Expression env
+            total_time <- total_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
-            let typed_expr, tag = eval_method memo_type (renamer_apply_pool renamer fv |> ref) {d with env=renamed_env; ltag=ref renamer.Count} expr
+            let typed_expr, tag = eval_method memo_type (ref renamed_fv) {d with env=renamed_env; ltag=ref renamer.Expression.Count} expr
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-            else memo_type, ref fv, renamer_reverse renamer, tag, typed_expr_ty
+            else memo_type, ref fv, renamer_reversed, tag, typed_expr_ty
 
         let memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
         let memoize_method d x = 
@@ -946,8 +971,8 @@ let spiral_peval aux_modules main_module =
                 TyJoinPoint(memo_type,args,rev_renamer,tag,ret_ty)) d x
 
         let memoize_closure arg d x =
-            let fv, arg_ty = typed_expr_free_variables arg, get_type arg
-            let memo_type r = MemoClosure (renamer_apply_pool r fv)
+            let fv, arg_ty = typed_expr_free_variables arg |> HashSet |> nodify_pool, get_type arg
+            let memo_type r = MemoClosure (renamer_apply_pool (n r) fv)
             memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
                 TyJoinPoint(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
 
@@ -1920,448 +1945,448 @@ let spiral_peval aux_modules main_module =
         runParserOnString (spaces >>. expr .>> eof) inbuilt_operators module_name module_code
 
     // #Codegen
-    let spiral_codegen main =
-        let buffer_type_definitions = ResizeArray()
-        let buffer_code = ResizeArray()
-        let buffer = ResizeArray()
-        let exp x = String.concat "" x
-
-        let process_statements (statements: ResizeArray<ProgramNode>) =
-            let rec process_statement (code: StringBuilder,ind as state) statement =
-                match statement with
-                | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp |> code.Append, ind
-                | Indent -> code, ind+4
-                | Dedent -> code, ind-4
-                | Statements x -> process_statements state x
-            and process_statements state (statements: ResizeArray<ProgramNode>) =
-                Seq.fold process_statement state statements
-            process_statements (StringBuilder(),0) statements
-            |> fun (code,ind) -> code.ToString()
-
-        let state x = buffer.Add <| Statement x
-        let enter' f = buffer.Add Indent; f(); buffer.Add Dedent
-        let enter f = 
-            enter' <| fun _ -> 
-                match f() with
-                | "" -> ()
-                | s -> state s
-
-        let rec is_unit_tuple t = List.forall is_unit t
-        and is_unit_env env = Map.forall (fun _ -> is_unit) env
-        and is_unit = function
-            | VVT (N []) | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
-            | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
-            | ArrayT(N(_,t)) -> is_unit t
-            | FunT (N(N env,_)) -> is_unit_env env
-            | VVT (N t) -> is_unit_tuple t
-
-        let (|Unit|_|) x = if is_unit x then Some () else None
-
-        let definitions_set = h0()
-        let definitions_queue = Queue()
-
-        let print_tag_tuple' t = sprintf "Tuple%i" t
-        let print_tag_union' t = sprintf "Union%i" t
-        let print_tag_rec' t = sprintf "Rec%i" t
-        let print_tag_env_ty' t = sprintf "Env%i" t
-
-        let sym = function
-            | VVT (S s) | UnionT (S s) | FunT(S s) | RecT s -> s
-            | _ -> failwith "Invalid input to sym."
-
-        let def_enqueue f t =
-            if definitions_set.Add t then definitions_queue.Enqueue t
-            f (sym t)
-
-        let print_tag_tuple t = def_enqueue print_tag_tuple' t
-        let print_tag_union t = def_enqueue print_tag_union' t
-        let print_tag_rec t = def_enqueue print_tag_rec' t
-        let print_tag_env_ty t = def_enqueue print_tag_env_ty' t
-
-        let rec print_type = function
-            | Unit -> "unit"
-            | FunT _ as x -> print_tag_env_ty x
-            | VVT _ as x -> print_tag_tuple x
-            | UnionT _ as x -> print_tag_union x
-            | RecT _ as x -> print_tag_rec x
-            | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
-            | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
-            | ArrayT _ -> failwith "Not implemented."
-            | DotNetTypeInstanceT (N t) -> print_dotnet_instance_type t
-            | ClosureT(N(a,b)) -> 
-                let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
-                sprintf "(%s) -> %s" a (print_type b)
-            | PrimT x ->
-                match x with
-                | Int8T -> "int8"
-                | Int16T -> "int16"
-                | Int32T -> "int32"
-                | Int64T -> "int64"
-                | UInt8T -> "uint8"
-                | UInt16T -> "uint16"
-                | UInt32T -> "uint32"
-                | UInt64T -> "uint64"
-                | Float32T -> "float32"
-                | Float64T -> "float64"
-                | BoolT -> "bool"
-                | StringT -> "string"
-                | CharT -> "char"
-            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
-                failwith "Should be covered in Unit."
-                
-
-        and print_dotnet_instance_type (x: System.Type) =
-            if x.GenericTypeArguments.Length > 0 then
-                [|
-                x.Namespace
-                "." 
-                x.Name.Split '`' |> Array.head
-                "<"
-                Array.map (dotnet_type_to_ty >> print_type) x.GenericTypeArguments |> String.concat ","
-                ">"
-                |] |> String.concat null
-            else
-                [|x.Namespace; "."; x.Name|] |> String.concat null
-
-        let print_tyv (tag,ty) = sprintf "var_%i" tag
-        let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
-        let print_method tag = sprintf "method_%i" tag
-
-        let print_args args = 
-            Set.toList args |> List.filter (snd >> is_unit >> not)
-            |> List.map print_tyv_with_type |> String.concat ", "
-
-        let get_tag =
-            let mutable i = 0
-            fun () -> i <- i + 1; i
-
-        let print_case_rec x i = print_tag_rec x + sprintf "Case%i" i
-        let print_case_union x i = print_tag_union x + sprintf "Case%i" i
-
-        let rec codegen expr =
-            let print_value = function
-                | LitInt8 x -> sprintf "%iy" x
-                | LitInt16 x -> sprintf "%is" x
-                | LitInt32 x -> sprintf "%i" x
-                | LitInt64 x -> sprintf "%iL" x
-                | LitUInt8 x -> sprintf "%iuy" x
-                | LitUInt16 x -> sprintf "%ius" x
-                | LitUInt32 x -> sprintf "%iu" x
-                | LitUInt64 x -> sprintf "%iUL" x
-                | LitFloat32 x -> sprintf "%ff" x
-                | LitFloat64 x -> sprintf "%f" x
-                | LitString x -> sprintf "\"%s\"" x
-                | LitChar x -> 
-                    match x with
-                    | '\n' -> @"\n"
-                    | '\t' -> @"\t"
-                    | '\r' -> @"\r"
-                    | x -> string x
-                    |> sprintf "'%s'"
-                | LitBool x -> if x then "true" else "false"
-
-            let print_if t f =
-                match t with
-                | Unit -> f (); ""
-                | t ->
-                    let if_var = sprintf "if_var_%i" (get_tag())
-                    sprintf "let (%s: %s) =" if_var (print_type t) |> state
-                    enter' <| fun _ -> f()
-                    if_var
-        
-            let rec if_ cond tr fl =
-                let enter f =
-                    enter <| fun _ ->
-                        match f () with
-                        | "" -> "()"
-                        | x -> x
-                
-                print_if (get_type tr) <| fun _ ->
-                    sprintf "if %s then" (codegen cond) |> state
-                    enter <| fun _ -> codegen tr
-                    "else" |> state
-                    enter <| fun _ -> codegen fl
-
-            let make_struct l on_empty on_rest =
-                Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
-                |> String.concat ", "
-                |> function
-                    | "" -> on_empty
-                    | x -> on_rest x
-
-            let if_not_unit ty f = if is_unit ty then "" else f()
-
-            let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
-
-            let array_create (TyTuple size) = function
-                | Unit -> ""
-                | ArrayT(N(_,t)) ->
-                    let x = List.map codegen size |> String.concat "*"
-                    sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) x
-                | _ -> failwith "impossible"
-
-            let reference_create = function
-                | TyType Unit -> ""
-                | x -> sprintf "(ref %s)" (codegen x)
-
-            let array_index (TyTuple size) ar (TyTuple idx) =
-                match ar with
-                | TyType Unit -> ""
-                | _ ->
-                    let size, idx = List.map codegen size, List.map codegen idx
-                    // Print assertions for multidimensional arrays.
-                    // For 1d arrays, the .NET runtime does the checking.
-                    match size with
-                    | _ :: _ :: _ ->
-                        List.iter2 (fun s i -> 
-                            let cond = sprintf "%s < %s && %s >= 0L" i s i
-                            // I am worried about code size blowup due to the string in sprintf so I'll leave the message out.
-                            //let message = """sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i" """
-                            sprintf "if (%s) = false then raise <| System.ArgumentOutOfRangeException(\"%s\")" cond i |> state
-                            ) size idx
-                    | _ -> ()
-
-                    let rec index_first = function
-                        | _ :: s :: sx, i :: ix -> index_rest (sprintf "%s * %s" i s) (sx, ix)
-                        | [_], [i] -> i
-                        | _ -> "0"
-                    and index_rest prev = function
-                        | s :: sx, i :: ix -> index_rest (sprintf "(%s + %s) * %s" prev i s) (sx, ix)
-                        | [], [i] -> sprintf "%s + %s" prev i
-                        | _ -> failwith "Invalid state."
-
-                    sprintf "%s.[int32 (%s)]" (codegen ar) (index_first (size, idx))
-
-            let reference_index = function
-                | TyType Unit -> ""
-                | x -> sprintf "(!%s)" (codegen x)
-
-            let array_set size ar idx r = 
-                match ar with
-                | TyType Unit -> ()
-                | _ -> sprintf "%s <- %s" (array_index size ar idx) (codegen r) |> state
-            let reference_set l r = 
-                match l with
-                | TyType Unit -> ()
-                | _ -> sprintf "%s := %s" (codegen l) (codegen r) |> state
-
-            let string_length str = sprintf "(int64 %s.Length)" (codegen str)
-            let string_index str idx = sprintf "%s.[int32 (%s)]" (codegen str) (codegen idx)
-
-            match expr with
-            | TyV (_, Unit) | TyBox (N(_, Unit)) -> ""
-            | TyV v -> print_tyv v
-            | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
-            | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
-            | TyLet(_,(_,Unit),b,rest,_) ->
-                match b with
-                | TyOp(ArraySet,[TyOp(ArrayIndex,[size;ar;idx],_);b],_) ->
-                    match get_type ar with
-                    | ArrayT(N(DotNetReference,_)) -> reference_set ar b
-                    | ArrayT(N(DotNetHeap,_)) -> array_set size ar idx b
-                    | _ -> failwith "impossible"
-                | _ ->
-                    let b = codegen b
-                    if b <> "" then sprintf "%s" b |> state
-                codegen rest
-            | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
-            | TyLit x -> print_value x
-            | TyJoinPoint(MemoMethod,fv,_,tag,_) ->
-                let method_name = print_method tag
-                sprintf "%s(%s)" method_name (print_args !fv)
-            | TyJoinPoint(MemoClosure args,fv,rev_renamer,tag,_) -> 
-                let method_name = print_method tag
-                let fv = !fv - (renamer_apply_pool rev_renamer args)
-                if fv.IsEmpty then method_name
-                else sprintf "%s(%s)" method_name (print_args fv)
-            | TyBox(N(x, t)) ->
-                let case_name =
-                    let union_idx s = Seq.findIndex ((=) (get_type x)) s
-                    match t with
-                    | UnionT (N s) -> print_case_union t (union_idx s)
-                    | RecT tag -> 
-                        match rect_dict.[tag] with
-                        | VVT _ -> print_tag_rec t
-                        | UnionT (N s) -> print_case_rec t (union_idx s)
-                        | _ -> failwith "Only VVT and UnionT can be recursive types."
-                    | _ -> failwith "Only VVT and UnionT can be boxed types."
-                if is_unit (get_type x) then case_name else sprintf "%s(%s)" case_name (codegen x)
-            | TyFun(N(N env_term, _)) ->
-                let t = get_type expr
-                Map.toArray env_term
-                |> Array.map snd
-                |> fun x -> make_struct x "" (fun args -> sprintf "%s(%s)" (print_tag_env_ty t) args)
-            | TyVV (N l) -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
-            | TyOp(op,args,t) ->
-                match op, args with
-                | Apply,[a;b] ->
-                    // Apply during codegen is only used for applying closures.
-                    // There is one level of flattening in the outer arguments.
-                    // The reason for this is the symmetry between the F# and the Cuda side.
-                    let b = tuple_field b |> List.map codegen |> String.concat ", "
-                    sprintf "%s(%s)" (codegen a) b
-                | Case,v :: cases ->
-                    print_if t <| fun _ ->
-                        let print_case =
-                            match get_type v with
-                            | RecT _ as x -> print_case_rec x
-                            | UnionT _ as x -> print_case_union x
-                            | _ -> failwith "impossible"
-
-                        sprintf "match %s with" (codegen v) |> state
-                        let print_case i case = 
-                            let case = codegen case
-                            if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state
-                            else sprintf "| %s(%s) ->" (print_case i) case |> state
-                        let rec loop i = function
-                            | case :: body :: rest -> 
-                                print_case i case
-                                enter <| fun _ -> 
-                                    let x = codegen body
-                                    if String.IsNullOrEmpty x then "()" else x
-                                loop (i+1) rest
-                            | [] -> ()
-                            | _ -> failwith "The cases should always be in pairs."
-                        loop 0 cases
-
-                | ArrayCreate,[a] -> array_create a t
-                | ReferenceCreate,[a] -> reference_create a
-                | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index a b c
-                | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetReference,_)));c] -> reference_index b
-                | StringIndex,[str;idx] -> string_index str idx
-                | StringLength,[str] -> string_length str
-
-                // Primitive operations on expressions.
-                | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
-                | Sub,[a;b] -> sprintf "(%s - %s)" (codegen a) (codegen b)
-                | Mult,[a;b] -> sprintf "(%s * %s)" (codegen a) (codegen b)
-                | Div,[a;b] -> sprintf "(%s / %s)" (codegen a) (codegen b)
-                | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
-                | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
-                | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
-                | EQ,[a;b] -> sprintf "(%s = %s)" (codegen a) (codegen b)
-                | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
-                | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
-                | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
-                | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
-                | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
-
-                | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
-                | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
-
-        //        | ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
-        //        | ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
-        //        | ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
-        //        | ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
-
-                | Neg,[a] -> sprintf "(-%s)" (codegen a)
-                | VVIndex,[a;b] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen a) (codegen b)
-                | EnvUnseal,[r; TyLit (LitString k)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
-                | Log,[x] -> sprintf "log(%s)" (codegen x)
-                | Exp,[x] -> sprintf "exp(%s)" (codegen x)
-                | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
-                | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] ->
-                    match t with 
-                    | DotNetTypeInstanceT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
-                    | _ -> failwith "impossible"
-                | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
-                    match v with
-                    | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
-                    | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
-                // Cuda kernel constants
-        //        | Syncthreads,[],_) -> state "syncthreads();"; ""
-
-                | x -> failwithf "Missing TyOp case. %A" x
-
-        let prefix =
-            let mutable prefix = false
-            fun () -> if prefix then "and" else prefix <- true; "type"
-
-        let print_union_cases print_case tys =
-            enter' <| fun _ ->
-                List.iteri (fun i -> function
-                    | Unit -> "| " + print_case i |> state
-                    | x -> sprintf "| %s of %s" (print_case i) (print_type x) |> state) tys
-
-        let print_struct_definition iter fold name tys =
-            let args sep f =
-                fold (fun s k ty -> 
-                    match ty with
-                    | Unit -> s
-                    | _ -> f k :: s) [] tys
-                |> List.rev
-                |> String.concat sep
-
-            let args_declaration = args ", " <| fun k -> sprintf "arg_mem_%s" k
-            let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
-
-            sprintf "%s %s =" (prefix()) name |> state
-            enter' <| fun _ -> 
-                "struct" |> state
-                iter (fun k ty -> 
-                    match ty with
-                    | Unit -> ()
-                    | _ -> sprintf "val mem_%s: %s" k (print_type ty) |> state) tys
-            
-                sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
-                "end" |> state
-
-        let print_method_definition is_first (memo_type,body,tag,fv) = 
-            let prefix = if is_first then "let rec" else "and"
-            let method_name = print_method tag
-            match memo_type with
-            | MemoClosure args -> 
-                let fv = !fv - args |> fun fv -> if fv.IsEmpty then "" else sprintf "(%s) " (print_args fv)
-                sprintf "%s %s %s(%s): %s =" prefix method_name fv (print_args args) (print_type (get_type body))
-            
-            | MemoMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args !fv) (print_type (get_type body))
-            |> state
-
-            enter <| fun _ -> 
-                let x = codegen body
-                if String.IsNullOrEmpty x then "()" else x
-
-        memoized_methods |> Seq.fold (fun is_first x -> 
-            match x.Value with
-            | MemoMethodDone (memo_type, e, tag, args, _) -> print_method_definition is_first (memo_type, e, tag, args); false
-            | _ -> is_first) true |> ignore
-        codegen main |> state // Can't forget the non-method
-
-        buffer_code.AddRange(buffer)
-        buffer.Clear()
-
-        while definitions_queue.Count > 0 do
-            match definitions_queue.Dequeue() with
-            | FunT(N (N tys, _)) as x ->
-                if is_unit_env tys = false then
-                    let tuple_name = print_tag_env_ty x
-                    print_struct_definition Map.iter Map.fold tuple_name tys
-            | RecT tag as x ->
-                let tys = rect_dict.[tag]
-                sprintf "%s %s =" (prefix ()) (print_tag_rec x) |> state
-                match tys with
-                | Unit -> "| " + print_tag_rec' tag |> state
-                | VVT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
-                | UnionT (N tys) -> print_union_cases (print_case_rec x) (Set.toList tys)
-                | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
-            | UnionT (N tys) as x ->
-                sprintf "%s %s =" (prefix()) (print_tag_union x) |> state
-                print_union_cases (print_case_union x) (Set.toList tys)
-            | VVT (N tys) as x ->
-                if is_unit_tuple tys = false then
-                    let tuple_name = print_tag_tuple x
-                    let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-                    let iter f l = List.iteri (fun i x -> f (string i) x) l
-                    print_struct_definition iter fold tuple_name tys
-            | _ -> failwith "impossible"
-
-        buffer_type_definitions.AddRange(buffer)
-        buffer.Clear()
-
-        buffer.AddRange(buffer_type_definitions)
-        buffer.AddRange(buffer_code)
-  
-        process_statements buffer
+//    let spiral_codegen main =
+//        let buffer_type_definitions = ResizeArray()
+//        let buffer_code = ResizeArray()
+//        let buffer = ResizeArray()
+//        let exp x = String.concat "" x
+//
+//        let process_statements (statements: ResizeArray<ProgramNode>) =
+//            let rec process_statement (code: StringBuilder,ind as state) statement =
+//                match statement with
+//                | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp |> code.Append, ind
+//                | Indent -> code, ind+4
+//                | Dedent -> code, ind-4
+//                | Statements x -> process_statements state x
+//            and process_statements state (statements: ResizeArray<ProgramNode>) =
+//                Seq.fold process_statement state statements
+//            process_statements (StringBuilder(),0) statements
+//            |> fun (code,ind) -> code.ToString()
+//
+//        let state x = buffer.Add <| Statement x
+//        let enter' f = buffer.Add Indent; f(); buffer.Add Dedent
+//        let enter f = 
+//            enter' <| fun _ -> 
+//                match f() with
+//                | "" -> ()
+//                | s -> state s
+//
+//        let rec is_unit_tuple t = List.forall is_unit t
+//        and is_unit_env env = Map.forall (fun _ -> is_unit) env
+//        and is_unit = function
+//            | VVT (N []) | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+//            | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
+//            | ArrayT(N(_,t)) -> is_unit t
+//            | FunT (N(N env,_)) -> is_unit_env env
+//            | VVT (N t) -> is_unit_tuple t
+//
+//        let (|Unit|_|) x = if is_unit x then Some () else None
+//
+//        let definitions_set = h0()
+//        let definitions_queue = Queue()
+//
+//        let print_tag_tuple' t = sprintf "Tuple%i" t
+//        let print_tag_union' t = sprintf "Union%i" t
+//        let print_tag_rec' t = sprintf "Rec%i" t
+//        let print_tag_env_ty' t = sprintf "Env%i" t
+//
+//        let sym = function
+//            | VVT (S s) | UnionT (S s) | FunT(S s) | RecT s -> s
+//            | _ -> failwith "Invalid input to sym."
+//
+//        let def_enqueue f t =
+//            if definitions_set.Add t then definitions_queue.Enqueue t
+//            f (sym t)
+//
+//        let print_tag_tuple t = def_enqueue print_tag_tuple' t
+//        let print_tag_union t = def_enqueue print_tag_union' t
+//        let print_tag_rec t = def_enqueue print_tag_rec' t
+//        let print_tag_env_ty t = def_enqueue print_tag_env_ty' t
+//
+//        let rec print_type = function
+//            | Unit -> "unit"
+//            | FunT _ as x -> print_tag_env_ty x
+//            | VVT _ as x -> print_tag_tuple x
+//            | UnionT _ as x -> print_tag_union x
+//            | RecT _ as x -> print_tag_rec x
+//            | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
+//            | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
+//            | ArrayT _ -> failwith "Not implemented."
+//            | DotNetTypeInstanceT (N t) -> print_dotnet_instance_type t
+//            | ClosureT(N(a,b)) -> 
+//                let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
+//                sprintf "(%s) -> %s" a (print_type b)
+//            | PrimT x ->
+//                match x with
+//                | Int8T -> "int8"
+//                | Int16T -> "int16"
+//                | Int32T -> "int32"
+//                | Int64T -> "int64"
+//                | UInt8T -> "uint8"
+//                | UInt16T -> "uint16"
+//                | UInt32T -> "uint32"
+//                | UInt64T -> "uint64"
+//                | Float32T -> "float32"
+//                | Float64T -> "float64"
+//                | BoolT -> "bool"
+//                | StringT -> "string"
+//                | CharT -> "char"
+//            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
+//                failwith "Should be covered in Unit."
+//                
+//
+//        and print_dotnet_instance_type (x: System.Type) =
+//            if x.GenericTypeArguments.Length > 0 then
+//                [|
+//                x.Namespace
+//                "." 
+//                x.Name.Split '`' |> Array.head
+//                "<"
+//                Array.map (dotnet_type_to_ty >> print_type) x.GenericTypeArguments |> String.concat ","
+//                ">"
+//                |] |> String.concat null
+//            else
+//                [|x.Namespace; "."; x.Name|] |> String.concat null
+//
+//        let print_tyv (tag,ty) = sprintf "var_%i" tag
+//        let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
+//        let print_method tag = sprintf "method_%i" tag
+//
+//        let print_args args = 
+//            Set.toList args |> List.filter (snd >> is_unit >> not)
+//            |> List.map print_tyv_with_type |> String.concat ", "
+//
+//        let get_tag =
+//            let mutable i = 0
+//            fun () -> i <- i + 1; i
+//
+//        let print_case_rec x i = print_tag_rec x + sprintf "Case%i" i
+//        let print_case_union x i = print_tag_union x + sprintf "Case%i" i
+//
+//        let rec codegen expr =
+//            let print_value = function
+//                | LitInt8 x -> sprintf "%iy" x
+//                | LitInt16 x -> sprintf "%is" x
+//                | LitInt32 x -> sprintf "%i" x
+//                | LitInt64 x -> sprintf "%iL" x
+//                | LitUInt8 x -> sprintf "%iuy" x
+//                | LitUInt16 x -> sprintf "%ius" x
+//                | LitUInt32 x -> sprintf "%iu" x
+//                | LitUInt64 x -> sprintf "%iUL" x
+//                | LitFloat32 x -> sprintf "%ff" x
+//                | LitFloat64 x -> sprintf "%f" x
+//                | LitString x -> sprintf "\"%s\"" x
+//                | LitChar x -> 
+//                    match x with
+//                    | '\n' -> @"\n"
+//                    | '\t' -> @"\t"
+//                    | '\r' -> @"\r"
+//                    | x -> string x
+//                    |> sprintf "'%s'"
+//                | LitBool x -> if x then "true" else "false"
+//
+//            let print_if t f =
+//                match t with
+//                | Unit -> f (); ""
+//                | t ->
+//                    let if_var = sprintf "if_var_%i" (get_tag())
+//                    sprintf "let (%s: %s) =" if_var (print_type t) |> state
+//                    enter' <| fun _ -> f()
+//                    if_var
+//        
+//            let rec if_ cond tr fl =
+//                let enter f =
+//                    enter <| fun _ ->
+//                        match f () with
+//                        | "" -> "()"
+//                        | x -> x
+//                
+//                print_if (get_type tr) <| fun _ ->
+//                    sprintf "if %s then" (codegen cond) |> state
+//                    enter <| fun _ -> codegen tr
+//                    "else" |> state
+//                    enter <| fun _ -> codegen fl
+//
+//            let make_struct l on_empty on_rest =
+//                Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
+//                |> String.concat ", "
+//                |> function
+//                    | "" -> on_empty
+//                    | x -> on_rest x
+//
+//            let if_not_unit ty f = if is_unit ty then "" else f()
+//
+//            let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
+//
+//            let array_create (TyTuple size) = function
+//                | Unit -> ""
+//                | ArrayT(N(_,t)) ->
+//                    let x = List.map codegen size |> String.concat "*"
+//                    sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) x
+//                | _ -> failwith "impossible"
+//
+//            let reference_create = function
+//                | TyType Unit -> ""
+//                | x -> sprintf "(ref %s)" (codegen x)
+//
+//            let array_index (TyTuple size) ar (TyTuple idx) =
+//                match ar with
+//                | TyType Unit -> ""
+//                | _ ->
+//                    let size, idx = List.map codegen size, List.map codegen idx
+//                    // Print assertions for multidimensional arrays.
+//                    // For 1d arrays, the .NET runtime does the checking.
+//                    match size with
+//                    | _ :: _ :: _ ->
+//                        List.iter2 (fun s i -> 
+//                            let cond = sprintf "%s < %s && %s >= 0L" i s i
+//                            // I am worried about code size blowup due to the string in sprintf so I'll leave the message out.
+//                            //let message = """sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i" """
+//                            sprintf "if (%s) = false then raise <| System.ArgumentOutOfRangeException(\"%s\")" cond i |> state
+//                            ) size idx
+//                    | _ -> ()
+//
+//                    let rec index_first = function
+//                        | _ :: s :: sx, i :: ix -> index_rest (sprintf "%s * %s" i s) (sx, ix)
+//                        | [_], [i] -> i
+//                        | _ -> "0"
+//                    and index_rest prev = function
+//                        | s :: sx, i :: ix -> index_rest (sprintf "(%s + %s) * %s" prev i s) (sx, ix)
+//                        | [], [i] -> sprintf "%s + %s" prev i
+//                        | _ -> failwith "Invalid state."
+//
+//                    sprintf "%s.[int32 (%s)]" (codegen ar) (index_first (size, idx))
+//
+//            let reference_index = function
+//                | TyType Unit -> ""
+//                | x -> sprintf "(!%s)" (codegen x)
+//
+//            let array_set size ar idx r = 
+//                match ar with
+//                | TyType Unit -> ()
+//                | _ -> sprintf "%s <- %s" (array_index size ar idx) (codegen r) |> state
+//            let reference_set l r = 
+//                match l with
+//                | TyType Unit -> ()
+//                | _ -> sprintf "%s := %s" (codegen l) (codegen r) |> state
+//
+//            let string_length str = sprintf "(int64 %s.Length)" (codegen str)
+//            let string_index str idx = sprintf "%s.[int32 (%s)]" (codegen str) (codegen idx)
+//
+//            match expr with
+//            | TyV (_, Unit) | TyBox (N(_, Unit)) -> ""
+//            | TyV v -> print_tyv v
+//            | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
+//            | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
+//            | TyLet(_,(_,Unit),b,rest,_) ->
+//                match b with
+//                | TyOp(ArraySet,[TyOp(ArrayIndex,[size;ar;idx],_);b],_) ->
+//                    match get_type ar with
+//                    | ArrayT(N(DotNetReference,_)) -> reference_set ar b
+//                    | ArrayT(N(DotNetHeap,_)) -> array_set size ar idx b
+//                    | _ -> failwith "impossible"
+//                | _ ->
+//                    let b = codegen b
+//                    if b <> "" then sprintf "%s" b |> state
+//                codegen rest
+//            | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
+//            | TyLit x -> print_value x
+//            | TyJoinPoint(MemoMethod,fv,_,tag,_) ->
+//                let method_name = print_method tag
+//                sprintf "%s(%s)" method_name (print_args !fv)
+//            | TyJoinPoint(MemoClosure args,fv,rev_renamer,tag,_) -> 
+//                let method_name = print_method tag
+//                let fv = !fv - (renamer_apply_pool rev_renamer args)
+//                if fv.IsEmpty then method_name
+//                else sprintf "%s(%s)" method_name (print_args fv)
+//            | TyBox(N(x, t)) ->
+//                let case_name =
+//                    let union_idx s = Seq.findIndex ((=) (get_type x)) s
+//                    match t with
+//                    | UnionT (N s) -> print_case_union t (union_idx s)
+//                    | RecT tag -> 
+//                        match rect_dict.[tag] with
+//                        | VVT _ -> print_tag_rec t
+//                        | UnionT (N s) -> print_case_rec t (union_idx s)
+//                        | _ -> failwith "Only VVT and UnionT can be recursive types."
+//                    | _ -> failwith "Only VVT and UnionT can be boxed types."
+//                if is_unit (get_type x) then case_name else sprintf "%s(%s)" case_name (codegen x)
+//            | TyFun(N(N env_term, _)) ->
+//                let t = get_type expr
+//                Map.toArray env_term
+//                |> Array.map snd
+//                |> fun x -> make_struct x "" (fun args -> sprintf "%s(%s)" (print_tag_env_ty t) args)
+//            | TyVV (N l) -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
+//            | TyOp(op,args,t) ->
+//                match op, args with
+//                | Apply,[a;b] ->
+//                    // Apply during codegen is only used for applying closures.
+//                    // There is one level of flattening in the outer arguments.
+//                    // The reason for this is the symmetry between the F# and the Cuda side.
+//                    let b = tuple_field b |> List.map codegen |> String.concat ", "
+//                    sprintf "%s(%s)" (codegen a) b
+//                | Case,v :: cases ->
+//                    print_if t <| fun _ ->
+//                        let print_case =
+//                            match get_type v with
+//                            | RecT _ as x -> print_case_rec x
+//                            | UnionT _ as x -> print_case_union x
+//                            | _ -> failwith "impossible"
+//
+//                        sprintf "match %s with" (codegen v) |> state
+//                        let print_case i case = 
+//                            let case = codegen case
+//                            if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state
+//                            else sprintf "| %s(%s) ->" (print_case i) case |> state
+//                        let rec loop i = function
+//                            | case :: body :: rest -> 
+//                                print_case i case
+//                                enter <| fun _ -> 
+//                                    let x = codegen body
+//                                    if String.IsNullOrEmpty x then "()" else x
+//                                loop (i+1) rest
+//                            | [] -> ()
+//                            | _ -> failwith "The cases should always be in pairs."
+//                        loop 0 cases
+//
+//                | ArrayCreate,[a] -> array_create a t
+//                | ReferenceCreate,[a] -> reference_create a
+//                | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index a b c
+//                | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetReference,_)));c] -> reference_index b
+//                | StringIndex,[str;idx] -> string_index str idx
+//                | StringLength,[str] -> string_length str
+//
+//                // Primitive operations on expressions.
+//                | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
+//                | Sub,[a;b] -> sprintf "(%s - %s)" (codegen a) (codegen b)
+//                | Mult,[a;b] -> sprintf "(%s * %s)" (codegen a) (codegen b)
+//                | Div,[a;b] -> sprintf "(%s / %s)" (codegen a) (codegen b)
+//                | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
+//                | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
+//                | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
+//                | EQ,[a;b] -> sprintf "(%s = %s)" (codegen a) (codegen b)
+//                | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
+//                | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
+//                | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
+//                | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
+//                | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
+//
+//                | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
+//                | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
+//
+//        //        | ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
+//        //        | ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
+//        //        | ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
+//        //        | ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
+//
+//                | Neg,[a] -> sprintf "(-%s)" (codegen a)
+//                | VVIndex,[a;b] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen a) (codegen b)
+//                | EnvUnseal,[r; TyLit (LitString k)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
+//                | Log,[x] -> sprintf "log(%s)" (codegen x)
+//                | Exp,[x] -> sprintf "exp(%s)" (codegen x)
+//                | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
+//                | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] ->
+//                    match t with 
+//                    | DotNetTypeInstanceT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
+//                    | _ -> failwith "impossible"
+//                | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
+//                    match v with
+//                    | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
+//                    | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
+//                // Cuda kernel constants
+//        //        | Syncthreads,[],_) -> state "syncthreads();"; ""
+//
+//                | x -> failwithf "Missing TyOp case. %A" x
+//
+//        let prefix =
+//            let mutable prefix = false
+//            fun () -> if prefix then "and" else prefix <- true; "type"
+//
+//        let print_union_cases print_case tys =
+//            enter' <| fun _ ->
+//                List.iteri (fun i -> function
+//                    | Unit -> "| " + print_case i |> state
+//                    | x -> sprintf "| %s of %s" (print_case i) (print_type x) |> state) tys
+//
+//        let print_struct_definition iter fold name tys =
+//            let args sep f =
+//                fold (fun s k ty -> 
+//                    match ty with
+//                    | Unit -> s
+//                    | _ -> f k :: s) [] tys
+//                |> List.rev
+//                |> String.concat sep
+//
+//            let args_declaration = args ", " <| fun k -> sprintf "arg_mem_%s" k
+//            let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
+//
+//            sprintf "%s %s =" (prefix()) name |> state
+//            enter' <| fun _ -> 
+//                "struct" |> state
+//                iter (fun k ty -> 
+//                    match ty with
+//                    | Unit -> ()
+//                    | _ -> sprintf "val mem_%s: %s" k (print_type ty) |> state) tys
+//            
+//                sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
+//                "end" |> state
+//
+//        let print_method_definition is_first (memo_type,body,tag,fv) = 
+//            let prefix = if is_first then "let rec" else "and"
+//            let method_name = print_method tag
+//            match memo_type with
+//            | MemoClosure args -> 
+//                let fv = !fv - args |> fun fv -> if fv.IsEmpty then "" else sprintf "(%s) " (print_args fv)
+//                sprintf "%s %s %s(%s): %s =" prefix method_name fv (print_args args) (print_type (get_type body))
+//            
+//            | MemoMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args !fv) (print_type (get_type body))
+//            |> state
+//
+//            enter <| fun _ -> 
+//                let x = codegen body
+//                if String.IsNullOrEmpty x then "()" else x
+//
+//        memoized_methods |> Seq.fold (fun is_first x -> 
+//            match x.Value with
+//            | MemoMethodDone (memo_type, e, tag, args, _) -> print_method_definition is_first (memo_type, e, tag, args); false
+//            | _ -> is_first) true |> ignore
+//        codegen main |> state // Can't forget the non-method
+//
+//        buffer_code.AddRange(buffer)
+//        buffer.Clear()
+//
+//        while definitions_queue.Count > 0 do
+//            match definitions_queue.Dequeue() with
+//            | FunT(N (N tys, _)) as x ->
+//                if is_unit_env tys = false then
+//                    let tuple_name = print_tag_env_ty x
+//                    print_struct_definition Map.iter Map.fold tuple_name tys
+//            | RecT tag as x ->
+//                let tys = rect_dict.[tag]
+//                sprintf "%s %s =" (prefix ()) (print_tag_rec x) |> state
+//                match tys with
+//                | Unit -> "| " + print_tag_rec' tag |> state
+//                | VVT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
+//                | UnionT (N tys) -> print_union_cases (print_case_rec x) (Set.toList tys)
+//                | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
+//            | UnionT (N tys) as x ->
+//                sprintf "%s %s =" (prefix()) (print_tag_union x) |> state
+//                print_union_cases (print_case_union x) (Set.toList tys)
+//            | VVT (N tys) as x ->
+//                if is_unit_tuple tys = false then
+//                    let tuple_name = print_tag_tuple x
+//                    let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+//                    let iter f l = List.iteri (fun i x -> f (string i) x) l
+//                    print_struct_definition iter fold tuple_name tys
+//            | _ -> failwith "impossible"
+//
+//        buffer_type_definitions.AddRange(buffer)
+//        buffer.Clear()
+//
+//        buffer.AddRange(buffer_type_definitions)
+//        buffer.AddRange(buffer_code)
+//  
+//        process_statements buffer
 
     // #Run
     let print_type_error (code: Dictionary<ModuleName, ModuleCode []>) (trace: Trace) message = 
@@ -2487,9 +2512,10 @@ let spiral_peval aux_modules main_module =
 //            typed_expr_optimization_pass 2 x // Is mutable
 //            printfn "Time for optimization pass was: %A" watch.Elapsed
 //            watch.Restart()
-            let x = Succ (spiral_codegen x |> copy_to_clipboard)
-            printfn "Time for codegen was: %A" watch.Elapsed
-            x
+//            let x = Succ (spiral_codegen x |> copy_to_clipboard)
+//            printfn "Time for codegen was: %A" watch.Elapsed
+//            x
+            Succ()
 
         with 
         | :? TypeError as e -> 
