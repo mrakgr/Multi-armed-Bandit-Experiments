@@ -822,7 +822,7 @@ let spiral_peval aux_modules main_module =
         | _ -> None
 
     // #Type directed partial evaluation
-    let rec expr_peval (d : LangEnv) (expr: Expr) =
+    let rec expr_peval (d: LangEnv) (expr: Expr) =
         let inline tev d expr = expr_peval d expr
         let inline apply_seq d x = !d.seq x
         let inline tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
