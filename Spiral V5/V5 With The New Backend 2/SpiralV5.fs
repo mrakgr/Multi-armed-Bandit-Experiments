@@ -517,50 +517,50 @@ let spiral_peval aux_modules main_module =
         | TypeLit (LitString x) -> Some x
         | _ -> None
 
-    let rec is_returnable' _ = true
-    let is_returnable a = is_returnable' (get_type a)
+    let inline is_returnable' _ = true
+    let inline is_returnable a = is_returnable' (get_type a)
 
     let is_numeric' = function
         | PrimT (UInt8T | UInt16T | UInt32T | UInt64T 
             | Int8T | Int16T | Int32T | Int64T 
             | Float32T | Float64T) -> true
         | _ -> false
-    let is_numeric a = is_numeric' (get_type a)
+    let inline is_numeric a = is_numeric' (get_type a)
 
     let is_string' = function
         | PrimT StringT -> true
         | _ -> false
-    let is_string a = is_string' (get_type a)
+    let inline is_string a = is_string' (get_type a)
 
     let is_char' = function
         | PrimT CharT -> true
         | _ -> false
-    let is_char a = is_char' (get_type a)
+    let inline is_char a = is_char' (get_type a)
 
     let is_primt' = function
         | PrimT x -> true
         | _ -> false
-    let is_primt a = is_primt' (get_type a)
+    let inline is_primt a = is_primt' (get_type a)
 
     let is_float' = function
         | PrimT (Float32T | Float64T) -> true
         | _ -> false
-    let is_float a = is_float' (get_type a)
+    let inline is_float a = is_float' (get_type a)
 
     let rec is_bool' = function
         | PrimT BoolT -> true
         | _ -> false
-    let is_bool a = is_bool' (get_type a)
+    let inline is_bool a = is_bool' (get_type a)
 
     let rec is_int' = function
         | PrimT (UInt32T | UInt64T | Int32T | Int64T) -> true
         | _ -> false
-    let is_int a = is_int' (get_type a)
+    let inline is_int a = is_int' (get_type a)
 
     let rec is_int64' = function
         | PrimT Int64T -> true
         | _ -> false
-    let is_int64 a = is_int64' (get_type a)
+    let inline is_int64 a = is_int64' (get_type a)
 
 
     // #Prepass
@@ -570,10 +570,10 @@ let spiral_peval aux_modules main_module =
 
     let rec pattern_compile arg pat =
         let rec pattern_compile arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
-            let cp' arg pat on_succ on_fail = pattern_compile arg pat on_succ on_fail
-            let cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
+            let inline cp' arg pat on_succ on_fail = pattern_compile arg pat on_succ on_fail
+            let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
 
-            let pat_foldbacki f s l =
+            let inline pat_foldbacki f s l =
                 let mutable len = 0
                 let rec loop i l =
                     match l with
@@ -640,7 +640,7 @@ let spiral_peval aux_modules main_module =
         inl main_arg (pattern_compile (v main_arg) pat) |> expr_prepass
 
     and expr_prepass e =
-        let f e = expr_prepass e
+        let inline f e = expr_prepass e
         match e with
         | V (N n) -> Set.singleton n, e
         | Op(N(op',l)) ->
@@ -694,7 +694,7 @@ let spiral_peval aux_modules main_module =
 
     let rec renamer_apply_env memo r e = Map.map (fun _ v -> renamer_apply_typedexpr memo r v) e |> nodify_env_term
     and renamer_apply_typedexpr (memo_dict: Dictionary<_,_>) r e =
-        let f e = renamer_apply_typedexpr memo_dict (r: Dictionary<_,_>) e
+        let inline f e = renamer_apply_typedexpr memo_dict (r: Dictionary<_,_>) e
         memoize memo_dict e <| fun () ->
             match e with
             | TyBox (N(n,t)) -> tybox(f n,t)
@@ -712,11 +712,11 @@ let spiral_peval aux_modules main_module =
             | TyLet(le,(n,t),a,b,t') -> TyLet(le,(r.[n],t),f a,f b,t')
 
     // #Free vars
-    let vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
-    let vars_union f l = vars_union' Set.empty f l
+    let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
+    let inline vars_union f l = vars_union' Set.empty f l
 
-    let rec typed_expr_free_variables_template (memo: HashSet<_>) on_join_point e =
-        let f e = typed_expr_free_variables_template memo on_join_point e
+    let rec typed_expr_free_variables_template (memo: HashSet<_>) e =
+        let inline f e = typed_expr_free_variables_template memo e
 
         if memo.Add e then
             match e with
@@ -724,19 +724,19 @@ let spiral_peval aux_modules main_module =
             | TyV(n,t) -> Set.singleton (n, t)
             | TyLit _ -> Set.empty
             | TyVV (N l) | TyOp(_,l,_) -> vars_union f l
-            | TyFun(N (N l,_)) -> env_free_variables_template memo on_join_point l
-            | TyJoinPoint(typ,used_vars,renamer,tag,ty) -> on_join_point (typ,used_vars,renamer,tag)
+            | TyFun(N (N l,_)) -> env_free_variables_template memo l
+            | TyJoinPoint(typ,fv,renamer,tag,ty) -> fv.Value.Expression |> Set
             // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
             // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
             | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
         else Set.empty
 
-    and env_free_variables_template memo on_join_point env = 
-        Map.fold (fun s _ v -> typed_expr_free_variables_template memo on_join_point v + s) Set.empty env
+    and env_free_variables_template memo env = 
+        Map.fold (fun s _ v -> typed_expr_free_variables_template memo v + s) Set.empty env
 
-    let typed_expr_std_pass (typ,fv: Arguments,renamer,tag) = fv.Value.Expression |> Set
-    let inline typed_expr_free_variables e = typed_expr_free_variables_template (h0()) typed_expr_std_pass e
-    let inline env_free_variables env = env_free_variables_template (h0()) typed_expr_std_pass env
+//    let typed_expr_std_pass (typ,fv: Arguments,renamer,tag) = fv.Value.Expression |> Set
+    let inline typed_expr_free_variables e = typed_expr_free_variables_template (h0()) e
+    let inline env_free_variables env = env_free_variables_template (h0()) env
 
     // #Postpass
     /// Optimizes the free variables for the sake of tuple deforestation.
@@ -823,20 +823,20 @@ let spiral_peval aux_modules main_module =
 
     // #Type directed partial evaluation
     let rec expr_peval (d : LangEnv) (expr: Expr) =
-        let tev d expr = expr_peval d expr
-        let apply_seq d x = !d.seq x
-        let tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
-        let tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
-        let tev_method d expr = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr |> apply_seq d
-        let tev_rec d expr = tev_method {d with rbeh=AnnotationReturn} expr
+        let inline tev d expr = expr_peval d expr
+        let inline apply_seq d x = !d.seq x
+        let inline tev_seq d expr = let d = {d with seq=ref id; cse_env=ref !d.cse_env} in tev d expr |> apply_seq d
+        let inline tev_assume cse_env d expr = let d = {d with seq=ref id; cse_env=ref cse_env} in tev d expr |> apply_seq d
+        let inline tev_method d expr = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr |> apply_seq d
+        let inline tev_rec d expr = let d = {d with seq=ref id; cse_env=ref Map.empty; rbeh=AnnotationReturn} in tev d expr |> apply_seq d
         let on_type_er trace message = TypeError(trace,message) |> raise
 
-        let tev2 d a b = tev d a, tev d b
-        let tev3 d a b c = tev d a, tev d b, tev d c
+        let inline tev2 d a b = tev d a, tev d b
+        let inline tev3 d a b c = tev d a, tev d b, tev d c
 
-        let inner_compile x = expr_prepass x |> snd |> tev d
+        let inline inner_compile x = expr_prepass x |> snd |> tev d
 
-        let v_find env x on_fail = 
+        let inline v_find env x on_fail = 
             match Map.tryFind x env with
             | Some v -> v
             | None -> on_fail()
@@ -868,13 +868,13 @@ let spiral_peval aux_modules main_module =
         // for a shallow version, take a look at `alternative_destructure_v6e.fsx`.
         // The deep version can also be straightforwardly derived from a template of this using the Y combinator.
         let rec destructure d r = 
-            let destructure r = destructure d r
+            let inline destructure r = destructure d r
 
-            let chase_cse on_succ on_fail r = 
+            let inline chase_cse on_succ on_fail r = 
                 match Map.tryFind r !d.cse_env with
                 | Some x -> on_succ x
                 | None -> on_fail r
-            let chase_recurse r = chase_cse destructure id r
+            let inline chase_recurse r = chase_cse destructure id r
 
             let destructure_var r =
                 let index_tuple_args tuple_types = 
@@ -888,13 +888,10 @@ let spiral_peval aux_modules main_module =
                 | FunT (N (N env,t)) -> tyfun(env_unseal env |> nodify_env_term, t)
                 | _ -> chase_recurse r
            
-            let destructure_cse r = 
+            let inline destructure_cse r = 
                 chase_cse 
                     chase_recurse
-                    (fun r ->
-                        let x = make_tyv_and_push_typed_expr d r
-                        cse_add d r x
-                        x)
+                    (make_tyv_and_push_typed_expr d)
                     r
             
             match r with
@@ -902,9 +899,9 @@ let spiral_peval aux_modules main_module =
             | TyBox _ | TyV _ -> destructure_var r
             | TyJoinPoint _ | TyLet _ | TyOp _ -> destructure_cse r
 
-        let if_is_returnable (TyType r & x) =
-            if is_returnable' r then x
-            else on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" r
+        let inline if_is_returnable ty_x f =
+            if is_returnable' ty_x then f()
+            else on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" ty_x
 
         let if_body d cond tr fl =
             let b x = cse_add' d cond (TyLit <| LitBool x)
@@ -915,11 +912,11 @@ let spiral_peval aux_modules main_module =
             let fl = tev_assume (b false) d fl
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then
-                match cond with
-                | TyLit(LitBool true) -> tr
-                | TyLit(LitBool false) -> fl
-                | _ -> TyOp(If,[cond;tr;fl],type_tr)
-                |> if_is_returnable
+                if_is_returnable type_tr <| fun () ->
+                    match cond with
+                    | TyLit(LitBool true) -> tr
+                    | TyLit(LitBool false) -> fl
+                    | _ -> TyOp(If,[cond;tr;fl],type_tr)
             else on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
         let if_cond d tr fl cond =
@@ -966,7 +963,7 @@ let spiral_peval aux_modules main_module =
             if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else memo_type, ref fv, renamer_reversed, tag, typed_expr_ty
 
-        let memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
+        let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
         let memoize_method d x = 
             let memo_type _ = MemoMethod
             memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
@@ -979,11 +976,11 @@ let spiral_peval aux_modules main_module =
                 TyJoinPoint(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
 
         let case_ d v case =
-            let assume d v x branch = tev_assume (cse_add' d v x) d branch
+            let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
             match tev d v with
             | TyV(_, t & (UnionT _ | RecT _)) as v ->
                 let rec case_destructure d args_ty =
-                    let f x = make_tyv_and_push_ty d x
+                    let inline f x = make_tyv_and_push_ty d x
                     let union_case = function
                         | UnionT (N l) -> Set.toList l |> List.map f
                         | _ -> [f args_ty]
@@ -1019,13 +1016,13 @@ let spiral_peval aux_modules main_module =
 
         let typec_create d x = 
             let key = nodify_memo_key (x, d.env)
-            let ret x = make_tyv_and_push_ty d (typect x)
+            let inline ret x = make_tyv_and_push_ty d (typect x)
 
-            let add_to_memo_dict x = 
+            let inline add_to_memo_dict x = 
                 memoized_methods.[key] <- MemoType x
                 x
 
-            let if_recursive_type_add_to_type_dict x =
+            let inline if_recursive_type_add_to_type_dict x =
                 match memoized_methods.TryGetValue key with
                 | true, MemoType (RecT tag as ty) -> rect_dict.[tag] <- x; ty
                 | _ -> x
@@ -1038,9 +1035,7 @@ let spiral_peval aux_modules main_module =
                 memoized_methods.[key] <- MemoTypeInEvaluation (RecT memoized_methods.Count)
                 tev_seq d x |> get_type |> typec_strip |> if_recursive_type_add_to_type_dict |> add_to_memo_dict |> ret
                 
-            
-
-        let wrap_exception d f =
+        let inline wrap_exception d f =
             try f()
             with 
             | :? TypeError as e -> reraise()
@@ -1059,7 +1054,7 @@ let spiral_peval aux_modules main_module =
 
         let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
 
-        let array_index' d = function
+        let inline array_index' d = function
             | ar, idx when is_all_int64 idx ->
                 match ar with
                 | TyArray (size,ar,_,t) ->
@@ -1083,12 +1078,11 @@ let spiral_peval aux_modules main_module =
             | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
             | _ -> on_type_er d.trace "Expected a string."
 
-        let rec apply d a b = apply_template tev d (a, b)
-        and apply_template tev d (a, b) = 
+        let rec apply d a b = 
             match destructure d a, destructure d b with
             // It might make more sense to use TyType rather than TyTag here, but I do not want get_type to be triggered on everything here
             // as it is an expensive operation.
-            | closure & TyFun(N(N env_term,(FunTypeFunction _ | FunTypeRecFunction _))), TyV (_,ForCastT (N args_ty)) -> 
+            | recf & TyFun(N(N env_term,fun_type)), TyV (_,ForCastT (N args_ty)) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
                     match args_ty with
@@ -1096,8 +1090,16 @@ let spiral_peval aux_modules main_module =
                     | x -> f x
             
                 let args = instantiate_type_as_variable d args_ty
-                apply_template (memoize_closure args) d (closure, args)
-            | x, TyV (_,ForCastT (args_ty)) -> on_type_er d.trace <| sprintf "Expected a function in type application. Got: %A" x
+                let inline tev d body = memoize_closure args d body
+                match fun_type with
+                | FunTypeModule -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" fun_type
+                // Usually it is against my principles to do inlining by hand, but apply is directly on the hot path 
+                // and without me doing this, it would need to take higher order functions.
+                | FunTypeRecFunction ((pat,body),name) ->
+                    let env = if pat <> "" then Map.add pat args env_term else env_term
+                    tev {d with env = Map.add name recf env |> nodify_env_term} body
+                | FunTypeFunction (pat,body) -> 
+                    tev {d with env = nodify_env_term <| if pat <> "" then Map.add pat args env_term else env_term} body
             | recf & TyFun(N(N env_term,FunTypeRecFunction ((pat,body),name))), args -> 
                 let env = if pat <> "" then Map.add pat args env_term else env_term
                 tev {d with env = Map.add name recf env |> nodify_env_term} body
@@ -1167,7 +1169,8 @@ let spiral_peval aux_modules main_module =
                 else on_type_er d.trace "The index into a string literal is out of bounds."
             | TyType(PrimT StringT) & str, idx -> 
                 if is_int idx = false then on_type_er d.trace "Expected an int as the second argument to string index."
-                TyOp(StringIndex,[str;idx],PrimT CharT)
+                TyOp(StringIndex,[str;idx],PrimT CharT) 
+                |> destructure d // Just like VVIndex, StringIndex might need rewriting. 
             | closure & TyType(ClosureT(N (clo_arg_ty,clo_ret_ty))), args -> 
                 let arg_ty = get_type args
                 if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
@@ -1176,7 +1179,7 @@ let spiral_peval aux_modules main_module =
 
         let apply_tev d expr args = apply d (tev d expr) (tev d args)
 
-        let vv_index_template f d v i =
+        let inline vv_index_template f d v i =
             let v,i = tev2 d v i
             match v, i with
             | TyVV (N l), TyLitIndex i ->
@@ -1189,7 +1192,7 @@ let spiral_peval aux_modules main_module =
         let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i |> destructure d
         let vv_slice_from d v i = vv_index_template (fun l i -> tyvv l.[i..]) d v i
 
-        let vv_unop_template on_succ on_fail d v =
+        let inline vv_unop_template on_succ on_fail d v =
             match tev d v with
             | TyVV (N l) -> on_succ l
             | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
@@ -1233,7 +1236,7 @@ let spiral_peval aux_modules main_module =
                 else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `upon'` if that is the desired behavior." name
             | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `upon'` if that is the desired behavior." name
 
-        let module_with_template f d module_ name arg =
+        let inline module_with_template f d module_ name arg =
             let module_, name, arg = tev3 d module_ name arg
             match module_, name with
             | TyFun(N(N module_,FunTypeModule)), TypeString name -> f d module_ name arg
@@ -1251,17 +1254,17 @@ let spiral_peval aux_modules main_module =
                 let ta, tb = get_type a, get_type b |> typec_strip
                 if ta = tb then a else on_type_er d.trace <| sprintf "%A <> %A" ta tb
 
-        let prim_bin_op_template d check_error is_check k a b t =
+        let inline prim_bin_op_template d check_error is_check k a b t =
             let a, b = tev2 d a b
             if is_check a b then k t a b
             else on_type_er d.trace (check_error a b)
 
-        let prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
-        let prim_un_op_helper t a = TyOp(t,[a],get_type a)
-        let bool_helper t a b = TyOp(t,[a;b],PrimT BoolT)
+        let inline prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
+        let inline prim_un_op_helper t a = TyOp(t,[a],get_type a)
+        let inline bool_helper t a b = TyOp(t,[a;b],PrimT BoolT)
 
-        let prim_arith_op d = 
-            let er = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A"
+        let prim_arith_op d a b t = 
+            let er a b = sprintf "`is_numeric a && get_type a = get_type b` is false.\na=%A, b=%A" a b
             let check a b = is_numeric a && get_type a = get_type b
             prim_bin_op_template d er check (fun t a b ->
                 let inline op_arith a b =
@@ -1287,10 +1290,10 @@ let spiral_peval aux_modules main_module =
                     | LitFloat64 a, LitFloat64 b -> op_arith a b |> LitFloat64 |> TyLit
                     | _ -> prim_bin_op_helper t a b
                 | _ -> prim_bin_op_helper t a b
-                )
+                ) a b t
 
-        let prim_comp_op d = 
-            let er = sprintf "(is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A"
+        let prim_comp_op d a b t = 
+            let er a b = sprintf "(is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b` is false.\na=%A, b=%A" a b
             let check a b = (is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b
             prim_bin_op_template d er check (fun t a b ->
                 let inline eq_op a b = LitBool (a = b) |> TyLit
@@ -1324,10 +1327,10 @@ let spiral_peval aux_modules main_module =
                         | LitChar a, LitChar b -> op a b |> LitBool |> TyLit
                         | _ -> bool_helper t a b
                     | _ -> bool_helper t a b
-                    )
+                    ) a b t
 
-        let prim_bool_op d = 
-            let er = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A"
+        let prim_bool_op d a b t = 
+            let er a b = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A" a b
             let check a b = is_bool a && get_type a = get_type b
             prim_bin_op_template d er check (fun t a b ->
                 let inline op a b =
@@ -1338,30 +1341,30 @@ let spiral_peval aux_modules main_module =
                 match a, b with
                 | TyLit (LitBool a), TyLit (LitBool b) -> op a b |> LitBool |> TyLit
                 | _ -> bool_helper t a b            
-                )
+                ) a b t
 
-        let prim_shift_op d =
-            let er = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A"
+        let prim_shift_op d a b t =
+            let er a b = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A" a b
             let check a b = is_int a && is_int b
-            prim_bin_op_template d er check prim_bin_op_helper
+            prim_bin_op_template d er check prim_bin_op_helper a b t
 
-        let prim_shuffle_op d =
-            let er = sprintf "`is_int b` is false.\na=%A, b=%A"
+        let prim_shuffle_op d a b t =
+            let er a b = sprintf "`is_int b` is false.\na=%A, b=%A" a b
             let check a b = is_int b
-            prim_bin_op_template d er check prim_bin_op_helper
+            prim_bin_op_template d er check prim_bin_op_helper a b t
 
         let prim_un_op_template d check_error is_check k a t =
             let a = tev d a
             if is_check a then k t a
             else on_type_er d.trace (check_error a)
 
-        let prim_un_floating d =
-            let er = sprintf "`is_float a` is false.\na=%A"
+        let prim_un_floating d a t =
+            let er a = sprintf "`is_float a` is false.\na=%A" a
             let check a = is_float a
-            prim_un_op_template d er check prim_un_op_helper
+            prim_un_op_template d er check prim_un_op_helper a t
 
-        let prim_un_numeric d =
-            let er = sprintf "`is_numeric a` is false.\na=%A"
+        let prim_un_numeric d a t =
+            let er a = sprintf "`is_numeric a` is false.\na=%A" a
             let check a = is_numeric a
             prim_un_op_template d er check (fun t a -> 
                 let inline op a = 
@@ -1380,7 +1383,7 @@ let spiral_peval aux_modules main_module =
                     | LitFloat64 a -> op a |> LitFloat64 |> TyLit
                     | _ -> prim_un_op_helper t a
                 | _ -> prim_un_op_helper t a
-                )
+                ) a t
 
         let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> make_tyv_and_push_ty d
         let error_non_unit d a =
@@ -1431,7 +1434,7 @@ let spiral_peval aux_modules main_module =
             | l, r when get_type l = get_type r -> make_tyv_and_push_typed_expr d (TyOp(ArraySet,[l;r],BVVT))
             | _ -> on_type_er d.trace "The two sides in array set have different types."
 
-        let add_trace d x = {d with trace = x :: d.trace}
+        let inline add_trace d x = {d with trace = x :: d.trace}
 
         match expr with
         | Lit (N value) -> TyLit value
@@ -1443,9 +1446,10 @@ let spiral_peval aux_modules main_module =
         | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
         | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
         | ExprPos p -> tev (add_trace d p.Pos) p.Expression
-        | VV (N vars) -> List.map (tev d) vars |> tyvv
+        | VV (N vars) -> List.map (tev d >> destructure d) vars |> tyvv
         | Op(N (op,vars)) ->
-            match op, vars with
+            match op,vars with
+            | Apply,[a;b] -> apply_tev d a b
             | StringLength,[a] -> string_length d a
             | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
             | Fix,[Lit (N (LitString name)); body] ->
@@ -1455,12 +1459,9 @@ let spiral_peval aux_modules main_module =
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
             | If,[cond;tr;fl] -> if_ d cond tr fl
-            | Apply,[a;b] -> apply_tev d a b
             | JoinPoint,[a] -> memoize_method d a
             | ForCast,[x] -> for_cast d x
-            | PrintStatic,[a] -> 
-                printfn "%A" (tev d a)
-                TyB
+            | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
             | PrintEnv,[a] -> printfn "%A" d.env; tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | ModuleOpen,[a;b] -> module_open d a b

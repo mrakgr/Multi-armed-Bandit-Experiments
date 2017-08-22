@@ -497,17 +497,6 @@ inl ret =
 Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
     """
 
-let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
-    "test34",
-    """
-inl console = mscorlib."System.Console"
-inl (|>>) = Parsing."|>>"
-inl end x = ()
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 10 |>> f) end
-
-parse <| inl _ -> ()
-    """
-
 let hacker_rank_2 =
     "hacker_rank_2",
     """
@@ -525,17 +514,46 @@ inl comp = function
 
 parse_3 <| inl a1,a2,a3 ->
     parse_3 <| inl x1,x2,x3 ->
-        print_static (a1,a2,a3)
-        print_static (x1,x2,x3)
-        comp (a1,x1); comp (a2,x2); comp (a3,x3)
+        comp (a1,x1)
+        comp (a2,x2)
+        comp (a3,x3)
 
 alice() |> console.Write
 console.Write ' '
 bob() |> console.Write
     """
 
+let test37 = // Do unit statements get cut off?
+    "test37",
+    """
+inl alice = ref 0
+inl bob = ref 0
+inl comp = function
+    | a,b when a > b -> alice := alice () + 1
+    | a,b when a < b -> bob := bob () + 1
+    | a,b -> ()
+
+inl preturn = Parsing.preturn
+inl (|>>) = Parsing."|>>"
+
+inl parse f = Parsing.run (dyn "asd") (preturn () |>> f) (inl _ -> ())
+parse <| inl _ ->
+    comp (dyn 3, dyn 4)
+    """
+
+let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
+    "test34",
+    """
+inl console = mscorlib."System.Console"
+inl (|>>) = Parsing."|>>"
+inl end x = ()
+inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320 |>> f) end
+
+parse <| inl _ -> ()
+    """
+
 let f () =
-    let x = spiral_peval [tuple; parsing] hacker_rank_2
+    let x = spiral_peval [tuple;parsing] test34
     printfn "Time spent in renaming: %A" total_time
     //printfn "%A" x
     ()
