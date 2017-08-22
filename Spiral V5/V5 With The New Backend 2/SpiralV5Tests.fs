@@ -2,32 +2,32 @@
 open Lib
 open Main
 
-let test1 = // Does it run?
-    "test1",
+let test1 = 
+    "test1",[],"Does it run?",
     """
 inl a = 5
 inl b = 10
 a + b
     """
 
-let test2 = // Does it run methods?
-    "test2",
+let test2 = 
+    "test2",[],"Does it run methods?",
     """
 met a () = 5
 met b () = 10
 a () + b ()
     """
 
-let test3 = // Does this method case work?
-    "test3",
+let test3 = // 
+    "test3",[],"Does this method case work?",
     """
 met a = 5
 met b = 10
 a + b
     """
 
-let test4 = // Does the and pattern work correctly?
-    "test4",
+let test4 = // 
+    "test4",[],"Does the and pattern work correctly?",
     """
 met f (a, b) (c, d) = (a+c,b+d)
 met q & (a, b) = 1,2
@@ -35,8 +35,8 @@ met w & (c, d) = 3,4
 f q w
     """
 
-let test5 = // Does basic pattern matching work?
-    "test5",
+let test5 = // 
+    "test5",[],"Does basic pattern matching work?",
     """
 inl f = function
     || .Add x y -> x + y
@@ -48,8 +48,8 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let fib = // Does recursion work on the fibonacci example?
-    "fib",
+let fib = // 
+    "fib",[],"Does recursion work on the fibonacci example?",
     """
 met rec fib ^dyn x = 
     if x <= 0 then 0 else fib (x-1) + fib (x-2)
@@ -57,8 +57,8 @@ met rec fib ^dyn x =
 fib 1
     """
 
-let test6 = // Does returning type level methods from methods work?
-    "test6",
+let test6 = // 
+    "test6",[],"Does returning type level methods from methods work?",
     """
 met min n =
     met tes a =
@@ -68,8 +68,8 @@ met min n =
     tes 1 2 (2.2,3,4.5)
 min 10
     """
-let test7 = // Do active patterns work?
-    "test7",
+let test7 = // 
+    "test7",[],"Do active patterns work?",
     """
 inl f op1 op2 op3 = function
     | ^op1 (.Some, x) -> x
@@ -94,8 +94,8 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let test8 = // Does the basic union type work?
-    "test8",
+let test8 = // 
+    "test8",[],"Does the basic union type work?",
     """
 met x =
     inl option_int = 
@@ -108,8 +108,8 @@ match x with
 | .None -> 0
     """
 
-let test9 = // Does the partial evaluator optimize unused match cases?
-    "test9",
+let test9 = // 
+    "test9",[],"Does the partial evaluator optimize unused match cases?",
     """
 inl ab = 
     type .A
@@ -122,8 +122,8 @@ match x with
 | _ -> 4
     """
 
-let test10 = // The worst case for partially evaluated pattern matchers.
-    "test10",
+let test10 = // 
+    "test10",[],"The worst case for partially evaluated pattern matchers.",
     """
 inl ab = 
     type .A
@@ -136,8 +136,8 @@ match x with
 | _ -> 4
     """
 
-let test11 = // Do the nested patterns work on dynamic data?
-    "test1",
+let test11 = // 
+    "test1",[],"Do the nested patterns work on dynamic data?",
     """
 inl a = type (1,2)
 inl b = type (1,a,a)
@@ -148,8 +148,8 @@ match x with
 | _ :: () -> 0
     """
 
-let test12 = // Does recursive pattern matching work on static data?
-    "test12",
+let test12 = // 
+    "test12",[],"Does recursive pattern matching work on static data?",
     """
 inl rec p = function
     | .Some, x -> p x
@@ -157,8 +157,8 @@ inl rec p = function
 p (.Some, .None)
     """
 
-let test13 = // A more complex interpreter example on static data.
-    "test13",
+let test13 = // 
+    "test13",[],"A more complex interpreter example on static data.",
     """
 met rec expr x = 
     type 
@@ -179,8 +179,8 @@ inl rec interpreter_static = function
 interpreter_static c
     """
 
-let test14 = // Does recursive pattern matching work on partially static data?
-    "test14",
+let test14 = // 
+    "test14",[],"Does recursive pattern matching work on partially static data?",
     """
 met rec expr x = 
     type 
@@ -203,8 +203,8 @@ met rec inter x =
 inter c
     """
 
-let test15 = // Does basic .NET interop work?
-    "test15",
+let test15 = // 
+    "test15",[],"Does basic .NET interop work?",
     """
 inl system = load_assembly .mscorlib
 inl builder_type = ."System.Text.StringBuilder" |> system 
@@ -226,9 +226,8 @@ dict.get_Item 1
     """
 
 let hacker_rank_1 =
-    "hacker_rank_1",
+    "hacker_rank_1",[],"The very first warmup exercise : https://www.hackerrank.com/challenges/solve-me-first",
     """
-// The very first warmup exercise : https://www.hackerrank.com/challenges/solve-me-first
 inl console = ."System.Console" |> mscorlib
 inl parse_int32 = 
     inl f = ."System.Int32" |> mscorlib
@@ -240,16 +239,16 @@ inl a, b = read_int(), read_int()
 write (a + b)
     """
 
-let test16 = // Do var union types work?
-    "test16",
+let test16 = // 
+    "test16",[],"Do var union types work?",
     """
 inl t = type (union (type int64) (type float32))
 if dyn true then t 0
 else t 0.0
     """
 
-let test17 = // Do modules work?
-    "test17",
+let test17 = // 
+    "test17",[],"Do modules work?",
     """
 inl m =
     inl x = 2
@@ -259,8 +258,8 @@ inl m =
 m.x, m.y, m.z
     """
 
-let test18 = // Do arrays and references work?
-    "test18",
+let test18 = // 
+    "test18",[],"Do arrays and references work?",
     """
 inl a = ref 0
 a := 5
@@ -279,16 +278,16 @@ a (1) <- ()
 a (1) |> ignore
     """
 
-let test19 = // Does term level casting for functions work?
-    "test19",
+let test19 = // 
+    "test19",[],"Does term level casting for functions work?",
     """
 inl add a b (c, (d, f), e) = a + b + c + d + e + f
 inl f = add 1 (dyn 2) `(int64,(int64,int64),int64)
 f (1,(2,5),3)
     """
 
-let test20 = // Does pattern matching on union non-tuple types work? Do type annotation patterns work?
-    "test20",
+let test20 = // 
+    "test20",[],"Does pattern matching on union non-tuple types work? Do type annotation patterns work?",
     """
 inl t = union (type int64) (type float32)
 inl x = t 3.5
@@ -297,8 +296,8 @@ match x with
 | q : int64 -> x * x
     """
 
-let test21 = // Does defining user operators work?
-    "test21",
+let test21 = // 
+    "test21",[],"Does defining user operators work?",
     """
 inl (.+) a b = a + b
 inl x = 2 * 22 .+ 33
@@ -307,8 +306,8 @@ inl f op a b = op a b
 f (*) 2 x
     """
 
-let test22 = // Do unary operators work?
-    "test22",
+let test22 = // 
+    "test22",[],"Do unary operators work?",
     """
 inl t1 x = -x
 inl t2 x = `x
@@ -316,8 +315,8 @@ inl t3 x = .(x)
 t2 true, t3 "asd", t1 2.2
     """
 
-let test23 = // Do when and as patterns work?
-    "test23",
+let test23 = // 
+    "test23",[],"Do when and as patterns work?",
     """
 inl f = function
     | a,b,c as q when a < 10 -> q
@@ -325,8 +324,8 @@ inl f = function
 f (1,2,3)
     """
 
-let test24 = // Do literal pattern matchers work? Does partial evaluation of equality work?
-    "test24",
+let test24 = // 
+    "test24",[],"Do literal pattern matchers work? Does partial evaluation of equality work?",
     """
 inl f x = 
     match x with
@@ -345,22 +344,22 @@ f 0, f 1, f false, f true, f "asd", f 1i8,
 f 5.5, f 5f64, f .5.5, f .23u32
     """
 
-let test25 = // Does the tuple cons pattern work?
-    "test25",
+let test25 = // 
+    "test25",[],"Does the tuple cons pattern work?",
     """
 inl f = function | x1 :: x2 :: x3 :: xs -> 3 | x1 :: x2 :: xs -> 2 | x1 :: xs -> 1 | () -> 0
 
 f (), f (1 :: ()), f (1,2)
     """
 
-let test26 = // Does tuple map work? This also tests rev and foldl.
-    "test26",
+let test26 = // 
+    "test26",[tuple],"Does tuple map work? This also tests rev and foldl.",
     """
 Tuple.map (inl x -> x * 2) (1,2,3)
     """
 
-let test27 = // Do tuple zip and unzip work?
-    "test27",
+let test27 = // 
+    "test27",[tuple],"Do tuple zip and unzip work?",
     """
 inl j = 2,3.3
 inl k = 4.4,55
@@ -370,8 +369,8 @@ inl n = 123,456
 Tuple.zip ((j,k),(l,m),n) |> Tuple.unzip
     """
 
-let test28 = // Does string indexing work?
-    "test28",
+let test28 = // 
+    "test28",[],"Does string indexing work?",
     """
 inl console = mscorlib ."System.Console"
 inl a = "qwe"
@@ -379,8 +378,8 @@ inl b = console.ReadLine()
 a(0),b(0)
     """
 
-let test30 = // Do recursive algebraic datatypes work?
-    "test30",
+let test30 = // 
+    "test30",[],"Do recursive algebraic datatypes work?",
     """
 met rec List x =
     type
@@ -400,8 +399,8 @@ met rec sum (^int64 (^dyn s)) l =
 nil |> cons 3 |> cons 2 |> cons 1 |> dyn |> sum 0
         """
 
-let test31 = // Does passing types into types work?
-    "test31",
+let test31 = // 
+    "test31",[],"Does passing types into types work?",
     """
 inl a = 
     type 
@@ -415,16 +414,16 @@ inl b =
 (.A, (2,3)) |> a |> dyn |> b
     """
 
-let test32 = // Do the .NET methods work inside methods?
-    "test32",
+let test32 = // 
+    "test32",[],"Do the .NET methods work inside methods?",
     """
 inl to_int64 = mscorlib ."System.Convert" .ToInt64
 met f = to_int64 (dyn 'a')
 f
     """
 
-let test33 = // Does a simple loop have superlinear scaling?
-    "test33",
+let test33 = //
+    "test33",[],"Does a simple loop have superlinear scaling?",
     """
 inl rec loop = function
     | i when i > 0 -> loop (i-1)
@@ -432,8 +431,8 @@ inl rec loop = function
 loop 50000
     """
 
-let test29 = // Does a simple int parser work?
-    "test29",
+let test29 = // 
+    "test29",[tuple;parsing],"Does a simple int parser work?",
     """
 inl console = mscorlib ."System.Console"
 inl t =
@@ -462,8 +461,8 @@ match result with
     0
     """
 
-let test35 = // Does case on union types with recursive types work properly?
-    "test35",
+let test35 = // 
+    "test35",[],"Does case on union types with recursive types work properly?",
     """
 met rec List x = 
     type
@@ -483,10 +482,8 @@ match Res 1 |> dyn with
     """
 
 let hacker_rank_2 =
-    "hacker_rank_2",
+    "hacker_rank_2",[tuple;parsing],"https://www.hackerrank.com/challenges/compare-the-triplets",
     """
-// https://www.hackerrank.com/challenges/compare-the-triplets
-
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
 inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3 |>> f) (inl _ -> ())
@@ -508,8 +505,8 @@ console.Write ' '
 bob() |> console.Write
     """
 
-let test37 = // Do unit statements get cut off?
-    "test37",
+let test37 = // 
+    "test37",[tuple;parsing],"Do unit statements get cut off?",
     """
 inl alice = ref 0
 inl bob = ref 0
@@ -526,8 +523,8 @@ parse <| inl _ ->
     comp (dyn 3, dyn 4)
     """
 
-let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
-    "test34",
+let test34 = // 
+    "test34",[tuple;parsing],"Does parse_n_ints blow up the code size? Does it scale linearly?",
     """
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
@@ -537,8 +534,8 @@ inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320 |>> f) 
 parse <| inl _ -> ()
     """
 
-let test36 = // Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.
-    "test36",
+let test36 = // 
+    "test36",[tuple;parsing2],"Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.",
     """
 inl console = mscorlib."System.Console"
 
@@ -552,11 +549,25 @@ inl ret =
 Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
     """
 
-let f () =
-    let x = spiral_peval [tuple;parsing2] test36
-    printfn "Time spent in renaming: %A" total_time
-    //printfn "%A" x
-    ()
-System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
+let tests =
+    [|
+    test1;test2;test3;test4;test5;test6;test7;test8;test9
+    test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
+    test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
+    test30;test31;test32;test33;test34;test35;test36
+    hacker_rank_1;hacker_rank_2
+    |]
 
+let run_test name =
+    let name,aux_modules,desc,body = Array.find (fun (name',aux,desc,body) -> name = name') tests
 
+    let f () =
+        printfn "%s - %s" name desc
+        let main_module = name,body
+        let x = spiral_peval aux_modules main_module
+        printfn "Time spent in renaming: %A" total_time
+        //printfn "%A" x
+        ()
+    System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
+
+run_test "test36"

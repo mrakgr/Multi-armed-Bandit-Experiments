@@ -2494,7 +2494,7 @@ let spiral_peval aux_modules main_module =
         f main_module
         d
      
-    let copy_to_clipboard x =
+    let copy_to_temporary x =
         let path = IO.Path.Combine(__SOURCE_DIRECTORY__,"output.txt")
         printfn "Copied the code to: %s" path
         IO.File.WriteAllText(path,x)
@@ -2515,7 +2515,7 @@ let spiral_peval aux_modules main_module =
 //            typed_expr_optimization_pass 2 x // Is mutable
 //            printfn "Time for optimization pass was: %A" watch.Elapsed
 //            watch.Restart()
-            let x = Succ (spiral_codegen x |> copy_to_clipboard)
+            let x = Succ (spiral_codegen x |> copy_to_temporary)
             printfn "Time for codegen was: %A" watch.Elapsed
             x
 
