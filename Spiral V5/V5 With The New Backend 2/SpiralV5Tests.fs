@@ -482,21 +482,6 @@ match Res 1 |> dyn with
 | _ -> 3
     """
 
-let test36 = // Does parse_n_ints blow up the code size? Does it scale linearly? This is for the new parsing library that uses modules.
-    "test36",
-    """
-inl console = mscorlib."System.Console"
-
-inl ret = 
-    inl on_succ x = ()
-    inl on_fail x = ()
-    inl on_fatal_fail x = ()
-    inl on_type = ()
-    module (on_succ,on_fail,on_fatal_fail,on_type)
-
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
-    """
-
 let hacker_rank_2 =
     "hacker_rank_2",
     """
@@ -552,10 +537,25 @@ inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320 |>> f) 
 parse <| inl _ -> ()
     """
 
+let test36 = // Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.
+    "test36",
+    """
+inl console = mscorlib."System.Console"
+
+inl ret = 
+    inl on_succ x = Tuple.foldl (+) 0 x
+    inl on_fail x = 0
+    inl on_fatal_fail x = 0
+    inl on_type = int64
+    module (on_succ,on_fail,on_fatal_fail,on_type)
+
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
+    """
+
 let f () =
-    let x = spiral_peval [tuple;parsing] test34
+    let x = spiral_peval [tuple;parsing2] test36
     printfn "Time spent in renaming: %A" total_time
     //printfn "%A" x
     ()
-System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*256).Start()
+System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 

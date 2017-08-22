@@ -2495,9 +2495,9 @@ let spiral_peval aux_modules main_module =
         d
      
     let copy_to_clipboard x =
-        let path = @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\ConsoleApplication4\ConsoleApplication4\Program.fs"
+        let path = IO.Path.Combine(__SOURCE_DIRECTORY__,"output.txt")
         printfn "Copied the code to: %s" path
-        System.IO.File.WriteAllText(path,x)
+        IO.File.WriteAllText(path,x)
         x
 
     let watch = System.Diagnostics.Stopwatch.StartNew()
