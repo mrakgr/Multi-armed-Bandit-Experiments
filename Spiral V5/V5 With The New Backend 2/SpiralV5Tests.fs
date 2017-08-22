@@ -423,30 +423,6 @@ met f = to_int64 (dyn 'a')
 f
     """
 
-let hacker_rank_2 =
-    "hacker_rank_2",
-    """
-// https://www.hackerrank.com/challenges/compare-the-triplets
-
-inl console = mscorlib."System.Console"
-inl (|>>) = Parsing."|>>"
-inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3 |>> f) (inl _ -> ())
-inl alice = ref 0
-inl bob = ref 0
-inl comp = function
-    | a,b when a > b -> alice := alice () + 1
-    | a,b when a < b -> bob := bob () + 1
-    | a,b -> ()
-
-parse_3 <| inl a1,a2,a3 ->
-    parse_3 <| inl x1,x2,x3 ->
-        comp (a1,x1); comp (a2,x2); comp (a3,x3)
-
-alice() |> console.Write
-console.Write ' '
-bob() |> console.Write
-    """
-
 let test33 = // Does a simple loop have superlinear scaling?
     "test33",
     """
@@ -518,7 +494,7 @@ inl ret =
     inl on_type = ()
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 10) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
     """
 
 let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
@@ -527,16 +503,41 @@ let test34 = // Does parse_n_ints blow up the code size? Does it scale linearly?
 inl console = mscorlib."System.Console"
 inl (|>>) = Parsing."|>>"
 inl end x = ()
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320 |>> f) end
+inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 10 |>> f) end
 
 parse <| inl _ -> ()
     """
 
+let hacker_rank_2 =
+    "hacker_rank_2",
+    """
+// https://www.hackerrank.com/challenges/compare-the-triplets
+
+inl console = mscorlib."System.Console"
+inl (|>>) = Parsing."|>>"
+inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3 |>> f) (inl _ -> ())
+inl alice = ref 0
+inl bob = ref 0
+inl comp = function
+    | a,b when a > b -> alice := alice () + 1
+    | a,b when a < b -> bob := bob () + 1
+    | a,b -> ()
+
+parse_3 <| inl a1,a2,a3 ->
+    parse_3 <| inl x1,x2,x3 ->
+        print_static (a1,a2,a3)
+        print_static (x1,x2,x3)
+        comp (a1,x1); comp (a2,x2); comp (a3,x3)
+
+alice() |> console.Write
+console.Write ' '
+bob() |> console.Write
+    """
 
 let f () =
-    let x = spiral_peval [tuple; parsing] test34
+    let x = spiral_peval [tuple; parsing] hacker_rank_2
+    printfn "Time spent in renaming: %A" total_time
     //printfn "%A" x
-    printfn "%A" total_time
     ()
 System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*256).Start()
 
