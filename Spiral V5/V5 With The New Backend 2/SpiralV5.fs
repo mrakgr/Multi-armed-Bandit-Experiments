@@ -232,7 +232,19 @@ and TypedExpr =
     | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
     | TyLit of Value
     | TyOp of Op * TypedExpr list * Ty
-    | TyJoinPoint of MemoExprType * Arguments * Renamer * Tag * Ty
+    | TyJoinPoint of JoinPointKey * Ty
+
+and JoinPointType =
+    | JoinPointClosure of Arguments
+    | JoinPointMethod
+and JoinPointKey = MemoKey * Tag
+and JoinPointValue = JoinPointType * Arguments * Renamer
+
+and MemoCases =
+    | MemoMethodInEvaluation
+    | MemoMethod of JoinPointType * Arguments * TypedExpr
+    | MemoTypeInEvaluation of Ty
+    | MemoType of Ty
 
 and Tag = int
 and TyTag = Tag * Ty
@@ -240,23 +252,12 @@ and EnvTerm = Node<Map<string, TypedExpr>>
 and EnvTy = Node<Map<string, Ty>>
 and MemoKey = Node<Expr * EnvTerm>
 
-and Pool = Node<HashSet<TyTag>>
-and Arguments = Pool ref
-and Renamer = Node<Dictionary<Tag,Tag>>
-
-and MemoExprType =
-    | MemoClosure of Pool
-    | MemoMethod
+and Arguments = HashSet<TyTag>
+and Renamer = Dictionary<Tag,Tag>
 
 and LetType =
     | LetStd
     | LetInvisible
-
-and MemoCases =
-    | MemoMethodInEvaluation of Tag
-    | MemoMethodDone of MemoExprType * TypedExpr * Tag * Arguments * optimization_pass_count: int ref
-    | MemoTypeInEvaluation of Ty
-    | MemoType of Ty
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
 and MemoDict = Dictionary<MemoKey, MemoCases>
