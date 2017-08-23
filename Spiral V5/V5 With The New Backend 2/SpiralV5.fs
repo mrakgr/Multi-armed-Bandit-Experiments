@@ -17,6 +17,7 @@ open System.Text
 // Language types
 type ModuleName = string
 type ModuleCode = string
+type Module = Module of name: ModuleName * aux_modules: Module list * description: string * code: ModuleCode
 
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
@@ -299,7 +300,7 @@ and ProgramNode =
     | Statements of Buf
 
 // #Main
-let spiral_peval aux_modules main_module = 
+let spiral_peval (Module(module_name,module_auxes,_,module_code)) = 
     let h0() = HashSet(HashIdentity.Structural)
     let d0() = Dictionary(HashIdentity.Structural)
     let force (x: Lazy<_>) = x.Value
@@ -865,7 +866,10 @@ let spiral_peval aux_modules main_module =
             let inline destructure_cse r = 
                 chase_cse 
                     chase_recurse
-                    (make_tyv_and_push_typed_expr d)
+                    (fun r ->
+                        let x = make_tyv_and_push_typed_expr d r
+                        if flag_optimization then cse_add d r x
+                        x)
                     r
             
             match r with
@@ -2447,17 +2451,25 @@ let spiral_peval aux_modules main_module =
             l "upon'" (p3 <| fun a b c -> op(ModuleWithExtend,[a;b;c]))
             ]
 
-    let rec parse_modules xs on_fail ret =
-        let p x on_fail ret =
+    let rec parse_modules (modules_auxes: Module list) on_fail ret =
+        let m = h0()
+
+        let inline p x ret =
             match spiral_parse x with
             | Success(r,_,_) -> ret r
             | Failure(er,_,_) -> on_fail er
-        match xs with
-        | (name,code as x) :: xs -> 
-            p x on_fail <| fun r -> 
-                parse_modules xs on_fail <| fun rs ->
-                    l name r rs |> ret
-        | [] -> p main_module on_fail ret
+        let rec loop xs ret =
+            match xs with
+            | Module(name,aux_modules,_,code) :: xs -> 
+                //loop aux_modules <| fun auxes ->
+//                if m.Add(name,code) then
+                    p (name,code) <| fun r -> 
+                        loop xs <| fun rs ->
+                            l name r rs |> ret
+//                else
+//                    loop xs ret
+            | [] -> p (module_name,module_code) ret
+        loop module_auxes ret
 
     let code =
         let d = Dictionary()
@@ -2467,13 +2479,13 @@ let spiral_peval aux_modules main_module =
         d
      
     let copy_to_temporary x =
-        let path = IO.Path.Combine(__SOURCE_DIRECTORY__,"output.txt")
+        let path = IO.Path.Combine(__SOURCE_DIRECTORY__,"output.fsx")
         printfn "Copied the code to: %s" path
         IO.File.WriteAllText(path,x)
         x
 
     let watch = System.Diagnostics.Stopwatch.StartNew()
-    parse_modules aux_modules Fail <| fun body -> 
+    parse_modules module_auxes Fail <| fun body -> 
         printfn "Time for parse: %A" watch.Elapsed
         watch.Restart()
         let d = data_empty()

@@ -556,13 +556,28 @@ inl t = int64 (dyn 1)
 print_static t
     """
 
+let hacker_rank_3 =
+    "test39",[tuple;parsing2;console],"https://www.hackerrank.com/challenges/mini-max-sum",
+    """
+open Console
+open Parsing
+run_with_unit_ret (read_n_ints 5) (inl x :: xs as l ->
+    inl min a b = if a < b then a else b
+    inl max a b = if a > b then a else b
+    inl sum = Tuple.foldl (+) 0 l
+    inl min = Tuple.foldl min x l
+    inl max = Tuple.foldl max x l
+    // Now how do I print this?
+    )
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38
-    hacker_rank_1;hacker_rank_2
+    hacker_rank_1;hacker_rank_2;hacker_rank_3
     |]
 
 let run_test name =
@@ -577,4 +592,4 @@ let run_test name =
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test36"
+run_test "test34"

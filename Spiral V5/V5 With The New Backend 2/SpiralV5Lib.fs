@@ -1,7 +1,7 @@
 ﻿module Spiral.Lib
 
 let tuple =
-    "Tuple",
+    "Tuple",[],"Operations on tuples.",
     """
 inl rec foldl f s = function
     | x :: xs -> foldl f (f s x) xs
@@ -92,7 +92,7 @@ module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,ind
     """
 
 let parsing =
-    "Parsing",
+    "Parsing",[tuple],"Parser combinators. (depreciated)",
     """
 inl convert = mscorlib ."System.Convert"
 inl to_int64 = convert .ToInt64
@@ -225,7 +225,7 @@ module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse
     """
 
 let parsing2 =
-    "Parsing",
+    "Parsing",[tuple],"Parser combinators.",
     """
 inl convert = mscorlib ."System.Convert"
 inl to_int64 = convert .ToInt64
@@ -347,8 +347,25 @@ inl parse_n_ints n =
     loop n |> tuple
     
 inl parse_ints = many int64 parse_int
-inl preturn x s ret = ret (.Succ, x)
+inl preturn x s ret = ret .on_succ x
 
-module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints)
+inl with_unit_ret f = 
+    inl on_succ x = unit (f x)
+    inl on_fail x = ()
+    inl on_fatal_fail x = ()
+    inl on_type = ()
+    module (on_succ,on_fail,on_fatal_fail,on_type)
+
+inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
+
+module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret)
     """
 
+let console =
+    "Console",[parsing2],"IO printing functions.",
+    """
+inl console = mscorlib."System.Console"
+inl readline () = console.ReadLine()
+inl write x = console.Write x
+inl writeline x = write x; console.WriteLine()
+    """
