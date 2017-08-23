@@ -577,4 +577,4 @@ let run_test name =
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test38"
+run_test "test36"

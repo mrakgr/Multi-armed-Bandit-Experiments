@@ -304,6 +304,13 @@ let spiral_peval aux_modules main_module =
     let d0() = Dictionary(HashIdentity.Structural)
     let force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
+    let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
+
+    let ty_join_point memo_key value t =
+        let new_subtag = join_point_dict.Count
+        let key = memo_key,new_subtag
+        join_point_dict.Add(key,value)
+        TyJoinPoint(key,t)
 
     let inline n (x: Node<_>) = x.Expression 
     let (|N|) x = n x
@@ -331,10 +338,6 @@ let spiral_peval aux_modules main_module =
    
     // #Smart constructors
     
-    // Nodified mutable collections are not to be modified obviously.
-    let nodify_pool: _ -> Pool = nodify <| d0()
-    let nodify_renamer: _ -> Renamer = nodify <| d0()
-
     // nodify_expr variants.
     let nodify_v = nodify_expr <| d0()
     let nodify_lit = nodify_expr <| d0()
@@ -483,7 +486,7 @@ let spiral_peval aux_modules main_module =
 
         | TyV(_,t)
         | TyBox(N(_,t))
-        | TyLet(_,_,_,_,t) | TyJoinPoint(_,_,_,_,t)
+        | TyLet(_,_,_,_,t) | TyJoinPoint(_,t)
         | TyOp(_,_,t) -> t
 
     let (|TyTypeC|_|) x =
@@ -672,17 +675,17 @@ let spiral_peval aux_modules main_module =
             renamed_fv.Add(i,ty) |> ignore
             i <- i + 1
             ) s
-        nodify_renamer renamer, nodify_renamer renamer_reversed, nodify_pool fv, nodify_pool renamed_fv
+        renamer, renamer_reversed, fv, renamed_fv
 
-    let renamer_apply_pool (r: Dictionary<_,_>) (s: Pool) = 
+    let renamer_apply_pool (r: Dictionary<_,_>) (s: HashSet<_>) = 
         let s' = h0()
-        s.Expression |> Seq.iter (fun (tag,ty) -> s'.Add(r.[tag],ty) |> ignore)
-        nodify_pool s' // Note: uses reference equality.
+        s |> Seq.iter (fun (tag,ty) -> s'.Add(r.[tag],ty) |> ignore)
+        s' 
 
     let renamer_apply_renamer (r: Dictionary<_,_>) (m: Renamer): Renamer = 
         let m' = d0()
-        m.Expression |> Seq.iter (fun kv -> m'.[kv.Key] <- r.[kv.Value])
-        nodify_renamer m' // Note: uses reference equality.
+        m |> Seq.iter (fun kv -> m'.[kv.Key] <- r.[kv.Value])
+        m'
 
 //    let renamer_reverse r = 
 //        Map.fold (fun s k v -> Map.add v k s) Map.empty r
@@ -705,10 +708,11 @@ let spiral_peval aux_modules main_module =
                 let n' = r.[n]
                 if n' = n then e else tyv (n',t)
             | TyLit _ -> e
-            | TyJoinPoint(typ,used_vars,renamer,tag,t) -> 
+            | TyJoinPoint((memo_key,_ as key),t) -> 
+                let typ,arguments,renamer = join_point_dict.[key]
+                let arguments = renamer_apply_pool r arguments
                 let renamer = renamer_apply_renamer r renamer
-                let used_vars = ref <| renamer_apply_pool r (!used_vars)
-                TyJoinPoint(typ,used_vars,renamer,tag,t)
+                ty_join_point memo_key (typ,arguments,renamer) t
             | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
             | TyLet(le,(n,t),a,b,t') -> TyLet(le,(r.[n],t),f a,f b,t')
 
@@ -726,7 +730,7 @@ let spiral_peval aux_modules main_module =
             | TyLit _ -> Set.empty
             | TyVV (N l) | TyOp(_,l,_) -> vars_union f l
             | TyFun(N (N l,_)) -> env_free_variables_template memo l
-            | TyJoinPoint(typ,fv,renamer,tag,ty) -> fv.Value.Expression |> Set
+            | TyJoinPoint(key,ty) -> join_point_dict.[key] |> fun (_,fv,_) -> Set fv
             // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
             // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
             | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
@@ -735,39 +739,8 @@ let spiral_peval aux_modules main_module =
     and env_free_variables_template memo env = 
         Map.fold (fun s _ v -> typed_expr_free_variables_template memo v + s) Set.empty env
 
-//    let typed_expr_std_pass (typ,fv: Arguments,renamer,tag) = fv.Value.Expression |> Set
     let inline typed_expr_free_variables e = typed_expr_free_variables_template (h0()) e
     let inline env_free_variables env = env_free_variables_template (h0()) env
-
-    // #Postpass
-    /// Optimizes the free variables for the sake of tuple deforestation.
-    /// It needs at least two passes to converge properly. And probably exactly two.
-//    let typed_expr_optimization_pass num_passes typed_exp =
-//        let link_memo = 
-//            memoized_methods 
-//            |> Seq.choose (fun x -> 
-//                match x.Value with
-//                | MemoMethodDone(_,_,tag,_,_) -> Some (tag, x.Key)
-//                | _ -> None)
-//            |> dict
-//
-//        let memo = h0()
-//
-//        let rec on_method_call_optimization_pass (_, method_call_args, renamer, tag) =
-//            let set_method_call_args vars = renamer_apply_pool renamer vars |> fun x -> method_call_args := x; x
-//            
-//            match memoized_methods.[link_memo.[tag]] with
-//            | MemoMethodDone(_,ty_expr,_,method_definition_args,counter) -> 
-//                if !counter < num_passes then
-//                    counter := !counter + 1
-//                    let vars = typed_expr_free_variables_template memo on_method_call_optimization_pass ty_expr
-//                    method_definition_args := vars
-//                    set_method_call_args vars
-//                else
-//                    set_method_call_args !method_definition_args
-//            | _ -> failwith "impossible"
-//            
-//        typed_expr_free_variables_template memo on_method_call_optimization_pass typed_exp |> ignore
 
     // #Conversion
     let env_num_args env = 
@@ -938,43 +911,41 @@ let spiral_peval aux_modules main_module =
 
             match memoized_methods.TryGetValue key_args with
             | false, _ ->
-                let tag = memoized_methods.Count
-
-                memoized_methods.[key_args] <- MemoMethodInEvaluation tag
+                memoized_methods.[key_args] <- MemoMethodInEvaluation
                 let typed_expr = tev_method d expr
-                memoized_methods.[key_args] <- MemoMethodDone (memo_type, typed_expr, tag, used_vars, ref 0)
-                typed_expr, tag
-            | true, MemoMethodInEvaluation tag -> 
-                tev_rec d expr, tag
-            | true, MemoMethodDone (memo_type, typed_expr, tag, used_vars, _) -> 
-                typed_expr, tag
+                memoized_methods.[key_args] <- MemoMethod (memo_type, used_vars, typed_expr)
+                typed_expr, key_args
+            | true, MemoMethodInEvaluation -> 
+                tev_rec d expr, key_args
+            | true, MemoMethod (memo_type, used_vars, typed_expr) -> 
+                typed_expr, key_args
             | true, _->
                 failwith "Expected a method."
 
-        let eval_renaming memo_type d expr =
+        let inline eval_renaming memo_type d expr =
             let env = d.env.Expression
             let stopwatch = Diagnostics.Stopwatch.StartNew()
             let renamer, renamer_reversed, fv, renamed_fv = renamer_make (env_free_variables env)
-            let renamed_env = renamer_apply_env (d0()) renamer.Expression env
+            let renamed_env = renamer_apply_env (d0()) renamer env
             total_time <- total_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
-            let typed_expr, tag = eval_method memo_type (ref renamed_fv) {d with env=renamed_env; ltag=ref renamer.Expression.Count} expr
+            let typed_expr, memo_key = eval_method memo_type renamed_fv {d with env=renamed_env; ltag=ref renamer.Count} expr
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-            else memo_type, ref fv, renamer_reversed, tag, typed_expr_ty
+            else memo_key, fv, renamer_reversed, typed_expr_ty
 
         let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
         let memoize_method d x = 
-            let memo_type _ = MemoMethod
-            memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
-                TyJoinPoint(memo_type,args,rev_renamer,tag,ret_ty)) d x
+            let memo_type = JoinPointMethod
+            memoize_helper (fun _ -> memo_type) (fun (memo_key,args,rev_renamer,ret_ty) -> 
+                ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty) d x
 
         let memoize_closure arg d x =
-            let fv, arg_ty = typed_expr_free_variables arg |> HashSet |> nodify_pool, get_type arg
-            let memo_type r = MemoClosure (renamer_apply_pool (n r) fv)
-            memoize_helper memo_type (fun (memo_type,args,rev_renamer,tag,ret_ty) -> 
-                TyJoinPoint(memo_type,args,rev_renamer,tag,closuret(arg_ty,ret_ty))) d x
+            let fv, arg_ty = typed_expr_free_variables arg |> HashSet, get_type arg
+            let memo_type renamer = JoinPointClosure <| renamer_apply_pool renamer fv
+            memoize_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
+                ty_join_point memo_key (JoinPointClosure fv,args,rev_renamer) (closuret(arg_ty,ret_ty))) d x
 
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
@@ -2195,14 +2166,15 @@ let spiral_peval aux_modules main_module =
                 codegen rest
             | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
             | TyLit x -> print_value x
-            | TyJoinPoint(MemoMethod,fv,_,tag,_) ->
-                let method_name = print_method tag
-                sprintf "%s(%s)" method_name (print_args (n !fv))
-            | TyJoinPoint(MemoClosure args,fv,rev_renamer,tag,_) -> 
-                let method_name = print_method tag
-                let fv = (n !fv |> Set) - (renamer_apply_pool (n rev_renamer) args |> n |> Set)
-                if fv.IsEmpty then method_name
-                else sprintf "%s(%s)" method_name (print_args fv)
+            | TyJoinPoint((S method_tag,_ as key),_) ->
+                let method_name = print_method method_tag
+                match join_point_dict.[key] with
+                | JoinPointMethod, fv, _ ->
+                    sprintf "%s(%s)" method_name (print_args fv)
+                | JoinPointClosure args, fv, rev_renamer ->
+                    let fv = (Set fv) - (Set args)
+                    if fv.IsEmpty then method_name
+                    else sprintf "%s(%s)" method_name (print_args fv)
             | TyBox(N(x, t)) ->
                 let case_name =
                     let union_idx s = Seq.findIndex ((=) (get_type x)) s
@@ -2335,15 +2307,14 @@ let spiral_peval aux_modules main_module =
                 sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
                 "end" |> state
 
-        let print_method_definition is_first (memo_type,body,tag,fv: Arguments) = 
+        let print_method_definition is_first tag (join_point_type, fv, body) = 
             let prefix = if is_first then "let rec" else "and"
             let method_name = print_method tag
-            match memo_type with
-            | MemoClosure args -> 
-                let fv = (!fv |> n |> Set) - (args |> n |> Set) |> fun fv -> if fv.IsEmpty then "" else sprintf "(%s) " (print_args fv)
-                sprintf "%s %s %s(%s): %s =" prefix method_name fv (print_args (n args)) (print_type (get_type body))
-            
-            | MemoMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args (!fv |> n |> Set)) (print_type (get_type body))
+            match join_point_type with
+            | JoinPointClosure args -> 
+                let fv = (Set fv) - (Set args) |> fun fv -> if fv.IsEmpty then "" else sprintf "(%s) " (print_args fv)
+                sprintf "%s %s %s(%s): %s =" prefix method_name fv (print_args args) (print_type (get_type body))
+            | JoinPointMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args (Set fv)) (print_type (get_type body))
             |> state
 
             enter <| fun _ -> 
@@ -2352,7 +2323,7 @@ let spiral_peval aux_modules main_module =
 
         memoized_methods |> Seq.fold (fun is_first x -> 
             match x.Value with
-            | MemoMethodDone (memo_type, e, tag, args, _) -> print_method_definition is_first (memo_type, e, tag, args); false
+            | MemoMethod (join_point_type, fv, body) -> print_method_definition is_first x.Key.Symbol (join_point_type, fv, body); false
             | _ -> is_first) true |> ignore
         codegen main |> state // Can't forget the non-method
 
@@ -2513,9 +2484,6 @@ let spiral_peval aux_modules main_module =
             let x = !d.seq (expr_peval d input)
             printfn "Time for peval was: %A" watch.Elapsed
             watch.Restart()
-//            typed_expr_optimization_pass 2 x // Is mutable
-//            printfn "Time for optimization pass was: %A" watch.Elapsed
-//            watch.Restart()
             let x = Succ (spiral_codegen x |> copy_to_temporary)
             printfn "Time for codegen was: %A" watch.Elapsed
             x
@@ -2523,5 +2491,5 @@ let spiral_peval aux_modules main_module =
         with 
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1
-            let message = if message.Length > 300 then message.[0..299] else message
+            let message = if message.Length > 300 then message.[0..299] + "..." else message
             Fail <| print_type_error code trace message
