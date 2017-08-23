@@ -2458,18 +2458,17 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
             match spiral_parse x with
             | Success(r,_,_) -> ret r
             | Failure(er,_,_) -> on_fail er
-        let rec loop xs ret =
+
+        let rec loop acc xs ret =
             match xs with
-            | Module(name,aux_modules,_,code) :: xs -> 
-                //loop aux_modules <| fun auxes ->
-//                if m.Add(name,code) then
-                    p (name,code) <| fun r -> 
-                        loop xs <| fun rs ->
-                            l name r rs |> ret
-//                else
-//                    loop xs ret
-            | [] -> p (module_name,module_code) ret
-        loop module_auxes ret
+            | Module(name,auxes,_,code) :: xs ->
+                loop acc auxes <| fun auxes ->
+                    p (name,code) <| fun x ->
+                        loop (auxes >> l name x) xs ret
+            | [] -> ret acc
+
+        loop id module_auxes (fun r -> p (module_name,module_code) (r >> ret))
+
 
     let code =
         let d = Dictionary()
