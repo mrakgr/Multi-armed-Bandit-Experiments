@@ -578,18 +578,17 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38
     hacker_rank_1;hacker_rank_2;hacker_rank_3
-    |]
+    |] |> Array.map module_
 
 let run_test name =
-    let name,aux_modules,desc,body = Array.find (fun (name',aux,desc,body) -> name = name') tests
+    let (Module(N(name,aux,desc,body)) as main_module) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
 
     let f () =
         printfn "%s - %s" name desc
-        let main_module = name,body
-        let x = spiral_peval aux_modules main_module
+        let x = spiral_peval main_module
         printfn "Time spent in renaming: %A" total_time
         //printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test34"
+run_test "test36"

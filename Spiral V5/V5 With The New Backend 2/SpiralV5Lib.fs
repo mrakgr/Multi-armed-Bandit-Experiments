@@ -1,6 +1,8 @@
 ﻿module Spiral.Lib
+open Main
 
 let tuple =
+    (
     "Tuple",[],"Operations on tuples.",
     """
 inl rec foldl f s = function
@@ -89,9 +91,10 @@ inl unzip' = unzip_template id
 inl index = tuple_index
 
 module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon')
-    """
+    """) |> module_
 
 let parsing =
+    (
     "Parsing",[tuple],"Parser combinators. (depreciated)",
     """
 inl convert = mscorlib ."System.Convert"
@@ -222,9 +225,10 @@ inl parse_ints = many int64 parse_int
 inl preturn x s ret = ret (.Succ, x)
 
 module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints)
-    """
+    """) |> module_
 
 let parsing2 =
+    (
     "Parsing",[tuple],"Parser combinators.",
     """
 inl convert = mscorlib ."System.Convert"
@@ -359,13 +363,14 @@ inl with_unit_ret f =
 inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
 
 module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret)
-    """
+    """) |> module_
 
 let console =
+    (
     "Console",[parsing2],"IO printing functions.",
     """
 inl console = mscorlib."System.Console"
 inl readline () = console.ReadLine()
 inl write x = console.Write x
 inl writeline x = write x; console.WriteLine()
-    """
+    """) |> module_

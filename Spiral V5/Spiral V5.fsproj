@@ -232,7 +232,6 @@
     <None Include="V5 With The New Backend 2\nodify_type_v3.fsx" />
     <None Include="V5 With The New Backend 2\typed_expr_hashing_benchmark.fsx" />
     <None Include="V5 With The New Backend 2\add_interpreter.fsx" />
-    <None Include="V5 With The New Backend 2\output.fsx" />
     <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5Lib.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5Tests.fs" />

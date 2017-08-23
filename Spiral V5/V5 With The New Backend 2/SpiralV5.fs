@@ -15,10 +15,6 @@ open FParsec
 open System.Text
 
 // Language types
-type ModuleName = string
-type ModuleCode = string
-type Module = Module of name: ModuleName * aux_modules: Module list * description: string * code: ModuleCode
-
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
     member x.Symbol = symbol
@@ -35,7 +31,28 @@ type Node<'a>(expr:'a, symbol:int) =
             | :? Node<'a> as y -> compare symbol y.Symbol
             | _ -> failwith "Invalid comparison for Node."
 
-type PosKey = string * int64 * int64
+let inline n (x: Node<_>) = x.Expression 
+let (|N|) x = n x
+let (|S|) (x: Node<_>) = x.Symbol
+
+type ModuleName = string
+type ModuleCode = string
+type ModuleDescription = string
+type Module = Module of Node<ModuleName * Module list * ModuleDescription * ModuleCode>
+
+type PosKey = Module * int64 * int64
+
+let h0() = HashSet(HashIdentity.Structural)
+let d0() = Dictionary(HashIdentity.Structural)
+
+let inline memoize (memo_dict: Dictionary<_,_>) k f =
+    match memo_dict.TryGetValue k with
+    | true, v -> v
+    | false, _ -> let v = f() in memo_dict.[k] <- v; v
+
+let nodify (dict: Dictionary<_,_>) x = memoize dict x (fun () -> Node(x,dict.Count))
+let nodify_module = nodify <| d0()
+let module_ x = nodify_module x |> Module
 
 type Pos<'a when 'a: equality and 'a: comparison>(pos:PosKey, expr:'a) = 
     member x.Expression = expr
@@ -300,9 +317,7 @@ and ProgramNode =
     | Statements of Buf
 
 // #Main
-let spiral_peval (Module(module_name,module_auxes,_,module_code)) = 
-    let h0() = HashSet(HashIdentity.Structural)
-    let d0() = Dictionary(HashIdentity.Structural)
+let spiral_peval module_main = 
     let force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
@@ -313,10 +328,6 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
         join_point_dict.Add(key,value)
         TyJoinPoint(key,t)
 
-    let inline n (x: Node<_>) = x.Expression 
-    let (|N|) x = n x
-    let (|S|) (x: Node<_>) = x.Symbol
-
     let nodify_expr (dict: Dictionary<_,_>) x =
         match dict.TryGetValue x with
         | true, id -> Node(x,id)
@@ -325,18 +336,7 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
             let x' = Node(x,id)
             dict.[x] <- id
             x'
-
-    let nodify (dict: Dictionary<_,_>) x =
-        match dict.TryGetValue x with
-        | true, x -> x
-        | false, _ ->
-            let id = dict.Count
-            let x' = Node(x,id)
-            dict.[x] <- x'
-            x'
-
-    
-   
+ 
     // #Smart constructors
     
     // nodify_expr variants.
@@ -691,11 +691,6 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
 //    let renamer_reverse r = 
 //        Map.fold (fun s k v -> Map.add v k s) Map.empty r
 //        |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
-
-    let inline memoize (memo_dict: Dictionary<_,_>) k f =
-        match memo_dict.TryGetValue k with
-        | true, v -> v
-        | false, _ -> let v = f() in memo_dict.[k] <- v; v
 
     let rec renamer_apply_env memo r e = Map.map (fun _ v -> renamer_apply_typedexpr memo r v) e |> nodify_env_term
     and renamer_apply_typedexpr (memo_dict: Dictionary<_,_>) r e =
@@ -1500,8 +1495,8 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
        
 
     // #Parsing
-    let spiral_parse (module_name, module_code) = 
-        let pos' (s: CharStream<_>) = s.Name, s.Line, s.Column
+    let spiral_parse (Module(N(module_name,_,_,module_code)) & module_) = 
+        let pos' (s: CharStream<_>) = module_, s.Line, s.Column
         let pos expr (s: CharStream<_>) = (expr |>> expr_pos (pos' s)) s
 
         let patpos expr (s: CharStream<_>) = 
@@ -2368,25 +2363,31 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
         process_statements buffer
 
     // #Run
-    let print_type_error (code: Dictionary<ModuleName, ModuleCode []>) (trace: Trace) message = 
+    let print_type_error (trace: Trace) message = 
+        let code: Dictionary<Module, ModuleCode []> = d0()
         let error = System.Text.StringBuilder(1024)
         error.AppendLine message |> ignore
-        let rec loop prev_file prev_line i (trace: _[]) = 
-            if i > 0 then
-                let (file, line: int64, col: int64) = trace.[i-1]
-                if prev_file <> file || prev_line <> line then
-                    let er_code = code.[file].[int line - 1]
-                    let er_file = if file <> "" then sprintf " in file \"%s\"." file else file
-                    error.AppendLine <| sprintf "Error trace on line: %i, column: %i%s" line col er_file |> ignore
-                    error.AppendLine er_code |> ignore
-                    let col = int (col - 1L)
-                    for i=1 to col do error.Append(' ') |> ignore
-                    error.AppendLine "^" |> ignore
-                loop file line (i-1) trace
-            else
-                error.ToString()
-        let trace = List.toArray trace
-        loop "" -1L trace.Length trace
+        List.foldBack (fun ((file & Module(N(file_name,_,_,file_code))), line, col as trace) prev_trace ->
+            let b =
+                match prev_trace with
+                | Some (prev_file, prev_line, col) when prev_file <> file || prev_line <> line -> true
+                | None -> true
+                | _ -> false
+            if b then
+                let er_code = 
+                    memoize code file (fun () -> file_code.Split [|'\n'|])
+                    |> fun x -> x.[int line - 1]
+
+                let er_file = if file_name <> "" then sprintf " in file \"%s\"." file_name else file_name
+                error.AppendLine <| sprintf "Error trace on line: %i, column: %i%s" line col er_file |> ignore
+                error.AppendLine er_code |> ignore
+                let col = int (col - 1L)
+                for i=1 to col do error.Append(' ') |> ignore
+                error.AppendLine "^" |> ignore
+            Some trace
+            ) trace None
+        |> ignore
+        error.ToString()
 
     let data_empty () =
         {ltag = ref 0; seq=ref id; trace=[]; rbeh=AnnotationDive
@@ -2451,32 +2452,27 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
             l "upon'" (p3 <| fun a b c -> op(ModuleWithExtend,[a;b;c]))
             ]
 
-    let rec parse_modules (modules_auxes: Module list) on_fail ret =
-        let m = h0()
+    let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =
+        let h = h0()
 
         let inline p x ret =
             match spiral_parse x with
             | Success(r,_,_) -> ret r
             | Failure(er,_,_) -> on_fail er
 
-        let rec loop acc xs ret =
+        let rec loop xs ret =
             match xs with
-            | Module(name,auxes,_,code) :: xs ->
-                loop acc auxes <| fun auxes ->
-                    p (name,code) <| fun x ->
-                        loop (auxes >> l name x) xs ret
-            | [] -> ret acc
+            | (x & Module(N(name,auxes,_,_))) :: xs ->
+                if h.Add x then
+                    loop auxes <| fun auxes ->
+                        p x <| fun x ->
+                            loop xs <| fun xs ->
+                                ret (auxes << l name x << xs)
+                else loop xs ret
+            | [] -> ret id
 
-        loop id module_auxes (fun r -> p (module_name,module_code) (r >> ret))
+        loop module_auxes (fun r -> p module_main (r >> ret))
 
-
-    let code =
-        let d = Dictionary()
-        let f (name,code: string) = d.Add(name, code.Split [|'\n'|])
-        Seq.iter f aux_modules
-        f main_module
-        d
-     
     let copy_to_temporary x =
         let path = IO.Path.Combine(__SOURCE_DIRECTORY__,"output.fsx")
         printfn "Copied the code to: %s" path
@@ -2484,7 +2480,7 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
         x
 
     let watch = System.Diagnostics.Stopwatch.StartNew()
-    parse_modules module_auxes Fail <| fun body -> 
+    parse_modules module_main Fail <| fun body -> 
         printfn "Time for parse: %A" watch.Elapsed
         watch.Restart()
         let d = data_empty()
@@ -2503,4 +2499,4 @@ let spiral_peval (Module(module_name,module_auxes,_,module_code)) =
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1
             let message = if message.Length > 300 then message.[0..299] + "..." else message
-            Fail <| print_type_error code trace message
+            Fail <| print_type_error trace message
