@@ -238,49 +238,36 @@ met is_digit x = x >= '0' && x <= '9'
 met is_whitespace x = x = ' '
 met is_newline x = x = '\n' || x = '\r'
 
-inl stream_create stream = 
-    inl pos = ref 0
-    module (pos, stream)
-
-inl ParserResult suc =
-    type 
-        .Succ, suc
-        .Fail, (StreamPosition, string)
-        .FatalFail, string
-
 met rec List x =
     type
         .Cons, (x, List x)
         .Nil
 
-inl stream_advance i s = s.pos := s.pos () + i
-
-inl pchar s ret = 
-    (s.stream) (s.pos()) (upon' ret .on_succ <| inl c ->
-        stream_advance 1 s
-        ret .on_succ c)
+inl pchar stream pos ret = 
+    stream pos (upon' ret .on_succ <| inl pos c ->
+        ret .on_succ (pos+1) c)
     
-inl pdigit s ret =
-    pchar s (upon' ret .on_succ <| inl (c: char) ->
-        if is_digit c then ret .on_succ c
-        else ret .on_fail (s.pos, "digit"))
+inl pdigit stream pos ret =
+    pchar stream pos (upon' ret .on_succ <| inl pos (c: char) ->
+        if is_digit c then ret .on_succ pos c
+        else ret .on_fail pos "digit")
 
-inl pint64 s ret =
-    met rec loop state (^ dyn i) = 
-        pdigit s <| Tuple.upon' ret (
-            (.on_succ, inl c ->
+inl pint64 stream pos ret =
+    met rec loop state pos (^dyn i) = 
+        pdigit stream pos <| Tuple.upon' ret (
+            (.on_succ, inl pos c ->
                 inl x = to_int64 c - to_int64 '0'
-                i * 10 + x |> loop .Rest
+                i * 10 + x |> loop .Rest pos
                 ),
-            (.on_fail, inl _ ->
+            (.on_fail, inl pos _ ->
                 match state with
-                | .First -> ret .on_fail (s.pos, "int64")
-                | .Rest -> ret .on_succ i
+                | .First -> ret .on_fail pos "int64"
+                | .Rest -> ret .on_succ pos i
                 )
             )
         : ret .on_type
             
-    loop .First 0
+    loop .First pos 0
 
 inl list_rev typ l = 
     met rec loop (^typ (^dyn acc)) l = 
@@ -290,53 +277,52 @@ inl list_rev typ l =
         : l
     loop .Nil l
 
-inl many typ_p p s ret =
+inl many typ_p p stream pos ret =
     inl typ = List typ_p
+    inl state = pos
 
-    met rec many (^typ (^dyn r)) =
-        inl state = s.pos ()
-        p s <| Tuple.upon' ret (
-            (.on_succ, function
-                | x when state < s.pos() -> many <| (.Cons, (x, r))
-                | _ when state = s.pos() -> ret .on_fatal_fail "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
+    met rec many pos (^typ (^dyn r)) =
+        p stream pos <| Tuple.upon' ret (
+            (.on_succ, inl pos -> function
+                | x when state < pos -> many pos <| (.Cons, (x, r))
+                | _ when state = pos -> ret .on_fatal_fail pos "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
                 )
-            (.on_fail, function
-                | _ when state = s.pos() -> ret .on_succ (list_rev typ r)
-                | _ -> ret .on_fail (s.pos, "many")
+            (.on_fail, inl pos -> function
+                | _ when state = pos -> ret .on_succ pos (list_rev typ r)
+                | _ -> ret .on_fail pos "many"
                 )
             )
         : ret .on_type
 
-    many .Nil
+    many pos .Nil
 
-met rec spaces s ret =
-    pchar s <| Tuple.upon' ret (
-        (.on_succ, inl c ->    
-            if is_whitespace c || is_newline c then spaces s ret
-            else stream_advance (-1) s; ret .on_succ ()
+met rec spaces stream pos ret =
+    pchar stream pos <| Tuple.upon' ret (
+        (.on_succ, inl pos c ->    
+            if is_whitespace c || is_newline c then spaces stream pos ret
+            else ret .on_succ (pos-1) ()
             ),
-        (.on_fail, inl _ -> ret .on_succ ())
+        (.on_fail, inl pos _ -> ret .on_succ pos ())
         )
     : ret .on_type
 
-inl tuple l s ret =
-    inl rec loop acc = function
-        | x :: xs -> x s <| upon' ret .on_succ (inl x -> loop (x :: acc) xs)
-        | () -> ret .on_succ (Tuple.rev acc)
+inl tuple l stream pos ret =
+    inl rec loop pos acc = function
+        | x :: xs -> x stream pos <| upon' ret .on_succ (inl pos x -> loop pos (x :: acc) xs)
+        | () -> ret .on_succ pos (Tuple.rev acc)
         | _ -> error_type "Incorrect input to tuple."
-    loop () l
+    loop pos () l
 
-inl (>>=) a b s ret = a s <| upon' ret .on_succ (inl x -> b x s ret)
-inl (|>>) a f = a >>= inl x s ret -> ret .on_succ (f x)
+inl (>>=) a b stream pos ret = a stream pos <| upon' ret .on_succ (inl pos x -> b x stream pos ret)
+inl (|>>) a f = a >>= inl x stream pos ret -> ret .on_succ pos (f x)
 
-inl string_stream str = 
-    stream_create <| inl idx ret ->
-        if idx >= 0 && idx < string_length str then ret .on_succ (str idx)
-        else ret .on_fail (idx, "string index out of bounds")
+inl string_stream str pos ret = 
+    if pos >= 0 && pos < string_length str then ret .on_succ pos (str pos)
+    else ret .on_fail pos "string index out of bounds"
 
 inl run data parser ret = 
     match data with
-    | _ : string -> parser (string_stream data) ret
+    | _ : string -> parser (string_stream data) (dyn 0) ret
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
@@ -350,12 +336,12 @@ inl parse_n_ints n =
     loop n |> tuple
     
 inl parse_ints = many int64 parse_int
-inl preturn x s ret = ret .on_succ x
+inl preturn x stream pos ret = ret .on_succ pos x
 
 inl with_unit_ret f = 
-    inl on_succ x = unit (f x)
-    inl on_fail x = ()
-    inl on_fatal_fail x = ()
+    inl on_succ pos x = unit (f x)
+    inl on_fail pos x = ()
+    inl on_fatal_fail pos x = ()
     inl on_type = ()
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
@@ -363,9 +349,9 @@ inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
 
 inl rec sprintf_parser append =
     inl f x = append x; sprintf_parser append
-    inl parse_value s ret = 
-        pchar s <| Tuple.upon' ret (
-            (.on_succ, function
+    inl parse_value stream pos ret = 
+        pchar stream pos <| Tuple.upon' ret (
+            (.on_succ, inl pos -> function
                 | 'i' -> function
                     | x : int32 | x : int64 | x : uint32 | x : uint64 -> 
                         print_static 'i'
@@ -377,9 +363,9 @@ inl rec sprintf_parser append =
                         f x
                     | _ -> error_type "Expected a float in sprintf."
                 | _ -> error_type "Unexpected literal in sprintf."),
-            (.on_fail, inl x ->
+            (.on_fail, inl pos x ->
                 append '%'
-                ret .on_fail x)
+                ret .on_fail pos x)
             )
     pchar >>= function
         | '%' -> 
@@ -395,7 +381,7 @@ inl sprintf format =
     inl on_fail = strb.ToString()
     run format (sprintf_parser append) (module(on_fail))
 
-module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf)
+module (List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf)
     """) |> module_
 
 let console =

@@ -540,13 +540,13 @@ let test36 = //
 inl console = mscorlib."System.Console"
 
 inl ret = 
-    inl on_succ x = Tuple.foldl (+) 0 x
-    inl on_fail x = 0
-    inl on_fatal_fail x = 0
+    inl on_succ pos x = Tuple.foldl (+) 0 x
+    inl on_fail pos x = 0
+    inl on_fatal_fail pos x = 0
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3) ret
     """
 
 let test38 =
@@ -570,7 +570,7 @@ let hacker_rank_3 =
     """
 open Console
 open Parsing
-run_with_unit_ret (read_n_ints 5) (inl x :: xs as l ->
+run_with_unit_ret (read_n_ints 5) (inl pos (x :: xs as l) ->
     inl min a b = if a < b then a else b
     inl max a b = if a > b then a else b
     inl sum = Tuple.foldl (+) 0 l
@@ -596,9 +596,9 @@ let run_test name =
         printfn "%s - %s" name desc
         let x = spiral_peval main_module
         printfn "Time spent in renaming: %A" total_time
-        printfn "%A" x
+        //printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test39"
+run_test "test36"
 
