@@ -263,8 +263,7 @@ inl pchar s ret =
 inl pdigit s ret =
     pchar s (upon' ret .on_succ <| inl (c: char) ->
         if is_digit c then ret .on_succ c
-        else ret .on_fail (s.pos, "digit")
-        )
+        else ret .on_fail (s.pos, "digit"))
 
 inl pint64 s ret =
     met rec loop state (^ dyn i) = 
@@ -335,7 +334,7 @@ inl string_stream str =
         if idx >= 0 && idx < string_length str then ret .on_succ (str idx)
         else ret .on_fail (idx, "string index out of bounds")
 
-inl run (^dyn data) parser ret = 
+inl run data parser ret = 
     match data with
     | _ : string -> parser (string_stream data) ret
     | _ -> error_type "Only strings supported for now."
@@ -362,7 +361,41 @@ inl with_unit_ret f =
 
 inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
 
-module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret)
+inl rec sprintf_parser append =
+    inl f x = append x; sprintf_parser append
+    inl parse_value s ret = 
+        pchar s <| Tuple.upon' ret (
+            (.on_succ, function
+                | 'i' -> function
+                    | x : int32 | x : int64 | x : uint32 | x : uint64 -> 
+                        print_static 'i'
+                        f x
+                    | _ -> error_type "Expected an integer in sprintf."
+                | 'f' -> function
+                    | x : float32 | x : float64 -> 
+                        print_static 'f'
+                        f x
+                    | _ -> error_type "Expected a float in sprintf."
+                | _ -> error_type "Unexpected literal in sprintf."),
+            (.on_fail, inl x ->
+                append '%'
+                ret .on_fail x)
+            )
+    pchar >>= function
+        | '%' -> 
+            print_static "%"
+            parse_value
+        | c -> 
+            print_static c
+            f c
+
+inl sprintf format =
+    inl strb = mscorlib."System.Text.StringBuilder"(64i32)
+    inl append x = strb.Append x |> ignore
+    inl on_fail = strb.ToString()
+    run format (sprintf_parser append) (module(on_fail))
+
+module (ParserResult,List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf)
     """) |> module_
 
 let console =
