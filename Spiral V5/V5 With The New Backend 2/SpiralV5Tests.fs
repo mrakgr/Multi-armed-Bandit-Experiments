@@ -561,8 +561,7 @@ let test39 =
     """
 inl a = dyn 1
 inl b = dyn 2
-//Parsing.sprintf "%i + %i = %i" a b (a+b)
-Parsing.sprintf "123 456"
+Parsing.sprintf "%i + %i = %i" a b (a+b)
     """
 
 let hacker_rank_3 =
@@ -596,9 +595,9 @@ let run_test name =
         printfn "%s - %s" name desc
         let x = spiral_peval main_module
         printfn "Time spent in renaming: %A" total_time
-        //printfn "%A" x
+        printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test36"
+run_test "test39"
 

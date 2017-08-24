@@ -234,9 +234,9 @@ let parsing2 =
 inl convert = mscorlib ."System.Convert"
 inl to_int64 = convert .ToInt64
 
-met is_digit x = x >= '0' && x <= '9'
-met is_whitespace x = x = ' '
-met is_newline x = x = '\n' || x = '\r'
+inl is_digit x = x >= '0' && x <= '9'
+inl is_whitespace x = x = ' '
+inl is_newline x = x = '\n' || x = '\r'
 
 met rec List x =
     type
@@ -284,8 +284,8 @@ inl many typ_p p stream pos ret =
     met rec many pos (^typ (^dyn r)) =
         p stream pos <| Tuple.upon' ret (
             (.on_succ, inl pos -> function
-                | x when state < pos -> many pos <| (.Cons, (x, r))
                 | _ when state = pos -> ret .on_fatal_fail pos "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
+                | x -> many pos <| (.Cons, (x, r))
                 )
             (.on_fail, inl pos -> function
                 | _ when state = pos -> ret .on_succ pos (list_rev typ r)
@@ -316,13 +316,14 @@ inl tuple l stream pos ret =
 inl (>>=) a b stream pos ret = a stream pos <| upon' ret .on_succ (inl pos x -> b x stream pos ret)
 inl (|>>) a f = a >>= inl x stream pos ret -> ret .on_succ pos (f x)
 
-inl string_stream str pos ret = 
-    if pos >= 0 && pos < string_length str then ret .on_succ pos (str pos)
-    else ret .on_fail pos "string index out of bounds"
+inl string_stream str pos ret =
+    match pos with
+    | _ when pos >= 0 && pos < string_length str -> ret .on_succ pos (str pos)
+    | _ -> ret .on_fail pos "string index out of bounds"
 
 inl run data parser ret = 
     match data with
-    | _ : string -> parser (string_stream data) (dyn 0) ret
+    | _ : string -> parser (string_stream data) 0 ret
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
@@ -348,38 +349,39 @@ inl with_unit_ret f =
 inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
 
 inl rec sprintf_parser append =
-    inl f x = append x; sprintf_parser append
+    inl append_and_continue_parsing x = append x; sprintf_parser append
+
     inl parse_value stream pos ret = 
         pchar stream pos <| Tuple.upon' ret (
-            (.on_succ, inl pos -> function
+            (.on_succ, inl pos c -> 
+                match c with
+                | 'b' -> function
+                    | x : bool -> x
+                    | _ -> error_type "Expected a bool in sprintf."
                 | 'i' -> function
-                    | x : int32 | x : int64 | x : uint32 | x : uint64 -> 
-                        print_static 'i'
-                        f x
+                    | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
                     | _ -> error_type "Expected an integer in sprintf."
                 | 'f' -> function
-                    | x : float32 | x : float64 -> 
-                        print_static 'f'
-                        f x
+                    | x : float32 | x : float64 -> x
                     | _ -> error_type "Expected a float in sprintf."
-                | _ -> error_type "Unexpected literal in sprintf."),
+                | 'A' -> id
+                | _ -> error_type "Unexpected literal in sprintf."
+                |> inl guard_type -> ret .on_succ pos (inl x -> append_and_continue_parsing (guard_type x) stream pos ret)
+                ),
             (.on_fail, inl pos x ->
                 append '%'
                 ret .on_fail pos x)
             )
     pchar >>= function
-        | '%' -> 
-            print_static "%"
-            parse_value
-        | c -> 
-            print_static c
-            f c
+        | '%' -> parse_value
+        | c -> append_and_continue_parsing c
 
 inl sprintf format =
     inl strb = mscorlib."System.Text.StringBuilder"(64i32)
     inl append x = strb.Append x |> ignore
-    inl on_fail = strb.ToString()
-    run format (sprintf_parser append) (module(on_fail))
+    inl on_succ pos x = x
+    inl on_fail pos x = strb.ToString()
+    run format (sprintf_parser append) (module(on_succ,on_fail))
 
 module (List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf)
     """) |> module_
