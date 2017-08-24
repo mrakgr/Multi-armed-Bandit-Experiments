@@ -113,6 +113,7 @@ type Op =
     // StringOps
     | StringLength
     | StringIndex
+    | StringSlice
 
     // DotNetOps
     | DotNetLoadAssembly
@@ -180,13 +181,14 @@ type Op =
     | ModuleOpen
     | TypeLitCreate
     | Dynamize
+    | IsStatic
 
     // UnOps
     | Neg
     | Log
     | Exp
     | Tanh
-
+    
     // Constants
     | ModuleCreate
 
@@ -566,7 +568,6 @@ let spiral_peval module_main =
         | PrimT Int64T -> true
         | _ -> false
     let inline is_int64 a = is_int64' (get_type a)
-
 
     // #Prepass
     let get_pattern_tag =
@@ -1053,6 +1054,8 @@ let spiral_peval module_main =
             match destructure d a, destructure d b with
             // It might make more sense to use TyType rather than TyTag here, but I do not want get_type to be triggered on everything here
             // as it is an expensive operation.
+
+            // apply_for_cast
             | recf & TyFun(N(N env_term,fun_type)), TyV (_,ForCastT (N args_ty)) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_tyv_and_push_ty d x
@@ -1071,14 +1074,18 @@ let spiral_peval module_main =
                     tev {d with env = Map.add name recf env |> nodify_env_term} body
                 | FunTypeFunction (pat,body) -> 
                     tev {d with env = nodify_env_term <| if pat <> "" then Map.add pat args env_term else env_term} body
+            // apply_function
             | recf & TyFun(N(N env_term,FunTypeRecFunction ((pat,body),name))), args -> 
                 let env = if pat <> "" then Map.add pat args env_term else env_term
                 tev {d with env = Map.add name recf env |> nodify_env_term} body
             | TyFun(N(N env_term,FunTypeFunction (pat,body))), args -> 
                 tev {d with env = nodify_env_term <| if pat <> "" then Map.add pat args env_term else env_term} body
+            // apply_array
             | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
+            // apply_module
             | TyFun(N(N env_term,FunTypeModule)), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
             | TyFun(N(env_term,FunTypeModule)), _ -> on_type_er d.trace "Expected a type level string in module application."
+            // apply_dotnet_type
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
                     wrap_exception d <| fun _ ->
                         match a.GetType(name) with
@@ -1118,6 +1125,7 @@ let spiral_peval module_main =
                             else
                                 on_type_er d.trace "Cannot call a private constructor."    
             | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
+            // apply_typec
             | typec & TyType(TyTypeC (N ty)), args ->
                 let substitute_ty = function
                     | TyBox(N(x,_)) -> tybox(x,ty)
@@ -1135,13 +1143,21 @@ let spiral_peval module_main =
                     apply d (apply d lam typec) args
                 | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
                 | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
+            // apply_string
+            | TyLit (LitString str), TyVV(N [TyLitIndex a; TyLitIndex b]) -> 
+                let f x = x >= 0 && x < str.Length
+                if f a && f b then TyLit(LitString str.[a..b])
+                else on_type_er d.trace "The slice into a string literal is out of bounds."
             | TyLit (LitString str), TyLitIndex x -> 
                 if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
                 else on_type_er d.trace "The index into a string literal is out of bounds."
+            | TyType(PrimT StringT) & str, TyVV(N [a;b]) -> 
+                if is_int a && is_int b then TyOp(StringSlice,[str;a;b],PrimT StringT) |> destructure d
+                else on_type_er d.trace "Expected an int as the second argument to string index."
             | TyType(PrimT StringT) & str, idx -> 
-                if is_int idx = false then on_type_er d.trace "Expected an int as the second argument to string index."
-                TyOp(StringIndex,[str;idx],PrimT CharT) 
-                |> destructure d // Just like VVIndex, StringIndex might need rewriting. 
+                if is_int idx then TyOp(StringIndex,[str;idx],PrimT CharT) |> destructure d
+                else on_type_er d.trace "Expected an int as the second argument to string index."
+            // apply_closure
             | closure & TyType(ClosureT(N (clo_arg_ty,clo_ret_ty))), args -> 
                 let arg_ty = get_type args
                 if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
@@ -1405,6 +1421,11 @@ let spiral_peval module_main =
             | l, r when get_type l = get_type r -> make_tyv_and_push_typed_expr d (TyOp(ArraySet,[l;r],BVVT))
             | _ -> on_type_er d.trace "The two sides in array set have different types."
 
+        let is_static d x = 
+            match tev d x with
+            | TyLit _ -> TyLit <| LitBool true
+            | _ -> TyLit <| LitBool false
+
         let inline add_trace d x = {d with trace = x :: d.trace}
 
         match expr with
@@ -1441,6 +1462,7 @@ let spiral_peval module_main =
             | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c
             | TypeLitCreate,[a] -> type_lit_create d a
             | Dynamize,[a] -> dynamize d a
+            | IsStatic,[a] -> is_static d a
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
@@ -2146,6 +2168,7 @@ let spiral_peval module_main =
 
             let string_length str = sprintf "(int64 %s.Length)" (codegen str)
             let string_index str idx = sprintf "%s.[int32 (%s)]" (codegen str) (codegen idx)
+            let string_slice str a b = sprintf "%s.[int32 (%s)..int32 (%s)]" (codegen str) (codegen a) (codegen b)
 
             match expr with
             | TyV (_, Unit) | TyBox (N(_, Unit)) -> ""
@@ -2229,6 +2252,7 @@ let spiral_peval module_main =
                 | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index a b c
                 | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetReference,_)));c] -> reference_index b
                 | StringIndex,[str;idx] -> string_index str idx
+                | StringSlice,[str;a;b] -> string_slice str a b
                 | StringLength,[str] -> string_length str
 
                 // Primitive operations on expressions.
@@ -2450,6 +2474,7 @@ let spiral_peval module_main =
             l "string_length" (p <| fun x -> op(StringLength,[x]))
             l "upon" (p3 <| fun a b c -> op(ModuleWith,[a;b;c]))
             l "upon'" (p3 <| fun a b c -> op(ModuleWithExtend,[a;b;c]))
+            l "is_static" (p <| fun x -> op(IsStatic,[x]))
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =

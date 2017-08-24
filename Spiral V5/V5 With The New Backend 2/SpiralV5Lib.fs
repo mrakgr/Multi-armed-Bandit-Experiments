@@ -244,9 +244,13 @@ met rec List x =
         .Nil
 
 inl pchar stream pos ret = 
-    stream pos (upon' ret .on_succ <| inl pos c ->
+    stream pos (upon' ret .on_succ <| inl c ->
         ret .on_succ (pos+1) c)
-    
+
+inl pchar_pos stream pos ret = 
+    stream pos (upon' ret .on_succ <| inl c ->
+        ret .on_succ (pos+1) (c,pos))
+
 inl pdigit stream pos ret =
     pchar stream pos (upon' ret .on_succ <| inl pos (c: char) ->
         if is_digit c then ret .on_succ pos c
@@ -317,13 +321,14 @@ inl (>>=) a b stream pos ret = a stream pos <| upon' ret .on_succ (inl pos x -> 
 inl (|>>) a f = a >>= inl x stream pos ret -> ret .on_succ pos (f x)
 
 inl string_stream str pos ret =
+    inl f pos = pos >= 0 && pos < string_length str
     match pos with
-    | _ when pos >= 0 && pos < string_length str -> ret .on_succ pos (str pos)
+    | (a, b when f a && f b) | (pos when f pos) -> ret .on_succ (str pos)
     | _ -> ret .on_fail pos "string index out of bounds"
 
 inl run data parser ret = 
     match data with
-    | _ : string -> parser (string_stream data) 0 ret
+    | _ : string -> parser (string_stream data) (if is_static data then 0 else dyn 0) ret
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
@@ -348,33 +353,54 @@ inl with_unit_ret f =
 
 inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
 
-inl rec sprintf_parser append =
-    inl append_and_continue_parsing x = append x; sprintf_parser append
+inl sprintf_parser =
+    inl rec sprintf_parser state append stream pos ret =
+        inl parse_variable stream pos ret = 
+            pchar stream pos <| Tuple.upon' ret (
+                (.on_succ, inl pos c -> 
+                    match c with
+                    | 's' -> function
+                        | x : string -> x
+                        | _ -> error_type "Expected a bool in sprintf."
+                    | 'c' -> function
+                        | x : char -> x
+                        | _ -> error_type "Expected a bool in sprintf."
+                    | 'b' -> function
+                        | x : bool -> x
+                        | _ -> error_type "Expected a bool in sprintf."
+                    | 'i' -> function
+                        | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
+                        | _ -> error_type "Expected an integer in sprintf."
+                    | 'f' -> function
+                        | x : float32 | x : float64 -> x
+                        | _ -> error_type "Expected a float in sprintf."
+                    | 'A' -> id
+                    | _ -> error_type "Unexpected literal in sprintf."
+                    |> inl guard_type -> ret .on_succ pos (inl x -> append (guard_type x); sprintf_parser .None append stream pos ret)
+                    ),
+                (.on_fail, inl pos x ->
+                    append '%'
+                    ret .on_fail pos x
+                    )
+                )
+        inl append_state stream pos ret =
+            match state with
+            | .None -> ret .on_succ pos ()
+            | ab -> stream ab (upon' ret .on_succ (inl r -> append r; ret .on_succ pos ()))
 
-    inl parse_value stream pos ret = 
-        pchar stream pos <| Tuple.upon' ret (
-            (.on_succ, inl pos c -> 
-                match c with
-                | 'b' -> function
-                    | x : bool -> x
-                    | _ -> error_type "Expected a bool in sprintf."
-                | 'i' -> function
-                    | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
-                    | _ -> error_type "Expected an integer in sprintf."
-                | 'f' -> function
-                    | x : float32 | x : float64 -> x
-                    | _ -> error_type "Expected a float in sprintf."
-                | 'A' -> id
-                | _ -> error_type "Unexpected literal in sprintf."
-                |> inl guard_type -> ret .on_succ pos (inl x -> append_and_continue_parsing (guard_type x) stream pos ret)
+        pchar_pos stream pos <| Tuple.upon' ret (
+            (.on_succ, inl pos -> function
+                | '%', _ -> (append_state >>= inl _ -> parse_variable) stream pos ret
+                | _, char_pos -> 
+                    inl state = 
+                        match state with
+                        | .None -> (char_pos, char_pos)
+                        | (start,_) -> (start, char_pos)
+                    sprintf_parser state append stream pos ret
                 ),
-            (.on_fail, inl pos x ->
-                append '%'
-                ret .on_fail pos x)
+            (.on_fail, inl pos mes -> (append_state |>> inl _ -> ret .on_fail pos mes) stream pos ret)
             )
-    pchar >>= function
-        | '%' -> parse_value
-        | c -> append_and_continue_parsing c
+    sprintf_parser .None
 
 inl sprintf format =
     inl strb = mscorlib."System.Text.StringBuilder"(64i32)
