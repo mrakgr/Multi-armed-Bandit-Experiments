@@ -319,7 +319,7 @@ and ProgramNode =
     | Statements of Buf
 
 // #Main
-let spiral_peval module_main = 
+let spiral_peval module_main output_path = 
     let force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
@@ -2499,9 +2499,8 @@ let spiral_peval module_main =
         loop module_auxes (fun r -> p module_main (r >> ret))
 
     let copy_to_temporary x =
-        let path = IO.Path.Combine(__SOURCE_DIRECTORY__,"output.fsx")
-        printfn "Copied the code to: %s" path
-        IO.File.WriteAllText(path,x)
+        IO.File.WriteAllText(output_path,x)
+        printfn "Copied the code to: %s" output_path
         x
 
     let watch = System.Diagnostics.Stopwatch.StartNew()

@@ -546,7 +546,7 @@ inl ret =
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
     """
 
 let test38 =
@@ -588,16 +588,16 @@ let tests =
     hacker_rank_1;hacker_rank_2;hacker_rank_3
     |] |> Array.map module_
 
-let run_test name =
+let run_test name output_file =
     let (Module(N(name,aux,desc,body)) as main_module) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
 
     let f () =
         printfn "%s - %s" name desc
-        let x = spiral_peval main_module
+        let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
         printfn "Time spent in renaming: %A" total_time
-        printfn "%A" x
+        //printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test39"
+run_test "test36" "output.txt"
 

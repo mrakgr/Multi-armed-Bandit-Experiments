@@ -87,10 +87,22 @@ inl rec unzip_template on_irreg l =
 
 inl unzip = unzip_template regularity_guard
 inl unzip' = unzip_template id
-
 inl index = tuple_index
 
-module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon')
+inl init_template k n f =
+    inl rec loop n = 
+        match n with 
+        | n when n > 0 -> 
+            inl n = n - 1
+            f n :: loop n
+        | 0 -> ()
+        | _ -> error_type "The input to this function cannot be static or less than 0 or not an int."
+    loop n |> k
+
+inl init = init_template rev
+inl repeat n x = init_template id n (inl _ -> x)
+
+module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon',init,repeat)
     """) |> module_
 
 let parsing =
@@ -257,21 +269,17 @@ inl pdigit stream pos ret =
         else ret .on_fail pos "digit")
 
 inl pint64 stream pos ret =
-    met rec loop state pos (^dyn i) = 
+    met rec loop on_fail pos (^dyn i) = 
         pdigit stream pos <| Tuple.upon' ret (
             (.on_succ, inl pos c ->
                 inl x = to_int64 c - to_int64 '0'
-                i * 10 + x |> loop .Rest pos
+                i * 10 + x |> loop (inl pos _ -> ret .on_succ pos i) pos
                 ),
-            (.on_fail, inl pos _ ->
-                match state with
-                | .First -> ret .on_fail pos "int64"
-                | .Rest -> ret .on_succ pos i
-                )
+            (.on_fail, on_fail)
             )
         : ret .on_type
             
-    loop .First pos 0
+    loop (inl pos _ -> ret .on_fail pos "int64") pos 0
 
 inl list_rev typ l = 
     met rec loop (^typ (^dyn acc)) l = 
@@ -332,14 +340,7 @@ inl run data parser ret =
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
-
-inl parse_n_ints n = 
-    inl rec loop n = 
-        match n with 
-        | n when n > 0 -> parse_int :: loop (n-1)
-        | 0 -> ()
-        | _ -> error_type "The input to this function cannot be static or less than 0 or not an int."
-    loop n |> tuple
+inl parse_n_ints n = Tuple.repeat n parse_int |> tuple
     
 inl parse_ints = many int64 parse_int
 inl preturn x stream pos ret = ret .on_succ pos x
