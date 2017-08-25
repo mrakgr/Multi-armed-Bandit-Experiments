@@ -269,18 +269,29 @@ inl pdigit stream pos ret =
         else ret .on_fail pos "digit")
 
 inl pint64 stream pos ret =
-    met rec loop on_fail pos (^dyn i) = 
+    met rec loop state on_fail pos (^dyn i) = 
+        mscorlib."System.Console".Write state
         pdigit stream pos <| Tuple.upon' ret (
             (.on_succ, inl pos c ->
                 inl x = to_int64 c - to_int64 '0'
-                inl i = i * 10 + x 
-                loop (inl pos _ -> ret .on_succ pos i) pos i
+                i * 10 + x |> loop "pint64_rest" (inl i pos _ -> ret .on_succ pos i) pos
                 ),
-            (.on_fail, on_fail)
+            (.on_fail, on_fail i)
             )
         : ret .on_type
             
-    loop (inl pos _ -> ret .on_fail pos "int64") pos 0
+    loop "pint64_starting" (inl _ pos _ -> ret .on_fail pos "int64") pos 0
+
+met rec spaces stream pos ret =
+    mscorlib."System.Console".Write "spaces"
+    pchar stream pos <| Tuple.upon' ret (
+        (.on_succ, inl pos c ->    
+            if is_whitespace c || is_newline c then spaces stream pos ret
+            else ret .on_succ (pos-1) ()
+            ),
+        (.on_fail, inl pos _ -> ret .on_succ pos ())
+        )
+    : ret .on_type
 
 inl list_rev typ l = 
     met rec loop (^typ (^dyn acc)) l = 
@@ -308,16 +319,6 @@ inl many typ_p p stream pos ret =
         : ret .on_type
 
     many pos .Nil
-
-met rec spaces stream pos ret =
-    pchar stream pos <| Tuple.upon' ret (
-        (.on_succ, inl pos c ->    
-            if is_whitespace c || is_newline c then spaces stream pos ret
-            else ret .on_succ (pos-1) ()
-            ),
-        (.on_fail, inl pos _ -> ret .on_succ pos ())
-        )
-    : ret .on_type
 
 inl tuple l stream pos ret =
     inl rec loop pos acc = function

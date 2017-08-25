@@ -378,6 +378,36 @@ inl b = console.ReadLine()
 a(0),b(0)
     """
 
+let test29 = // 
+    "test29",[tuple;parsing],"Does a simple int parser work?",
+    """
+inl console = mscorlib ."System.Console"
+inl t =
+    type
+        int64
+        int64, int64
+        string
+        Parsing.List int64
+
+inl result =
+    Parsing.run "12 34 " (Parsing.parse_ints) <| function
+        | .Succ, x -> t x
+        | .FatalFail, er | .Fail, (_, er) -> t er
+        | .FetchType -> t ""
+        | x -> error_type "Got a strange input."
+
+inl t = Parsing.List int64
+match result with
+| (.ListCons,(a,(.ListCons,(b,.ListNil)))): t as x ->
+    console.Write a
+    console.WriteLine()
+    console.Write b
+    console.WriteLine()
+    a+b
+| _ -> 
+    0
+    """
+
 let test30 = // 
     "test30",[],"Do recursive algebraic datatypes work?",
     """
@@ -431,34 +461,15 @@ inl rec loop = function
 loop 50000
     """
 
-let test29 = // 
-    "test29",[tuple;parsing],"Does a simple int parser work?",
+let test34 = // 
+    "test34",[tuple;parsing],"Does parse_n_ints blow up the code size? Does it scale linearly?",
     """
-inl console = mscorlib ."System.Console"
-inl t =
-    type
-        int64
-        int64, int64
-        string
-        Parsing.List int64
+inl console = mscorlib."System.Console"
+inl (|>>) = Parsing."|>>"
+inl end x = ()
+inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320 |>> f) end
 
-inl result =
-    Parsing.run "12 34 " (Parsing.parse_ints) <| function
-        | .Succ, x -> t x
-        | .FatalFail, er | .Fail, (_, er) -> t er
-        | .FetchType -> t ""
-        | x -> error_type "Got a strange input."
-
-inl t = Parsing.List int64
-match result with
-| (.ListCons,(a,(.ListCons,(b,.ListNil)))): t as x ->
-    console.Write a
-    console.WriteLine()
-    console.Write b
-    console.WriteLine()
-    a+b
-| _ -> 
-    0
+parse <| inl _ -> ()
     """
 
 let test35 = // 
@@ -505,6 +516,21 @@ console.Write ' '
 bob() |> console.Write
     """
 
+let test36 = // 
+    "test36",[tuple;parsing2],"Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.",
+    """
+inl console = mscorlib."System.Console"
+
+inl ret = 
+    inl on_succ pos x = Tuple.foldl (+) 0 x
+    inl on_fail pos x = -1
+    inl on_fatal_fail pos x = -2
+    inl on_type = int64
+    module (on_succ,on_fail,on_fatal_fail,on_type)
+
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 1) ret
+    """
+
 let test37 = // 
     "test37",[tuple;parsing],"Do unit statements get cut off?",
     """
@@ -523,32 +549,6 @@ parse <| inl _ ->
     comp (dyn 3, dyn 4)
     """
 
-let test34 = // 
-    "test34",[tuple;parsing],"Does parse_n_ints blow up the code size? Does it scale linearly?",
-    """
-inl console = mscorlib."System.Console"
-inl (|>>) = Parsing."|>>"
-inl end x = ()
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320 |>> f) end
-
-parse <| inl _ -> ()
-    """
-
-let test36 = // 
-    "test36",[tuple;parsing2],"Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.",
-    """
-inl console = mscorlib."System.Console"
-
-inl ret = 
-    inl on_succ pos x = Tuple.foldl (+) 0 x
-    inl on_fail pos x = -1
-    inl on_fatal_fail pos x = -2
-    inl on_type = int64
-    module (on_succ,on_fail,on_fatal_fail,on_type)
-
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 2) ret
-    """
-
 let test38 =
     "test38",[],"Is type constructor of an int64 an int64?",
     """
@@ -565,19 +565,29 @@ Parsing.sprintf "%i + %i = %i" a b (a+b) |> ignore
 Console.printfn "(%f,%b,%i,%s)" 2.2 true 55 "Wut?"
     """
 
+let test40 =
+    "test40",[],"Does this compile into just one method?",
+    """
+met rec f a, b =
+    if dyn true then f b a
+    else a + b
+    : int64
+f (dyn 1) (dyn 2)
+    """
+
+
 let hacker_rank_3 =
     "hacker_rank_3",[tuple;parsing2;console],"https://www.hackerrank.com/challenges/mini-max-sum",
     """
 open Console
 open Parsing
-run_with_unit_ret (readline()) (parse_n_ints 5) (inl (x :: xs as l) ->
+run_with_unit_ret (readline()) (parse_n_ints 5) <| inl x :: xs as l ->
     inl min a b = if a < b then a else b
     inl max a b = if a > b then a else b
     inl sum = Tuple.foldl (+) 0 l
     inl min = Tuple.foldl min x l
     inl max = Tuple.foldl max x l
     printf "%i %i" (sum-max) (sum-min)
-    )
     """
 
 let tests =
@@ -586,6 +596,7 @@ let tests =
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
+    test40;
     hacker_rank_1;hacker_rank_2;hacker_rank_3
     |] |> Array.map module_
 
@@ -600,5 +611,5 @@ let run_test name output_file =
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "hacker_rank_3" "output.fsx"
+run_test "test40" "output.fsx"
 
