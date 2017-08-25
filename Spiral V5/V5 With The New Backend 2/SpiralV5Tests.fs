@@ -265,17 +265,21 @@ inl a = ref 0
 a := 5
 a() |> ignore
 
-inl a = ref ()
+inl a = ref () // Is not supposed to be printed due to being unit.
 a := ()
+a()
+
+inl a = ref <| (inl a, b -> a + b) `(int64,int64)
+a := (inl a, b -> a * b) `(int64,int64)
 a() |> ignore
 
-inl a = array_create (10,15,5) int64
-a (0,8,1) <- 2
-a (0,8,1) |> ignore
+inl a = array_create 10 int64
+a 3 <- 2
+a 3 |> ignore
 
-inl a = array_create 3 ()
-a (1) <- ()
-a (1) |> ignore
+inl a = array_create 3 id // Is supposed to be unit and not printed.
+a 1 <- id
+a 1 |> ignore
     """
 
 let test19 = // 
@@ -607,9 +611,9 @@ let run_test name output_file =
         printfn "%s - %s" name desc
         let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
         printfn "Time spent in renaming: %A" total_time
-        //printfn "%A" x
+        printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test36" "output.txt"
+run_test "test18" "output.fsx"
 

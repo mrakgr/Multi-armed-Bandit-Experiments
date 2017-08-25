@@ -751,11 +751,7 @@ let spiral_peval module_main output_path =
         | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
-//    let is_all_int64 size = List.forall is_int64 (tuple_field size)
-//    let (|TyArray|_|) = function
-//        | TyType (ArrayT (N (DotNetHeap,ret_type)))
-//        | TyTuple [size; ar & TyType (ArrayT (N (ar_type,ret_type)))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
-//        | _ -> None
+    let is_all_int64 size = List.forall is_int64 (tuple_field size)
 
     // #Type directed partial evaluation
     let rec expr_peval (d: LangEnv) (expr: Expr) =
@@ -993,17 +989,6 @@ let spiral_peval module_main output_path =
 
         let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
 
-        let inline array_index' d = function
-            | ar, idx when is_all_int64 idx ->
-                match ar with
-                | TyArray (size,ar,_,t) ->
-                    if List.length (tuple_field size) = List.length (tuple_field idx) then TyOp(ArrayIndex,[size;ar;idx],t)
-                    else on_type_er d.trace "Array index does not match the number of dimensions in the array."
-                | _ -> on_type_er d.trace "Trying to index into a non-array."
-            | x -> on_type_er d.trace <| sprintf "One of the index arguments in array index is not an int64. Got: %A" x
-    
-        let array_index d ar idx = array_index' d (tev2 d ar idx)
-
         let (|TyLitIndex|_|) = function
             | TyLit (LitInt32 i) -> Some i
             | TyLit (LitInt64 i) -> Some (int i)
@@ -1047,11 +1032,25 @@ let spiral_peval module_main output_path =
                 tev {d with env = Map.add name recf env |> nodify_env_term} body
             | TyFun(N(N env_term,FunTypeFunction (pat,body))), args -> 
                 tev {d with env = nodify_env_term <| if pat <> "" then Map.add pat args env_term else env_term} body
-            // apply_array
-            | ar & TyArray _, idx -> array_index' d (ar, idx) |> make_tyv_and_push_typed_expr d
             // apply_module
             | TyFun(N(N env_term,FunTypeModule)), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
             | TyFun(N(env_term,FunTypeModule)), _ -> on_type_er d.trace "Expected a type level string in module application."
+            // apply_string_static
+            | TyLit (LitString str), TyVV(N [TyLitIndex a; TyLitIndex b]) -> 
+                let f x = x >= 0 && x < str.Length
+                if f a && f b then TyLit(LitString str.[a..b])
+                else on_type_er d.trace "The slice into a string literal is out of bounds."
+            | TyLit (LitString str), TyLitIndex x -> 
+                if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
+                else on_type_er d.trace "The index into a string literal is out of bounds."
+            // apply_array
+            | ar & TyType(ArrayT(N(array_ty,elem_ty))), idx ->
+                match array_ty, idx with
+                | DotNetHeap, idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
+                | DotNetHeap, idx -> on_type_er d.trace <| sprintf "The index into an array is not an int. Got: %A" idx
+                | DotNetReference, TyVV(N []) -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
+                | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
+                | _ -> failwith "Not implemented."
             // apply_dotnet_type
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
                     wrap_exception d <| fun _ ->
@@ -1111,13 +1110,6 @@ let spiral_peval module_main output_path =
                 | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
                 | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
             // apply_string
-            | TyLit (LitString str), TyVV(N [TyLitIndex a; TyLitIndex b]) -> 
-                let f x = x >= 0 && x < str.Length
-                if f a && f b then TyLit(LitString str.[a..b])
-                else on_type_er d.trace "The slice into a string literal is out of bounds."
-            | TyLit (LitString str), TyLitIndex x -> 
-                if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
-                else on_type_er d.trace "The index into a string literal is out of bounds."
             | TyType(PrimT StringT) & str, TyVV(N [a;b]) -> 
                 if is_int a && is_int b then TyOp(StringSlice,[str;a;b],PrimT StringT) |> destructure d
                 else on_type_er d.trace "Expected an int as the second argument to string index."
@@ -1369,24 +1361,25 @@ let spiral_peval module_main output_path =
             let typ = tev_seq d typ |> function 
                 | TyType (TyTypeC (N x) | x) -> x 
 
-            let size, array_type =
+            let size,array_type =
                 match tev d size with
-                | size when is_all_int64 size -> size, arrayt(DotNetHeap,typ)
+                | size when is_int size -> size,arrayt(DotNetHeap,typ)
                 | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
 
-            let array = TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
-            tyvv [size;array]
+            TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
 
         let reference_create d x =
             let x = tev d x
-            let size, array_type = TyB, arrayt(DotNetReference, get_type x)
-            let array = TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
-            tyvv [size;array]
+            let array_type = arrayt(DotNetReference, get_type x)
+            TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
 
         let array_set d ar idx r =
-            match array_index d ar idx, tev d r with
-            | l, r when get_type l = get_type r -> make_tyv_and_push_typed_expr d (TyOp(ArraySet,[l;r],BVVT))
-            | _ -> on_type_er d.trace "The two sides in array set have different types."
+            match tev3 d ar idx r with
+            | ar & TyType (ArrayT(N(DotNetHeap,t))), idx, r when is_int idx && t = get_type r -> 
+                make_tyv_and_push_typed_expr d (TyOp(ArraySet,[ar;idx;r],BVVT))
+            | ar & TyType (ArrayT(N(DotNetReference,t))), idx & TyVV(N []), r when t = get_type r -> 
+                make_tyv_and_push_typed_expr d (TyOp(ArraySet,[ar;idx;r],BVVT))
+            | x -> on_type_er d.trace <| sprintf "The two sides in array set have different types. %A" x
 
         let is_static d x = 
             match tev d x with
@@ -1433,7 +1426,6 @@ let spiral_peval module_main output_path =
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
-            | ArrayIndex,[a;b] -> array_index d a b
             | ArraySet,[a;b;c] -> array_set d a b c
 
             // Primitive operations on expressions.
@@ -1972,13 +1964,13 @@ let spiral_peval module_main output_path =
             | VVT _ as x -> print_tag_tuple x
             | UnionT _ as x -> print_tag_union x
             | RecT _ as x -> print_tag_rec x
-            | ArrayT(N(DotNetReference,t)) -> sprintf "%s ref" (print_type t)
-            | ArrayT(N(DotNetHeap,t)) -> sprintf "%s []" (print_type t)
+            | ArrayT(N(DotNetReference,t)) -> sprintf "(%s ref)" (print_type t)
+            | ArrayT(N(DotNetHeap,t)) -> sprintf "(%s [])" (print_type t)
             | ArrayT _ -> failwith "Not implemented."
             | DotNetTypeInstanceT (N t) -> print_dotnet_instance_type t
             | ClosureT(N(a,b)) -> 
                 let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
-                sprintf "(%s) -> %s" a (print_type b)
+                sprintf "(%s -> %s)" a (print_type b)
             | PrimT x ->
                 match x with
                 | Int8T -> "int8"
@@ -2083,61 +2075,36 @@ let spiral_peval module_main output_path =
 
             let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
-            let array_create (TyTuple size) = function
+            let array_create size = function
                 | Unit -> ""
-                | ArrayT(N(_,t)) ->
-                    let x = List.map codegen size |> String.concat "*"
-                    sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) x
+                | ArrayT(N(_,t)) -> sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) (codegen size)
                 | _ -> failwith "impossible"
 
             let reference_create = function
                 | TyType Unit -> ""
                 | x -> sprintf "(ref %s)" (codegen x)
 
-            let array_index (TyTuple size) ar (TyTuple idx) =
+            let array_index ar idx =
                 match ar with
                 | TyType Unit -> ""
-                | _ ->
-                    let size, idx = List.map codegen size, List.map codegen idx
-                    // Print assertions for multidimensional arrays.
-                    // For 1d arrays, the .NET runtime does the checking.
-                    match size with
-                    | _ :: _ :: _ ->
-                        List.iter2 (fun s i -> 
-                            let cond = sprintf "%s < %s && %s >= 0L" i s i
-                            // I am worried about code size blowup due to the string in sprintf so I'll leave the message out.
-                            //let message = """sprintf "Specified argument was out of the range of valid values in array indexing. index=%i size=%i" """
-                            sprintf "if (%s) = false then raise <| System.ArgumentOutOfRangeException(\"%s\")" cond i |> state
-                            ) size idx
-                    | _ -> ()
-
-                    let rec index_first = function
-                        | _ :: s :: sx, i :: ix -> index_rest (sprintf "%s * %s" i s) (sx, ix)
-                        | [_], [i] -> i
-                        | _ -> "0"
-                    and index_rest prev = function
-                        | s :: sx, i :: ix -> index_rest (sprintf "(%s + %s) * %s" prev i s) (sx, ix)
-                        | [], [i] -> sprintf "%s + %s" prev i
-                        | _ -> failwith "Invalid state."
-
-                    sprintf "%s.[int32 (%s)]" (codegen ar) (index_first (size, idx))
+                | _ -> sprintf "%s.[int32 %s]" (codegen ar) (codegen idx)
 
             let reference_index = function
                 | TyType Unit -> ""
                 | x -> sprintf "(!%s)" (codegen x)
 
-            let array_set size ar idx r = 
+            let array_set ar idx r = 
                 match ar with
                 | TyType Unit -> ()
-                | _ -> sprintf "%s <- %s" (array_index size ar idx) (codegen r) |> state
+                | _ -> sprintf "%s <- %s" (array_index ar idx) (codegen r) |> state
             let reference_set l r = 
                 match l with
                 | TyType Unit -> ()
                 | _ -> sprintf "%s := %s" (codegen l) (codegen r) |> state
 
             let string_length str = sprintf "(int64 %s.Length)" (codegen str)
-            let string_index str idx = sprintf "%s.[int32 (%s)]" (codegen str) (codegen idx)
-            let string_slice str a b = sprintf "%s.[int32 (%s)..int32 (%s)]" (codegen str) (codegen a) (codegen b)
+            let string_index str idx = sprintf "%s.[int32 %s]" (codegen str) (codegen idx)
+            let string_slice str a b = sprintf "%s.[int32 %s..int32 %s]" (codegen str) (codegen a) (codegen b)
 
             match expr with
             | TyV (_, Unit) | TyBox (N(_, Unit)) -> ""
@@ -2146,10 +2113,10 @@ let spiral_peval module_main output_path =
             | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
             | TyLet(_,(_,Unit),b,rest,_) ->
                 match b with
-                | TyOp(ArraySet,[TyOp(ArrayIndex,[size;ar;idx],_);b],_) ->
+                | TyOp(ArraySet,[ar;idx;b],_) ->
                     match get_type ar with
                     | ArrayT(N(DotNetReference,_)) -> reference_set ar b
-                    | ArrayT(N(DotNetHeap,_)) -> array_set size ar idx b
+                    | ArrayT(N(DotNetHeap,_)) -> array_set ar idx b
                     | _ -> failwith "impossible"
                 | _ ->
                     let b = codegen b
@@ -2218,8 +2185,8 @@ let spiral_peval module_main output_path =
 
                 | ArrayCreate,[a] -> array_create a t
                 | ReferenceCreate,[a] -> reference_create a
-                | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index a b c
-                | ArrayIndex,[a;b & TyType(ArrayT(N (DotNetReference,_)));c] -> reference_index b
+                | ArrayIndex,[b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index b c
+                | ArrayIndex,[b & TyType(ArrayT(N (DotNetReference,_)));c] -> reference_index b
                 | StringIndex,[str;idx] -> string_index str idx
                 | StringSlice,[str;a;b] -> string_slice str a b
                 | StringLength,[str] -> string_length str
