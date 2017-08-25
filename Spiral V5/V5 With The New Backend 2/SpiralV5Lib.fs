@@ -273,7 +273,8 @@ inl pint64 stream pos ret =
         pdigit stream pos <| Tuple.upon' ret (
             (.on_succ, inl pos c ->
                 inl x = to_int64 c - to_int64 '0'
-                i * 10 + x |> loop (inl pos _ -> ret .on_succ pos i) pos
+                inl i = i * 10 + x 
+                loop (inl pos _ -> ret .on_succ pos i) pos i
                 ),
             (.on_fail, on_fail)
             )
@@ -346,7 +347,7 @@ inl parse_ints = many int64 parse_int
 inl preturn x stream pos ret = ret .on_succ pos x
 
 inl with_unit_ret f = 
-    inl on_succ pos x = unit (f x)
+    inl on_succ pos = f
     inl on_fail pos x = ()
     inl on_fatal_fail pos x = ()
     inl on_type = ()
@@ -403,14 +404,17 @@ inl sprintf_parser =
             )
     sprintf_parser .None
 
-inl sprintf format =
+inl sprintf_template append on_succ on_fail format =
+    run format (sprintf_parser append) (module(on_succ,on_fail))
+
+inl sprintf format = 
     inl strb = mscorlib."System.Text.StringBuilder"(64i32)
     inl append x = strb.Append x |> ignore
     inl on_succ pos x = x
     inl on_fail pos x = strb.ToString()
-    run format (sprintf_parser append) (module(on_succ,on_fail))
+    sprintf_template append on_succ on_fail format
 
-module (List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf)
+module (List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template)
     """) |> module_
 
 let console =
@@ -419,6 +423,15 @@ let console =
     """
 inl console = mscorlib."System.Console"
 inl readline () = console.ReadLine()
-inl write x = console.Write x
-inl writeline x = write x; console.WriteLine()
+inl write = console.Write
+inl writeline = console.WriteLine
+
+inl printf_template cont = 
+    inl on_succ pos x = x
+    inl on_fail pos x = cont()
+    Parsing.sprintf_template write on_succ on_fail
+
+inl printf = printf_template id
+inl printfn = printf_template writeline
+module (console,readline,write,writeline,printf,printfn)
     """) |> module_

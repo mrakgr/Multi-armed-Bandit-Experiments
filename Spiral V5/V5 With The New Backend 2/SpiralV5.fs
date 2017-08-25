@@ -746,7 +746,8 @@ let spiral_peval module_main output_path =
             if Set.isEmpty f then s else s+1) 0 env
 
     let rec dotnet_type_to_ty (x: System.Type) =
-        if x = typeof<int8> then PrimT Int8T
+        if x = typeof<bool> then PrimT BoolT
+        elif x = typeof<int8> then PrimT Int8T
         elif x = typeof<int16> then PrimT Int16T
         elif x = typeof<int32> then PrimT Int32T
         elif x = typeof<int64> then PrimT Int64T
@@ -768,6 +769,7 @@ let spiral_peval module_main output_path =
 
     let rec dotnet_ty_to_type (x: Ty) =
         match x with
+        | PrimT BoolT -> typeof<bool>
         | PrimT Int8T -> typeof<int8>
         | PrimT Int16T -> typeof<int16>
         | PrimT Int32T -> typeof<int32>
@@ -2434,6 +2436,7 @@ let spiral_peval module_main output_path =
             l "dyn" (p dynamize)
             l "union" (p2 type_union)
 
+            l "bool" (op(TypeConstructorCreate,[lit <| LitBool true]))
             l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
             l "int32" (op(TypeConstructorCreate,[lit <| LitInt32 0]))
             l "int16" (op(TypeConstructorCreate,[lit <| LitInt16 0s]))

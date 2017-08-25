@@ -1,0 +1,21 @@
+let (var_22: System.Text.StringBuilder) = System.Text.StringBuilder(64)
+let (var_29: int64) = 1L
+let (var_30: int64) = 2L
+var_22.Append(var_29)
+var_22.Append(" + ")
+var_22.Append(var_30)
+var_22.Append(" = ")
+let (var_137: int64) = (var_29 + var_30)
+var_22.Append(var_137)
+let (var_152: string) = var_22.ToString()
+System.Console.Write("(")
+System.Console.Write(2.200000f)
+System.Console.Write(",")
+System.Console.Write(true)
+System.Console.Write(",")
+System.Console.Write(55L)
+System.Console.Write(",")
+System.Console.Write("Wut?")
+System.Console.Write(")")
+System.Console.WriteLine()
+

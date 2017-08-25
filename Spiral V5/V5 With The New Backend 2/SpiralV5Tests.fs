@@ -541,12 +541,12 @@ inl console = mscorlib."System.Console"
 
 inl ret = 
     inl on_succ pos x = Tuple.foldl (+) 0 x
-    inl on_fail pos x = 0
-    inl on_fatal_fail pos x = 0
+    inl on_fail pos x = -1
+    inl on_fatal_fail pos x = -2
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 2) ret
     """
 
 let test38 =
@@ -557,25 +557,26 @@ print_static t
     """
 
 let test39 =
-    "test39",[parsing2],"Does sprintf work?",
+    "test39",[parsing2;console],"Does sprintf work?",
     """
 inl a = dyn 1
 inl b = dyn 2
-Parsing.sprintf "%i + %i = %i" a b (a+b)
+Parsing.sprintf "%i + %i = %i" a b (a+b) |> ignore
+Console.printfn "(%f,%b,%i,%s)" 2.2 true 55 "Wut?"
     """
 
 let hacker_rank_3 =
-    "test39",[tuple;parsing2;console],"https://www.hackerrank.com/challenges/mini-max-sum",
+    "hacker_rank_3",[tuple;parsing2;console],"https://www.hackerrank.com/challenges/mini-max-sum",
     """
 open Console
 open Parsing
-run_with_unit_ret (read_n_ints 5) (inl pos (x :: xs as l) ->
+run_with_unit_ret (readline()) (parse_n_ints 5) (inl (x :: xs as l) ->
     inl min a b = if a < b then a else b
     inl max a b = if a > b then a else b
     inl sum = Tuple.foldl (+) 0 l
     inl min = Tuple.foldl min x l
     inl max = Tuple.foldl max x l
-    // Now how do I print this?
+    printf "%i %i" (sum-max) (sum-min)
     )
     """
 
@@ -595,9 +596,9 @@ let run_test name output_file =
         printfn "%s - %s" name desc
         let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
         printfn "Time spent in renaming: %A" total_time
-        //printfn "%A" x
+        printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test36" "output.txt"
+run_test "hacker_rank_3" "output.fsx"
 
