@@ -19,3 +19,4 @@
 #r "System.Xml.Linq.dll"
 #r "../../packages/FSharp.Compiler.Service.13.0.0/lib/net45/FSharp.Compiler.Service.dll"
 #r "../../packages/System.ValueTuple.4.3.1/lib/netstandard1.0/System.ValueTuple.dll"
+#r "../../packages/Iesi.Collections.4.0.2/lib/net40/Iesi.Collections.dll"

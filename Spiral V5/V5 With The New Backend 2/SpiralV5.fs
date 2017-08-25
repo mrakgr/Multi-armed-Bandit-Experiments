@@ -3,6 +3,7 @@
 // Global open
 open System
 open System.Collections.Generic
+open Iesi.Collections.Generic
 
 let mutable total_time = TimeSpan()
 [<Literal>]
@@ -43,6 +44,7 @@ type Module = Module of Node<ModuleName * Module list * ModuleDescription * Modu
 type PosKey = Module * int64 * int64
 
 let h0() = HashSet(HashIdentity.Structural)
+let lh0() = LinkedHashSet()
 let d0() = Dictionary(HashIdentity.Structural)
 
 let inline memoize (memo_dict: Dictionary<_,_>) k f =
@@ -272,7 +274,7 @@ and EnvTerm = Node<Map<string, TypedExpr>>
 and EnvTy = Node<Map<string, Ty>>
 and MemoKey = Node<Expr * EnvTerm>
 
-and Arguments = HashSet<TyTag>
+and Arguments = LinkedHashSet<TyTag>
 and Renamer = Dictionary<Tag,Tag>
 
 and LetType =
@@ -667,20 +669,8 @@ let spiral_peval module_main output_path =
             vars, expr_pos p.Pos body
 
     // #Renaming
-    let renamer_make s = 
-        let mutable i = 0
-        let renamer,renamer_reversed,fv,renamed_fv = d0(),d0(),h0(),h0()
-        Set.iter (fun (tag,ty as x) -> 
-            renamer.Add(tag,i)
-            renamer_reversed.Add(i, tag)
-            fv.Add x |> ignore
-            renamed_fv.Add(i,ty) |> ignore
-            i <- i + 1
-            ) s
-        renamer, renamer_reversed, fv, renamed_fv
-
-    let renamer_apply_pool (r: Dictionary<_,_>) (s: HashSet<_>) = 
-        let s' = h0()
+    let renamer_apply_pool (r: Dictionary<_,_>) (s: LinkedHashSet<_>) = 
+        let s' = lh0()
         s |> Seq.iter (fun (tag,ty) -> s'.Add(r.[tag],ty) |> ignore)
         s' 
 
@@ -689,29 +679,32 @@ let spiral_peval module_main output_path =
         m |> Seq.iter (fun kv -> m'.[kv.Key] <- r.[kv.Value])
         m'
 
-//    let renamer_reverse r = 
-//        Map.fold (fun s k v -> Map.add v k s) Map.empty r
-//        |> fun x -> if r.Count <> x.Count then failwith "The renamer is not bijective." else x
-
-    let rec renamer_apply_env memo r e = Map.map (fun _ v -> renamer_apply_typedexpr memo r v) e |> nodify_env_term
-    and renamer_apply_typedexpr (memo_dict: Dictionary<_,_>) r e =
-        let inline f e = renamer_apply_typedexpr memo_dict (r: Dictionary<_,_>) e
+    let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e |> nodify_env_term
+    and renamer_apply_typedexpr
+        (memo_dict: Dictionary<_,_>, renamer: Dictionary<_,_>, renamer_reversed: Dictionary<_,_>, 
+         fv: LinkedHashSet<_>, renamed_fv: LinkedHashSet<_> as r) e =
+        let inline f e = renamer_apply_typedexpr r e
+        let inline rename (n,t as k) =
+            match renamer.TryGetValue n with
+            | true, _ -> failwith "Should be caught be the memoize call."
+            | false, _ ->
+                let n' = renamer.Count
+                renamer.Add(n,n')
+                renamer_reversed.Add(n',n)
+                fv.Add k |> ignore
+                let k' = n', t
+                renamed_fv.Add (n',t) |> ignore
+                k'
         memoize memo_dict e <| fun () ->
             match e with
             | TyBox (N(n,t)) -> tybox(f n,t)
             | TyVV (N l) -> tyvv(List.map f l)
-            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env memo_dict r l, t)
-            | TyV (n,t) -> 
-                let n' = r.[n]
-                if n' = n then e else tyv (n',t)
+            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
+            | TyV (n,t as k) -> 
+                let n', _ as k' = rename k
+                if n' = n then e else tyv k'
             | TyLit _ -> e
-            | TyJoinPoint((memo_key,_ as key),t) -> 
-                let typ,arguments,renamer = join_point_dict.[key]
-                let arguments = renamer_apply_pool r arguments
-                let renamer = renamer_apply_renamer r renamer
-                ty_join_point memo_key (typ,arguments,renamer) t
-            | TyOp(o,l,t) -> TyOp(o,List.map f l,t)
-            | TyLet(le,(n,t),a,b,t') -> TyLet(le,(r.[n],t),f a,f b,t')
+            | TyJoinPoint _ | TyOp _ | TyLet _ -> failwith "Only data structures can be renamed."
 
     // #Free vars
     let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
@@ -924,11 +917,12 @@ let spiral_peval module_main output_path =
             | true, _->
                 failwith "Expected a method."
 
+        let inline renamables0() = d0(), d0(), d0(), lh0(), lh0()
         let inline eval_renaming memo_type d expr =
             let env = d.env.Expression
             let stopwatch = Diagnostics.Stopwatch.StartNew()
-            let renamer, renamer_reversed, fv, renamed_fv = renamer_make (env_free_variables env)
-            let renamed_env = renamer_apply_env (d0()) renamer env
+            let _, renamer, renamer_reversed, fv, renamed_fv as k = renamables0()
+            let renamed_env = renamer_apply_env k env
             total_time <- total_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
@@ -944,7 +938,8 @@ let spiral_peval module_main output_path =
                 ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty) d x
 
         let memoize_closure arg d x =
-            let fv, arg_ty = typed_expr_free_variables arg |> HashSet, get_type arg
+            let _,_,_,fv,_ as r = renamables0()
+            let arg_ty = renamer_apply_typedexpr r arg |> get_type
             let memo_type renamer = JoinPointClosure <| renamer_apply_pool renamer fv
             memoize_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
                 ty_join_point memo_key (JoinPointClosure fv,args,rev_renamer) (closuret(arg_ty,ret_ty))) d x
@@ -2051,8 +2046,10 @@ let spiral_peval module_main output_path =
         let print_method tag = sprintf "method_%i" tag
 
         let print_args args = 
-            Seq.toArray args |> Array.filter (snd >> is_unit >> not) |> Array.sort
-            |> Array.map print_tyv_with_type |> String.concat ", "
+            Seq.choose (fun (_,ty as x) ->
+                if is_unit ty = false then print_tyv_with_type x |> Some
+                else None) args
+            |> String.concat ", "
 
         let get_tag =
             let mutable i = 0
@@ -2196,8 +2193,8 @@ let spiral_peval module_main output_path =
                 | JoinPointMethod, fv, _ ->
                     sprintf "%s(%s)" method_name (print_args fv)
                 | JoinPointClosure args, fv, rev_renamer ->
-                    let fv = (Set fv) - (Set args)
-                    if fv.IsEmpty then method_name
+                    let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
+                    if Seq.isEmpty fv then method_name
                     else sprintf "%s(%s)" method_name (print_args fv)
             | TyBox(N(x, t)) ->
                 let case_name =
@@ -2337,9 +2334,11 @@ let spiral_peval module_main output_path =
             let method_name = print_method tag
             match join_point_type with
             | JoinPointClosure args -> 
-                let fv = (Set fv) - (Set args) |> fun fv -> if fv.IsEmpty then "" else sprintf "(%s) " (print_args fv)
-                sprintf "%s %s %s(%s): %s =" prefix method_name fv (print_args args) (print_type (get_type body))
-            | JoinPointMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args (Set fv)) (print_type (get_type body))
+                let printed_fv = 
+                    Seq.filter (fun x -> args.Contains x = false) fv
+                    |> fun fv -> if Seq.isEmpty fv then "" else sprintf "(%s) " (print_args fv)
+                sprintf "%s %s %s(%s): %s =" prefix method_name printed_fv (print_args args) (print_type (get_type body))
+            | JoinPointMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args fv) (print_type (get_type body))
             |> state
 
             enter <| fun _ -> 

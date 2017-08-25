@@ -236,6 +236,7 @@
     <Compile Include="V5 With The New Backend 2\SpiralV5Lib.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5Tests.fs" />
     <None Include="V5 With The New Backend 2\output.fsx" />
+    <Content Include="V5 With The New Backend 2\output.txt" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
@@ -272,6 +273,10 @@
     </Reference>
     <Reference Include="FSharp.Core">
       <HintPath>..\packages\FSharp.Core.4.2.1\lib\net45\FSharp.Core.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Iesi.Collections">
+      <HintPath>..\packages\Iesi.Collections.4.0.2\lib\net40\Iesi.Collections.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="ManagedCuda">

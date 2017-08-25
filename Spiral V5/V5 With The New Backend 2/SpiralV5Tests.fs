@@ -528,7 +528,7 @@ inl ret =
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 1) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
     """
 
 let test37 = // 
@@ -566,12 +566,12 @@ Console.printfn "(%f,%b,%i,%s)" 2.2 true 55 "Wut?"
     """
 
 let test40 =
-    "test40",[],"Does this compile into just one method?",
+    "test40",[],"Does this compile into just one method? Are the arguments reversed in the method call?",
     """
-met rec f a, b =
+met rec f a b =
     if dyn true then f b a
     else a + b
-    : int64
+    : 0
 f (dyn 1) (dyn 2)
     """
 
@@ -607,9 +607,9 @@ let run_test name output_file =
         printfn "%s - %s" name desc
         let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
         printfn "Time spent in renaming: %A" total_time
-        printfn "%A" x
+        //printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test40" "output.fsx"
+run_test "test36" "output.txt"
 
