@@ -706,38 +706,7 @@ let spiral_peval module_main output_path =
             | TyLit _ -> e
             | TyJoinPoint _ | TyOp _ | TyLet _ -> failwith "Only data structures can be renamed."
 
-    // #Free vars
-    let inline vars_union' init f l = List.fold (fun s x -> Set.union s (f x)) init l
-    let inline vars_union f l = vars_union' Set.empty f l
-
-    let rec typed_expr_free_variables_template (memo: HashSet<_>) e =
-        let inline f e = typed_expr_free_variables_template memo e
-
-        if memo.Add e then
-            match e with
-            | TyBox(N(n,t)) -> f n
-            | TyV(n,t) -> Set.singleton (n, t)
-            | TyLit _ -> Set.empty
-            | TyVV (N l) | TyOp(_,l,_) -> vars_union f l
-            | TyFun(N (N l,_)) -> env_free_variables_template memo l
-            | TyJoinPoint(key,ty) -> join_point_dict.[key] |> fun (_,fv,_) -> Set fv
-            // Note, this is different from `Set.remove x (f b) + f a` because let statements are also used to instantiate a variable to themselves.
-            // For example `let x = x`. In the typed language that is being compiled to, I want the x's tag to be blocked from being propagated.
-            | TyLet(_,x,a,b,_) -> Set.remove x (f b + f a)
-        else Set.empty
-
-    and env_free_variables_template memo env = 
-        Map.fold (fun s _ v -> typed_expr_free_variables_template memo v + s) Set.empty env
-
-    let inline typed_expr_free_variables e = typed_expr_free_variables_template (h0()) e
-    let inline env_free_variables env = env_free_variables_template (h0()) env
-
     // #Conversion
-    let env_num_args env = 
-        Map.fold (fun s k v -> 
-            let f = typed_expr_free_variables v
-            if Set.isEmpty f then s else s+1) 0 env
-
     let rec dotnet_type_to_ty (x: System.Type) =
         if x = typeof<bool> then PrimT BoolT
         elif x = typeof<int8> then PrimT Int8T
@@ -782,10 +751,11 @@ let spiral_peval module_main output_path =
         | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
-    let is_all_int64 size = List.forall is_int64 (tuple_field size)
-    let (|TyArray|_|) = function
-        | TyTuple [size; ar & TyType (ArrayT (N (ar_type,ret_type)))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
-        | _ -> None
+//    let is_all_int64 size = List.forall is_int64 (tuple_field size)
+//    let (|TyArray|_|) = function
+//        | TyType (ArrayT (N (DotNetHeap,ret_type)))
+//        | TyTuple [size; ar & TyType (ArrayT (N (ar_type,ret_type)))] when is_all_int64 size -> Some (size,ar,ar_type,ret_type)
+//        | _ -> None
 
     // #Type directed partial evaluation
     let rec expr_peval (d: LangEnv) (expr: Expr) =
