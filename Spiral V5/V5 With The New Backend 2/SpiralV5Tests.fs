@@ -579,6 +579,21 @@ met rec f a b =
 f (dyn 1) (dyn 2)
     """
 
+let test41 =
+    "test41",[parsing2],"Does using closures cut down on code size for the parser?",
+    """
+inl console = mscorlib."System.Console"
+
+inl ret = 
+    inl on_succ pos x = Tuple.foldl (+) 0 x
+    inl on_fail pos x = -1
+    inl on_fatal_fail pos x = -2
+    inl on_type = int64
+    module (on_succ,on_fail,on_fatal_fail,on_type)
+
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints' 320) ret
+    """
+
 
 let hacker_rank_3 =
     "hacker_rank_3",[tuple;parsing2;console],"https://www.hackerrank.com/challenges/mini-max-sum",
@@ -600,7 +615,7 @@ let tests =
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
-    test40;
+    test40;test41
     hacker_rank_1;hacker_rank_2;hacker_rank_3
     |] |> Array.map module_
 
@@ -611,9 +626,9 @@ let run_test name output_file =
         printfn "%s - %s" name desc
         let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
         printfn "Time spent in renaming: %A" total_time
-        printfn "%A" x
+        //printfn "%A" x
         ()
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test18" "output.fsx"
+run_test "test41" "output.txt"
 

@@ -318,12 +318,17 @@ inl many typ_p p stream pos ret =
 
     many pos .Nil
 
-inl tuple l stream pos ret =
+inl tuple_template k l stream pos ret =
     inl rec loop pos acc = function
-        | x :: xs -> x stream pos <| upon' ret .on_succ (inl pos x -> loop pos (x :: acc) xs)
+        | x :: xs -> 
+            inl k = (inl pos -> k (inl x -> loop pos (x :: acc) xs)) `int64
+            x stream pos <| upon' ret .on_succ k
         | () -> ret .on_succ pos (Tuple.rev acc)
         | _ -> error_type "Incorrect input to tuple."
     loop pos () l
+
+inl tuple = tuple_template id
+inl tuple' typ_chain = tuple_template <| inl x -> x `typ_chain
 
 inl (>>=) a b stream pos ret = a stream pos <| upon' ret .on_succ (inl pos x -> b x stream pos ret)
 inl (|>>) a f = a >>= inl x stream pos ret -> ret .on_succ pos (f x)
@@ -340,7 +345,10 @@ inl run data parser ret =
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
-inl parse_n_ints n = Tuple.repeat n parse_int |> tuple
+
+inl parse_n_ints_template k n = Tuple.repeat n parse_int |> k
+inl parse_n_ints = parse_n_ints_template tuple
+inl parse_n_ints' = parse_n_ints_template <| tuple' int64
     
 inl parse_ints = many int64 parse_int
 inl preturn x stream pos ret = ret .on_succ pos x
@@ -413,7 +421,9 @@ inl sprintf format =
     inl on_fail pos x = strb.ToString()
     sprintf_template append on_succ on_fail format
 
-module (List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template)
+module 
+    (List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template,
+     parse_n_ints',tuple')
     """) |> module_
 
 let console =
