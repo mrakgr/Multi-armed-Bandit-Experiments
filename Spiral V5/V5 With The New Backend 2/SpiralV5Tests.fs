@@ -526,9 +526,9 @@ let test36 = //
 inl console = mscorlib."System.Console"
 
 inl ret = 
-    inl on_succ pos x = Tuple.foldl (+) 0 x
-    inl on_fail pos x = -1
-    inl on_fatal_fail pos x = -2
+    inl on_succ pos, x = Tuple.foldl (+) 0 x
+    inl on_fail pos, x = -1
+    inl on_fatal_fail pos, x = -2
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
@@ -585,9 +585,9 @@ let test41 =
 inl console = mscorlib."System.Console"
 
 inl ret = 
-    inl on_succ pos x = Tuple.foldl (+) 0 x
-    inl on_fail pos x = -1
-    inl on_fatal_fail pos x = -2
+    inl on_succ pos, x = Tuple.foldl (+) 0 x
+    inl on_fail pos, x = -1
+    inl on_fatal_fail pos, x = -2
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
