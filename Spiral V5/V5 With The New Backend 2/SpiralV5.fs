@@ -218,6 +218,8 @@ and Pattern =
     | PatCons of Pattern list
     | PatType of Pattern * Expr
     | PatActive of string * Pattern
+    | PatPartActive of string * Pattern
+    | PatExtActive of string * Pattern
     | PatOr of Pattern list
     | PatAnd of Pattern list
     | PatClauses of (Pattern * Expr) list
@@ -328,7 +330,7 @@ and ProgramNode =
 
 // #Main
 let spiral_peval module_main output_path = 
-    let force (x: Lazy<_>) = x.Value
+    let inline force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
 
@@ -410,7 +412,7 @@ let spiral_peval module_main output_path =
     let tyfun x = nodify_tyfun x |> TyFun
     let tybox x = nodify_tybox x |> TyBox
 
-    let lit_int i = LitInt32 i |> lit
+    let lit_int i = LitInt64 i |> lit
     let lit_string x = LitString x |> lit
 
     let fix name x =
@@ -588,12 +590,12 @@ let spiral_peval module_main output_path =
             let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
 
             let inline pat_foldbacki f s l =
-                let mutable len = 0
+                let mutable len = 0L
                 let rec loop i l =
                     match l with
-                    | x :: xs -> f (x,i) (loop (i+1) xs)
+                    | x :: xs -> f (x,i) (loop (i+1L) xs)
                     | [] -> len <- i; s
-                loop 0 l, len
+                loop 0L l, len
             
             let pat_tuple l' =
                 pat_foldbacki
@@ -616,9 +618,15 @@ let spiral_peval module_main output_path =
                     (on_succ, tuple_slice_from)
                     l
                 |> fun ((on_succ,_),len) -> 
-                    if_static (gte (tuple_length arg) (lit_int (len-1))) on_succ.Value on_fail.Value
+                    if_static (gte (tuple_length arg) (lit_int (len-1L))) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
                     |> case arg
+
+            let pat_part_active a pat on_fail arg =
+                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let on_succ = inl pat_var (cp (v pat_var) pat on_succ on_fail |> force)
+                let on_fail = inl "" on_fail.Value
+                ap' (v a) [arg; on_fail; on_succ]
 
             match pat with
             | E -> on_succ.Value
@@ -632,6 +640,16 @@ let spiral_peval module_main output_path =
             | PatActive (a,b) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
+            | PatPartActive (a,pat) -> pat_part_active a pat on_fail arg
+            | PatExtActive (a,pat) ->
+                let rec f pat (on_fail: Lazy<Expr>) = 
+                    match pat with
+                    | PatAnd _ -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> pat_part_active a pat on_fail
+                    | PatOr l -> List.foldBack (fun pat on_fail -> lazy f pat on_fail) l on_fail |> force
+                    | PatCons l -> vv [type_lit_create (LitString "cons"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a pat on_fail
+                    | PatTuple l -> vv [type_lit_create (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a pat on_fail
+                    | _ -> vv [type_lit_create (LitString "var"); arg]
+                f pat on_fail
             | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
             | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
@@ -817,7 +835,7 @@ let spiral_peval module_main output_path =
             let destructure_var r =
                 let index_tuple_args tuple_types = 
                     List.mapi (fun i typ -> 
-                        destructure <| TyOp(VVIndex,[r;TyLit <| LitInt32 i],typ)) tuple_types
+                        destructure <| TyOp(VVIndex,[r;TyLit <| LitInt64 (int64 i)],typ)) tuple_types
                 let env_unseal x =
                     let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
                     Map.map unseal x
@@ -1151,7 +1169,7 @@ let spiral_peval module_main output_path =
             | v -> on_fail()
 
         let vv_length x = 
-            vv_unop_template (fun l -> TyLit (LitInt32 l.Length)) 
+            vv_unop_template (fun l -> l.Length |> int64 |> LitInt64 |> TyLit) 
                 (fun _ -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v) x
                 
         let vv_is x = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false)) x
@@ -1538,7 +1556,9 @@ let spiral_peval module_main output_path =
         let with_ = keywordString "with"
         let open_ = keywordString "open"
         let cons = keywordString "::"
-        let active = keywordChar '^'
+        let active_pat = keywordChar '!'
+        let part_active_pat = keywordChar '@'
+        let ext_active_pat = keywordChar '#'
         let type_' = keywordString "type"
         let wildcard = keywordChar '_'
 
@@ -1553,37 +1573,55 @@ let spiral_peval module_main output_path =
 
             let parser = numberLiteral numberFormat "number"
 
-            let default_int x _ = int64 x |> LitInt64 |> Reply
-            let default_float x _ = float32 x |> LitFloat32 |> Reply
+            let inline safe_parse f on_succ er_msg x = 
+                match f x with
+                | true, x -> Reply(on_succ x)
+                | false, _ -> Reply(ReplyStatus.FatalError,messageError er_msg)
 
-            let followedBySuffix x default_ =
+            let default_int x _ = safe_parse Int64.TryParse LitInt64 "default int parse failed" x
+            let default_float x _ = safe_parse Single.TryParse LitFloat32 "default float parse failed" x
+
+            let int8 x _ = safe_parse SByte.TryParse LitInt8 "int8 parse failed" x
+            let int16 x _ = safe_parse Int16.TryParse LitInt16 "int16 parse failed" x
+            let int32 x _ = safe_parse Int32.TryParse LitInt32 "int32 parse failed" x
+            let int64 x _ = safe_parse Int64.TryParse LitInt64 "int64 parse failed" x
+
+            let uint8 x _ = safe_parse Byte.TryParse LitUInt8 "uint8 parse failed" x
+            let uint16 x _ = safe_parse UInt16.TryParse LitUInt16 "uint16 parse failed" x
+            let uint32 x _ = safe_parse UInt32.TryParse LitUInt32 "uint32 parse failed" x
+            let uint64 x _ = safe_parse UInt64.TryParse LitUInt64 "uint64 parse failed" x
+
+            let float32 x _ = safe_parse Single.TryParse LitFloat32 "float32 parse failed" x
+            let float64 x _ = safe_parse Double.TryParse LitFloat64 "float64 parse failed" x
+
+            let followedBySuffix x is_x_integer =
                 let f c l = 
-                    let l = Array.map (fun (k,m) -> skipString k |>> fun _ -> m x) l
+                    let l = Array.map (fun (k,m) -> skipString k >>= fun _ -> m x) l
                     skipChar c >>. choice l
                 choice
                     [|
                     f 'i'
                         [|
-                        "8", int8 >> LitInt8
-                        "16", int16 >> LitInt16
-                        "32", int32 >> LitInt32
-                        "64", int64 >> LitInt64
+                        "8", int8
+                        "16", int16
+                        "32", int32
+                        "64", int64
                         |]
 
                     f 'u'
                         [|
-                        "8", uint8 >> LitUInt8
-                        "16", uint16 >> LitUInt16
-                        "32", uint32 >> LitUInt32
-                        "64", uint64 >> LitUInt64
+                        "8", uint8
+                        "16", uint16
+                        "32", uint32
+                        "64", uint64
                         |]
 
                     f 'f'
                         [|
-                        "32", float32 >> LitFloat32
-                        "64", float >> LitFloat64
+                        "32", float32
+                        "64", float64
                         |]
-                    default_ x
+                    (if is_x_integer then default_int x else default_float x)
                     |]
 
             fun s ->
@@ -1591,8 +1629,7 @@ let spiral_peval module_main output_path =
                 if reply.Status = Ok then
                     let nl = reply.Result // the parsed NumberLiteral
                     try 
-                        if nl.IsInteger then followedBySuffix nl.String default_int s
-                        else followedBySuffix nl.String default_float s
+                        followedBySuffix nl.String nl.IsInteger s
                     with
                     | :? System.OverflowException as e ->
                         s.Skip(-nl.String.Length)
@@ -1639,8 +1676,10 @@ let spiral_peval module_main output_path =
         let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
         let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
         let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
-        let pat_type expr pattern = tuple2 pattern (opt (pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
-        let pat_active pattern = (active >>. tuple2 var_name pattern |>> PatActive) <|> pattern
+        let pat_type expr pattern = tuple2 pattern (opt (notFollowedBy cons >>. pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
+        let pat_active pattern = 
+            let active_pat = choice [active_pat >>% PatActive; part_active_pat >>% PatPartActive; ext_active_pat >>% PatExtActive]
+            (pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)) <|> pattern
         let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
         let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
         let pat_type_lit = dot >>. (lit_ <|> (var_name |>> LitString)) |>> PatTypeLit
@@ -1650,7 +1689,7 @@ let spiral_peval module_main output_path =
 
         let (^<|) a b = a b // High precedence, right associative <| operator
         let rec patterns expr s = // The order the pattern parsers are chained determines their precedence.
-            pat_when expr ^<| pat_as ^<| pat_or ^<| pat_tuple ^<| pat_and ^<| pat_type expr ^<| pat_cons ^<| pat_active 
+            pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr ^<| pat_active 
             ^<| choice [|pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds (patterns expr)|] <| s
     
         let pattern_list expr = many (patterns expr)
@@ -2410,8 +2449,8 @@ let spiral_peval module_main output_path =
             b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
             b "||" Or; b "&&" And; b "::" VVCons
 
-            l "fst" (p <| fun x -> tuple_index x 0)
-            l "snd" (p <| fun x -> tuple_index x 1)
+            l "fst" (p <| fun x -> tuple_index x 0L)
+            l "snd" (p <| fun x -> tuple_index x 1L)
 
             l "tuple_length" (p <| fun x -> op(VVLength,[x]))
             l "tuple_index" (p2 tuple_index')

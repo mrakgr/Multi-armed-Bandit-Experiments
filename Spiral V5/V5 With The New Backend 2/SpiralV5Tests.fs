@@ -51,7 +51,7 @@ a, b, c
 let fib = // 
     "fib",[],"Does recursion work on the fibonacci example?",
     """
-met rec fib ^dyn x = 
+met rec fib !dyn x = 
     if x <= 0 then 0 else fib (x-1) + fib (x-2)
     : x
 fib 1
@@ -72,9 +72,9 @@ let test7 = //
     "test7",[],"Do active patterns work?",
     """
 inl f op1 op2 op3 = function
-    | ^op1 (.Some, x) -> x
-    | ^op2 (.Some, x) -> x
-    | ^op3 (.Some, x) -> x
+    | !op1 (.Some, x) -> x
+    | !op2 (.Some, x) -> x
+    | !op3 (.Some, x) -> x
 
 inl add = function
     | .Add -> .Some, inl x y -> x + y
@@ -424,7 +424,7 @@ inl t = List int64
 inl nil = t .ListNil
 inl cons x xs = t (.ListCons, (x, xs))
 
-met rec sum (^int64 (^dyn s)) l = 
+met rec sum (!int64 (!dyn s)) l = 
     match l with
     | .ListCons, (x, xs) -> sum (s + x) xs
     | .ListNil -> s
@@ -532,7 +532,7 @@ inl ret =
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints (.no_clo,320)) ret
     """
 
 let test37 = // 
@@ -591,9 +591,8 @@ inl ret =
     inl on_type = int64
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints' 320) ret
+Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
     """
-
 
 let hacker_rank_3 =
     "hacker_rank_3",[tuple;parsing2;console],"https://www.hackerrank.com/challenges/mini-max-sum",
@@ -609,26 +608,89 @@ run_with_unit_ret (readline()) (parse_n_ints 5) <| inl x :: xs as l ->
     printf "%i %i" (sum-max) (sum-min)
     """
 
+let test42 =
+    "test42",[],"Do partial active patterns work?",
+    """
+inl f x on_fail on_succ =
+    match x with
+    | x : int64 -> on_succ (x,"is_int64")
+    | x : int32 -> on_succ (x,"is_int32",x*x)
+    | _ -> on_fail()
+
+inl m m1 = function
+    | @m1 (q,w,e) -> q,w,e
+    | @m1 (q,w) -> q,w
+    | @m1 q -> q
+    | _ -> error_type "The call to m1 failed."
+
+m f 2.2
+    """
+
+let test43 =
+    "test43",[tuple],"Do extension active patterns work?",
+    """
+// This test is a bit strange since I expect the extension patterns to be used to implement views
+// instead of doing general tranformations.
+inl f x on_fail on_succ =
+    match x with
+    | .tup, n, (_ :: _ as x) when n = tuple_length x -> Tuple.repeat n x |> on_succ
+    | .cons, n, x -> "rest" :: Tuple.repeat n x |> Tuple.rev |> on_succ 
+    | .var, x -> on_succ ("is_var",x)
+    | _ -> on_fail()
+
+inl m m1 = function
+    | #m1 (q,w,e) -> q, w, e
+    | #m1 (q,w) -> q, w
+    | #m1 (a :: b) -> a :: b
+    | #m1 q -> q
+    | _ -> error_type "The call to m1 failed."
+
+m f true, m f (2.2,3.3), m f ("a","b","c"), m f (1,2,3,4)
+    """
+
+let test44 =
+    "test44",[tuple],"Do or extension active patterns work?",
+    """
+inl f x on_fail on_succ =
+    match x with
+    | .tup, 4, x -> on_succ x // This one does not get triggered due to not being in m
+    | .tup, 3, x -> on_succ x
+    | .tup, 2, x -> on_succ x
+    | .var, x -> on_succ x
+    | _ -> on_fail()
+
+inl m m1 = function
+    | #m1 (x,_,_ | x,_ | x) -> x
+    | _ -> error_type "The call to m1 failed."
+
+m f true, m f (2.2,3.3), m f ("a","b","c"), m f (1,2,3,4)
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
-    test40;test41
+    test40;test41;test42;test43;test44
     hacker_rank_1;hacker_rank_2;hacker_rank_3
     |] |> Array.map module_
 
-let run_test name output_file =
+let run_test name is_big_test =
     let (Module(N(name,aux,desc,body)) as main_module) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
 
     let f () =
         printfn "%s - %s" name desc
-        let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
-        printfn "Time spent in renaming: %A" total_time
-        //printfn "%A" x
-        ()
+        if is_big_test then
+            let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.txt"))
+            printfn "Time spent in renaming: %A" total_time
+            //printfn "%A" x
+        else
+            let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.fsx"))
+            printfn "Time spent in renaming: %A" total_time
+            printfn "%A" x
+
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test41" "output.txt"
+run_test "test44" false
 

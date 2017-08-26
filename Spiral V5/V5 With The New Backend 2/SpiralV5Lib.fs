@@ -148,7 +148,7 @@ inl pdigit s ret =
     | x -> ret x
 
 inl pint64 s ret =
-    met rec loop state (^ dyn i) = 
+    met rec loop state (! dyn i) = 
         pdigit s <| function
             | .Succ, c -> 
                 inl x = to_int64 c - to_int64 '0'
@@ -163,7 +163,7 @@ inl pint64 s ret =
     loop .First 0
 
 inl list_rev typ l = 
-    met rec loop (^typ (^dyn acc)) l = 
+    met rec loop (!typ (!dyn acc)) l = 
         match l with
         | .ListNil -> acc
         | .ListCons, (x, xs) -> loop (.ListCons, (x, acc)) xs
@@ -173,7 +173,7 @@ inl list_rev typ l =
 inl many typ_p p s ret =
     inl typ = List typ_p
 
-    met rec many (^typ (^dyn r)) =
+    met rec many (!typ (!dyn r)) =
         inl state = s.pos ()
         p s <| function
             | .Succ, x when state < s.pos() -> many <| (.ListCons, (x, r))
@@ -217,7 +217,7 @@ inl string_stream str =
         if cond then ret (.Succ, (str idx)) 
         else ret (.Fail, (idx, "string index out of bounds"))
 
-inl run (^dyn data) parser ret = 
+inl run (!dyn data) parser ret = 
     match data with
     | _ : string -> parser (string_stream data) ret
     | _ -> error_type "Only strings supported for now."
@@ -269,7 +269,7 @@ inl pdigit stream pos ret =
         else ret .on_fail (pos, "digit"))
 
 inl pint64 stream pos ret =
-    met rec loop on_fail pos (^dyn i) = 
+    met rec loop on_fail pos (!dyn i) = 
         pdigit stream pos <| Tuple.upon' ret (
             (.on_succ, inl pos, c ->
                 inl x = to_int64 c - to_int64 '0'
@@ -292,7 +292,7 @@ met rec spaces stream pos ret =
     : ret .on_type
 
 inl list_rev typ l = 
-    met rec loop (^typ (^dyn acc)) l = 
+    met rec loop (!typ (!dyn acc)) l = 
         match l with
         | .Nil -> acc
         | .Cons, (x, xs) -> loop (.Cons, (x, acc)) xs
@@ -303,7 +303,7 @@ inl many typ_p p stream pos ret =
     inl typ = List typ_p
     inl state = pos
 
-    met rec many pos (^typ (^dyn r)) =
+    met rec many pos (!typ (!dyn r)) =
         p stream pos <| Tuple.upon' ret (
             (.on_succ, function
                 | pos,_ when state = pos -> ret .on_fatal_fail (pos, "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop.")
@@ -328,7 +328,7 @@ inl tuple_template k l stream pos ret =
     loop pos () l
 
 inl tuple = tuple_template id
-inl tuple' typ_chain = tuple_template <| inl x -> x `(int64, typ_chain)
+inl tuple_chain typ_chain = tuple_template <| inl x -> x `(int64, typ_chain)
 
 inl (>>=) a b stream pos ret = a stream pos <| upon' ret .on_succ (inl pos, x -> b x stream pos ret)
 inl (|>>) a f = a >>= inl x stream pos ret -> ret .on_succ (pos, f x)
@@ -336,7 +336,7 @@ inl (|>>) a f = a >>= inl x stream pos ret -> ret .on_succ (pos, f x)
 inl string_stream str pos ret =
     inl f pos = pos >= 0 && pos < string_length str
     match pos with
-    | (a, b when f a && f b) | (pos when f pos) -> ret .on_succ (pos, str pos)
+    | a, b when f a && f b | pos when f pos -> ret .on_succ (pos, str pos)
     | _ -> ret .on_fail (pos, "string index out of bounds")
 
 inl run data parser ret = 
@@ -347,8 +347,10 @@ inl run data parser ret =
 inl parse_int = tuple (pint64, spaces) |>> fst
 
 inl parse_n_ints_template k n = Tuple.repeat n parse_int |> k
-inl parse_n_ints = parse_n_ints_template tuple
-inl parse_n_ints' = parse_n_ints_template <| tuple' int64
+inl parse_n_ints = function
+    | .no_clo, n | n when n <= 5 -> parse_n_ints_template tuple n
+    | n when n > 5 -> parse_n_ints_template (tuple_chain int64) n
+    | n : int64 -> type_error "The input to this function must be static."
     
 inl parse_ints = many int64 parse_int
 inl preturn x stream pos ret = ret .on_succ (pos, x)
@@ -423,7 +425,7 @@ inl sprintf format =
 
 module 
     (List,run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template,
-     parse_n_ints',tuple')
+     tuple_chain)
     """) |> module_
 
 let console =
