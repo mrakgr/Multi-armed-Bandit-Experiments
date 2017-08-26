@@ -205,6 +205,12 @@ and FunType =
     | FunTypeRecFunction of FunctionCore * string
     | FunTypeModule
 
+    override t.ToString() =
+        match t with
+        | FunTypeModule -> "<module>"
+        | FunTypeFunction (str, expr) -> "<function>"
+        | FunTypeRecFunction (_, name) -> sprintf "<rec_function: %s>" name
+
 and Pattern =
     | E
     | PatVar of string
