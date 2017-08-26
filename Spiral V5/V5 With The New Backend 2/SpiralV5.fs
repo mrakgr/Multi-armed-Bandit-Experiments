@@ -2087,7 +2087,7 @@ let spiral_peval module_main output_path =
             let array_index ar idx =
                 match ar with
                 | TyType Unit -> ""
-                | _ -> sprintf "(%s.GetValue(%s) :?> _)" (codegen ar) (codegen idx)
+                | _ -> sprintf "%s.[int32 %s]" (codegen ar) (codegen idx)
 
             let reference_index = function
                 | TyType Unit -> ""
@@ -2096,7 +2096,7 @@ let spiral_peval module_main output_path =
             let array_set ar idx r = 
                 match ar with
                 | TyType Unit -> ()
-                | _ -> sprintf "%s.SetValue(%s,%s)" (codegen ar) (codegen r) (codegen idx) |> state
+                | _ -> sprintf "%s <- %s" (array_index ar idx) (codegen r) |> state
             let reference_set l r = 
                 match l with
                 | TyType Unit -> ()

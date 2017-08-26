@@ -11,6 +11,6 @@ let (var_30: (int64 * int64 -> int64)) = method_15
 var_26 := var_30
 let (var_32: (int64 * int64 -> int64)) = (!var_26)
 let (var_33: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(10L))
-var_33.SetValue(2L,3L)
-let (var_35: int64) = (var_33.GetValue(3L) :?> _)
+var_33.[int32 3L] <- 2L
+let (var_35: int64) = var_33.[int32 3L]
 
