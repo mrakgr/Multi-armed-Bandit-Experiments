@@ -695,6 +695,13 @@ inl m' n m1 = function
 m f (1,1), m f true, m' 6 f (2,2), m' 5 f (2,2), m' 1 f 123.456
     """
 
+let hacker_rank_4 =
+    "hacker_rank_4",[console],"https://www.hackerrank.com/challenges/simple-array-sum",
+    """
+open Parsing
+inl parser = read_int >>= inl n -> read_n_ints array_loader n
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
