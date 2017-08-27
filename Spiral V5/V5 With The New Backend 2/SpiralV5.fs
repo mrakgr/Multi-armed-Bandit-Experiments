@@ -622,7 +622,7 @@ let spiral_peval module_main output_path =
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
                     |> case arg
 
-            let pat_part_active a pat on_succ on_fail arg =
+            let pat_part_active a pat on_fail arg =
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 let on_succ = inl pat_var (cp (v pat_var) pat on_succ on_fail |> force)
                 let on_fail = inl "" on_fail.Value
@@ -640,23 +640,18 @@ let spiral_peval module_main output_path =
             | PatActive (a,b) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
-            | PatPartActive (a,pat) -> pat_part_active a pat on_succ on_fail arg
+            | PatPartActive (a,pat) -> pat_part_active a pat on_fail arg
             | PatExtActive (a,pat) ->
-                let rec f fin pat on_succ on_fail = 
-                    match pat with
-                    | PatAnd _ -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> fin pat on_succ on_fail
-                    | PatOr l -> List.foldBack (fun pat on_fail -> lazy f fin pat on_succ on_fail) l on_fail |> force
-                    | PatCons l -> vv [type_lit_create (LitString "cons"); l.Length |> int64 |> LitInt64 |> lit; arg] |> fin pat on_succ on_fail
-                    | PatTuple l -> vv [type_lit_create (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> fin pat on_succ on_fail
-                    | PatType (a,typ) -> 
-                        let fin pat on_succ on_fail arg = 
-                            let arg = if_static (eq_type arg typ) (force on_succ) (force on_fail) |> case arg
-                            fin pat on_succ on_fail arg
-                        f fin a on_succ on_fail
-                    | PatWhen (pat, e) -> f fin pat (lazy if_static e on_succ.Value on_fail.Value) on_fail
+                let rec f pat' on_fail = function
+                    | PatAnd _ as pat -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> pat_part_active a (pat' pat) on_fail
+                    | PatOr l -> List.foldBack (fun pat on_fail -> lazy f pat' on_fail pat) l on_fail |> force
+                    | PatCons l as pat -> vv [type_lit_create (LitString "cons"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' pat) on_fail
+                    | PatTuple l as pat -> vv [type_lit_create (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' pat) on_fail
+                    | PatType (a,typ) -> f (fun a -> PatType(a,typ) |> pat') on_fail a
+                    | PatWhen (pat, e) -> f (fun pat -> PatWhen(pat,e) |> pat') on_fail pat
                     | PatClauses _ -> failwith "Clauses should not appear inside other clauses."
-                    | _ -> vv [type_lit_create (LitString "var"); arg] |> fin pat on_succ on_fail
-                f (fun pat on_succ on_fail -> pat_part_active a pat on_succ on_fail) pat on_succ on_fail 
+                    | pat -> vv [type_lit_create (LitString "var"); arg] |> pat_part_active a (pat' pat) on_fail
+                f id on_fail pat
             | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
             | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
@@ -1182,7 +1177,7 @@ let spiral_peval module_main output_path =
         let vv_is x = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false)) x
 
         let eq_type d a b =
-            let f x = match get_type x with TyTypeC (N x) -> x | x -> x
+            let f a = typec_strip (get_type a) 
             let a, b = tev2 d a b 
             LitBool (f a = f b) |> TyLit
     
@@ -1227,8 +1222,9 @@ let spiral_peval module_main output_path =
             match d.rbeh with
             | AnnotationReturn -> tev d b |> get_type |> typec_strip |> make_tyv_and_push_ty d
             | AnnotationDive ->
+                let f a = typec_strip (get_type a) 
                 let a, b = tev d a, tev_seq d b
-                let ta, tb = get_type a, get_type b |> typec_strip
+                let ta, tb = f a, f b
                 if ta = tb then a else on_type_er d.trace <| sprintf "%A <> %A" ta tb
 
         let inline prim_bin_op_template d check_error is_check k a b t =

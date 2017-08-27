@@ -646,10 +646,10 @@ inl m m1 = function
     | #m1 q -> q
     | _ -> error_type "The call to m1 failed."
 
-m f true, // cons
-m f (2.2,3.3), // tup
-m f ("a","b","c"), // tup
-m f (1,2,3,4) // cons
+m f true, // Tuple1(true, true, "rest")
+m f (2.2,3.3), // Tuple3(Tuple2(2.200000f, 3.300000f), Tuple2(2.200000f, 3.300000f))
+m f ("a","b","c"), // Tuple5(Tuple4("a", "b", "c"), Tuple4("a", "b", "c"), Tuple4("a", "b", "c"))
+m f (1,2,3,4) // Tuple7(Tuple6(1L, 2L, 3L, 4L), Tuple6(1L, 2L, 3L, 4L), "rest")
     """
 
 let test44 =
@@ -667,6 +667,7 @@ inl m m1 = function
     | #m1 (x,_,_ | x,_ | x) -> x
     | _ -> error_type "The call to m1 failed."
 
+// Tuple4(Tuple1("is_var", true), 2.200000f, "a", Tuple3("is_var", Tuple2(1L, 2L, 3L, 4L)))
 m f true, m f (2.2,3.3), m f ("a","b","c"), m f (1,2,3,4)
     """
 
@@ -679,11 +680,19 @@ inl f x on_fail on_succ =
     | _, x -> on_succ x
 
 inl m m1 = function
-    | #m1 ((a,b) : (int64,int64)) -> "is_int64"
+    | #m1 ((a,b,c): (int64,int64,int64)) -> "is_int64_int64_int64"
+    | #m1 ((a,b): (int64,int64)) -> "is_int64_int64"
     | #m1 (x : bool) -> "is_bool"
     | #m1 x -> "is_x"
 
-m f (1,1)
+inl m' n m1 = function
+    | #m1 ((a,b,c): (int64,int64,int64) when n > 5) -> "is_int64_int64_int64, n > 5"
+    | #m1 ((a,b): (int64,int64) when n > 5) -> "is_int64_int64, n > 5"
+    | #m1 ((a,b): (int64,int64) when n <= 5) -> "is_int64_int64, n <= 5"
+    | _ -> "???"
+
+// Tuple5("is_int64_int64", "is_bool", "is_int64_int64, n > 5", "is_int64_int64, n <= 5", "???")
+m f (1,1), m f true, m' 6 f (2,2), m' 5 f (2,2), m' 1 f 123.456
     """
 
 let tests =
@@ -712,5 +721,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test45" false
+run_test "test43" false
 
