@@ -622,7 +622,7 @@ let spiral_peval module_main output_path =
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
                     |> case arg
 
-            let pat_part_active a pat on_fail arg =
+            let pat_part_active a pat on_succ on_fail arg =
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 let on_succ = inl pat_var (cp (v pat_var) pat on_succ on_fail |> force)
                 let on_fail = inl "" on_fail.Value
@@ -640,16 +640,23 @@ let spiral_peval module_main output_path =
             | PatActive (a,b) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
-            | PatPartActive (a,pat) -> pat_part_active a pat on_fail arg
+            | PatPartActive (a,pat) -> pat_part_active a pat on_succ on_fail arg
             | PatExtActive (a,pat) ->
-                let rec f pat (on_fail: Lazy<Expr>) = 
+                let rec f fin pat on_succ on_fail = 
                     match pat with
-                    | PatAnd _ -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> pat_part_active a pat on_fail
-                    | PatOr l -> List.foldBack (fun pat on_fail -> lazy f pat on_fail) l on_fail |> force
-                    | PatCons l -> vv [type_lit_create (LitString "cons"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a pat on_fail
-                    | PatTuple l -> vv [type_lit_create (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a pat on_fail
-                    | _ -> vv [type_lit_create (LitString "var"); arg]
-                f pat on_fail
+                    | PatAnd _ -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> fin pat on_succ on_fail
+                    | PatOr l -> List.foldBack (fun pat on_fail -> lazy f fin pat on_succ on_fail) l on_fail |> force
+                    | PatCons l -> vv [type_lit_create (LitString "cons"); l.Length |> int64 |> LitInt64 |> lit; arg] |> fin pat on_succ on_fail
+                    | PatTuple l -> vv [type_lit_create (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> fin pat on_succ on_fail
+                    | PatType (a,typ) -> 
+                        let fin pat on_succ on_fail arg = 
+                            let arg = if_static (eq_type arg typ) (force on_succ) (force on_fail) |> case arg
+                            fin pat on_succ on_fail arg
+                        f fin a on_succ on_fail
+                    | PatWhen (pat, e) -> f fin pat (lazy if_static e on_succ.Value on_fail.Value) on_fail
+                    | PatClauses _ -> failwith "Clauses should not appear inside other clauses."
+                    | _ -> vv [type_lit_create (LitString "var"); arg] |> fin pat on_succ on_fail
+                f (fun pat on_succ on_fail -> pat_part_active a pat on_succ on_fail) pat on_succ on_fail 
             | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
             | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
@@ -1676,6 +1683,10 @@ let spiral_peval module_main output_path =
         let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
         let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
         let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
+        // TODO: That `notFollowedBy cons` is such a hack.
+        // I should have made the whole parser follow the pattern of reading a whole token first and then comparing
+        // instead of the thing I do now where I use skipString. It is too bad it did not occur to me that designing
+        // this way would be a good idea. I am going to reimplement it like that on the next redesign.
         let pat_type expr pattern = tuple2 pattern (opt (notFollowedBy cons >>. pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
         let pat_active pattern = 
             let active_pat = choice [active_pat >>% PatActive; part_active_pat >>% PatPartActive; ext_active_pat >>% PatExtActive]

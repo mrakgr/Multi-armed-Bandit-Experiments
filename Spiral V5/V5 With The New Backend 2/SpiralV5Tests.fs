@@ -632,6 +632,7 @@ let test43 =
 // This test is a bit strange since I expect the extension patterns to be used to implement views
 // instead of doing general tranformations.
 inl f x on_fail on_succ =
+    print_static x
     match x with
     | .tup, n, (_ :: _ as x) when n = tuple_length x -> Tuple.repeat n x |> on_succ
     | .cons, n, x -> "rest" :: Tuple.repeat n x |> Tuple.rev |> on_succ 
@@ -645,18 +646,21 @@ inl m m1 = function
     | #m1 q -> q
     | _ -> error_type "The call to m1 failed."
 
-m f true, m f (2.2,3.3), m f ("a","b","c"), m f (1,2,3,4)
+m f true, // cons
+m f (2.2,3.3), // tup
+m f ("a","b","c"), // tup
+m f (1,2,3,4) // cons
     """
 
 let test44 =
-    "test44",[tuple],"Do or extension active patterns work?",
+    "test44",[],"Do or extension active patterns work?",
     """
 inl f x on_fail on_succ =
     match x with
     | .tup, 4, x -> on_succ x // This one does not get triggered due to not being in m
     | .tup, 3, x -> on_succ x
     | .tup, 2, x -> on_succ x
-    | .var, x -> on_succ x
+    | .var, x -> on_succ ("is_var",x)
     | _ -> on_fail()
 
 inl m m1 = function
@@ -666,13 +670,29 @@ inl m m1 = function
 m f true, m f (2.2,3.3), m f ("a","b","c"), m f (1,2,3,4)
     """
 
+let test45 =
+    "test45",[],"Do `type` and `when` patterns work with combination extension patterns?",
+    """
+inl f x on_fail on_succ =
+    match x with
+    | _, _, x -> on_succ x
+    | _, x -> on_succ x
+
+inl m m1 = function
+    | #m1 ((a,b) : (int64,int64)) -> "is_int64"
+    | #m1 (x : bool) -> "is_bool"
+    | #m1 x -> "is_x"
+
+m f (1,1)
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
-    test40;test41;test42;test43;test44
+    test40;test41;test42;test43;test44;test45
     hacker_rank_1;hacker_rank_2;hacker_rank_3
     |] |> Array.map module_
 
@@ -692,5 +712,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test44" false
+run_test "test45" false
 
