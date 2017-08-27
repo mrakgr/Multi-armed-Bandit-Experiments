@@ -382,36 +382,6 @@ inl b = console.ReadLine()
 a(0),b(0)
     """
 
-let test29 = // 
-    "test29",[tuple;parsing],"Does a simple int parser work?",
-    """
-inl console = mscorlib ."System.Console"
-inl t =
-    type
-        int64
-        int64, int64
-        string
-        Parsing.List int64
-
-inl result =
-    Parsing.run "12 34 " (Parsing.parse_ints) <| function
-        | .Succ, x -> t x
-        | .FatalFail, er | .Fail, (_, er) -> t er
-        | .FetchType -> t ""
-        | x -> error_type "Got a strange input."
-
-inl t = Parsing.List int64
-match result with
-| (.ListCons,(a,(.ListCons,(b,.ListNil)))): t as x ->
-    console.Write a
-    console.WriteLine()
-    console.Write b
-    console.WriteLine()
-    a+b
-| _ -> 
-    0
-    """
-
 let test30 = // 
     "test30",[],"Do recursive algebraic datatypes work?",
     """
@@ -465,17 +435,6 @@ inl rec loop = function
 loop 50000
     """
 
-let test34 = // 
-    "test34",[tuple;parsing],"Does parse_n_ints blow up the code size? Does it scale linearly?",
-    """
-inl console = mscorlib."System.Console"
-inl (|>>) = Parsing."|>>"
-inl end x = ()
-inl parse f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320 |>> f) end
-
-parse <| inl _ -> ()
-    """
-
 let test35 = // 
     "test35",[],"Does case on union types with recursive types work properly?",
     """
@@ -496,30 +455,6 @@ match Res 1 |> dyn with
 | _ -> 3
     """
 
-let hacker_rank_2 =
-    "hacker_rank_2",[tuple;parsing],"https://www.hackerrank.com/challenges/compare-the-triplets",
-    """
-inl console = mscorlib."System.Console"
-inl (|>>) = Parsing."|>>"
-inl parse_3 f = Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 3 |>> f) (inl _ -> ())
-inl alice = ref 0
-inl bob = ref 0
-inl comp = function
-    | a,b when a > b -> alice := alice () + 1
-    | a,b when a < b -> bob := bob () + 1
-    | a,b -> ()
-
-parse_3 <| inl a1,a2,a3 ->
-    parse_3 <| inl x1,x2,x3 ->
-        comp (a1,x1)
-        comp (a2,x2)
-        comp (a3,x3)
-
-alice() |> console.Write
-console.Write ' '
-bob() |> console.Write
-    """
-
 let test36 = // 
     "test36",[tuple;parsing2],"Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.",
     """
@@ -533,24 +468,6 @@ inl ret =
     module (on_succ,on_fail,on_fatal_fail,on_type)
 
 Parsing.run (console.ReadLine()) (Parsing.parse_n_ints (.no_clo,320)) ret
-    """
-
-let test37 = // 
-    "test37",[tuple;parsing],"Do unit statements get cut off?",
-    """
-inl alice = ref 0
-inl bob = ref 0
-inl comp = function
-    | a,b when a > b -> alice := alice () + 1
-    | a,b when a < b -> bob := bob () + 1
-    | a,b -> ()
-
-inl preturn = Parsing.preturn
-inl (|>>) = Parsing."|>>"
-
-inl parse f = Parsing.run (dyn "asd") (preturn () |>> f) (inl _ -> ())
-parse <| inl _ ->
-    comp (dyn 3, dyn 4)
     """
 
 let test38 =
@@ -706,10 +623,10 @@ let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
-    test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
+    test20;test21;test22;test23;test24;test25;test26;test27;test28
+    test30;test31;test32;test33;test35;test36;test38;test39
     test40;test41;test42;test43;test44;test45
-    hacker_rank_1;hacker_rank_2;hacker_rank_3
+    hacker_rank_1;hacker_rank_3
     |] |> Array.map module_
 
 let run_test name is_big_test =
