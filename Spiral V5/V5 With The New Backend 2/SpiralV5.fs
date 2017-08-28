@@ -161,6 +161,7 @@ type Op =
     | TypeConstructorCreate
     | TypeConstructorUnion
     | EqType
+    | ModuleHasMember
 
     | ArrayCreate
     | ReferenceCreate
@@ -184,6 +185,7 @@ type Op =
     | TypeLitCreate
     | Dynamize
     | IsStatic
+    | IsModule
 
     // UnOps
     | Neg
@@ -226,6 +228,9 @@ and Pattern =
     | PatTypeLit of Value
     | PatLit of Value
     | PatWhen of Pattern * Expr
+    | PatModuleBinding of string * Pattern option
+    | PatModuleInner of string * Pattern list
+    | PatModuleOuter of string option * Pattern list
     | PatPos of Pos<Pattern>
 
 and Expr = 
@@ -457,6 +462,9 @@ let spiral_peval module_main output_path =
     let print_expr x = (PrintExpr,[x]) |> op
     let dynamize x = (Dynamize,[x]) |> op
 
+    let is_module x = op (IsModule,[x])
+    let module_has_member a b = op (ModuleHasMember,[a;b])
+
     let if_static cond tr fl = (IfStatic,[cond;tr;fl]) |> op
     let case arg case = (Case,[arg;case]) |> op
     let binop op' a b = (op',[a;b]) |> op
@@ -628,6 +636,10 @@ let spiral_peval module_main output_path =
                 let on_fail = inl "" on_fail.Value
                 ap' (v a) [arg; on_fail; on_succ]
 
+            let pat_module_bindings bindings on_succ = 
+                List.foldBack (fun x on_succ -> cp (v "self") x on_succ on_fail) bindings on_succ |> force 
+            let pat_module_is_module on_succ = if_static (is_module arg) on_succ (force on_fail)
+
             match pat with
             | E -> on_succ.Value
             | PatVar x -> l x arg on_succ.Value
@@ -663,6 +675,28 @@ let spiral_peval module_main output_path =
                 let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
                 if_static (eq_type arg x) on_succ on_fail.Value |> case arg
             | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
+            | PatModuleInner(name,bindings) ->
+                let memb = type_lit_create (LitString name)
+                
+                pat_module_bindings bindings on_succ
+                |> l name (v "self")
+                |> l "self" (ap arg memb)
+                |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
+                |> pat_module_is_module
+            | PatModuleOuter(name,bindings) ->
+                pat_module_bindings bindings on_succ
+                |> fun x -> 
+                    match name with
+                    | Some name -> l name (v "self") x
+                    | None -> x
+                |> l "self" arg
+                |> pat_module_is_module
+            | PatModuleBinding (name,pat) ->
+                let memb = type_lit_create (LitString name)
+                match pat with
+                | Some pat -> l "self" (ap arg memb) (cp' (v "self") pat on_succ on_fail)
+                | None -> l name (ap arg memb) on_succ.Value
+                |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
             | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
 
         let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
@@ -1413,6 +1447,17 @@ let spiral_peval module_main output_path =
             | TyLit _ -> TyLit <| LitBool true
             | _ -> TyLit <| LitBool false
 
+        let is_module d a =
+            match tev d a with
+            | TyFun(N(_,FunTypeModule)) -> TyLit (LitBool true)
+            | _ -> TyLit (LitBool false)
+
+        let module_has_member d a b =
+            match tev2 d a b with
+            | TyFun(N(N env,FunTypeModule)), TypeString b -> TyLit (LitBool <| Map.containsKey b env)
+            | TyFun(N(N env,FunTypeModule)), _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
+            | _ -> on_type_er d.trace "Expecting a module as the first argument to ModuleHasMember."
+
         let inline add_trace d x = {d with trace = x :: d.trace}
 
         match expr with
@@ -1450,6 +1495,7 @@ let spiral_peval module_main output_path =
             | TypeLitCreate,[a] -> type_lit_create d a
             | Dynamize,[a] -> dynamize d a
             | IsStatic,[a] -> is_static d a
+            | IsModule,[a] -> is_module d a
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
@@ -1489,6 +1535,7 @@ let spiral_peval module_main output_path =
             | TypeAnnot,[a;b] -> type_annot d a b
             | TypeConstructorUnion,[a;b] -> typec_union d a b
             | EqType,[a;b] -> eq_type d a b
+            | ModuleHasMember,[a;b] -> module_has_member d a b
             | Neg,[a] -> prim_un_numeric d a Neg
             | ErrorType,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "%A" a
             | ErrorNonUnit,[a] -> error_non_unit d a
@@ -1520,7 +1567,7 @@ let spiral_peval module_main output_path =
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
-                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env"
+                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env" | "self"
                 | "print_expr" | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
@@ -1695,9 +1742,20 @@ let spiral_peval module_main output_path =
         let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
 
         let (^<|) a b = a b // High precedence, right associative <| operator
-        let rec patterns expr s = // The order the pattern parsers are chained determines their precedence.
+
+        let rec pat_module_outer expr = 
+            let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
+            curlies (opt (attempt (var_name .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleOuter
+        and pat_module_inner expr = 
+            let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
+            curlies ((var_name .>> with_) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleInner
+
+        and patterns_template expr pat_module s = // The order in which the pattern parsers are chained in determines their precedence.
+            let inline recurse s = patterns_template expr pat_module s
             pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr ^<| pat_active 
-            ^<| choice [|pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds (patterns expr)|] <| s
+            ^<| choice [|pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_module expr|] <| s
+
+        let inline patterns expr s = patterns_template expr pat_module_outer s
     
         let pattern_list expr = many (patterns expr)
     
