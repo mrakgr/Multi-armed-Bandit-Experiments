@@ -122,6 +122,14 @@ type Op =
     | DotNetTypeConstruct
     | DotNetTypeCallMethod
 
+    // Module
+    | ModuleCreate
+    | ModuleWith
+    | ModuleWithExtend
+    | ModuleCreateAlt
+    | ModuleWithAlt
+    | ModuleIs
+
     // Case
     | Case
 
@@ -155,8 +163,6 @@ type Op =
     | VVLength
     | VVIs
     | TypeAnnot
-    | ModuleWith
-    | ModuleWithExtend
     | EnvUnseal
     | TypeConstructorCreate
     | TypeConstructorUnion
@@ -185,7 +191,6 @@ type Op =
     | TypeLitCreate
     | Dynamize
     | IsStatic
-    | IsModule
 
     // UnOps
     | Neg
@@ -194,8 +199,6 @@ type Op =
     | Tanh
     
     // Constants
-    | ModuleCreate
-
     | Syncthreads
     | BlockDimX | BlockDimY | BlockDimZ
     | GridDimX | GridDimY | GridDimZ
@@ -324,6 +327,11 @@ type Userstate = Dictionary<string, int * Associativity>
 type ParserExpr =
 | ParserStatement of PosKey * (Expr -> Expr)
 | ParserExpr of PosKey * Expr
+
+type ModuleParse = // The modules are tad too complicated to be created directly in the parser, so I am using this as an auxilliary.
+| MPBinding of string * Expr
+| MPCreate of ModuleParse list
+| MPWith of string * ModuleParse list
 
 // Codegen types
 type Buf = ResizeArray<ProgramNode>
@@ -462,7 +470,7 @@ let spiral_peval module_main output_path =
     let print_expr x = (PrintExpr,[x]) |> op
     let dynamize x = (Dynamize,[x]) |> op
 
-    let is_module x = op (IsModule,[x])
+    let module_is x = op (ModuleIs,[x])
     let module_has_member a b = op (ModuleHasMember,[a;b])
 
     let if_static cond tr fl = (IfStatic,[cond;tr;fl]) |> op
@@ -638,7 +646,7 @@ let spiral_peval module_main output_path =
 
             let pat_module_bindings bindings on_succ = 
                 List.foldBack (fun x on_succ -> cp (v "self") x on_succ on_fail) bindings on_succ |> force 
-            let pat_module_is_module on_succ = if_static (is_module arg) on_succ (force on_fail)
+            let pat_module_is_module on_succ = if_static (module_is arg) on_succ (force on_fail)
 
             match pat with
             | E -> on_succ.Value
@@ -679,22 +687,22 @@ let spiral_peval module_main output_path =
                 let memb = type_lit_create (LitString name)
                 
                 pat_module_bindings bindings on_succ
-                |> l name (v "self")
-                |> l "self" (ap arg memb)
+                |> l name (v " self")
+                |> l " self" (ap arg memb)
                 |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
                 |> pat_module_is_module
             | PatModuleOuter(name,bindings) ->
                 pat_module_bindings bindings on_succ
                 |> fun x -> 
                     match name with
-                    | Some name -> l name (v "self") x
+                    | Some name -> l name (v " self") x
                     | None -> x
-                |> l "self" arg
+                |> l " self" arg
                 |> pat_module_is_module
             | PatModuleBinding (name,pat) ->
                 let memb = type_lit_create (LitString name)
                 match pat with
-                | Some pat -> l "self" (ap arg memb) (cp' (v "self") pat on_succ on_fail)
+                | Some pat -> l " self" (ap arg memb) (cp' (v " self") pat on_succ on_fail)
                 | None -> l name (ap arg memb) on_succ.Value
                 |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
             | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
@@ -1447,7 +1455,7 @@ let spiral_peval module_main output_path =
             | TyLit _ -> TyLit <| LitBool true
             | _ -> TyLit <| LitBool false
 
-        let is_module d a =
+        let module_is d a =
             match tev d a with
             | TyFun(N(_,FunTypeModule)) -> TyLit (LitBool true)
             | _ -> TyLit (LitBool false)
@@ -1457,6 +1465,31 @@ let spiral_peval module_main output_path =
             | TyFun(N(N env,FunTypeModule)), TypeString b -> TyLit (LitBool <| Map.containsKey b env)
             | TyFun(N(N env,FunTypeModule)), _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
             | _ -> on_type_er d.trace "Expecting a module as the first argument to ModuleHasMember."
+
+        let module_create_alt d l =
+            List.fold (fun env -> function
+                | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e) env
+                | _ -> failwith "impossible"
+                ) (n d.env) l
+            |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
+
+        let module_with_alt d name l =
+            let env = 
+                match v_find (n d.env) name (on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name) with
+                | TyFun(N(env,FunTypeModule)) -> n env
+                | _ -> on_type_er d.trace <| sprintf "Variable %s is not a module." name
+            List.fold (fun env -> function
+                | VV(N [Lit(N(LitBool flag_error_is_name_missing)); Lit(N(LitString n)); e]) ->
+                    let d =
+                        match Map.tryFind n env with
+                        | Some v -> { d with env = Map.add "self" v env |> nodify_env_term }
+                        // This does not particularly change the semantics of the function, but I'd prefer it if the specific 
+                        // missing module gets outed, instead of `self` in the following stage.
+                        | None -> if flag_error_is_name_missing then on_type_er d.trace <| sprintf "Submodule %s is not inside the %s module." n name else d
+                    Map.add n (tev d e) env
+                | _ -> failwith "impossible"
+                ) env l
+            |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
 
         let inline add_trace d x = {d with trace = x :: d.trace}
 
@@ -1495,7 +1528,7 @@ let spiral_peval module_main output_path =
             | TypeLitCreate,[a] -> type_lit_create d a
             | Dynamize,[a] -> dynamize d a
             | IsStatic,[a] -> is_static d a
-            | IsModule,[a] -> is_module d a
+            | ModuleIs,[a] -> module_is d a
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
@@ -1862,6 +1895,20 @@ let spiral_peval module_main output_path =
             keywordString "print_expr" >>. expr_indent i (<=) expr |>> print_expr
             <| s
 
+        let rec mp_compile = function
+            | MPBinding(n,e) -> vv [lit_string n; e]
+            | MPCreate l -> List.map mp_compile l |> fun l -> op(ModuleCreateAlt,l)
+            | MPWith(n,l) -> List.map mp_compile l |> fun l -> op(ModuleWithAlt,lit (LitBool false) :: lit_string n :: l)
+
+        let case_module_alt expr =
+            let parse_binding = var_name .>>. (eq >>. expr) |>> MPBinding
+            let module_create = many parse_binding
+            let module_with = 
+                attempt (var_name .>> with_) >>= fun name ->
+                    (module_create |>> fun l -> MPWith(name,l))
+            curlies (module_with <|> (module_create |>> MPCreate))
+            |>> mp_compile
+
         let rec expressions expr s =
             let unary_ops = 
                 [case_for_cast; case_lit_lift]
@@ -1870,7 +1917,7 @@ let spiral_peval module_main output_path =
             let rest = 
                 [case_print_env; case_print_expr
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
-                 case_rounds; case_typecase; case_typeinl; case_var; case_module]
+                 case_rounds; case_typecase; case_typeinl; case_var; case_module; case_module_alt]
                 |> List.map (fun x -> x expr |> attempt)
                 |> choice
             unary_ops <|> rest <| s
