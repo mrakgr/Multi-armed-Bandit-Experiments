@@ -644,8 +644,8 @@ let spiral_peval module_main output_path =
                 let on_fail = inl "" on_fail.Value
                 ap' (v a) [arg; on_fail; on_succ]
 
-            let pat_module_bindings bindings on_succ = 
-                List.foldBack (fun x on_succ -> cp (v " self") x on_succ on_fail) bindings on_succ |> force 
+            let pat_module_bindings pat_var bindings on_succ = 
+                List.foldBack (fun x on_succ -> cp pat_var x on_succ on_fail) bindings on_succ |> force 
             let pat_module_is_module on_succ = if_static (module_is arg) on_succ (force on_fail)
 
             match pat with
@@ -684,25 +684,30 @@ let spiral_peval module_main output_path =
                 if_static (eq_type arg x) on_succ on_fail.Value |> case arg
             | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
             | PatModuleInner(name,bindings) ->
+                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var' = v pat_var
                 let memb = type_lit_create (LitString name)
                 
-                pat_module_bindings bindings on_succ
-                |> l name (v " self")
-                |> l " self" (ap arg memb)
+                pat_module_bindings pat_var' bindings on_succ
+                |> l name pat_var'
+                |> l pat_var (ap arg memb)
                 |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
                 |> pat_module_is_module
             | PatModuleOuter(name,bindings) ->
-                pat_module_bindings bindings on_succ
+                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var' = v pat_var
+                pat_module_bindings pat_var' bindings on_succ
                 |> fun x -> 
                     match name with
-                    | Some name -> l name (v " self") x
+                    | Some name -> l name pat_var' x
                     | None -> x
-                |> l " self" arg
+                |> l pat_var arg
                 |> pat_module_is_module
             | PatModuleBinding (name,pat) ->
+                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 let memb = type_lit_create (LitString name)
                 match pat with
-                | Some pat -> l " self" (ap arg memb) (cp' (v " self") pat on_succ on_fail)
+                | Some pat -> l pat_var (ap arg memb) (cp' (v pat_var) pat on_succ on_fail)
                 | None -> l name (ap arg memb) on_succ.Value
                 |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
             | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
@@ -1464,7 +1469,7 @@ let spiral_peval module_main output_path =
             match tev2 d a b with
             | TyFun(N(N env,FunTypeModule)), TypeString b -> TyLit (LitBool <| Map.containsKey b env)
             | TyFun(N(N env,FunTypeModule)), _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
-            | _ -> on_type_er d.trace "Expecting a module as the first argument to ModuleHasMember."
+            | x -> on_type_er d.trace <| sprintf "Expecting a module as the first argument to ModuleHasMember. Got: %A" x
 
         let module_create_alt d l =
             List.fold (fun env -> function
@@ -1904,8 +1909,12 @@ let spiral_peval module_main output_path =
             let mp_create l = op(ModuleCreateAlt,l)
             let mp_with (n,l) = op(ModuleWithAlt,lit (LitBool false) :: v n :: l)
 
-            let parse_binding = var_name .>>. (eq >>. expr) |>> mp_binding
-            let module_create = many parse_binding
+            let parse_binding s = 
+                let i = col s
+                var_name .>>. (eq >>. expr_indent i (<) expr) |>> mp_binding <| s
+            let module_create s = 
+                let i = col s
+                many (expr_indent i (=) parse_binding) s
             let module_with = 
                 attempt (var_name .>> with_) >>= fun name ->
                     (module_create |>> fun l -> mp_with(name,l))

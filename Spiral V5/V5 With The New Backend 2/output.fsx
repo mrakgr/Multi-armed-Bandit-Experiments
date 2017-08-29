@@ -1,14 +1,13 @@
-type Env2 =
+type Tuple1 =
     struct
-    val mem_a: int64
-    val mem_b: int64
-    val mem_c: int64
-    new(arg_mem_a, arg_mem_b, arg_mem_c) = {mem_a = arg_mem_a; mem_b = arg_mem_b; mem_c = arg_mem_c}
-    end
-and Tuple1 =
-    struct
-    val mem_0: Env2
+    val mem_0: int64
     val mem_1: int64
     new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
     end
-Tuple1(Env2(4L, 2L, 3L), 9L)
+and Tuple2 =
+    struct
+    val mem_0: string
+    val mem_1: Tuple1
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
+    end
+Tuple2("Coord", Tuple1(1L, 2L))
