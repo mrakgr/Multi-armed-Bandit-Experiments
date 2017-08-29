@@ -1478,25 +1478,34 @@ let spiral_peval module_main output_path =
                 ) (n d.env) l
             |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
 
-        let module_with_alt d = function
-            | Lit(N(LitBool flag_error_is_name_missing)) :: V(N name) :: l ->
-                let env = 
-                    match v_find (n d.env) name (fun () -> on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name) with
-                    | TyFun(N(env,FunTypeModule)) -> n env
-                    | _ -> on_type_er d.trace <| sprintf "Variable %s is not a module." name
-                List.fold (fun env -> function
-                    | VV(N [Lit(N(LitString n)); e]) ->
-                        let d =
+        let module_with_alt (d: LangEnv) l =
+            let names, bindings =
+                match l with
+                | VV (N l) :: bindings -> l, bindings
+                | V _ as x :: bindings -> [x], bindings
+                | x -> failwithf "Malformed ModuleWithAlt. %A" x
+
+            let rec loop cur_env names = 
+                match names with
+                | (V(N name) | Lit(N(LitString name))) :: names ->
+                    match Map.tryFind name cur_env with
+                    | Some (TyFun(N(N env,FunTypeModule)) as recf) -> tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule)
+                    | Some _ -> on_type_er d.trace <| sprintf "Variable %s is not a module." name
+                    | _ -> on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name
+                | [] ->
+                    List.fold (fun env -> function
+                        | VV(N [Lit(N(LitString n)); e]) ->
                             match Map.tryFind n env with
-                            | Some v -> { d with env = Map.add "self" v env |> nodify_env_term }
-                            // This does not particularly change the semantics of the function, but I'd prefer it if the specific 
-                            // missing module gets outed, instead of `self` in the following stage.
-                            | None -> if flag_error_is_name_missing then on_type_er d.trace <| sprintf "Submodule %s is not inside the %s module." n name else d
-                        Map.add n (tev d e) env
-                    | _ -> failwith "impossible"
-                    ) env l
-                |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
-            | x -> failwithf "Malformed ModuleWithAlt. %A" x
+                            | Some v -> Map.add "self" v env
+                            | None -> env 
+                            |> fun env -> { d with env = nodify_env_term env }
+                            |> fun d -> Map.add n (tev d e) env
+                        | _ -> failwith "impossible"
+                        ) cur_env bindings
+                    |> fun env -> tyfun(nodify_env_term env, FunTypeModule)
+                | x -> failwithf "Malformed ModuleWithAlt. %A" x
+            loop (n d.env) names
+            
 
         let inline add_trace d x = {d with trace = x :: d.trace}
 
@@ -1785,12 +1794,24 @@ let spiral_peval module_main output_path =
 
         let (^<|) a b = a b // High precedence, right associative <| operator
 
+        let rec pat_module_helper (names,bindings) = 
+            match names with
+            | [x] -> PatModuleInner(x,bindings)
+            | x :: xs -> PatModuleInner(x,[pat_module_helper (xs,bindings)])
+            | _ -> failwith "Invalid state"
         let rec pat_module_outer expr s = 
             let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-            curlies (opt (attempt (var_name .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleOuter <| s
+            curlies (opt (attempt (sepBy1 var_name dot .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding)) //|>> PatModuleOuter <| s
+            |>> function
+                | Some (n :: (_ :: _ as ns)), bindings -> PatModuleOuter(Some n, [pat_module_helper (ns,bindings)])
+                | Some [n], bindings -> PatModuleOuter(Some n,bindings)
+                | Some [], _ -> failwith "impossible"
+                | None, bindings -> PatModuleOuter(None,bindings)
+            <| s
         and pat_module_inner expr s = 
             let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-            curlies ((var_name .>> with_) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleInner <| s
+            curlies ((sepBy1 var_name dot .>> with_) .>>. many (pat_module_inner expr <|> parse_binding)) 
+            |>> pat_module_helper <| s
 
         and patterns_template expr pat_module s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr pat_module s
@@ -1907,8 +1928,12 @@ let spiral_peval module_main output_path =
         let case_module_alt expr s =
             let mp_binding (n,e) = vv [lit_string n; e]
             let mp_create l = op(ModuleCreateAlt,l)
-            let mp_with (n,l) = op(ModuleWithAlt,lit (LitBool false) :: v n :: l)
-
+            let mp_with (n,l) = 
+                match n with
+                | [x] -> op(ModuleWithAlt,v x :: l)
+                | x :: xs -> op(ModuleWithAlt,vv (v x :: List.map lit_string xs) :: l)
+                | _ -> failwith "impossible"
+                
             let parse_binding s = 
                 let i = col s
                 var_name .>>. (eq >>. expr_indent i (<) expr) |>> mp_binding <| s
@@ -1916,8 +1941,8 @@ let spiral_peval module_main output_path =
                 let i = col s
                 many (expr_indent i (=) parse_binding) s
             let module_with = 
-                attempt (var_name .>> with_) >>= fun name ->
-                    (module_create |>> fun l -> mp_with(name,l))
+                attempt (sepBy1 var_name dot .>> with_) >>= fun names ->
+                    (module_create |>> fun l -> mp_with (names,l))
             curlies (module_with <|> (module_create |>> mp_create))
             <| s
 
