@@ -645,7 +645,7 @@ let spiral_peval module_main output_path =
                 ap' (v a) [arg; on_fail; on_succ]
 
             let pat_module_bindings bindings on_succ = 
-                List.foldBack (fun x on_succ -> cp (v "self") x on_succ on_fail) bindings on_succ |> force 
+                List.foldBack (fun x on_succ -> cp (v " self") x on_succ on_fail) bindings on_succ |> force 
             let pat_module_is_module on_succ = if_static (module_is arg) on_succ (force on_fail)
 
             match pat with
@@ -1473,23 +1473,25 @@ let spiral_peval module_main output_path =
                 ) (n d.env) l
             |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
 
-        let module_with_alt d name l =
-            let env = 
-                match v_find (n d.env) name (on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name) with
-                | TyFun(N(env,FunTypeModule)) -> n env
-                | _ -> on_type_er d.trace <| sprintf "Variable %s is not a module." name
-            List.fold (fun env -> function
-                | VV(N [Lit(N(LitBool flag_error_is_name_missing)); Lit(N(LitString n)); e]) ->
-                    let d =
-                        match Map.tryFind n env with
-                        | Some v -> { d with env = Map.add "self" v env |> nodify_env_term }
-                        // This does not particularly change the semantics of the function, but I'd prefer it if the specific 
-                        // missing module gets outed, instead of `self` in the following stage.
-                        | None -> if flag_error_is_name_missing then on_type_er d.trace <| sprintf "Submodule %s is not inside the %s module." n name else d
-                    Map.add n (tev d e) env
-                | _ -> failwith "impossible"
-                ) env l
-            |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
+        let module_with_alt d = function
+            | Lit(N(LitBool flag_error_is_name_missing)) :: V(N name) :: l ->
+                let env = 
+                    match v_find (n d.env) name (fun () -> on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name) with
+                    | TyFun(N(env,FunTypeModule)) -> n env
+                    | _ -> on_type_er d.trace <| sprintf "Variable %s is not a module." name
+                List.fold (fun env -> function
+                    | VV(N [Lit(N(LitString n)); e]) ->
+                        let d =
+                            match Map.tryFind n env with
+                            | Some v -> { d with env = Map.add "self" v env |> nodify_env_term }
+                            // This does not particularly change the semantics of the function, but I'd prefer it if the specific 
+                            // missing module gets outed, instead of `self` in the following stage.
+                            | None -> if flag_error_is_name_missing then on_type_er d.trace <| sprintf "Submodule %s is not inside the %s module." n name else d
+                        Map.add n (tev d e) env
+                    | _ -> failwith "impossible"
+                    ) env l
+                |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
+            | x -> failwithf "Malformed ModuleWithAlt. %A" x
 
         let inline add_trace d x = {d with trace = x :: d.trace}
 
@@ -1525,6 +1527,8 @@ let spiral_peval module_main output_path =
             | ModuleCreate,[l] -> module_create d l
             | ModuleWith,[a;b;c] -> module_with d a b c
             | ModuleWithExtend,[a;b;c] -> module_with_extend d a b c
+            | ModuleCreateAlt,l -> module_create_alt d l
+            | ModuleWithAlt, l -> module_with_alt d l
             | TypeLitCreate,[a] -> type_lit_create d a
             | Dynamize,[a] -> dynamize d a
             | IsStatic,[a] -> is_static d a
@@ -1579,7 +1583,7 @@ let spiral_peval module_main output_path =
 
             // Constants
             | TypeConstructorCreate,[a] -> typec_create d a
-            | _ -> failwith "Missing Op case."
+            | x -> failwithf "Missing Op case. %A" x
        
 
     // #Parsing
@@ -1600,7 +1604,7 @@ let spiral_peval module_main output_path =
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
-                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env" | "self"
+                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env"
                 | "print_expr" | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
@@ -1776,12 +1780,12 @@ let spiral_peval module_main output_path =
 
         let (^<|) a b = a b // High precedence, right associative <| operator
 
-        let rec pat_module_outer expr = 
+        let rec pat_module_outer expr s = 
             let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-            curlies (opt (attempt (var_name .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleOuter
-        and pat_module_inner expr = 
+            curlies (opt (attempt (var_name .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleOuter <| s
+        and pat_module_inner expr s = 
             let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-            curlies ((var_name .>> with_) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleInner
+            curlies ((var_name .>> with_) .>>. many (pat_module_inner expr <|> parse_binding)) |>> PatModuleInner <| s
 
         and patterns_template expr pat_module s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr pat_module s
@@ -1895,19 +1899,18 @@ let spiral_peval module_main output_path =
             keywordString "print_expr" >>. expr_indent i (<=) expr |>> print_expr
             <| s
 
-        let rec mp_compile = function
-            | MPBinding(n,e) -> vv [lit_string n; e]
-            | MPCreate l -> List.map mp_compile l |> fun l -> op(ModuleCreateAlt,l)
-            | MPWith(n,l) -> List.map mp_compile l |> fun l -> op(ModuleWithAlt,lit (LitBool false) :: lit_string n :: l)
+        let case_module_alt expr s =
+            let mp_binding (n,e) = vv [lit_string n; e]
+            let mp_create l = op(ModuleCreateAlt,l)
+            let mp_with (n,l) = op(ModuleWithAlt,lit (LitBool false) :: v n :: l)
 
-        let case_module_alt expr =
-            let parse_binding = var_name .>>. (eq >>. expr) |>> MPBinding
+            let parse_binding = var_name .>>. (eq >>. expr) |>> mp_binding
             let module_create = many parse_binding
             let module_with = 
                 attempt (var_name .>> with_) >>= fun name ->
-                    (module_create |>> fun l -> MPWith(name,l))
-            curlies (module_with <|> (module_create |>> MPCreate))
-            |>> mp_compile
+                    (module_create |>> fun l -> mp_with(name,l))
+            curlies (module_with <|> (module_create |>> mp_create))
+            <| s
 
         let rec expressions expr s =
             let unary_ops = 

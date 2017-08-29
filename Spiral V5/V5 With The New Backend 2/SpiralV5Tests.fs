@@ -612,6 +612,20 @@ inl m' n m1 = function
 m f (1,1), m f true, m' 6 f (2,2), m' 5 f (2,2), m' 1 f 123.456
     """
 
+let test46 =
+    "test46",[],"Does the module pattern work?",
+    """
+inl f {a b c} = a + b + c
+inl x =
+    {
+    a=1
+    b=2
+    c=3
+    }
+
+f {x with a = 4}
+    """
+
 let hacker_rank_4 =
     "hacker_rank_4",[console],"https://www.hackerrank.com/challenges/simple-array-sum",
     """
@@ -625,7 +639,7 @@ let tests =
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28
     test30;test31;test32;test33;test35;test36;test38;test39
-    test40;test41;test42;test43;test44;test45
+    test40;test41;test42;test43;test44;test45;test46
     hacker_rank_1;hacker_rank_3
     |] |> Array.map module_
 
@@ -645,5 +659,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test43" false
+run_test "test46" false
 
