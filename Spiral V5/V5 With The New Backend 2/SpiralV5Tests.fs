@@ -648,14 +648,12 @@ f {x with
     """
 
 let test49 =
-    "test49",[],"Does the lens pattern work?",
+    "test49",[],"Does the lens pattern work? Does self work? Does the semicolon get parsed properly?",
     """
 inl x = { a = { b = { c = 3 } } }
 
 inl f {x.a.b with c q} = c,q
-f {x.a.b with 
-    q = 4
-    c = self + 3 }
+f {x.a.b with q = 4; c = self + 3; d = {q = 12; w = 23}}
     """
 
 let hacker_rank_4 =

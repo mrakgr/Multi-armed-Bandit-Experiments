@@ -323,7 +323,12 @@ exception TypeError of Trace * string
 type Result<'a,'b> = Succ of 'a | Fail of 'b
 
 // Parser types
-type Userstate = Dictionary<string, int * Associativity>
+type Userstate = 
+    {
+    ops : Dictionary<string, int * Associativity>
+    ignore_semicolon : bool
+    }
+
 type ParserExpr =
 | ParserStatement of PosKey * (Expr -> Expr)
 | ParserExpr of PosKey * Expr
@@ -1927,6 +1932,25 @@ let spiral_peval module_main output_path =
             keywordString "print_expr" >>. expr_indent i (<=) expr |>> print_expr
             <| s
 
+        let inline expr_indent_semicolon is_module i expr' (s: CharStream<_>) =
+            let inline if_ op tr s = expr_indent i op tr s
+            let mutable op = (=)
+            let inline set_op op' x = op <- op'; x
+            let inline semicolon s = if_ (<) (semicolon |>> set_op (<=)) s
+            let inline expr s = if_ op (expr' |>> set_op (=)) s
+            let inline f s = many1 (expr .>> optional semicolon) s
+            let u = s.UserState
+            match is_module, u.ignore_semicolon with
+            | true, false | false, true -> f s
+            | true, true -> 
+                s.UserState <- {u with ignore_semicolon=false}
+                let x = f s
+                s.UserState <- u
+                x
+            | false, false -> many1 (if_ (=) expr') s
+            
+                
+
         let case_module_alt expr s =
             let mp_binding (n,e) = vv [lit_string n; e]
             let mp_create l = op(ModuleCreateAlt,l)
@@ -1941,7 +1965,8 @@ let spiral_peval module_main output_path =
                 var_name .>>. (eq >>. expr_indent i (<) expr) |>> mp_binding <| s
             let module_create s = 
                 let i = col s
-                many (expr_indent i (=) parse_binding) s
+                expr_indent_semicolon true i parse_binding s
+
             let module_with = 
                 attempt (sepBy1 var_name dot .>> with_) >>= fun names ->
                     (module_create |>> fun l -> mp_with (names,l))
@@ -1974,16 +1999,8 @@ let spiral_peval module_main output_path =
 
         let indentations statements expressions (s: CharStream<Userstate>) =
             let i = (col s)
-            let if_ op tr (s: CharStream<_>) = expr_indent i op tr s
-            let expr_indent expr =
-                let mutable op = (=)
-                let set_op op' x = op <- op'; x
-                let semicolon s = if_ (<) (semicolon |>> set_op (<=)) s
-                let expr s = if_ op (expr |>> set_op (=)) s
-                many1 (expr .>> optional semicolon)
-
             let pos' s = Reply(pos' s)
-            expr_indent ((tuple2 pos' statements |>> ParserStatement) <|> (tuple2 pos' expressions |>> ParserExpr)) >>= process_parser_exprs <| s
+            expr_indent_semicolon false i ((tuple2 pos' statements |>> ParserStatement) <|> (tuple2 pos' expressions |>> ParserExpr)) >>= process_parser_exprs <| s
 
         let application expr (s: CharStream<_>) =
             let i = (col s)
@@ -2053,7 +2070,7 @@ let spiral_peval module_main output_path =
 
         let operators expr (s: CharStream<_>) =
             let poperator (s: CharStream<Userstate>) =
-                let dict_operator = s.UserState
+                let dict_operator = s.UserState.ops
                 let p = pos' s
                 (poperator >>=? function
                     | "->" | ":=" | "<-" -> fail "forbidden operator"
@@ -2093,7 +2110,7 @@ let spiral_peval module_main output_path =
             tdop op term 0 s
 
         let rec expr s = annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
-        runParserOnString (spaces >>. expr .>> eof) inbuilt_operators module_name module_code
+        runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; ignore_semicolon=true} module_name module_code
 
     // #Codegen
     let spiral_codegen main =
