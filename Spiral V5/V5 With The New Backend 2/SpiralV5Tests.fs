@@ -179,7 +179,7 @@ inl rec interpreter_static = function
 interpreter_static c
     """
 
-let test14 = // 
+let test14 =
     "test14",[],"Does recursive pattern matching work on partially static data?",
     """
 met rec expr x = 
@@ -380,6 +380,20 @@ inl console = mscorlib ."System.Console"
 inl a = "qwe"
 inl b = console.ReadLine()
 a(0),b(0)
+    """
+
+let test29 =
+    "test29",[],"Does pattern matching work redux?",
+    """
+inl t = 
+    type 
+        int64, int64
+        int64
+
+inl x = (1,1) |> t |> dyn
+match x with
+| a,b -> 0
+| c -> c
     """
 
 let test30 = // 
@@ -667,7 +681,7 @@ let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
-    test20;test21;test22;test23;test24;test25;test26;test27;test28
+    test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test36;test38;test39
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     hacker_rank_1;hacker_rank_3
@@ -689,5 +703,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test1" false
+run_test "test14" false
 

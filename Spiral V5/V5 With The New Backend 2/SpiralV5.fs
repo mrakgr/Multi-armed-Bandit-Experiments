@@ -6,8 +6,6 @@ open System.Collections.Generic
 open Iesi.Collections.Generic
 
 let mutable total_time = TimeSpan()
-[<Literal>]
-let flag_optimization = false
 
 // Parser open
 open FParsec
@@ -629,7 +627,6 @@ let spiral_peval module_main output_path =
                     if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
                     |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
                     |> case arg
-                    
 
             let pat_cons l = 
                 pat_foldbacki
@@ -903,7 +900,7 @@ let spiral_peval module_main output_path =
                     chase_recurse
                     (fun r ->
                         let x = make_tyv_and_push_typed_expr d r
-                        if flag_optimization then cse_add d r x
+                        cse_add d r x
                         x)
                     r
             
@@ -1605,7 +1602,6 @@ let spiral_peval module_main output_path =
             // Constants
             | TypeConstructorCreate,[a] -> typec_create d a
             | x -> failwithf "Missing Op case. %A" x
-       
 
     // #Parsing
     let spiral_parse (Module(N(module_name,_,_,module_code)) & module_) = 
@@ -2437,7 +2433,7 @@ let spiral_peval module_main output_path =
         //        | ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
 
                 | Neg,[a] -> sprintf "(-%s)" (codegen a)
-                | VVIndex,[a;b] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen a) (codegen b)
+                | VVIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | EnvUnseal,[r; TyLit (LitString k)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
                 | Exp,[x] -> sprintf "exp(%s)" (codegen x)
