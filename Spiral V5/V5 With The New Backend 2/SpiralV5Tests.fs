@@ -469,21 +469,6 @@ match Res 1 |> dyn with
 | _ -> 3
     """
 
-let test36 = // 
-    "test36",[tuple;parsing2],"Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.",
-    """
-inl console = mscorlib."System.Console"
-
-inl ret = 
-    inl on_succ pos, x = Tuple.foldl (+) 0 x
-    inl on_fail pos, x = -1
-    inl on_fatal_fail pos, x = -2
-    inl on_type = int64
-    module (on_succ,on_fail,on_fatal_fail,on_type)
-
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints (.no_clo,320)) ret
-    """
-
 let test38 =
     "test38",[],"Is type constructor of an int64 an int64?",
     """
@@ -492,12 +477,11 @@ print_static t
     """
 
 let test39 =
-    "test39",[parsing2;console],"Does sprintf work?",
+    "test39",[parsing3;console],"Does sprintf work?",
     """
 inl a = dyn 1
 inl b = dyn 2
 Parsing.sprintf "%i + %i = %i" a b (a+b) |> ignore
-Console.printfn "(%f,%b,%i,%s)" 2.2 true 55 "Wut?"
     """
 
 let test40 =
@@ -510,35 +494,6 @@ met rec f a b =
 f (dyn 1) (dyn 2)
     """
 
-let test41 =
-    "test41",[parsing2],"Does using closures cut down on code size for the parser?",
-    """
-inl console = mscorlib."System.Console"
-
-inl ret = 
-    inl on_succ pos, x = Tuple.foldl (+) 0 x
-    inl on_fail pos, x = -1
-    inl on_fatal_fail pos, x = -2
-    inl on_type = int64
-    module (on_succ,on_fail,on_fatal_fail,on_type)
-
-Parsing.run (console.ReadLine()) (Parsing.parse_n_ints 320) ret
-    """
-
-let hacker_rank_3 =
-    "hacker_rank_3",[tuple;parsing2;console],"https://www.hackerrank.com/challenges/mini-max-sum",
-    """
-open Console
-open Parsing
-run_with_unit_ret (readline()) (parse_n_ints 5) <| inl x :: xs as l ->
-    inl min a b = if a < b then a else b
-    inl max a b = if a > b then a else b
-    inl sum = Tuple.foldl (+) 0 l
-    inl min = Tuple.foldl min x l
-    inl max = Tuple.foldl max x l
-    printf "%i %i" (sum-max) (sum-min)
-    """
-
 let test42 =
     "test42",[],"Do partial active patterns work?",
     """
@@ -546,15 +501,15 @@ inl f x on_fail on_succ =
     match x with
     | x : int64 -> on_succ (x,"is_int64")
     | x : int32 -> on_succ (x,"is_int32",x*x)
-    | _ -> on_fail()
+    | x -> on_fail()
 
 inl m m1 = function
     | @m1 (q,w,e) -> q,w,e
     | @m1 (q,w) -> q,w
     | @m1 q -> q
-    | _ -> error_type "The call to m1 failed."
+    | x -> error_type "The call to m1 failed."
 
-m f 2.2
+m f 2
     """
 
 let test43 =
@@ -563,7 +518,6 @@ let test43 =
 // This test is a bit strange since I expect the extension patterns to be used to implement views
 // instead of doing general tranformations.
 inl f x on_fail on_succ =
-    print_static x
     match x with
     | .tup, n, (_ :: _ as x) when n = tuple_length x -> Tuple.repeat n x |> on_succ
     | .cons, n, x -> "rest" :: Tuple.repeat n x |> Tuple.rev |> on_succ 
@@ -677,14 +631,32 @@ open Parsing
 inl parser = read_int >>= inl n -> read_n_ints array_loader n
     """
 
+let test50 =
+    "test50",[parsing3],"Does the v3 of the parsing library work?",
+    """
+inl console = mscorlib."System.Console"
+
+inl ret = 
+    {
+    on_succ = inl state x -> Tuple.foldl (+) 0 x
+    on_fail = inl state x -> -1
+    on_fatal_fail = inl state x -> -2
+    on_type = int64
+    }
+
+open Parsing
+run (console.ReadLine()) (parse_n_ints 6) ret
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;test33;test35;test36;test38;test39
-    test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
-    hacker_rank_1;hacker_rank_3
+    test30;test31;test32;test33;test35;test38;test39
+    test40;test42;test43;test44;test45;test46;test47;test48;test49
+    test50
+    hacker_rank_1
     |] |> Array.map module_
 
 let run_test name is_big_test =
@@ -703,5 +675,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test14" false
+run_test "test50" false
 

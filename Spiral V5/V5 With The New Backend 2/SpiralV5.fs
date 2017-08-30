@@ -779,7 +779,7 @@ let spiral_peval module_main output_path =
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
             | TyLit _ -> e
-            | TyJoinPoint _ | TyOp _ | TyLet _ -> failwith "Only data structures can be renamed."
+            | TyJoinPoint _ | TyOp _ | TyLet _ -> failwithf "Only data structures can be renamed. Got: %A" e
 
     // #Conversion
     let rec dotnet_type_to_ty (x: System.Type) =
@@ -1475,7 +1475,7 @@ let spiral_peval module_main output_path =
 
         let module_create_alt d l =
             List.fold (fun env -> function
-                | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e) env
+                | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
                 ) (n d.env) l
             |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
@@ -1498,12 +1498,11 @@ let spiral_peval module_main output_path =
                 | Lit(N(LitString name)) :: names -> f name (fun env -> tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule))
                 | [] ->
                     List.fold (fun env -> function
-                        | VV(N [Lit(N(LitString n)); e]) ->
-                            match Map.tryFind n env with
-                            | Some v -> Map.add "self" v env
-                            | None -> env 
-                            |> fun env -> { d with env = nodify_env_term env }
-                            |> fun d -> Map.add n (tev d e) env
+                        | VV(N [Lit(N(LitString name)); e]) ->
+                            match Map.tryFind name env with
+                            | Some v -> {d with env = Map.add "self" v (n d.env) |> nodify_env_term}
+                            | None -> d
+                            |> fun d -> Map.add name (tev d e |> destructure d) env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
                     |> fun env -> tyfun(nodify_env_term env, FunTypeModule)
@@ -1539,7 +1538,10 @@ let spiral_peval module_main output_path =
             | JoinPoint,[a] -> memoize_method d a
             | ForCast,[x] -> for_cast d x
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
-            | PrintEnv,[a] -> printfn "%A" d.env; tev d a
+            | PrintEnv,[a] -> 
+                Map.iter (fun k _ -> printfn "%s" k) (n d.env)
+                //printfn "%A" d.env; 
+                tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | ModuleOpen,[a;b] -> module_open d a b
             | ModuleCreate,[l] -> module_create d l
@@ -1602,6 +1604,7 @@ let spiral_peval module_main output_path =
             // Constants
             | TypeConstructorCreate,[a] -> typec_create d a
             | x -> failwithf "Missing Op case. %A" x
+
 
     // #Parsing
     let spiral_parse (Module(N(module_name,_,_,module_code)) & module_) = 
@@ -1882,8 +1885,8 @@ let spiral_peval module_main output_path =
         let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. change_semicolon_ignore_to_true expr) meth_pat'
 
         let case_lit expr = lit_ |>> lit
-        let case_if_then_else expr = if_then_else (change_semicolon_ignore_to_true expr)
-        let case_rounds expr s = rounds (change_semicolon_ignore_to_true expr <|>% B) s
+        let case_if_then_else expr = change_semicolon_ignore_to_true (if_then_else expr)
+        let case_rounds expr s = change_semicolon_ignore_to_true (rounds (expr <|>% B)) s
         let case_var expr = name |>> v
 
         let case_typex match_type expr (s: CharStream<_>) =
