@@ -1486,12 +1486,14 @@ let spiral_peval module_main output_path =
                 | x -> failwithf "Malformed ModuleWithAlt. %A" x
 
             let rec loop cur_env names = 
-                match names with
-                | (V(N name) | Lit(N(LitString name))) :: names ->
+                let inline f name f =
                     match Map.tryFind name cur_env with
-                    | Some (TyFun(N(N env,FunTypeModule)) as recf) -> tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule)
+                    | Some (TyFun(N(N env,FunTypeModule)) as recf) -> f env
                     | Some _ -> on_type_er d.trace <| sprintf "Variable %s is not a module." name
                     | _ -> on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name
+                match names with
+                | V(N name) :: names -> f name (fun env -> loop env names)
+                | Lit(N(LitString name)) :: names -> f name (fun env -> tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule))
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString n)); e]) ->

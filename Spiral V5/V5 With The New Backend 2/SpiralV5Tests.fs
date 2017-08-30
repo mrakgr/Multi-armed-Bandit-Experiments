@@ -633,8 +633,8 @@ inl f {name {p with x y}} = name,(x,y)
 inl x = { name = "Coord" }
 
 f {x with 
-    p = {x=1
-         y=2}}
+    p = { x = 1
+          y = 2 }}
     """
 
 let test48 =
@@ -645,6 +645,17 @@ inl x = { name = "Coord" }
 f {x with 
     p = { x = 1
           y = 2 }}
+    """
+
+let test49 =
+    "test49",[],"Does the lens pattern work?",
+    """
+inl x = { a = { b = { c = 3 } } }
+
+inl f {x.a.b with c q} = c,q
+f {x.a.b with 
+    q = 4
+    c = self + 3 }
     """
 
 let hacker_rank_4 =
@@ -660,7 +671,7 @@ let tests =
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28
     test30;test31;test32;test33;test35;test36;test38;test39
-    test40;test41;test42;test43;test44;test45;test46;test47;test48
+    test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     hacker_rank_1;hacker_rank_3
     |] |> Array.map module_
 
@@ -680,5 +691,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test48" false
+run_test "test49" false
 
