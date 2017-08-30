@@ -453,9 +453,7 @@ inl sprintf_parser =
                         | _ -> error_type "Expected a float in sprintf."
                     | 'A' -> id
                     | _ -> error_type "Unexpected literal in sprintf."
-                    |> inl guard_type -> self state <| inl x -> 
-                        append (guard_type x)
-                        sprintf_parser .None append {d with state = state}
+                    |> inl guard_type -> self state (inl x -> append (guard_type x); sprintf_parser .None append {d with state = state})
                     ),
                 on_fail = inl state x ->
                     append '%'
@@ -467,9 +465,7 @@ inl sprintf_parser =
             | .None -> on_succ state ()
             | ab -> stream {
                 idx = ab
-                on_succ = inl r -> 
-                    append r
-                    on_succ state ()
+                on_succ = inl r -> append r; on_succ state ()
                 on_fail = inl msg -> on_fail state msg
                 }
 

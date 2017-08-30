@@ -1873,12 +1873,21 @@ let spiral_peval module_main output_path =
             |> List.map (fun x -> x expr |> attempt)
             |> choice
 
-        let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (lam >>. expr) inl_pat'
-        let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. expr) meth_pat'
+        let change_semicolon_ignore_to_true expr (s: CharStream<Userstate>) =
+            let u = s.UserState
+            if u.ignore_semicolon = false then
+                s.UserState <- {u with ignore_semicolon = true}
+                let x = expr s
+                s.UserState <- u
+                x
+            else expr s
+
+        let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (lam >>. change_semicolon_ignore_to_true expr) inl_pat'
+        let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. change_semicolon_ignore_to_true expr) meth_pat'
 
         let case_lit expr = lit_ |>> lit
-        let case_if_then_else expr = if_then_else expr 
-        let case_rounds expr s = rounds (expr <|>% B) s
+        let case_if_then_else expr = if_then_else (change_semicolon_ignore_to_true expr)
+        let case_rounds expr s = rounds (change_semicolon_ignore_to_true expr <|>% B) s
         let case_var expr = name |>> v
 
         let case_typex match_type expr (s: CharStream<_>) =
@@ -2109,7 +2118,7 @@ let spiral_peval module_main output_path =
             let term s = expr_indent expr s
             tdop op term 0 s
 
-        let rec expr s = annotations ^<| indentations (statements expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
+        let rec expr s = annotations ^<| indentations (statements ^<| change_semicolon_ignore_to_true expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; ignore_semicolon=true} module_name module_code
 
     // #Codegen
