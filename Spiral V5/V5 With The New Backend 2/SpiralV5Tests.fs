@@ -653,7 +653,7 @@ inl ret =
     on_fail = inl state x -> ('a','a','a','a')
     on_fatal_fail = inl state x -> ('a','a','a','a')
     on_type = (char,char,char,char)
-    }
+    } 
 
 open Parsing
 
