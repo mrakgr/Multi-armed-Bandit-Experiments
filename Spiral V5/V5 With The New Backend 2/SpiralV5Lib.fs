@@ -137,8 +137,27 @@ inl pdigit {d.ret with on_succ on_fail} =
             else on_fail state "digit"
         }
 
+//inl pint64 {d with state {ret with on_succ on_fail on_type}} =
+//    met rec loop (!dyn fail_state) state (!dyn i) = 
+//        pdigit { d with
+//            state = state
+//            ret = { self with
+//                on_succ = inl state c ->
+//                    print_static "I am in on_succ."
+//                    inl x = to_int64 c - to_int64 '0'
+//                    inl i = i * 10 + x 
+//                    loop false state i
+//                on_fail = inl state _ ->
+//                    if fail_state then on_fail state "pint64"
+//                    else on_succ state i
+//                }
+//            }
+//        : on_type
+//            
+//    loop true state 0
+
 inl pint64 {d with state {ret with on_succ on_fail on_type}} =
-    met rec loop on_fail state (!dyn i) = 
+    met rec loop on_fail {state with pos} i = 
         pdigit { d with
             state = state
             ret = { self with

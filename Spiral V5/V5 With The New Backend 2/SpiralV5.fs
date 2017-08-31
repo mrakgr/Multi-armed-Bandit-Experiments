@@ -764,6 +764,7 @@ let spiral_peval module_main output_path =
             | true, _ -> failwith "Should be caught be the memoize call."
             | false, _ ->
                 let n' = renamer.Count
+                printfn "%i" n'
                 renamer.Add(n,n')
                 renamer_reversed.Add(n',n)
                 fv.Add k |> ignore
@@ -772,10 +773,17 @@ let spiral_peval module_main output_path =
                 k'
         memoize memo_dict e <| fun () ->
             match e with
-            | TyBox (N(n,t)) -> tybox(f n,t)
-            | TyVV (N l) -> tyvv(List.map f l)
-            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
+            | TyBox (N(n,t)) -> 
+                printfn "I am in TyBox."
+                tybox(f n,t)
+            | TyVV (N l) -> 
+                printfn "I am in TyVV."
+                tyvv(List.map f l)
+            | TyFun(N(N l,t)) -> 
+                printfn "I am in TyFun."
+                tyfun(renamer_apply_env r l, t)
             | TyV (n,t as k) -> 
+                printfn "I am in TyV."
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
             | TyLit _ -> e
@@ -964,6 +972,7 @@ let spiral_peval module_main output_path =
             let stopwatch = Diagnostics.Stopwatch.StartNew()
             let _, renamer, renamer_reversed, fv, renamed_fv as k = renamables0()
             let renamed_env = renamer_apply_env k env
+            printfn "-----"
             total_time <- total_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
