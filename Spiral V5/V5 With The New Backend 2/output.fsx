@@ -1,12 +1,12 @@
 type Env83 =
     struct
-    val mem_ main_arg: string
+    val mem___main_arg83: string
     val mem_data: string
     val mem_pos: int64
-    new(arg_mem_ main_arg, arg_mem_data, arg_mem_pos) = {mem_ main_arg = arg_mem_ main_arg; mem_data = arg_mem_data; mem_pos = arg_mem_pos}
+    new(arg_mem___main_arg83, arg_mem_data, arg_mem_pos) = {mem___main_arg83 = arg_mem___main_arg83; mem_data = arg_mem_data; mem_pos = arg_mem_pos}
     end
 let rec method_14 ((var_2: string), (var_17: int64)) ((var_0: Env83), (var_1: int64)): int64 =
-    let (var_18: string) = var_0.mem_ main_arg
+    let (var_18: string) = var_0.mem___main_arg83
     let (var_19: string) = var_0.mem_data
     let (var_24: int64) = var_0.mem_pos
     let (var_31: (Env83 * int64 -> int64)) = method_15((var_2: string), (var_17: int64), (var_1: int64))
@@ -14,7 +14,7 @@ let rec method_14 ((var_2: string), (var_17: int64)) ((var_0: Env83), (var_1: in
     let (var_51: int64) = method_20((var_2: string), (var_31: (Env83 * int64 -> int64)), (var_18: string), (var_19: string), (var_24: int64), (var_50: int64))
     var_51
 and method_15 ((var_2: string), (var_17: int64), (var_18: int64)) ((var_0: Env83), (var_1: int64)): int64 =
-    let (var_19: string) = var_0.mem_ main_arg
+    let (var_19: string) = var_0.mem___main_arg83
     let (var_20: string) = var_0.mem_data
     let (var_25: int64) = var_0.mem_pos
     let (var_32: (Env83 * int64 -> int64)) = method_16((var_2: string), (var_17: int64), (var_18: int64), (var_1: int64))
@@ -22,7 +22,7 @@ and method_15 ((var_2: string), (var_17: int64), (var_18: int64)) ((var_0: Env83
     let (var_52: int64) = method_20((var_2: string), (var_32: (Env83 * int64 -> int64)), (var_19: string), (var_20: string), (var_25: int64), (var_51: int64))
     var_52
 and method_16 ((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64)) ((var_0: Env83), (var_1: int64)): int64 =
-    let (var_20: string) = var_0.mem_ main_arg
+    let (var_20: string) = var_0.mem___main_arg83
     let (var_21: string) = var_0.mem_data
     let (var_26: int64) = var_0.mem_pos
     let (var_33: (Env83 * int64 -> int64)) = method_17((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64), (var_1: int64))
@@ -30,7 +30,7 @@ and method_16 ((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64
     let (var_53: int64) = method_20((var_2: string), (var_33: (Env83 * int64 -> int64)), (var_20: string), (var_21: string), (var_26: int64), (var_52: int64))
     var_53
 and method_17 ((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64), (var_20: int64)) ((var_0: Env83), (var_1: int64)): int64 =
-    let (var_21: string) = var_0.mem_ main_arg
+    let (var_21: string) = var_0.mem___main_arg83
     let (var_22: string) = var_0.mem_data
     let (var_27: int64) = var_0.mem_pos
     let (var_34: (Env83 * int64 -> int64)) = method_18((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64), (var_20: int64), (var_1: int64))
@@ -38,7 +38,7 @@ and method_17 ((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64
     let (var_54: int64) = method_20((var_2: string), (var_34: (Env83 * int64 -> int64)), (var_21: string), (var_22: string), (var_27: int64), (var_53: int64))
     var_54
 and method_18 ((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64), (var_20: int64), (var_21: int64)) ((var_0: Env83), (var_1: int64)): int64 =
-    let (var_22: string) = var_0.mem_ main_arg
+    let (var_22: string) = var_0.mem___main_arg83
     let (var_23: string) = var_0.mem_data
     let (var_28: int64) = var_0.mem_pos
     let (var_35: (Env83 * int64 -> int64)) = method_19((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64), (var_20: int64), (var_21: int64), (var_1: int64))
@@ -46,7 +46,7 @@ and method_18 ((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64
     let (var_55: int64) = method_20((var_2: string), (var_35: (Env83 * int64 -> int64)), (var_22: string), (var_23: string), (var_28: int64), (var_54: int64))
     var_55
 and method_19 ((var_2: string), (var_17: int64), (var_18: int64), (var_19: int64), (var_20: int64), (var_21: int64), (var_22: int64)) ((var_0: Env83), (var_1: int64)): int64 =
-    let (var_23: string) = var_0.mem_ main_arg
+    let (var_23: string) = var_0.mem___main_arg83
     let (var_24: string) = var_0.mem_data
     let (var_29: int64) = var_0.mem_pos
     let (var_34: int64) = (0L + var_18)
@@ -208,7 +208,7 @@ and method_25((var_0: string), (var_15: (Env83 * int64 -> int64)), (var_16: int6
             let (var_70: int64) = var_15(Env83(var_0, var_0, var_18), var_17)
             var_70
     if_var_11
-let (var_23: string) = System.Console.ReadLine()
+let (var_23: string) = "1 1 1 1 1 1 1"
 let (var_25: int64) = 0L
 let (var_26: int64) = var_25
 let (var_38: (Env83 * int64 -> int64)) = method_14((var_23: string), (var_26: int64))

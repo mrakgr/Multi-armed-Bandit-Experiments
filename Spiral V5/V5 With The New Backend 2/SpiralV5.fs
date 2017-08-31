@@ -719,7 +719,7 @@ let spiral_peval module_main output_path =
         pattern_compile arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
     and pattern_compile_single pat =
-        let main_arg = " main_arg"
+        let main_arg = sprintf "__main_arg%i" (get_pattern_tag())
         inl main_arg (pattern_compile (v main_arg) pat) |> expr_prepass
 
     and expr_prepass e =
