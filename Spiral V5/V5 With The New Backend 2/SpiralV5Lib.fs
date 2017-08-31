@@ -116,13 +116,6 @@ inl is_digit x = x >= '0' && x <= '9'
 inl is_whitespace x = x = ' '
 inl is_newline x = x = '\n' || x = '\r'
 
-inl pchar {d with stream {state with pos} {ret with on_succ on_fail}} = 
-    stream {
-        idx = pos
-        on_succ = inl c -> on_succ {state with pos=pos+1} c
-        on_fail = inl msg -> on_fail state msg
-        }
-
 inl pchar_pos {d with stream {state with pos} {ret with on_succ on_fail}} = 
     stream {
         idx = pos
@@ -130,11 +123,31 @@ inl pchar_pos {d with stream {state with pos} {ret with on_succ on_fail}} =
         on_fail = inl msg -> on_fail state msg
         }
 
-inl pdigit {d.ret with on_succ on_fail} =
-    pchar { d.ret with
-        on_succ = inl state c -> 
-            if is_digit c then on_succ state c
-            else on_fail state "digit"
+inl pchar {d with stream {state with pos} {ret with on_succ on_fail}} = 
+    stream {
+        idx = pos
+        on_succ = inl c -> on_succ {state with pos=pos+1} c
+        on_fail = inl msg -> on_fail state msg
+        }
+
+//inl pdigit {d.ret with on_succ on_fail} =
+//    pchar { d.ret with
+//        on_succ = inl state c -> 
+//            if is_digit c then on_succ state c
+//            else on_fail state "digit"
+//        }
+
+inl pdigit {d with stream {state with pos} {ret with on_succ on_fail}} = 
+    stream {
+        idx = pos
+        on_succ = inl c ->
+            inl state = {state with pos=pos+1}
+            met f c = 
+                if is_digit c then on_succ state c
+                else on_fail state "digit"
+            print_static f
+            f c
+        on_fail = inl msg -> on_fail state msg
         }
 
 //inl pint64 {d with state {ret with on_succ on_fail on_type}} =
@@ -226,7 +239,8 @@ inl tuple_chain l {d with state {ret with on_succ on_fail}} =
         | _ -> error_type "Incorrect input to tuple."
     loop state l on_succ
 
-inl (>>=) a b d = a {d.ret with on_succ = inl state x -> b x {d with state=state}}
+inl (>>=) a b {d with stream state ret} = // The bug was in bind. TODO: Add remove to the language.
+    a {d.ret with on_succ = inl state x -> b x {stream=stream; state=state; ret=ret}}
 inl (|>>) a f = a >>= inl x {d with state {ret with on_succ}} -> on_succ state (f x)
 
 inl string_stream str {idx on_succ on_fail} =
@@ -326,7 +340,7 @@ inl sprintf format =
         } format
 
 module 
-    (run,spaces,tuple,many,(>>=),(|>>),pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template
+    (run,spaces,tuple,many,(>>=),(|>>),pchar,pdigit,pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template
      )
     """) |> module_
 

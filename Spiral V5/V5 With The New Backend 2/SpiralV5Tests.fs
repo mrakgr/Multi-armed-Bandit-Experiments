@@ -636,16 +636,38 @@ let test50 =
     """
 inl console = mscorlib."System.Console"
 
+//inl ret = 
+//    {
+//    on_succ = inl state x -> 
+//        print_static x
+//        //Tuple.foldl (+) 0 x
+//        0
+//    on_fail = inl state x -> -1
+//    on_fatal_fail = inl state x -> -2
+//    on_type = int64
+//    }
+
 inl ret = 
     {
-    on_succ = inl state x -> Tuple.foldl (+) 0 x
-    on_fail = inl state x -> -1
-    on_fatal_fail = inl state x -> -2
-    on_type = int64
+    on_succ = inl state x -> x
+    on_fail = inl state x -> ('a','a','a','a')
+    on_fatal_fail = inl state x -> ('a','a','a','a')
+    on_type = (char,char,char,char)
     }
 
 open Parsing
-run (console.ReadLine()) (tuple (pint64,pint64,pint64,pint64)) ret
+
+//inl f' = tuple (pint64,pint64,pint64,pint64)
+
+inl f =
+    pdigit >>= inl a ->
+    pdigit >>= inl b ->
+    pdigit >>= inl c ->
+    pdigit |>> inl d ->
+    (a,b,c,d)
+
+
+run (console.ReadLine()) f ret
     """
 
 let tests =

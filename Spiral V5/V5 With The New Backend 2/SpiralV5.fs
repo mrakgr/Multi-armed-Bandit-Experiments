@@ -331,11 +331,6 @@ type ParserExpr =
 | ParserStatement of PosKey * (Expr -> Expr)
 | ParserExpr of PosKey * Expr
 
-type ModuleParse = // The modules are tad too complicated to be created directly in the parser, so I am using this as an auxilliary.
-| MPBinding of string * Expr
-| MPCreate of ModuleParse list
-| MPWith of string * ModuleParse list
-
 // Codegen types
 type Buf = ResizeArray<ProgramNode>
 and ProgramNode =
@@ -425,19 +420,7 @@ let spiral_peval module_main output_path =
     
     let tyv x = x |> TyV
     let tyvv x = nodify_tyvv x |> TyVV
-    let mutable tyfun_tag = 0
-    let tyfun (a,t) = 
-        
-        match t with
-        | FunTypeModule ->
-            printfn "In tyfun %i." tyfun_tag
-            Map.iter (fun k _ ->
-                printfn "%i=%s" tyfun_tag k
-                ) (n a)
-            tyfun_tag <- tyfun_tag + 1 
-        | _ -> ()
-
-        nodify_tyfun (a,t) |> TyFun
+    let tyfun (a,t) = nodify_tyfun (a,t) |> TyFun
     let tybox x = nodify_tybox x |> TyBox
 
     let lit_int i = LitInt64 i |> lit
@@ -766,7 +749,7 @@ let spiral_peval module_main output_path =
         m |> Seq.iter (fun kv -> m'.[kv.Key] <- r.[kv.Value])
         m'
 
-    let rec renamer_apply_env r e = Map.map (fun _ v -> renamer_apply_typedexpr r v) e |> nodify_env_term
+    let rec renamer_apply_env r e = Map.map (fun k v -> renamer_apply_typedexpr r v) e |> nodify_env_term
     and renamer_apply_typedexpr
         (memo_dict: Dictionary<_,_>, renamer: Dictionary<_,_>, renamer_reversed: Dictionary<_,_>, 
          fv: LinkedHashSet<_>, renamed_fv: LinkedHashSet<_> as r) e =
@@ -776,7 +759,6 @@ let spiral_peval module_main output_path =
             | true, _ -> failwith "Should be caught be the memoize call."
             | false, _ ->
                 let n' = renamer.Count
-//                printfn "%i" n'
                 renamer.Add(n,n')
                 renamer_reversed.Add(n',n)
                 fv.Add k |> ignore
@@ -785,27 +767,10 @@ let spiral_peval module_main output_path =
                 k'
         memoize memo_dict e <| fun () ->
             match e with
-            | TyBox (N(n,t)) -> 
-//                printfn "I am in TyBox."
-                tybox(f n,t)
-            | TyVV (N l) -> 
-//                printfn "I am in TyVV."
-                tyvv(List.map f l)
-            | TyFun(N(N l,t)) -> 
-//                printfn "I am in TyFun."
-//                let f k v =
-//                    match v with
-//                    | TyV(t,_) when t = 15 -> Some k
-//                    | _ -> None
-//                match Map.tryPick f l with
-//                | Some k -> 
-////                    printfn "%A" t
-////                    Map.iter (fun k v -> printfn "%s" k) l
-//                    ()
-//                | _ -> ()
-                tyfun(renamer_apply_env r l, t)
+            | TyBox (N(n,t)) -> tybox(f n,t)
+            | TyVV (N l) -> tyvv(List.map f l)
+            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
             | TyV (n,t as k) -> 
-//                printfn "I am in TyV."
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
             | TyLit _ -> e
@@ -994,7 +959,6 @@ let spiral_peval module_main output_path =
             let stopwatch = Diagnostics.Stopwatch.StartNew()
             let _, renamer, renamer_reversed, fv, renamed_fv as k = renamables0()
             let renamed_env = renamer_apply_env k env
-            printfn "-----"
             total_time <- total_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
@@ -1462,10 +1426,7 @@ let spiral_peval module_main output_path =
                 | x -> on_type_er d.trace <| sprintf "Only variable names are allowed in module create. Got: %A" x
             let er n _ = on_type_er d.trace <| sprintf "In module create, the variable %s was not found." n
             let env = List.map (fun n -> n, v_find d.env.Expression n (er n)) (loop [] l) |> Map |> nodify_env_term
-            printfn "Calling tyfun in module_create."
-            let x = tyfun(env, FunTypeModule)
-            printfn "Finished calling tyfun in module_create."
-            x
+            tyfun(env, FunTypeModule)
 
         let array_create d size typ =
             let typ = tev_seq d typ |> function 
@@ -1512,11 +1473,7 @@ let spiral_peval module_main output_path =
                 | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
                 ) Map.empty l
-            |> fun x -> 
-                printfn "Calling tyfun in module_create_alt."
-                let x = tyfun(nodify_env_term x, FunTypeModule)
-                printfn "Finishing calling tyfun in module_create_alt."
-                x
+            |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
 
         let module_with_alt (d: LangEnv) l =
             let names, bindings =
@@ -1534,10 +1491,7 @@ let spiral_peval module_main output_path =
                 match names with
                 | V(N name) :: names -> f name (fun env -> loop env names)
                 | Lit(N(LitString name)) :: names -> f name (fun env -> 
-                    printfn "Calling tyfun in module_with_alt's names."
-                    let x = tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule)
-                    printfn "Finished calling tyfun in module_with_alt's names."
-                    x
+                    tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule)
                     )
                 | [] ->
                     List.fold (fun env -> function
@@ -1548,11 +1502,7 @@ let spiral_peval module_main output_path =
                             |> fun d -> Map.add name (tev d e |> destructure d) env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
-                    |> fun env -> 
-                        printfn "Calling tyfun in module_with_alt."
-                        let x = tyfun(nodify_env_term env, FunTypeModule)
-                        printfn "Finished calling tyfun in module_with_alt."
-                        x
+                    |> fun env -> tyfun(nodify_env_term env, FunTypeModule)
                 | x -> failwithf "Malformed ModuleWithAlt. %A" x
             loop (n d.env) names
             
