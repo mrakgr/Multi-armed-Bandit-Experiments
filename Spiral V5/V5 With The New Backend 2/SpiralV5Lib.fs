@@ -157,7 +157,7 @@ met rec spaces {d with state {ret with on_succ on_fail on_type}} =
     pchar { d.ret with
         on_succ = inl state' c ->
             if is_whitespace c || is_newline c then spaces { d with state = state' }
-            else on_succ state' ()
+            else on_succ state ()
         on_fail = inl state _ -> on_succ state ()
         }
     : on_type

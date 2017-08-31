@@ -645,7 +645,7 @@ inl ret =
     }
 
 open Parsing
-run (console.ReadLine()) (parse_n_ints 6) ret
+run (console.ReadLine()) (parse_n_ints 10) ret
     """
 
 let tests =
