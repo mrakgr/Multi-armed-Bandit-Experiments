@@ -425,7 +425,19 @@ let spiral_peval module_main output_path =
     
     let tyv x = x |> TyV
     let tyvv x = nodify_tyvv x |> TyVV
-    let tyfun x = nodify_tyfun x |> TyFun
+    let mutable tyfun_tag = 0
+    let tyfun (a,t) = 
+        
+        match t with
+        | FunTypeModule ->
+            printfn "In tyfun %i." tyfun_tag
+            Map.iter (fun k _ ->
+                printfn "%i=%s" tyfun_tag k
+                ) (n a)
+            tyfun_tag <- tyfun_tag + 1 
+        | _ -> ()
+
+        nodify_tyfun (a,t) |> TyFun
     let tybox x = nodify_tybox x |> TyBox
 
     let lit_int i = LitInt64 i |> lit
@@ -764,7 +776,7 @@ let spiral_peval module_main output_path =
             | true, _ -> failwith "Should be caught be the memoize call."
             | false, _ ->
                 let n' = renamer.Count
-                printfn "%i" n'
+//                printfn "%i" n'
                 renamer.Add(n,n')
                 renamer_reversed.Add(n',n)
                 fv.Add k |> ignore
@@ -774,16 +786,26 @@ let spiral_peval module_main output_path =
         memoize memo_dict e <| fun () ->
             match e with
             | TyBox (N(n,t)) -> 
-                printfn "I am in TyBox."
+//                printfn "I am in TyBox."
                 tybox(f n,t)
             | TyVV (N l) -> 
-                printfn "I am in TyVV."
+//                printfn "I am in TyVV."
                 tyvv(List.map f l)
             | TyFun(N(N l,t)) -> 
-                printfn "I am in TyFun."
+//                printfn "I am in TyFun."
+//                let f k v =
+//                    match v with
+//                    | TyV(t,_) when t = 15 -> Some k
+//                    | _ -> None
+//                match Map.tryPick f l with
+//                | Some k -> 
+////                    printfn "%A" t
+////                    Map.iter (fun k v -> printfn "%s" k) l
+//                    ()
+//                | _ -> ()
                 tyfun(renamer_apply_env r l, t)
             | TyV (n,t as k) -> 
-                printfn "I am in TyV."
+//                printfn "I am in TyV."
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
             | TyLit _ -> e

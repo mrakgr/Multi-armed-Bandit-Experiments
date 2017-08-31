@@ -469,22 +469,6 @@ match Res 1 |> dyn with
 | _ -> 3
     """
 
-let test36 = // 
-    "test36",[tuple;parsing2],"Does parse_n_ints blow up the code size? Does it scale linearly? This is for the v2 of the parsing library that uses modules.",
-    """
-inl console = mscorlib."System.Console"
-
-inl ret = 
-    inl on_succ pos, x = Tuple.foldl (+) 0 x
-    inl on_fail pos, x = -1
-    inl on_fatal_fail pos, x = -2
-    inl on_type = int64
-    module (on_succ,on_fail,on_fatal_fail,on_type)
-
-open Parsing
-run (console.ReadLine()) (tuple (pint64,pint64,pint64,pint64)) ret
-    """
-
 let test38 =
     "test38",[],"Is type constructor of an int64 an int64?",
     """
@@ -669,7 +653,7 @@ let tests =
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;test33;test35;test36;test38;test39
+    test30;test31;test32;test33;test35;test38;test39
     test40;test42;test43;test44;test45;test46;test47;test48;test49
     test50
     hacker_rank_1
@@ -691,5 +675,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test36" false
+run_test "test50" false
 
