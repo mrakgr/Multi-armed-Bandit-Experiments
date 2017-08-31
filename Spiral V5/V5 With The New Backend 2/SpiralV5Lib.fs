@@ -116,63 +116,30 @@ inl is_digit x = x >= '0' && x <= '9'
 inl is_whitespace x = x = ' '
 inl is_newline x = x = '\n' || x = '\r'
 
-inl pchar_pos {d with stream {state with pos} {ret with on_succ on_fail}} = 
+inl pchar_pos {state with pos} {d with stream {ret with on_succ on_fail}} = 
     stream {
         idx = pos
         on_succ = inl c -> on_succ {state with pos=pos+1} (c, pos)
         on_fail = inl msg -> on_fail state msg
         }
 
-inl pchar {d with stream {state with pos} {ret with on_succ on_fail}} = 
+inl pchar {state with pos} {d with stream {ret with on_succ on_fail}} = 
     stream {
         idx = pos
         on_succ = inl c -> on_succ {state with pos=pos+1} c
         on_fail = inl msg -> on_fail state msg
         }
 
-//inl pdigit {d.ret with on_succ on_fail} =
-//    pchar { d.ret with
-//        on_succ = inl state c -> 
-//            if is_digit c then on_succ state c
-//            else on_fail state "digit"
-//        }
-
-inl pdigit {d with stream {state with pos} {ret with on_succ on_fail}} = 
-    stream {
-        idx = pos
-        on_succ = inl c ->
-            inl state = {state with pos=pos+1}
-            met f c = 
-                if is_digit c then on_succ state c
-                else on_fail state "digit"
-            print_static f
-            f c
-        on_fail = inl msg -> on_fail state msg
+inl pdigit state {d.ret with on_succ on_fail} =
+    pchar state { d.ret with
+        on_succ = inl state c -> 
+            if is_digit c then on_succ state c
+            else on_fail state "digit"
         }
 
-//inl pint64 {d with state {ret with on_succ on_fail on_type}} =
-//    met rec loop (!dyn fail_state) state (!dyn i) = 
-//        pdigit { d with
-//            state = state
-//            ret = { self with
-//                on_succ = inl state c ->
-//                    print_static "I am in on_succ."
-//                    inl x = to_int64 c - to_int64 '0'
-//                    inl i = i * 10 + x 
-//                    loop false state i
-//                on_fail = inl state _ ->
-//                    if fail_state then on_fail state "pint64"
-//                    else on_succ state i
-//                }
-//            }
-//        : on_type
-//            
-//    loop true state 0
-
-inl pint64 {d with state {ret with on_succ on_fail on_type}} =
-    met rec loop on_fail {state with pos} i = 
-        pdigit { d with
-            state = state
+inl pint64 state {d with {ret with on_succ on_fail on_type}} =
+    met rec loop on_fail state i = 
+        pdigit state { d with
             ret = { self with
                 on_succ = inl state c ->
                     inl x = to_int64 c - to_int64 '0'
@@ -185,21 +152,38 @@ inl pint64 {d with state {ret with on_succ on_fail on_type}} =
             
     loop (inl state _ -> on_fail state "pint64") state 0
 
-met rec spaces {d with state {ret with on_succ on_fail on_type}} =
-    pchar { d.ret with
+//inl pint64 state {d with {ret with on_succ on_fail on_type}} =
+//    met rec loop (!dyn fail_state) state (!dyn i) = 
+//        pdigit state { d with
+//            ret = { self with
+//                on_succ = inl state c ->
+//                    inl x = to_int64 c - to_int64 '0'
+//                    inl i = i * 10 + x 
+//                    loop false state i
+//                on_fail = inl state _ ->
+//                    match fail_state with
+//                    | true -> on_fail state "pint64"
+//                    | _ -> on_succ state i
+//                }
+//            }
+//        : on_type
+//            
+//    loop true state 0
+
+met rec spaces state {d with {ret with on_succ on_fail on_type}} =
+    pchar state { d.ret with
         on_succ = inl state' c ->
-            if is_whitespace c || is_newline c then spaces { d with state = state' }
+            if is_whitespace c || is_newline c then spaces state' d
             else on_succ state ()
         on_fail = inl state _ -> on_succ state ()
         }
     : on_type
 
-inl many typ_p p {d with state {ret with on_succ on_fail on_fatal_fail on_type}} =
+inl many typ_p p state {d with {ret with on_succ on_fail on_fatal_fail on_type}} =
     inl typ = List.list typ_p
 
     met rec many {state with pos} (!typ (!dyn r)) =
-        p { d with
-            state = state
+        p state { d with
             ret = {self with
                 on_succ = inl {state with pos=pos'} -> function
                     | _ when pos = pos' -> on_fatal_fail state "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
@@ -213,35 +197,27 @@ inl many typ_p p {d with state {ret with on_succ on_fail on_fatal_fail on_type}}
 
     many state .Nil
 
-inl tuple l {d with state {ret with on_succ on_fail}} =
+inl tuple_template flag_term_cast l state {d with {ret with on_succ}} =
     inl rec loop state l ret = 
         match l with
         | x :: xs -> 
-            x {d with 
-                state = state
-                ret = {self with on_succ = inl state x -> 
-                    loop state xs <| inl state xs -> 
-                        ret state (x :: xs) }}
+            inl x, k = 
+                match flag_term_cast,x with
+                | true,(x,t) -> 
+                    inl k = (inl state, x -> loop state xs <| inl state xs -> ret state (x :: xs)) `(state,t)
+                    x, inl state x -> k (state,x)
+                | _, x ->
+                    x, inl state x -> loop state xs <| inl state xs -> ret state (x :: xs)
+            x state {d.ret with on_succ = k}
         | () -> ret state ()
         | _ -> error_type "Incorrect input to tuple."
     loop state l on_succ
 
-inl tuple_chain l {d with state {ret with on_succ on_fail}} =
-    inl rec loop state l ret = 
-        match l with
-        | (x,t) :: xs -> 
-            inl k = (inl state, x -> loop state xs <| inl state xs -> ret state (x :: xs)) `(state,t)
-            x {d with 
-                state = state
-                ret = {self with on_succ = inl state x -> k (state,x)}
-                }
-        | () -> ret state ()
-        | _ -> error_type "Incorrect input to tuple."
-    loop state l on_succ
+inl tuple = tuple_template false
+inl tuple_chain = tuple_template true
 
-inl (>>=) a b {d with stream state ret} = // The bug was in bind. TODO: Add remove to the language.
-    a {d.ret with on_succ = inl state x -> b x {stream=stream; state=state; ret=ret}}
-inl (|>>) a f = a >>= inl x {d with state {ret with on_succ}} -> on_succ state (f x)
+inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
+inl (|>>) a f = a >>= inl x state {d with {ret with on_succ}} -> on_succ state (f x)
 
 inl string_stream str {idx on_succ on_fail} =
     inl f idx = idx >= 0 && idx < string_length str
@@ -251,11 +227,9 @@ inl string_stream str {idx on_succ on_fail} =
 
 inl run data parser ret = 
     match data with
-    | _ : string -> parser {
-        stream = string_stream data
-        state = { pos = if is_static data then 0 else dyn 0 }
-        ret = ret
-        }
+    | _ : string -> 
+        parser { pos = if is_static data then 0 else dyn 0 }
+            { stream = string_stream data; ret = ret }
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int = tuple (pint64, spaces) |>> fst
@@ -266,7 +240,7 @@ inl parse_n_ints = function
     | n : int64 -> type_error "The input to this function must be static."
     
 inl parse_ints = many int64 parse_int
-inl preturn x {state {ret with on_succ}} = on_succ state x
+inl preturn x state {{ret with on_succ}} = on_succ state x
 
 inl with_unit_ret f = {
     on_type = ()
@@ -278,9 +252,9 @@ inl with_unit_ret f = {
 inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
 
 inl sprintf_parser =
-    inl rec sprintf_parser sprintf_state append {d with {ret with on_succ on_fail}} =
-        inl parse_variable d = 
-            pchar { d.ret with
+    inl rec sprintf_parser sprintf_state append state {d with {ret with on_succ on_fail}} =
+        inl parse_variable state d = 
+            pchar state { d.ret with
                 on_succ = inl state c -> 
                     match c with
                     | 's' -> function
@@ -300,14 +274,14 @@ inl sprintf_parser =
                         | _ -> error_type "Expected a float in sprintf."
                     | 'A' -> id
                     | _ -> error_type "Unexpected literal in sprintf."
-                    |> inl guard_type -> self state (inl x -> append (guard_type x); sprintf_parser .None append {d with state = state})
+                    |> inl guard_type -> self state (inl x -> append (guard_type x); sprintf_parser .None append state d)
                
                 on_fail = inl state x ->
                     append '%'
                     self state x
                 }
-        inl append_state {d with stream state {ret with on_succ on_fail}} =
-            match state with
+        inl append_state state {d with stream {ret with on_succ on_fail}} =
+            match sprintf_state with
             | .None -> on_succ state ()
             | ab -> stream {
                 idx = ab
@@ -315,16 +289,16 @@ inl sprintf_parser =
                 on_fail = inl msg -> on_fail state msg
                 }
 
-        pchar_pos { d.ret with
+        pchar_pos state { d.ret with
             on_succ = inl state -> function
-                | '%', _ -> (append_state >>= inl _ -> parse_variable) {d with state = state}
+                | '%', _ -> (append_state >>= inl _ -> parse_variable) state d
                 | _, pos ->
                     inl sprintf_state = 
                         match sprintf_state with
                         | .None -> (pos, pos)
                         | (start,_) -> (start, pos)
-                    sprintf_parser sprintf_state append {d with state = state}
-            on_fail = inl state mes -> (append_state |>> inl _ -> on_fail state mes) {d with state = state}
+                    sprintf_parser sprintf_state append state d
+            on_fail = inl state mes -> (append_state |>> inl _ -> on_fail state mes) state d
             }
     sprintf_parser .None
 
