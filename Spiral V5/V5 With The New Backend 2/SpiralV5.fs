@@ -1462,7 +1462,10 @@ let spiral_peval module_main output_path =
                 | x -> on_type_er d.trace <| sprintf "Only variable names are allowed in module create. Got: %A" x
             let er n _ = on_type_er d.trace <| sprintf "In module create, the variable %s was not found." n
             let env = List.map (fun n -> n, v_find d.env.Expression n (er n)) (loop [] l) |> Map |> nodify_env_term
-            tyfun(env, FunTypeModule)
+            printfn "Calling tyfun in module_create."
+            let x = tyfun(env, FunTypeModule)
+            printfn "Finished calling tyfun in module_create."
+            x
 
         let array_create d size typ =
             let typ = tev_seq d typ |> function 
@@ -1508,8 +1511,12 @@ let spiral_peval module_main output_path =
             List.fold (fun env -> function
                 | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
-                ) (n d.env) l
-            |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
+                ) Map.empty l
+            |> fun x -> 
+                printfn "Calling tyfun in module_create_alt."
+                let x = tyfun(nodify_env_term x, FunTypeModule)
+                printfn "Finishing calling tyfun in module_create_alt."
+                x
 
         let module_with_alt (d: LangEnv) l =
             let names, bindings =
@@ -1526,7 +1533,12 @@ let spiral_peval module_main output_path =
                     | _ -> on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name
                 match names with
                 | V(N name) :: names -> f name (fun env -> loop env names)
-                | Lit(N(LitString name)) :: names -> f name (fun env -> tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule))
+                | Lit(N(LitString name)) :: names -> f name (fun env -> 
+                    printfn "Calling tyfun in module_with_alt's names."
+                    let x = tyfun (Map.add name (loop env names) cur_env |> nodify_env_term, FunTypeModule)
+                    printfn "Finished calling tyfun in module_with_alt's names."
+                    x
+                    )
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString name)); e]) ->
@@ -1536,7 +1548,11 @@ let spiral_peval module_main output_path =
                             |> fun d -> Map.add name (tev d e |> destructure d) env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
-                    |> fun env -> tyfun(nodify_env_term env, FunTypeModule)
+                    |> fun env -> 
+                        printfn "Calling tyfun in module_with_alt."
+                        let x = tyfun(nodify_env_term env, FunTypeModule)
+                        printfn "Finished calling tyfun in module_with_alt."
+                        x
                 | x -> failwithf "Malformed ModuleWithAlt. %A" x
             loop (n d.env) names
             
