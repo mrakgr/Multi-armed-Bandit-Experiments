@@ -171,6 +171,7 @@ type Op =
     | ReferenceCreate
     | ArrayIndex
     | ArraySet
+    | ArrayLength
    
     | ShiftLeft
     | ShiftRight
@@ -797,7 +798,8 @@ let spiral_peval module_main output_path =
         elif x.IsArray then arrayt(DotNetHeap,dotnet_type_to_ty (x.GetElementType()))
         // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
         elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
-        else dotnet_type_runtimet x
+        elif x.ContainsGenericParameters then dotnet_type_runtimet x
+        else dotnet_type_instancet x
 
     let rec dotnet_ty_to_type (x: Ty) =
         match x with
@@ -1429,8 +1431,7 @@ let spiral_peval module_main output_path =
             tyfun(env, FunTypeModule)
 
         let array_create d size typ =
-            let typ = tev_seq d typ |> function 
-                | TyType (TyTypeC (N x) | x) -> x 
+            let typ = tev_seq d typ |> get_type |> typec_strip
 
             let size,array_type =
                 match tev d size with
@@ -1451,6 +1452,14 @@ let spiral_peval module_main output_path =
             | ar & TyType (ArrayT(N(DotNetReference,t))), idx & TyVV(N []), r when t = get_type r -> 
                 make_tyv_and_push_typed_expr d (TyOp(ArraySet,[ar;idx;r],BVVT))
             | x -> on_type_er d.trace <| sprintf "The two sides in array set have different types. %A" x
+
+        let array_length d ar =
+            match tev d ar with
+            | ar & TyType (ArrayT(N(DotNetHeap,t)))-> 
+                make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
+            | ar & TyType (ArrayT(N(DotNetReference,t)))-> 
+                TyLit (LitInt64 1L)
+            | x -> on_type_er d.trace <| sprintf "ArrayLength is only supported for .NET arrays. Got: %A" x
 
         let is_static d x = 
             match tev d x with
@@ -1554,6 +1563,7 @@ let spiral_peval module_main output_path =
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
             | ArraySet,[a;b;c] -> array_set d a b c
+            | ArrayLength,[a] -> array_length d a
 
             // Primitive operations on expressions.
             | Add,[a;b] -> prim_arith_op d a b Add
@@ -2307,6 +2317,8 @@ let spiral_peval module_main output_path =
                 | TyType Unit -> ""
                 | _ -> sprintf "%s.[int32 %s]" (codegen ar) (codegen idx)
 
+            let array_length ar = sprintf "%s.LongLength" (codegen ar)
+
             let reference_index = function
                 | TyType Unit -> ""
                 | x -> sprintf "(!%s)" (codegen x)
@@ -2405,6 +2417,7 @@ let spiral_peval module_main output_path =
                 | ReferenceCreate,[a] -> reference_create a
                 | ArrayIndex,[b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index b c
                 | ArrayIndex,[b & TyType(ArrayT(N (DotNetReference,_)));c] -> reference_index b
+                | ArrayLength,[a] -> array_length a
                 | StringIndex,[str;idx] -> string_index str idx
                 | StringSlice,[str;a;b] -> string_slice str a b
                 | StringLength,[str] -> string_length str
@@ -2438,11 +2451,11 @@ let spiral_peval module_main output_path =
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
                 | Exp,[x] -> sprintf "exp(%s)" (codegen x)
                 | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
-                | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] ->
+                | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] as x ->
                     match t with 
                     | DotNetTypeInstanceT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
                     | _ -> failwith "impossible"
-                | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
+                | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] as x ->
                     match v with
                     | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
                     | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
@@ -2615,6 +2628,7 @@ let spiral_peval module_main output_path =
             l "id" (p <| id)
             l "ref" (p <| fun x -> op(ReferenceCreate,[x]))
             l "array_create" (p2 <| fun size typ -> op(ArrayCreate,[size;typ]))
+            l "array_length" (p <| fun ar -> op(ArrayLength,[ar]))
 
             b "+" Add; b "-" Sub; b "*" Mult; b "/" Div
             b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))

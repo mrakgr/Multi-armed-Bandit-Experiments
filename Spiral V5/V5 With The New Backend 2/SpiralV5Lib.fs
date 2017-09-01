@@ -105,6 +105,20 @@ inl repeat n x = init_template id n (inl _ -> x)
 module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon',init,repeat)
     """) |> module_
 
+let array =
+    (
+    "Array",[],"The array module",
+    """
+inl foldl f s ar =
+    met rec loop (!dyn i) s =
+        if i < array_length ar then loop (i+1) (f s (ar i))
+        else s
+        : s
+    loop 0 s
+
+module (foldl)
+    """) |> module_
+
 let parsing3 =
     (
     "Parsing",[tuple],"Parser combinators.",
@@ -234,6 +248,23 @@ inl run data parser ret =
 
 inl parse_int = tuple (pint64, spaces) |>> fst
 
+inl parse_n_array p n state {d.ret with on_fatal_fail} =
+    if n > 0 then
+        (p >>= inl x ->
+            inl ar = array_create n x
+            ar 0 <- x
+            met rec loop (!dyn i) state {d.ret with on_succ on_type} =
+                if i < n then 
+                    (p >>= inl x ->
+                        ar i <- x
+                        loop (i+1)
+                        ) state d
+                else on_succ state ar
+                : on_type
+            loop 1) state d
+    else
+        on_fatal_fail state "n in parse array must be > 0."
+
 inl parse_n_ints = function
     | .no_clo, n | n when n <= 5 -> Tuple.repeat n parse_int |> tuple
     | n when n > 5 -> Tuple.repeat n (parse_int,int64) |> tuple_chain
@@ -298,7 +329,7 @@ inl sprintf_parser =
                         | .None -> (pos, pos)
                         | (start,_) -> (start, pos)
                     sprintf_parser sprintf_state append state d
-            on_fail = inl state mes -> (append_state |>> inl _ -> on_fail state mes) state d
+            on_fail = inl state mes -> (append_state >>= inl _ state _ -> on_fail state mes) state d
             }
     sprintf_parser .None
 
@@ -314,8 +345,8 @@ inl sprintf format =
         } format
 
 module 
-    (run,spaces,tuple,many,(>>=),(|>>),pchar,pdigit,pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template
-     )
+    (run,spaces,tuple,many,(>>=),(|>>),pchar,pdigit,pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template,
+     parse_n_array)
     """) |> module_
 
 

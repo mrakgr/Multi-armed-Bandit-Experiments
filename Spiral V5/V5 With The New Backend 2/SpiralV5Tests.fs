@@ -482,6 +482,7 @@ let test39 =
 inl a = dyn 1
 inl b = dyn 2
 Parsing.sprintf "%i + %i = %i" a b (a+b) |> ignore
+Console.printfn "(%i,%f,%b,%s)" 1 2.0 true "4"
     """
 
 let test40 =
@@ -624,13 +625,6 @@ inl f {x.a.b with c q} = c,q
 f {x.a.b with q = 4; c = self + 3; d = {q = 12; w = 23}}
     """
 
-let hacker_rank_4 =
-    "hacker_rank_4",[console],"https://www.hackerrank.com/challenges/simple-array-sum",
-    """
-open Parsing
-inl parser = read_int >>= inl n -> read_n_ints array_loader n
-    """
-
 let test50 =
     "test50",[parsing3],"Does the v3 of the parsing library work?",
     """
@@ -649,6 +643,20 @@ open Parsing
 run (console.ReadLine()) (parse_n_ints (320)) ret
     """
 
+let test51 =
+    "test51",[array;parsing3;console],"Does the array parsing function work?",
+    """
+//https://www.hackerrank.com/challenges/simple-array-sum
+open Console
+open Parsing
+
+inl r = console.OpenStandardInput() |> mscorlib ."System.IO.StreamReader"
+
+run_with_unit_ret (r.ReadToEnd()) 
+    (parse_int >>= parse_n_array parse_int) 
+    (Array.foldl (+) 0 >> writeline)
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -656,7 +664,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38;test39
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50
+    test50;test51
     hacker_rank_1
     |] |> Array.map module_
 
@@ -676,5 +684,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test39" false
+run_test "test51" false
 
