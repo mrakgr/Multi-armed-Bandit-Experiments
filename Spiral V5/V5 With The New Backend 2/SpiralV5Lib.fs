@@ -151,7 +151,7 @@ inl (>>.) a b = tuple (a,b) |>> snd
 // TODO: Instead of just passing the old state on failure to the next parser, the parser should
 // compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
 // polymorphic structural equality on all but primitive types. I want to be able to structurally compare anything.
-inl (<|>) a b state {d.ret with on_succ on_fail} = a state { d.ret with on_fail = inl state _ -> b state d }
+inl (<|>) a b state {d.ret with on_succ on_fail} = a state { d.ret with on_fail = inl _ _ -> b state d }
 
 inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
 
@@ -255,9 +255,9 @@ inl run data parser ret =
             { stream = string_stream data; ret = ret }
     | _ -> error_type "Only strings supported for now."
 
-inl parse_int = ((skipChar '-' >>. pint64 |>> negate) <|> pint64) >>. spaces
+inl parse_int = ((skipChar '-' >>. pint64 |>> negate) <|> pint64) .>> spaces
 
-inl parse_n_array p n state {d.ret with on_fatal_fail} =
+inl parse_n_array p n state {d.ret with on_fail} =
     if n > 0 then
         (p >>= inl x ->
             inl ar = array_create n x
@@ -272,7 +272,7 @@ inl parse_n_array p n state {d.ret with on_fatal_fail} =
                 : on_type
             loop 1) state d
     else
-        on_fatal_fail state "n in parse array must be > 0."
+        on_fail state "n in parse array must be > 0."
 
 inl parse_n_ints = function
     | .no_clo, n | n when n <= 5 -> Tuple.repeat n parse_int |> tuple
