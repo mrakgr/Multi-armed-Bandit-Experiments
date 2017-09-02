@@ -2288,8 +2288,9 @@ let spiral_peval module_main output_path =
             let rec if_ cond tr fl =
                 let enter f =
                     enter <| fun _ ->
+                        let x = buffer.Count
                         match f () with
-                        | "" -> "()"
+                        | "" when buffer.Count = x -> "()"
                         | x -> x
                 
                 print_if (get_type tr) <| fun _ ->
@@ -2347,6 +2348,7 @@ let spiral_peval module_main output_path =
             | TyV v -> print_tyv v
             | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
             | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
+            | TyLet(_,tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
             | TyLet(_,(_,Unit),b,rest,_) ->
                 match b with
                 | TyOp(ArraySet,[ar;idx;b],_) ->
@@ -2412,8 +2414,9 @@ let spiral_peval module_main output_path =
                             | case :: body :: rest -> 
                                 print_case i case
                                 enter <| fun _ -> 
+                                    let c = buffer.Count
                                     let x = codegen body
-                                    if String.IsNullOrEmpty x then "()" else x
+                                    if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
                                 loop (i+1) rest
                             | [] -> ()
                             | _ -> failwith "The cases should always be in pairs."
@@ -2517,8 +2520,9 @@ let spiral_peval module_main output_path =
             |> state
 
             enter <| fun _ -> 
+                let c = buffer.Count
                 let x = codegen body
-                if String.IsNullOrEmpty x then "()" else x
+                if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
 
         memoized_methods |> Seq.fold (fun is_first x -> 
             match x.Value with

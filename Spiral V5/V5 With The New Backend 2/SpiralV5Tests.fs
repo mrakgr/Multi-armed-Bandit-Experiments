@@ -664,7 +664,7 @@ open Parsing
 inl abs x = if x >= 0 then x else -x
 
 run_with_unit_ret (readall()) 
-    ((parse_int >>= inl n -> parse_n_array parse_int (n*n) |>> inl ar ->
+    (parse_int >>= inl n -> parse_n_array parse_int (n*n) |>> inl ar ->
         inl load row col = 
             inl f x = x >= 0 || x < n
             assert (f row && f col) "Out of bounds."
@@ -676,7 +676,6 @@ run_with_unit_ret (readall())
         inl a,b = loop 0 (0,0)
         abs (a-b) |> writeline
         )
-     <|> (inl _ _ -> writeline 0))
     """
 
 let tests =

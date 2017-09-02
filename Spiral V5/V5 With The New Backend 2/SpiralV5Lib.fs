@@ -257,7 +257,7 @@ inl run data parser ret =
 
 inl parse_int = ((skipChar '-' >>. pint64 |>> negate) <|> pint64) .>> spaces
 
-inl parse_n_array p n state {d.ret with on_fail} =
+inl parse_n_array p n state {d.ret with on_fatal_fail} =
     if n > 0 then
         (p >>= inl x ->
             inl ar = array_create n x
@@ -272,7 +272,7 @@ inl parse_n_array p n state {d.ret with on_fail} =
                 : on_type
             loop 1) state d
     else
-        on_fail state "n in parse array must be > 0."
+        on_fatal_fail state "n in parse array must be > 0."
 
 inl parse_n_ints = function
     | .no_clo, n | n when n <= 5 -> Tuple.repeat n parse_int |> tuple
