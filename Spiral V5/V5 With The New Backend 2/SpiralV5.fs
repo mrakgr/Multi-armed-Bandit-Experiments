@@ -196,6 +196,7 @@ type Op =
     | Log
     | Exp
     | Tanh
+    | FailWith
     
     // Constants
     | Syncthreads
@@ -1514,8 +1515,12 @@ let spiral_peval module_main output_path =
                     |> fun env -> tyfun(nodify_env_term env, FunTypeModule)
                 | x -> failwithf "Malformed ModuleWithAlt. %A" x
             loop (n d.env) names
-            
 
+        let failwith_ d a =
+            match tev d a with
+            | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BVVT)
+            | _ -> on_type_er d.trace "Expected a string as input to failwith."
+            
         let inline add_trace d x = {d with trace = x :: d.trace}
 
         match expr with
@@ -1607,6 +1612,7 @@ let spiral_peval module_main output_path =
             | Log,[a] -> prim_un_floating d a Log
             | Exp,[a] -> prim_un_floating d a Exp
             | Tanh,[a] -> prim_un_floating d a Tanh
+            | FailWith,[a] -> failwith_ d a
 
             // Constants
             | TypeConstructorCreate,[a] -> typec_create d a
@@ -2451,6 +2457,7 @@ let spiral_peval module_main output_path =
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
                 | Exp,[x] -> sprintf "exp(%s)" (codegen x)
                 | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
+                | FailWith,[x] -> sprintf "(failwith %s)" (codegen x)
                 | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] as x ->
                     match t with 
                     | DotNetTypeInstanceT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
@@ -2646,6 +2653,8 @@ let spiral_peval module_main output_path =
             l "upon" (p3 <| fun a b c -> op(ModuleWith,[a;b;c]))
             l "upon'" (p3 <| fun a b c -> op(ModuleWithExtend,[a;b;c]))
             l "is_static" (p <| fun x -> op(IsStatic,[x]))
+            l "failwith" (p <| fun x -> op(FailWith,[x]))
+            l "assert" (p2 <| fun c x -> if_static (eq c (lit (LitBool false))) (op(FailWith,[x])) B)
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =

@@ -674,7 +674,7 @@ run_with_unit_ret (readall())
             else s
             : s
         inl a,b = loop 0 (0,0)
-        abs (a+b) |> writeline
+        abs (a-b) |> writeline
         )
     """
 
@@ -685,7 +685,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38;test39
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51
+    test50;test51;test52
     hacker_rank_1
     |] |> Array.map module_
 
@@ -705,5 +705,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test51" false
+run_test "test52" false
 

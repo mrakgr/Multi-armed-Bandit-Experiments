@@ -123,6 +123,39 @@ let parsing3 =
     (
     "Parsing",[tuple],"Parser combinators.",
     """
+// Primitives
+inl tuple_template flag_term_cast l state {d with {ret with on_succ}} =
+    inl rec loop state l ret = 
+        match l with
+        | x :: xs -> 
+            inl x, k = 
+                match flag_term_cast,x with
+                | true,(x,t) -> 
+                    inl k = (inl state, x -> loop state xs <| inl state xs -> ret state (x :: xs)) `(state,t)
+                    x, inl state x -> k (state,x)
+                | _, x ->
+                    x, inl state x -> loop state xs <| inl state xs -> ret state (x :: xs)
+            x state {d.ret with on_succ = k}
+        | () -> ret state ()
+        | _ -> error_type "Incorrect input to tuple."
+    loop state l on_succ
+
+inl tuple = tuple_template false
+inl tuple_chain = tuple_template true
+
+inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
+inl (|>>) a f = a >>= inl x state {d with {ret with on_succ}} -> on_succ state (f x)
+inl (.>>) a b = tuple (a,b) |>> fst
+inl (>>.) a b = tuple (a,b) |>> snd
+
+// TODO: Instead of just passing the old state on failure to the next parser, the parser should
+// compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
+// polymorphic structural equality on all but primitive types. I want to be able to structurally compare anything.
+inl (<|>) a b state {d.ret with on_succ on_fail} = a state { d.ret with on_fail = inl state _ -> b state d }
+
+inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
+
+// CharParsers
 inl convert = mscorlib ."System.Convert"
 inl to_int64 = convert .ToInt64
 
@@ -150,6 +183,22 @@ inl pdigit state {d.ret with on_succ on_fail} =
             if is_digit c then on_succ state c
             else on_fail state "digit"
         }
+
+inl skipString str =
+    met rec loop (!dyn i) state {d.ret with on_succ} =
+        if i < string_length str then
+            (pchar >>= inl c state {d.ret with on_fail} ->
+                if c = str i then loop (i+1) state d
+                else on_fail state str)
+                state d
+        else
+            on_succ state ()
+    loop 0
+
+inl skipChar c =
+    pchar >>= inl c' state {d.ret with on_succ on_fail} ->
+        if c = c' then on_succ state ()
+        else on_fail state "skipChar"
 
 inl pint64 state {d with {ret with on_succ on_fail on_type}} =
     met rec loop on_fail state i = 
@@ -193,46 +242,6 @@ met rec spaces state {d with {ret with on_succ on_fail on_type}} =
         }
     : on_type
 
-inl many typ_p p state {d with {ret with on_succ on_fail on_fatal_fail on_type}} =
-    inl typ = List.list typ_p
-
-    met rec many {state with pos} (!typ (!dyn r)) =
-        p state { d with
-            ret = {self with
-                on_succ = inl {state with pos=pos'} -> function
-                    | _ when pos = pos' -> on_fatal_fail state "Many parser succeeded without changing the parser state. Unless the computation had been aborted, the parser would have gone into an infinite loop."
-                    | x -> many state <| (.Cons, (x, r))
-                on_fail = inl {state with pos=pos'} -> function
-                    | _ when pos = pos' -> on_succ state (List.rev typ r)
-                    | _ -> on_fail state "many"
-                }
-            }
-        : on_type
-
-    many state .Nil
-
-inl tuple_template flag_term_cast l state {d with {ret with on_succ}} =
-    inl rec loop state l ret = 
-        match l with
-        | x :: xs -> 
-            inl x, k = 
-                match flag_term_cast,x with
-                | true,(x,t) -> 
-                    inl k = (inl state, x -> loop state xs <| inl state xs -> ret state (x :: xs)) `(state,t)
-                    x, inl state x -> k (state,x)
-                | _, x ->
-                    x, inl state x -> loop state xs <| inl state xs -> ret state (x :: xs)
-            x state {d.ret with on_succ = k}
-        | () -> ret state ()
-        | _ -> error_type "Incorrect input to tuple."
-    loop state l on_succ
-
-inl tuple = tuple_template false
-inl tuple_chain = tuple_template true
-
-inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
-inl (|>>) a f = a >>= inl x state {d with {ret with on_succ}} -> on_succ state (f x)
-
 inl string_stream str {idx on_succ on_fail} =
     inl f idx = idx >= 0 && idx < string_length str
     match idx with
@@ -246,7 +255,7 @@ inl run data parser ret =
             { stream = string_stream data; ret = ret }
     | _ -> error_type "Only strings supported for now."
 
-inl parse_int = tuple (pint64, spaces) |>> fst
+inl parse_int = ((skipChar '-' >>. pint64 |>> negate) <|> pint64) >>. spaces
 
 inl parse_n_array p n state {d.ret with on_fatal_fail} =
     if n > 0 then
@@ -270,14 +279,13 @@ inl parse_n_ints = function
     | n when n > 5 -> Tuple.repeat n (parse_int,int64) |> tuple_chain
     | n : int64 -> type_error "The input to this function must be static."
     
-inl parse_ints = many int64 parse_int
 inl preturn x state {{ret with on_succ}} = on_succ state x
 
 inl with_unit_ret = {
     on_type = ()
     on_succ = inl state x -> ()
-    on_fail = inl state x -> ()
-    on_fatal_fail = inl state x -> ()
+    on_fail = inl state -> failwith
+    on_fatal_fail = inl state -> failwith
     }
 
 inl run_with_unit_ret data parser = run data parser with_unit_ret
@@ -345,8 +353,8 @@ inl sprintf format =
         } format
 
 module 
-    (run,spaces,tuple,many,(>>=),(|>>),pchar,pdigit,pint64,preturn,parse_int,parse_n_ints,parse_ints,run_with_unit_ret,sprintf,sprintf_template,
-     parse_n_array)
+    (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,preturn,parse_int,parse_n_ints,run_with_unit_ret,sprintf,sprintf_template,
+     parse_n_array,(<|>),attempt,(>>.),(.>>))
     """) |> module_
 
 
