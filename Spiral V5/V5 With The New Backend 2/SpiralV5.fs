@@ -119,6 +119,7 @@ type Op =
     | DotNetLoadAssembly
     | DotNetTypeConstruct
     | DotNetTypeCallMethod
+    | DotNetTypeGetField
 
     // Module
     | ModuleCreate
@@ -1135,10 +1136,18 @@ let spiral_peval module_main output_path =
                             else
                                 on_type_er d.trace "Cannot load a private type from an assembly."
             | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
-            | dotnet_type & TyType (DotNetTypeRuntimeT _ | DotNetTypeInstanceT _), method_name & TypeString _ ->
-                let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
-                          |> inner_compile
-                apply d (apply d lam dotnet_type) method_name
+            | dotnet_type & TyType (DotNetTypeRuntimeT (N t) | DotNetTypeInstanceT (N t)), method_name & TypeString name ->
+                match t.GetField name with
+                | null ->
+                    let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
+                              |> inner_compile
+                    apply d (apply d lam dotnet_type) method_name
+                | field ->
+                    if field.IsPublic then
+                        TyOp(DotNetTypeGetField,[dotnet_type;method_name],field.FieldType |> dotnet_type_to_ty)
+                        |> make_tyv_and_push_typed_expr d
+                    else
+                        on_type_er d.trace "Cannot get a private field."            
             | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
                 wrap_exception d <| fun _ ->
                     match typ.GetMethod(method_name, method_args) with
@@ -1847,12 +1856,13 @@ let spiral_peval module_main output_path =
         let if_then_else expr (s: CharStream<_>) =
             let i = (col s)
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
-            pipe3
-                (skipString "if" >>. spaces1 >>. expr)
-                (expr_indent (skipString "then" >>. spaces1 >>. expr))
-                (opt (expr_indent (skipString "else" >>. spaces1 >>. expr)))
-                (fun cond tr fl -> 
-                    let fl = match fl with Some x -> x | None -> B
+            let inline f' str = skipString str >>. spaces1 >>. expr
+            let inline f str = expr_indent (f' str)
+            pipe4 (f' "if") (f "then") (many (f "elif" .>>. f "then")) (opt (f "else"))
+                (fun cond tr elifs fl -> 
+                    let fl = 
+                        match fl with Some x -> x | None -> B
+                        |> List.foldBack (fun (cond,tr) fl -> op(If,[cond;tr;fl])) elifs
                     op(If,[cond;tr;fl]))
             <| s
 
@@ -2465,10 +2475,14 @@ let spiral_peval module_main output_path =
                     match t with 
                     | DotNetTypeInstanceT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
                     | _ -> failwith "impossible"
-                | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] as x ->
+                | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
                     match v with
                     | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
                     | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
+                | DotNetTypeGetField,[v; TypeString name] ->
+                    match v with
+                    | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s" (print_dotnet_instance_type t) name
+                    | _ -> sprintf "%s.%s" (codegen v) name
                 // Cuda kernel constants
         //        | Syncthreads,[],_) -> state "syncthreads();"; ""
 

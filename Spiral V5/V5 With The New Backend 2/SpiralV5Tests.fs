@@ -655,7 +655,7 @@ run_with_unit_ret (readall())
     """
 
 let test52 =
-    "test52",[array;parsing3;console],"HackerRank warmup: Diagonal Sum Difference?",
+    "test52",[array;parsing3;console],"HackerRank warmup: Diagonal Sum Difference",
     """
 //https://www.hackerrank.com/challenges/diagonal-difference
 open Console
@@ -678,6 +678,25 @@ run_with_unit_ret (readall())
         )
     """
 
+let test53 =
+    "test53",[array;parsing3;console],"HackerRank warmup: Birthday Cake Candles",
+    """
+//https://www.hackerrank.com/challenges/birthday-cake-candles
+open Console
+open Parsing
+
+run_with_unit_ret (readall()) 
+    (parse_int >>= inl n -> parse_n_array parse_int n |>> inl ar ->
+        Array.foldl (inl (min,score as s) x ->
+            if x > score then (1,x)
+            elif x = score then (min+1,score)
+            else s
+            ) (0,mscorlib ."System.Int64" .MinValue) ar
+        |> fst
+        |> writeline
+        )
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -685,7 +704,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38;test39
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52
+    test50;test51;test52;test53
     hacker_rank_1
     |] |> Array.map module_
 
@@ -705,5 +724,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test52" false
+run_test "test53" false
 
