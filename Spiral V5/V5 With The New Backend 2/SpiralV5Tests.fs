@@ -650,11 +650,32 @@ let test51 =
 open Console
 open Parsing
 
-inl r = console.OpenStandardInput() |> mscorlib ."System.IO.StreamReader"
+run_with_unit_ret (readall()) 
+    (parse_int >>= parse_n_array parse_int |>> (Array.foldl (+) 0 >> writeline)) 
+    """
 
-run_with_unit_ret (r.ReadToEnd()) 
-    (parse_int >>= parse_n_array parse_int) 
-    (Array.foldl (+) 0 >> writeline)
+let test52 =
+    "test52",[array;parsing3;console],"HackerRank warmup: Diagonal Sum Difference?",
+    """
+//https://www.hackerrank.com/challenges/diagonal-difference
+open Console
+open Parsing
+
+inl abs x = if x >= 0 then x else -x
+
+run_with_unit_ret (readall()) 
+    (parse_int >>= inl n -> parse_n_array parse_int (n*n) |>> inl ar ->
+        inl load row col = 
+            inl f x = x >= 0 || x < n
+            assert (f row && f col) "Out of bounds."
+            ar (n * row + col)
+        met rec loop (!dyn i) (d1,d2 as s) =
+            if i < n then loop (i+1) (d1 + load i i, d2 + load i (n-i-1))
+            else s
+            : s
+        inl a,b = loop 0 (0,0)
+        abs (a+b) |> writeline
+        )
     """
 
 let tests =

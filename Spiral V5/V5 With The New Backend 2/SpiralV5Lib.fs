@@ -273,14 +273,14 @@ inl parse_n_ints = function
 inl parse_ints = many int64 parse_int
 inl preturn x state {{ret with on_succ}} = on_succ state x
 
-inl with_unit_ret f = {
+inl with_unit_ret = {
     on_type = ()
-    on_succ = inl state x -> f x
+    on_succ = inl state x -> ()
     on_fail = inl state x -> ()
     on_fatal_fail = inl state x -> ()
     }
 
-inl run_with_unit_ret data parser f = run data parser (with_unit_ret f)
+inl run_with_unit_ret data parser = run data parser with_unit_ret
 
 inl sprintf_parser =
     inl rec sprintf_parser sprintf_state append state {d with {ret with on_succ on_fail}} =
@@ -355,7 +355,9 @@ let console =
     "Console",[parsing3],"IO printing functions.",
     """
 inl console = mscorlib."System.Console"
+inl readall () = console.OpenStandardInput() |> mscorlib ."System.IO.StreamReader" |> inl x -> x.ReadToEnd()
 inl readline () = console.ReadLine()
+
 inl write = console.Write
 inl writeline = console.WriteLine
 
@@ -367,5 +369,5 @@ inl printf_template cont =
 
 inl printf = printf_template id
 inl printfn = printf_template writeline
-module (console,readline,write,writeline,printf,printfn)
+module (console,readall,readline,write,writeline,printf,printfn)
     """) |> module_
