@@ -374,11 +374,6 @@ inl state_d state {d.ret with on_succ} = on_succ state (state, d)
 inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
 inl guard cond tr fl state d = if cond then tr () state d else fl () state d
 
-inl try_with handle handler state d =
-    handle () state {d.ret with
-        on_fail = inl state _ -> handler () state d
-        }
-
 inl rec tuple = function
     | x :: xs ->
         inm x = x
@@ -451,20 +446,19 @@ inl skipChar c =
     <| inl _ -> succ ()
     <| inl _ -> fail "skipChar"
 
-inl pint64 =
-    inm type_ = type_
-    met rec loop fail (!dyn i) state d =
-        try_with
-        <| inl _ ->
-            inm c = pdigit
+inl try_with handle handler state d = 
+    handle state {d.ret with on_fail = inl state _ -> handler state d}
+
+inl pint64 state {d.ret with on_type} =
+    met rec loop handler (!dyn i) state _ =
+        inl handle =
+            inm c = pdigit 
             inl x = to_int64 c - to_int64 '0'
-            inl i = i * 10 + x 
+            inl i = i * 10 + x
             loop (succ i) i
-        <| inl _ -> fail
-        <| state <| d
-        : type_
-            
-    loop (fail "pint64") 0
+        try_with handle handler state d
+        : on_type
+    loop (fail "pint64") 0 state d
 
 met rec spaces state {d.ret with on_type on_succ} =
     pchar >>= inl c ->
