@@ -237,7 +237,6 @@
     <Compile Include="V5 With The New Backend 2\SpiralV5Tests.fs" />
     <None Include="V5 With The New Backend 2\output.fsx" />
     <Content Include="V5 With The New Backend 2\output.txt" />
-    <Content Include="V5 With The New Backend 2\parsing4.txt" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

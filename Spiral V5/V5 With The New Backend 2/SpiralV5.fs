@@ -1049,7 +1049,7 @@ let spiral_peval module_main output_path =
             try f()
             with 
             | :? TypeError as e -> reraise()
-            | e -> on_type_er d.trace e.Message
+            | e -> on_type_er d.trace ("This is a .NET exception.\n"+e.Message)
 
         let dotnet_load_assembly d x =
             match tev d x with
@@ -1282,7 +1282,7 @@ let spiral_peval module_main output_path =
                 let f a = typec_strip (get_type a) 
                 let a, b = tev d a, tev_seq d b
                 let ta, tb = f a, f b
-                if ta = tb then a else on_type_er d.trace <| sprintf "%A <> %A" ta tb
+                if ta = tb then a else on_type_er d.trace <| sprintf "Type annotation mismatch.\n%A <> %A" ta tb
 
         let inline prim_bin_op_template d check_error is_check k a b t =
             let a, b = tev2 d a b
@@ -1796,7 +1796,7 @@ let spiral_peval module_main output_path =
             choice 
                 [|
                 pbool
-                pnumber .>> notFollowedBy (satisfy is_identifier_char)
+                pnumber .>> nextCharSatisfiesNot is_identifier_char
                 quoted_string
                 quoted_char
                 |] .>> spaces
@@ -2055,7 +2055,7 @@ let spiral_peval module_main output_path =
                 let i = (col s)
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
                 many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
-            (type_' >>. type_parse) <|> expr
+            attempt (type_' >>. nextCharSatisfiesNot is_identifier_char >>. type_parse) <|> expr
 
         let mset statements expressions (s: CharStream<_>) = 
             let i = (col s)
@@ -2720,7 +2720,6 @@ let spiral_peval module_main output_path =
             let x = Succ (spiral_codegen x |> copy_to_temporary)
             printfn "Time for codegen was: %A" watch.Elapsed
             x
-
         with 
         | :? TypeError as e -> 
             let trace, message = e.Data0, e.Data1

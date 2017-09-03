@@ -360,10 +360,232 @@ module
      parse_n_array,(<|>),attempt,(>>.),(.>>))
     """) |> module_
 
+let parsing4 =
+    (
+    "Parsing",[tuple],"Parser combinators.",
+    """
+// Primitives
+inl succ x state {{ret with on_succ}} = on_succ state x
+inl fail x state {{ret with on_fail}} = on_fail state x
+inl fatal_fail x state {{ret with on_fatal_fail}} = on_fatal_fail state x
+inl type_ state {d.ret with on_succ on_type} = on_succ state on_type
+inl state state {{ret with on_succ}} = on_succ state state
+inl state_d state {d.ret with on_succ} = on_succ state (state, d)
+inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
+inl guard cond tr fl state d = if cond then tr () state d else fl () state d
+
+inl try_with handle handler state d =
+    handle () state {d.ret with
+        on_fail = inl state _ -> handler () state d
+        }
+
+inl rec tuple = function
+    | x :: xs ->
+        inm x = x
+        inm xs = tuple xs
+        succ (x :: xs)
+    | () -> succ ()
+
+inl (|>>) a f = a >>= inl x -> succ (f x)
+inl (.>>) a b = tuple (a,b) |>> fst
+inl (>>.) a b = tuple (a,b) |>> snd
+
+// TODO: Instead of just passing the old state on failure to the next parser, the parser should
+// compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
+// polymorphic structural equality on all but primitive types. I want to be able to structurally compare anything.
+inl (<|>) a b state {d.ret with on_succ on_fail} = a state { d.ret with on_fail = inl _ _ -> b state d }
+
+inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
+
+// CharParsers
+inl convert = mscorlib ."System.Convert"
+inl to_int64 = convert .ToInt64
+
+inl is_digit x = x >= '0' && x <= '9'
+inl is_whitespace x = x = ' '
+inl is_newline x = x = '\n' || x = '\r'
+
+inl string_stream str {idx on_succ on_fail} =
+    inl f idx = idx >= 0 && idx < string_length str
+    match idx with
+    | a, b when f a && f b | idx when f idx -> on_succ (str idx)
+    | _ -> on_fail "string index out of bounds"
+
+inl pchar_pos {state with pos} {d with stream {ret with on_succ on_fail}} = 
+    stream {
+        idx = pos
+        on_succ = inl c -> on_succ {state with pos=pos+1} (c, pos)
+        on_fail = inl msg -> on_fail state msg
+        }
+
+inl pchar {state with pos} {d with stream {ret with on_succ on_fail}} = 
+    stream {
+        idx = pos
+        on_succ = inl c -> on_succ {state with pos=pos+1} c
+        on_fail = inl msg -> on_fail state msg
+        }
+
+inl pdigit =
+    inm c = pchar
+    guard (is_digit c)
+    <| inl _ -> succ c
+    <| inl _ -> fail "digit"
+
+inl skipString str =
+    inm type_ = type_
+    met rec loop (!dyn i) state d =
+        guard (i < string_length str) 
+        <| inl _ ->
+            inm c = pchar 
+            guard (c = str i) 
+            <| inl _ -> loop (i+1)
+            <| inl _ -> fail str
+        <| inl _ -> succ ()
+        <| state <| d
+        : type_
+    loop 0
+
+inl skipChar c =
+    inm c' = pchar
+    guard (c = c')
+    <| inl _ -> succ ()
+    <| inl _ -> fail "skipChar"
+
+inl pint64 =
+    inm type_ = type_
+    met rec loop fail (!dyn i) state d =
+        try_with
+        <| inl _ ->
+            inm c = pdigit
+            inl x = to_int64 c - to_int64 '0'
+            inl i = i * 10 + x 
+            loop (succ i) i
+        <| inl _ -> fail
+        <| state <| d
+        : type_
+            
+    loop (fail "pint64") 0
+
+met rec spaces state {d.ret with on_type on_succ} =
+    pchar >>= inl c ->
+        guard (is_whitespace c || is_newline c)
+        <| inl _ -> spaces
+        <| inl _ _ _->  on_succ state ()
+    <| state <| d : on_type
+
+inl run data parser ret = 
+    match data with
+    | _ : string -> 
+        parser { pos = if is_static data then 0 else dyn 0 }
+            { stream = string_stream data; ret = ret }
+    | _ -> error_type "Only strings supported for now."
+
+inl parse_int = ((skipChar '-' >>. pint64 |>> negate) <|> pint64) .>> spaces
+
+inl parse_n_array p n =
+    guard (n > 0)
+    <| inl _->
+        inm x = p
+        inl ar = array_create n x
+        ar 0 <- x
+        inm type_ = type_
+        met rec loop (!dyn i) state d =
+            guard (i < n)
+            <| inl _ ->
+                inm x = p
+                ar i <- x
+                loop (i+1)
+            <| inl _ -> 
+                succ ar
+            <| state <| d
+            : type_
+        loop 1
+    <| inl _ -> 
+        fatal_fail "n in parse array must be > 0."
+
+inl with_unit_ret = {
+    on_type = ()
+    on_succ = inl state x -> ()
+    on_fail = inl state -> failwith
+    on_fatal_fail = inl state -> failwith
+    }
+
+inl run_with_unit_ret data parser = run data parser with_unit_ret
+
+inl sprintf_parser append =
+    inl rec sprintf_parser sprintf_state =
+        inl parse_variable = 
+            try_with
+            <| inl _ ->
+                inm c = pchar
+                match c with
+                | 's' -> function
+                    | x : string -> x
+                    | _ -> error_type "Expected a string in sprintf."
+                | 'c' -> function
+                    | x : char -> x
+                    | _ -> error_type "Expected a char in sprintf."
+                | 'b' -> function
+                    | x : bool -> x
+                    | _ -> error_type "Expected a bool in sprintf."
+                | 'i' -> function
+                    | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
+                    | _ -> error_type "Expected an integer in sprintf."
+                | 'f' -> function
+                    | x : float32 | x : float64 -> x
+                    | _ -> error_type "Expected a float in sprintf."
+                | 'A' -> id
+                | _ -> error_type "Unexpected literal in sprintf."
+                |> inl guard_type -> 
+                    inm state, d = state_d
+                    succ (inl x -> append (guard_type x); sprintf_parser .None state d)
+            <| inl _ -> 
+                    append '%'
+                    fail "done"
+
+        inl append_state state {d with stream {ret with on_succ on_fail}} =
+            match sprintf_state with
+            | .None -> on_succ state ()
+            | ab -> stream {
+                idx = ab
+                on_succ = inl r -> append r; on_succ state ()
+                on_fail = inl msg -> on_fail state msg
+                }
+
+        try_with
+        <| inl _ ->
+            inm c = pchar_pos
+            match c with
+            | '%', _ -> append_state >>. parse_variable
+            | _, pos ->
+                inl sprintf_state = 
+                    match sprintf_state with
+                    | .None -> (pos, pos)
+                    | (start,_) -> (start, pos)
+                sprintf_parser sprintf_state
+        <| inl _ -> append_state >>. fail "done"
+    sprintf_parser .None
+
+inl sprintf_template append ret format =
+    run format (sprintf_parser append) ret
+
+inl sprintf format = 
+    inl strb = mscorlib."System.Text.StringBuilder"(64i32)
+    inl append x = strb.Append x |> ignore
+    sprintf_template append {
+        on_succ = inl state x -> x
+        on_fail = inl state msg -> strb.ToString()
+        } format
+
+module 
+    (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,succ,fail,fatal_fail,type_,state,state_d,parse_int,
+     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),attempt,(>>.),(.>>),try_with,guard,skipString,skipChar)
+    """) |> module_
+
 
 let console =
     (
-    "Console",[parsing3],"IO printing functions.",
+    "Console",[parsing4],"IO printing functions.",
     """
 inl console = mscorlib."System.Console"
 inl readall () = console.OpenStandardInput() |> mscorlib ."System.IO.StreamReader" |> inl x -> x.ReadToEnd()
