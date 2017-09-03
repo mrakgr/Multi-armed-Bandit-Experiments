@@ -697,6 +697,26 @@ run_with_unit_ret (readall())
         )
     """
 
+let test54 =
+    "test54",[tuple],"Does the monadic bind `inm` work?",
+    """
+inl on_succ a = (a,())
+inl on_log x = ((),Tuple.singleton x)
+inl (>>=) (a,w) f = // The writer monad.
+    inl a',w' = f a
+    (a',Tuple.append w w')
+
+inl add x y = x + y |> on_succ
+
+inm x = add 1 1
+inm _ = on_log x
+inm y = add 3 4
+inm _ = on_log y
+inm z = add 5 6
+inm _ = on_log z
+on_succ (x+y+z) // Tuple2(20L, Tuple1(2L, 7L, 11L))
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -704,7 +724,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38;test39
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53
+    test50;test51;test52;test53;test54
     hacker_rank_1
     |] |> Array.map module_
 
@@ -724,5 +744,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test53" false
+run_test "test54" false
 

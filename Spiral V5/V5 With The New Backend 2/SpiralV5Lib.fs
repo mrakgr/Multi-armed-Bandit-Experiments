@@ -13,6 +13,9 @@ inl rec foldr f l s =
     | x :: xs -> f x (foldr f xs s)
     | () -> s
 
+inl singleton x = x :: ()
+inl append = foldr (::)
+
 inl upon = foldl (inl module_ (k,v) -> upon module_ k v)
 inl upon' = foldl (inl module_ (k,v) -> upon' module_ k v)
 
@@ -102,7 +105,7 @@ inl init_template k n f =
 inl init = init_template rev
 inl repeat n x = init_template id n (inl _ -> x)
 
-module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon',init,repeat)
+module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon',init,repeat,append,singleton)
     """) |> module_
 
 let array =

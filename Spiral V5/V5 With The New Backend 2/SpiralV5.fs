@@ -438,6 +438,7 @@ let spiral_peval module_main output_path =
     let ap x y = (Apply,[x;y]) |> op
     let for_cast x = (ForCast,[x]) |> op
     let lp v b e = ap (inl_pat v e) b
+    let inmp v' b e = ap (ap (v ">>=") b) (inl_pat v' e)
     let l v b e = ap (inl v e) b
     let l_rec v b e = ap (inl v e) (fix v b)
 
@@ -1646,8 +1647,8 @@ let spiral_peval module_main output_path =
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
-                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env"
-                | "print_expr" | "rec" | "if" | "then" | "elif" | "else" | "inl" | "met" | "true" | "false" as x -> 
+                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm"
+                | "print_expr" | "rec" | "if" | "then" | "elif" | "else" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
@@ -1676,6 +1677,7 @@ let spiral_peval module_main output_path =
         let set_ref = keywordString ":="
         let set_array = keywordString "<-"
         let inl_ = keywordString "inl"
+        let inm_ = keywordString "inm"
         let met_ = keywordString "met"
         let inl_rec = keywordString1 "inl" .>> keywordString "rec"
         let met_rec = keywordString1 "met" .>> keywordString "rec"
@@ -1888,10 +1890,12 @@ let spiral_peval module_main output_path =
 
         let case_open expr = open_ >>. expr |>> module_open
 
+        let case_inm_pat_statement expr = pipe2 (inm_ >>. patterns expr) (eq >>. expr) inmp
+
         let statements expr = 
             [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
              case_met_pat_statement; case_met_name_pat_list_statement; case_met_rec_name_pat_list_statement
-             case_open]
+             case_open; case_inm_pat_statement]
             |> List.map (fun x -> x expr |> attempt)
             |> choice
 
