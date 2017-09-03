@@ -1647,7 +1647,7 @@ let spiral_peval module_main output_path =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
                 | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env"
-                | "print_expr" | "rec" | "if" | "then" | "else" | "inl" | "met" | "true" | "false" as x -> 
+                | "print_expr" | "rec" | "if" | "then" | "elif" | "else" | "inl" | "met" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
