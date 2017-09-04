@@ -926,7 +926,7 @@ let spiral_peval module_main output_path =
                     match cond with
                     | TyLit(LitBool true) -> tr
                     | TyLit(LitBool false) -> fl
-                    | _ -> TyOp(If,[cond;tr;fl],type_tr)
+                    | _ -> TyOp(If,[cond;tr;fl],type_tr) |> make_tyv_and_push_typed_expr d
             else on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
         let if_cond d tr fl cond =
@@ -1005,7 +1005,7 @@ let spiral_peval module_main output_path =
                             
                 match map_cases (case_destructure d t) with
                 | (_, TyType p) :: _ as cases -> 
-                    if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p)
+                    if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> make_tyv_and_push_typed_expr d
                     else 
                         let l = List.map (snd >> get_type) cases
                         on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
@@ -2288,16 +2288,25 @@ let spiral_peval module_main output_path =
                     |> sprintf "'%s'"
                 | LitBool x -> if x then "true" else "false"
 
-            let print_if t f =
+//            let inline print_if' t f =
+//                match t with
+//                | Unit -> f (); ""
+//                | t ->
+//                    let if_var = sprintf "if_var_%i" (get_tag())
+//                    sprintf "let (%s: %s) =" if_var (print_type t) |> state
+//                    enter' <| fun _ -> f()
+//                    if_var
+
+            let inline print_if_tail f = f()
+
+            let inline print_if (_,t as v) f =
                 match t with
-                | Unit -> f (); ""
-                | t ->
-                    let if_var = sprintf "if_var_%i" (get_tag())
-                    sprintf "let (%s: %s) =" if_var (print_type t) |> state
+                | Unit -> f ()
+                | _ ->
+                    sprintf "let %s =" (print_tyv_with_type v) |> state
                     enter' <| fun _ -> f()
-                    if_var
         
-            let rec if_ cond tr fl =
+            let inline if_ print_if cond tr fl =
                 let enter f =
                     enter <| fun _ ->
                         let x = buffer.Count
@@ -2305,7 +2314,7 @@ let spiral_peval module_main output_path =
                         | "" when buffer.Count = x -> "()"
                         | x -> x
                 
-                print_if (get_type tr) <| fun _ ->
+                print_if <| fun _ ->
                     sprintf "if %s then" (codegen cond) |> state
                     enter <| fun _ -> codegen tr
                     "else" |> state
@@ -2355,10 +2364,34 @@ let spiral_peval module_main output_path =
             let string_index str idx = sprintf "%s.[int32 %s]" (codegen str) (codegen idx)
             let string_slice str a b = sprintf "%s.[int32 %s..int32 %s]" (codegen str) (codegen a) (codegen b)
 
+            let match_with print_if v cases =
+                print_if <| fun _ ->
+                    let print_case =
+                        match get_type v with
+                        | RecT _ as x -> print_case_rec x
+                        | UnionT _ as x -> print_case_union x
+                        | _ -> failwith "impossible"
+
+                    sprintf "match %s with" (codegen v) |> state
+                    let print_case i case = 
+                        let case = codegen case
+                        if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state
+                        else sprintf "| %s(%s) ->" (print_case i) case |> state
+                    let rec loop i = function
+                        | case :: body :: rest -> 
+                            print_case i case
+                            enter <| fun _ -> 
+                                let c = buffer.Count
+                                let x = codegen body
+                                if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
+                            loop (i+1) rest
+                        | [] -> ()
+                        | _ -> failwith "The cases should always be in pairs."
+                    loop 0 cases
+
             match expr with
             | TyV (_, Unit) | TyBox (N(_, Unit)) -> ""
             | TyV v -> print_tyv v
-            | TyOp(If,[cond;tr;fl],t) -> if_ cond tr fl
             | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
             | TyLet(_,tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
             | TyLet(_,(_,Unit),b,rest,_) ->
@@ -2372,6 +2405,8 @@ let spiral_peval module_main output_path =
                     let b = codegen b
                     if b <> "" then sprintf "%s" b |> state
                 codegen rest
+            | TyLet(_,tyv,TyOp(If,[cond;tr;fl],t),rest,_) -> if_ (print_if tyv) cond tr fl; codegen rest
+            | TyLet(_,tyv,TyOp(Case,v :: cases,t),rest,_) -> match_with (print_if tyv) v cases; codegen rest
             | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
             | TyLit x -> print_value x
             | TyJoinPoint((S method_tag,_ as key),_) ->
@@ -2409,31 +2444,8 @@ let spiral_peval module_main output_path =
                     // The reason for this is the symmetry between the F# and the Cuda side.
                     let b = tuple_field b |> List.map codegen |> String.concat ", "
                     sprintf "%s(%s)" (codegen a) b
-                | Case,v :: cases ->
-                    print_if t <| fun _ ->
-                        let print_case =
-                            match get_type v with
-                            | RecT _ as x -> print_case_rec x
-                            | UnionT _ as x -> print_case_union x
-                            | _ -> failwith "impossible"
-
-                        sprintf "match %s with" (codegen v) |> state
-                        let print_case i case = 
-                            let case = codegen case
-                            if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state
-                            else sprintf "| %s(%s) ->" (print_case i) case |> state
-                        let rec loop i = function
-                            | case :: body :: rest -> 
-                                print_case i case
-                                enter <| fun _ -> 
-                                    let c = buffer.Count
-                                    let x = codegen body
-                                    if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
-                                loop (i+1) rest
-                            | [] -> ()
-                            | _ -> failwith "The cases should always be in pairs."
-                        loop 0 cases
-
+                | Case,v :: cases -> match_with print_if_tail v cases; ""
+                | If,[cond;tr;fl] -> if_ print_if_tail cond tr fl; ""
                 | ArrayCreate,[a] -> array_create a t
                 | ReferenceCreate,[a] -> reference_create a
                 | ArrayIndex,[b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index b c
