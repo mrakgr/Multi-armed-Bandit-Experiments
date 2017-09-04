@@ -724,18 +724,20 @@ let test55 =
 open Console
 open Parsing
 
-inl p = pint64
+inl f = 
+    inm n = parse_int
+    inm ar = parse_n_array parse_int n 
+    Array.foldl (inl (min,score as s) x ->
+        if x > score then (1,x)
+        elif x = score then (min+1,score)
+        else s
+        ) (0,mscorlib ."System.Int64" .MinValue) ar
+    |> fst
+    |> writeline
+    |> succ
 
-run_with_unit_ret (readall()) (p |>> writeline)
-//    (parse_int >>= inl n -> parse_n_array parse_int n |>> inl ar ->
-//        Array.foldl (inl (min,score as s) x ->
-//            if x > score then (1,x)
-//            elif x = score then (min+1,score)
-//            else s
-//            ) (0,mscorlib ."System.Int64" .MinValue) ar
-//        |> fst
-//        |> writeline
-//        )
+run_with_unit_ret (readall()) f
+
     """
 
 let tests =

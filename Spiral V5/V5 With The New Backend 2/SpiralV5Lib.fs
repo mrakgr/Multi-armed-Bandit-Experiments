@@ -380,16 +380,17 @@ inl ifm cond tr fl state d = if cond then tr () state d else fl () state d
 inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
 
 inl rec tuple = function
+    | () -> succ ()
     | x :: xs ->
         inm x = x
         inm xs = tuple xs
         succ (x :: xs)
-    | () -> succ ()
+    
 
 inl (|>>) a f = a >>= inl x -> succ (f x)
 inl (.>>.) a b = tuple (a,b)
 inl (.>>) a b = tuple (a,b) |>> fst
-inl (>>.) a b = tuple (a,b) |>> snd
+inl (>>.) a b = a >>= inl _ -> b // The way bind is used here in on purpose. `spaces` diverges otherwise.
 
 // TODO: Instead of just passing the old state on failure to the next parser, the parser should
 // compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
@@ -442,17 +443,19 @@ inl pstring (!dyn str) =
     loop 0
 
 inl pint64 =
-    met rec loop handler (!dyn i) state {d.ret with on_succ on_type} =
+    met rec loop handler i state {d.ret with on_succ on_type} =
         inl f =
             inm c = try_with pdigit handler
             inl x = to_int64 c - to_int64 '0'
+            inl max = 922337203685477580 // max int64 divided by 10
+            inm _ = guard (i = max && x <= 7 || i < max) (fail "integer overflow")
             inl i = i * 10 + x
             loop (goto on_succ i) i
         f state d : on_type
     loop (fail "pint64") 0
 
 inl spaces =
-    met rec loop (!dyn i) state {d.ret on_succ on_type} =
+    met rec loop (!dyn i) state {d.ret with on_succ on_type} =
         inl f = try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
         f state d : on_type
     loop 0
@@ -464,7 +467,9 @@ inl run data parser ret =
             { stream = string_stream data; ret = ret }
     | _ -> error_type "Only strings supported for now."
 
-inl parse_int = ((skipChar '-' >>. pint64 |>> negate) <|> pint64) .>> spaces
+inl parse_int =
+    inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
+    (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
 inl parse_n_array p n =
     inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
@@ -550,8 +555,8 @@ inl sprintf format =
         } format
 
 module 
-    (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,succ,fail,fatal_fail,type_,state,state_d,parse_int,
-     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),attempt,(>>.),(.>>),try_with,guard,skipString,skipChar)
+    (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,pstring,succ,fail,fatal_fail,type_,state,state_d,parse_int,
+     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),attempt,(>>.),(.>>),try_with,guard)
     """) |> module_
 
 

@@ -1363,13 +1363,11 @@ let spiral_peval module_main output_path =
             let er a b = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A" a b
             let check a b = is_bool a && get_type a = get_type b
             prim_bin_op_template d er check (fun t a b ->
-                let inline op a b =
-                    match t with
-                    | And -> a && b
-                    | Or -> a || b
-                    | _ -> failwith "Expected a comparison operation."
-                match a, b with
-                | TyLit (LitBool a), TyLit (LitBool b) -> op a b |> LitBool |> TyLit
+                match t, (a, b) with
+                | And, (TyLit (LitBool false), _ | _,TyLit (LitBool false)) -> LitBool false |> TyLit
+                | Or, (TyLit (LitBool true),_ | _, TyLit (LitBool true)) -> LitBool true |> TyLit
+                | And, (TyLit (LitBool a), TyLit (LitBool b)) -> LitBool (a && b) |> TyLit
+                | Or, (TyLit (LitBool a), TyLit (LitBool b)) -> LitBool (a || b) |> TyLit
                 | _ -> bool_helper t a b            
                 ) a b t
 
