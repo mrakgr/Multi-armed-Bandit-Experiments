@@ -724,7 +724,7 @@ let test55 =
 open Console
 open Parsing
 
-inl p = pint64
+inl p = skipString "Hello"
 
 run_with_unit_ret (readall()) (p |>> writeline)
 //    (parse_int >>= inl n -> parse_n_array parse_int n |>> inl ar ->

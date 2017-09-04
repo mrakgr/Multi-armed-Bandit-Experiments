@@ -370,9 +370,12 @@ inl fail x state {{ret with on_fail}} = on_fail state x
 inl fatal_fail x state {{ret with on_fatal_fail}} = on_fatal_fail state x
 inl type_ state {d.ret with on_succ on_type} = on_succ state on_type
 inl state state {{ret with on_succ}} = on_succ state state
+inl set_state state _ {{ret with on_succ}} = on_succ state ()
 inl state_d state {d.ret with on_succ} = on_succ state (state, d)
 inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
-inl guard cond tr fl state d = if cond then tr () state d else fl () state d
+inl try_with handle handler state d = handle state {d.ret with on_fail = inl state _ -> handler state d}
+inl guard cond handler state d = if cond then d.ret.on_succ state () else handler state d
+inl ifm cond tr fl state d = if cond then tr () state d else fl () state d
 
 inl rec tuple = function
     | x :: xs ->
@@ -382,15 +385,15 @@ inl rec tuple = function
     | () -> succ ()
 
 inl (|>>) a f = a >>= inl x -> succ (f x)
+inl (.>>.) a b = tuple (a,b)
 inl (.>>) a b = tuple (a,b) |>> fst
 inl (>>.) a b = tuple (a,b) |>> snd
 
 // TODO: Instead of just passing the old state on failure to the next parser, the parser should
 // compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
 // polymorphic structural equality on all but primitive types. I want to be able to structurally compare anything.
-inl (<|>) a b state {d.ret with on_succ on_fail} = a state { d.ret with on_fail = inl _ _ -> b state d }
-
 inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
+inl (<|>) a b = try_with (attempt a) b
 
 // CharParsers
 inl convert = mscorlib ."System.Convert"
@@ -422,50 +425,46 @@ inl pchar {state with pos} {d with stream {ret with on_succ on_fail}} =
 
 inl pdigit =
     inm c = pchar
-    guard (is_digit c)
-    <| inl _ -> succ c
-    <| inl _ -> fail "digit"
+    inm _ = guard (is_digit c) (fail "digit")
+    succ c
 
-inl skipString str =
-    inm type_ = type_
+inl skipString (!dyn str) =
     met rec loop (!dyn i) state d =
-        guard (i < string_length str) 
-        <| inl _ ->
-            inm c = pchar 
-            guard (c = str i) 
-            <| inl _ -> loop (i+1)
-            <| inl _ -> fail str
-        <| inl _ -> succ ()
-        <| state <| d
-        : type_
+        inl f =
+            ifm (i < string_length str)
+            <| inl _ ->
+                inm c = pchar 
+                inm _ = guard (c = str i) (fail str)
+                loop (i+1)
+            <| inl _ -> 
+                succ ()
+        f state d
+        : d.ret.on_type
     loop 0
 
 inl skipChar c =
     inm c' = pchar
-    guard (c = c')
-    <| inl _ -> succ ()
-    <| inl _ -> fail "skipChar"
+    inm _ = guard (c = c') (fail "skipChar")
+    succ ()
 
-inl try_with handle handler state d = 
-    handle state {d.ret with on_fail = inl state _ -> handler state d}
-
-inl pint64 state {d.ret with on_type} =
-    met rec loop handler (!dyn i) state _ =
-        inl handle =
-            inm c = pdigit 
+inl pint64 =
+    met rec loop handler (!dyn i) state d =
+        inl f =
+            inm c = try_with pdigit handler
             inl x = to_int64 c - to_int64 '0'
             inl i = i * 10 + x
             loop (succ i) i
-        try_with handle handler state d
-        : on_type
-    loop (fail "pint64") 0 state d
+        f state d : d.ret.on_type
+    loop (fail "pint64") 0
 
-met rec spaces state {d.ret with on_type on_succ} =
-    pchar >>= inl c ->
-        guard (is_whitespace c || is_newline c)
+met rec spaces state d =
+    inl f =
+        inm prev_state, c = state .>>. pchar
+        ifm (is_whitespace c || is_newline c) 
         <| inl _ -> spaces
-        <| inl _ _ _->  on_succ state ()
-    <| state <| d : on_type
+        <| inl _ -> set_state prev_state
+        
+    f state d : d.ret.on_type
 
 inl run data parser ret = 
     match data with
