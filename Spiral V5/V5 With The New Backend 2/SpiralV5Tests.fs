@@ -718,13 +718,13 @@ on_succ (x+y+z) // Tuple2(20L, Tuple1(2L, 7L, 11L))
     """
 
 let test55 =
-    "test55",[array;parsing4;console],"Does the v4 of the (monadic) parsing library work?",
+    "test55",[array;console;parsing4],"Does the v4 of the (monadic) parsing library work?",
     """
 //https://www.hackerrank.com/challenges/birthday-cake-candles
 open Console
 open Parsing
 
-inl p = skipString "Hello"
+inl p = pint64
 
 run_with_unit_ret (readall()) (p |>> writeline)
 //    (parse_int >>= inl n -> parse_n_array parse_int n |>> inl ar ->

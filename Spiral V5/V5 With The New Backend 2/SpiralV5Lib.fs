@@ -365,6 +365,7 @@ let parsing4 =
     "Parsing",[tuple],"Parser combinators.",
     """
 // Primitives
+inl goto point x state _ = point state x
 inl succ x state {{ret with on_succ}} = on_succ state x
 inl fail x state {{ret with on_fail}} = on_fail state x
 inl fatal_fail x state {{ret with on_fatal_fail}} = on_fatal_fail state x
@@ -376,6 +377,7 @@ inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d
 inl try_with handle handler state d = handle state {d.ret with on_fail = inl state _ -> handler state d}
 inl guard cond handler state d = if cond then d.ret.on_succ state () else handler state d
 inl ifm cond tr fl state d = if cond then tr () state d else fl () state d
+inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
 
 inl rec tuple = function
     | x :: xs ->
@@ -392,7 +394,6 @@ inl (>>.) a b = tuple (a,b) |>> snd
 // TODO: Instead of just passing the old state on failure to the next parser, the parser should
 // compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
 // polymorphic structural equality on all but primitive types. I want to be able to structurally compare anything.
-inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
 inl (<|>) a b = try_with (attempt a) b
 
 // CharParsers
@@ -409,62 +410,52 @@ inl string_stream str {idx on_succ on_fail} =
     | a, b when f a && f b | idx when f idx -> on_succ (str idx)
     | _ -> on_fail "string index out of bounds"
 
-inl pchar_pos {state with pos} {d with stream {ret with on_succ on_fail}} = 
-    stream {
-        idx = pos
-        on_succ = inl c -> on_succ {state with pos=pos+1} (c, pos)
-        on_fail = inl msg -> on_fail state msg
-        }
-
-inl pchar {state with pos} {d with stream {ret with on_succ on_fail}} = 
+inl stream_char {state with pos} {d with stream {ret with on_succ on_fail}} = 
     stream {
         idx = pos
         on_succ = inl c -> on_succ {state with pos=pos+1} c
         on_fail = inl msg -> on_fail state msg
         }
 
-inl pdigit =
-    inm c = pchar
-    inm _ = guard (is_digit c) (fail "digit")
+inl stream_char_pos =
+    inm {pos} = state
+    stream_char |>> inl x -> x,pos
+
+inl satisfyL f m =
+    inm s = state
+    inm c = stream_char
+    inm _ = guard (f c) (set_state s >>. fail m)
     succ c
 
-inl skipString (!dyn str) =
+inl (<?>) a m = try_with a (fail m)
+inl pdigit = satisfyL is_digit "digit"
+inl pchar c = satisfyL ((=) c) "char"
+
+inl pstring (!dyn str) =
     met rec loop (!dyn i) state d =
         inl f =
             ifm (i < string_length str)
-            <| inl _ ->
-                inm c = pchar 
-                inm _ = guard (c = str i) (fail str)
-                loop (i+1)
-            <| inl _ -> 
-                succ ()
+            <| inl _ -> pchar (str i) >>. loop (i+1)
+            <| inl _ -> succ str
         f state d
         : d.ret.on_type
     loop 0
 
-inl skipChar c =
-    inm c' = pchar
-    inm _ = guard (c = c') (fail "skipChar")
-    succ ()
-
 inl pint64 =
-    met rec loop handler (!dyn i) state d =
+    met rec loop handler (!dyn i) state {d.ret with on_succ on_type} =
         inl f =
             inm c = try_with pdigit handler
             inl x = to_int64 c - to_int64 '0'
             inl i = i * 10 + x
-            loop (succ i) i
-        f state d : d.ret.on_type
+            loop (goto on_succ i) i
+        f state d : on_type
     loop (fail "pint64") 0
 
-met rec spaces state d =
-    inl f =
-        inm prev_state, c = state .>>. pchar
-        ifm (is_whitespace c || is_newline c) 
-        <| inl _ -> spaces
-        <| inl _ -> set_state prev_state
-        
-    f state d : d.ret.on_type
+inl spaces =
+    met rec loop (!dyn i) state {d.ret on_succ on_type} =
+        inl f = try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
+        f state d : on_type
+    loop 0
 
 inl run data parser ret = 
     match data with
@@ -476,26 +467,22 @@ inl run data parser ret =
 inl parse_int = ((skipChar '-' >>. pint64 |>> negate) <|> pint64) .>> spaces
 
 inl parse_n_array p n =
-    guard (n > 0)
-    <| inl _->
-        inm x = p
-        inl ar = array_create n x
-        ar 0 <- x
-        inm type_ = type_
-        met rec loop (!dyn i) state d =
-            guard (i < n)
-            <| inl _ ->
-                inm x = p
-                ar i <- x
-                loop (i+1)
-            <| inl _ -> 
-                succ ar
-            <| state <| d
-            : type_
-        loop 1
-    <| inl _ -> 
-        fatal_fail "n in parse array must be > 0."
-
+    inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
+    inm x = p
+    inl ar = array_create n x
+    ar 0 <- x
+    met rec loop (!dyn i) state d =
+        ifm (i < n)
+        <| inl _ ->
+            inm x = p
+            ar i <- x
+            loop (i+1)
+        <| inl _ -> 
+            succ ar
+        <| state <| d
+        : d.ret.on_type
+    loop 1
+        
 inl with_unit_ret = {
     on_type = ()
     on_succ = inl state x -> ()
@@ -508,33 +495,28 @@ inl run_with_unit_ret data parser = run data parser with_unit_ret
 inl sprintf_parser append =
     inl rec sprintf_parser sprintf_state =
         inl parse_variable = 
-            try_with
-            <| inl _ ->
-                inm c = pchar
-                match c with
-                | 's' -> function
-                    | x : string -> x
-                    | _ -> error_type "Expected a string in sprintf."
-                | 'c' -> function
-                    | x : char -> x
-                    | _ -> error_type "Expected a char in sprintf."
-                | 'b' -> function
-                    | x : bool -> x
-                    | _ -> error_type "Expected a bool in sprintf."
-                | 'i' -> function
-                    | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
-                    | _ -> error_type "Expected an integer in sprintf."
-                | 'f' -> function
-                    | x : float32 | x : float64 -> x
-                    | _ -> error_type "Expected a float in sprintf."
-                | 'A' -> id
-                | _ -> error_type "Unexpected literal in sprintf."
-                |> inl guard_type -> 
-                    inm state, d = state_d
-                    succ (inl x -> append (guard_type x); sprintf_parser .None state d)
-            <| inl _ -> 
-                    append '%'
-                    fail "done"
+            inm c = try_with stream_char (inl x -> append '%'; fail "done" x)
+            match c with
+            | 's' -> function
+                | x : string -> x
+                | _ -> error_type "Expected a string in sprintf."
+            | 'c' -> function
+                | x : char -> x
+                | _ -> error_type "Expected a char in sprintf."
+            | 'b' -> function
+                | x : bool -> x
+                | _ -> error_type "Expected a bool in sprintf."
+            | 'i' -> function
+                | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
+                | _ -> error_type "Expected an integer in sprintf."
+            | 'f' -> function
+                | x : float32 | x : float64 -> x
+                | _ -> error_type "Expected a float in sprintf."
+            | 'A' -> id
+            | _ -> error_type "Unexpected literal in sprintf."
+            |> inl guard_type -> 
+                inm state, d = state_d
+                succ (inl x -> append (guard_type x); sprintf_parser .None state d)
 
         inl append_state state {d with stream {ret with on_succ on_fail}} =
             match sprintf_state with
@@ -545,18 +527,15 @@ inl sprintf_parser append =
                 on_fail = inl msg -> on_fail state msg
                 }
 
-        try_with
-        <| inl _ ->
-            inm c = pchar_pos
-            match c with
-            | '%', _ -> append_state >>. parse_variable
-            | _, pos ->
-                inl sprintf_state = 
-                    match sprintf_state with
-                    | .None -> (pos, pos)
-                    | (start,_) -> (start, pos)
-                sprintf_parser sprintf_state
-        <| inl _ -> append_state >>. fail "done"
+        inm c = try_with stream_char_pos (append_state >>. fail "done")
+        match c with
+        | '%', _ -> append_state >>. parse_variable
+        | _, pos ->
+            inl sprintf_state = 
+                match sprintf_state with
+                | .None -> (pos, pos)
+                | (start,_) -> (start, pos)
+            sprintf_parser sprintf_state
     sprintf_parser .None
 
 inl sprintf_template append ret format =
