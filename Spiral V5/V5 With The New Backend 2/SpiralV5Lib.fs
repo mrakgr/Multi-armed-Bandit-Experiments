@@ -432,7 +432,7 @@ inl (<?>) a m = try_with a (fail m)
 inl pdigit = satisfyL is_digit "digit"
 inl pchar c = satisfyL ((=) c) "char"
 
-inl pstring (!dyn str) =
+inl pstring (!dyn str) x =
     met rec loop (!dyn i) state d =
         inl f =
             ifm (i < string_length str)
@@ -440,7 +440,7 @@ inl pstring (!dyn str) =
             <| inl _ -> succ str
         f state d
         : d.ret.on_type
-    loop 0
+    loop 0 x
 
 inl pint64 =
     met rec loop handler i state {d.ret with on_succ on_type} =
@@ -454,11 +454,11 @@ inl pint64 =
         f state d : on_type
     loop (fail "pint64") 0
 
-inl spaces =
+inl spaces x =
     met rec loop (!dyn i) state {d.ret with on_succ on_type} =
         inl f = try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
         f state d : on_type
-    loop 0
+    loop 0 x
 
 inl run data parser ret = 
     match data with
@@ -471,22 +471,24 @@ inl parse_int =
     inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
     (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
-inl parse_n_array p n =
-    inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
-    inm x = p
-    inl ar = array_create n x
-    ar 0 <- x
-    met rec loop (!dyn i) state d =
-        ifm (i < n)
-        <| inl _ ->
-            inm x = p
-            ar i <- x
-            loop (i+1)
-        <| inl _ -> 
-            succ ar
-        <| state <| d
-        : d.ret.on_type
-    loop 1
+inl parse_n_array p n x =
+    inl f =
+        inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
+        inm x = p
+        inl ar = array_create n x
+        ar 0 <- x
+        met rec loop (!dyn i) state d =
+            ifm (i < n)
+            <| inl _ ->
+                inm x = p
+                ar i <- x
+                loop (i+1)
+            <| inl _ -> 
+                succ ar
+            <| state <| d
+            : d.ret.on_type
+        loop 1
+    f x
         
 inl with_unit_ret = {
     on_type = ()

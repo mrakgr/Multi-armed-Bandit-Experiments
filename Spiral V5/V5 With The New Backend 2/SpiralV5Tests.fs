@@ -640,7 +640,7 @@ inl ret =
 
 open Parsing
 
-run (console.ReadLine()) (parse_n_ints (320)) ret
+run (console.ReadLine()) (parse_n_ints (.no_clo,320)) ret
     """
 
 let test51 =
@@ -718,27 +718,73 @@ on_succ (x+y+z) // Tuple2(20L, Tuple1(2L, 7L, 11L))
     """
 
 let test55 =
-    "test55",[array;console;parsing4],"Does the v4 of the (monadic) parsing library work?",
+    "test55",[array;console;parsing4],"Does the v4 of the (monadic) parsing library work? Birthday Cake Candles problem.",
     """
 //https://www.hackerrank.com/challenges/birthday-cake-candles
 open Console
 open Parsing
 
-inl f = 
+inl solution x = 
+    inl f = 
+        inm n = parse_int
+        inm ar = parse_n_array parse_int n 
+        Array.foldl (inl (min,score as s) x ->
+            if x > score then (1,x)
+            elif x = score then (min+1,score)
+            else s
+            ) (0,mscorlib ."System.Int64" .MinValue) ar
+        |> fst
+        |> writeline
+        |> succ
+    f x
+
+run_with_unit_ret (readall()) solution
+    """
+
+let test56 =
+    "test56",[array;console;parsing4],"Does the v4 of the (monadic) parsing library work? Diagonal Sum Difference problem.",
+    """
+//https://www.hackerrank.com/challenges/diagonal-difference
+open Console
+open Parsing
+
+inl abs x = if x >= 0 then x else -x
+
+inl f =
     inm n = parse_int
-    inm ar = parse_n_array parse_int n 
-    Array.foldl (inl (min,score as s) x ->
-        if x > score then (1,x)
-        elif x = score then (min+1,score)
+    inm ar = parse_n_array parse_int (n*n)
+    inl load row col = 
+        inl f x = x >= 0 || x < n
+        assert (f row && f col) "Out of bounds."
+        ar (n * row + col)
+    met rec loop (!dyn i) (d1,d2 as s) =
+        if i < n then loop (i+1) (d1 + load i i, d2 + load i (n-i-1))
         else s
-        ) (0,mscorlib ."System.Int64" .MinValue) ar
-    |> fst
+        : s
+    inl a,b = loop 0 (0,0)
+    abs (a-b) 
     |> writeline
     |> succ
 
 run_with_unit_ret (readall()) f
+        """
 
+let test57 =
+    "test57",[array;console;parsing4],"Speed test for the v4 of the parsing library.",
     """
+//https://www.hackerrank.com/challenges/diagonal-difference
+open Console
+open Parsing
+
+inl abs x = if x >= 0 then x else -x
+
+inl f = 
+    Tuple.repeat 240 parse_int |> tuple
+    |>> (Tuple.foldl (+) 0 >> writeline >> succ)
+    
+run_with_unit_ret (readall()) f
+        """
+
 
 let tests =
     [|
@@ -747,7 +793,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38;test39
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53;test54;test55
+    test50;test51;test52;test53;test54;test55;test56;test57
     hacker_rank_1
     |] |> Array.map module_
 
