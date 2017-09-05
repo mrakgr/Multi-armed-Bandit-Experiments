@@ -131,6 +131,30 @@ inl init n f =
 module (foldl,init)
     """) |> module_
 
+let queue =
+    (
+    "Queue",[tuple],"The queue module.",
+    """
+inl queue = mscorlib ."System.Collections.Generic.Queue"
+
+inl rec create = function
+    | _ :: _ as x -> Tuple.map create x
+    | x -> 
+        inl q = queue x // Type application
+        q.Enqueue x // Adds the first element
+        q
+
+inl enqueue q x =
+    inl rec loop = function
+        | x :: xs, x' :: xs' -> loop (x,x'); loop (xs,xs')
+        | x,x' -> x.Enqueue x'
+    loop (Tuple.zip (q,x))
+
+inl rec dequeue = function
+    | _ :: _ as x -> Tuple.map dequeue x
+    | x -> x.Dequeue()
+    """) |> module_
+
 let parsing4 =
     (
     "Parsing",[tuple],"Parser combinators.",
