@@ -1425,9 +1425,11 @@ let spiral_peval module_main output_path =
             | _ -> on_type_er d.trace "Expected a literal in type literal create."
 
         let dynamize d a =
-            match tev d a with
-            | TyBox(N(_, (UnionT _ | RecT _))) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
-            | a -> a
+            let rec loop = function
+                | TyBox(N(_, (UnionT _ | RecT _))) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+                | TyVV(N l) -> tyvv (List.map loop l)
+                | a -> a
+            loop (tev d a)
 
         let module_create d l =
             let rec loop acc = function

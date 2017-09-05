@@ -732,7 +732,7 @@ inl solution x =
             if x > score then (1,x)
             elif x = score then (min+1,score)
             else s
-            ) (0,mscorlib ."System.Int64" .MinValue) ar
+            ) (dyn (0,mscorlib ."System.Int64" .MinValue)) ar
         |> fst
         |> writeline
         |> succ
@@ -785,6 +785,16 @@ inl f =
 run_with_unit_ret (readall()) f
         """
 
+let test58 =
+    "test58",[array;console],"Does the fold function get duplicated?",
+    """
+open Console
+
+inl ar = array_create 128 (int64,int64)
+Array.foldl (inl a,b c,d -> a+c,b+d) (dyn (1,2)) ar
+|> inl a,b -> a*b
+|> writeline
+    """
 
 let tests =
     [|
@@ -793,7 +803,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38;test39
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53;test54;test55;test56;test57
+    test50;test51;test52;test53;test54;test55;test56;test57;test58
     hacker_rank_1
     |] |> Array.map module_
 
