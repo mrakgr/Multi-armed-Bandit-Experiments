@@ -476,15 +476,6 @@ inl t = int64 (dyn 1)
 print_static t
     """
 
-let test39 =
-    "test39",[parsing3;console],"Does sprintf work?",
-    """
-inl a = dyn 1
-inl b = dyn 2
-Parsing.sprintf "%i + %i = %i" a b (a+b) |> ignore
-Console.printfn "(%i,%f,%b,%s)" 1 2.0 true "4"
-    """
-
 let test40 =
     "test40",[],"Does this compile into just one method? Are the arguments reversed in the method call?",
     """
@@ -796,14 +787,23 @@ Array.foldl (inl a,b c,d -> a+c,b+d) (dyn (1,2)) ar
 |> writeline
     """
 
+let test59 =
+    "test59",[parsing4;console],"Does sprintf work for v4?",
+    """
+inl a = dyn 1
+inl b = dyn 2
+Parsing.sprintf "%i + %i = %i" a b (a+b) |> ignore
+Console.printfn "(%i,%f,%b,%s)" 1 2.0 true "4"
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;test33;test35;test38;test39
+    test30;test31;test32;test33;test35;test38
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53;test54;test55;test56;test57;test58
+    test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     hacker_rank_1
     |] |> Array.map module_
 
@@ -823,5 +823,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test55" false
+run_test "test59" false
 

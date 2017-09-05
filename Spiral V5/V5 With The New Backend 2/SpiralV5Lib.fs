@@ -372,7 +372,6 @@ inl fatal_fail x state {{ret with on_fatal_fail}} = on_fatal_fail state x
 inl type_ state {d.ret with on_succ on_type} = on_succ state on_type
 inl state state {{ret with on_succ}} = on_succ state state
 inl set_state state _ {{ret with on_succ}} = on_succ state ()
-inl state_d state {d.ret with on_succ} = on_succ state (state, d)
 inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
 inl try_with handle handler state d = handle state {d.ret with on_fail = inl state _ -> handler state d}
 inl guard cond handler state d = if cond then d.ret.on_succ state () else handler state d
@@ -522,8 +521,7 @@ inl sprintf_parser append =
             | 'A' -> id
             | _ -> error_type "Unexpected literal in sprintf."
             |> inl guard_type -> 
-                inm state, d = state_d
-                succ (inl x -> append (guard_type x); sprintf_parser .None state d)
+                inl state d -> d.ret.on_succ state (inl x -> append x; sprintf_parser .None state d)
 
         inl append_state state {d with stream {ret with on_succ on_fail}} =
             match sprintf_state with
@@ -538,11 +536,10 @@ inl sprintf_parser append =
         match c with
         | '%', _ -> append_state >>. parse_variable
         | _, pos ->
-            inl sprintf_state = 
-                match sprintf_state with
-                | .None -> (pos, pos)
-                | (start,_) -> (start, pos)
-            sprintf_parser sprintf_state
+            match sprintf_state with
+            | .None -> (pos, pos)
+            | (start,_) -> (start, pos)
+            |> sprintf_parser
     sprintf_parser .None
 
 inl sprintf_template append ret format =
@@ -557,7 +554,7 @@ inl sprintf format =
         } format
 
 module 
-    (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,pstring,succ,fail,fatal_fail,type_,state,state_d,parse_int,
+    (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,pstring,succ,fail,fatal_fail,type_,state,parse_int,
      run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),attempt,(>>.),(.>>),try_with,guard)
     """) |> module_
 
