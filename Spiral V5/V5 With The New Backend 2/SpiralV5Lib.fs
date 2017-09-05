@@ -119,7 +119,16 @@ inl foldl f s ar =
         : s
     loop 0 s
 
-module (foldl)
+inl init n f =
+    assert (n > 0) "n > 0"
+    inl ar = array_create n (type (f 0))
+    met rec loop (!dyn i) =
+        if i < n then ar i <- f i
+        else ()
+    loop 0
+    ar
+
+module (foldl,init)
     """) |> module_
 
 let parsing4 =
@@ -152,6 +161,7 @@ inl (|>>) a f = a >>= inl x -> succ (f x)
 inl (.>>.) a b = tuple (a,b)
 inl (.>>) a b = tuple (a,b) |>> fst
 inl (>>.) a b = a >>= inl _ -> b // The way bind is used here in on purpose. `spaces` diverges otherwise.
+inl (>>%) a b = a |>> inl _ -> b
 
 // TODO: Instead of just passing the old state on failure to the next parser, the parser should
 // compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
@@ -235,7 +245,6 @@ inl parse_int =
 inl parse_n_array p n x =
     inl f =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
-        inm x = p
         inl ar = array_create n x
         ar 0 <- x
         met rec loop (!dyn i) state d =
@@ -317,7 +326,7 @@ inl sprintf format =
 
 module 
     (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,pstring,succ,fail,fatal_fail,type_,state,parse_int,
-     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),attempt,(>>.),(.>>),try_with,guard)
+     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),attempt,(>>.),(.>>),try_with,guard,(>>%))
     """) |> module_
 
 

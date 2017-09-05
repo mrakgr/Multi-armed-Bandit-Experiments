@@ -724,6 +724,50 @@ Parsing.sprintf "%i + %i = %i" a b (a+b) |> ignore
 Console.printfn "(%i,%f,%b,%s)" 1 2.0 true "4"
     """
 
+let test60 =
+    "test60",[parsing4;console],"https://www.hackerrank.com/challenges/saveprincess",
+    """
+// A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
+// gives some novel challenges regarding it.
+open Parsing
+
+inl Cell =
+    type
+        .Empty
+        .Princess
+        .Mario
+
+inl empty = pchar 'e' >>% Cell .Empty
+inl princess = pchar 'p' >>% Cell .Princess
+inl mario = pchar '-' >>% Cell .Mario
+
+inl cell = empty <|> princess <|> mario
+
+inl parse_cols n = parse_n_array n cell .>> spaces
+inl parse_rows n = parse_n_array n (parse_cols n)
+
+inl solve n field =
+    inl queue = mscorlib ."System.Collection.Generic.Queue" (int64,int64)
+    inl cur_pos on_succ =
+        met rec loop1 (!dyn row) =
+            met rec loop2 (!dyn col) =
+                if col < n then
+                    if ar row col = 'm' then on_succ row col
+                    else loop2 (col+1)
+                else loop1 (row+1)
+            if row < n then loop2 0
+            else failwith "Mario not found."
+        loop1 0
+    cur_pos <| inl row col ->
+    ar row col <- 0
+    queue.Enqueue(row,col)
+
+inl f =
+    inm n = parse_int
+    inm ar = parse_rows n
+
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
