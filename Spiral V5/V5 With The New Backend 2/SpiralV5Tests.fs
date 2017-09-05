@@ -616,78 +616,6 @@ inl f {x.a.b with c q} = c,q
 f {x.a.b with q = 4; c = self + 3; d = {q = 12; w = 23}}
     """
 
-let test50 =
-    "test50",[parsing3],"Does the v3 of the parsing library work?",
-    """
-inl console = mscorlib."System.Console"
-
-inl ret = 
-    {
-    on_succ = inl state x -> Tuple.foldl (+) 0 x
-    on_fail = inl state x -> -1
-    on_fatal_fail = inl state x -> -2
-    on_type = int64
-    } 
-
-open Parsing
-
-run (console.ReadLine()) (parse_n_ints (.no_clo,320)) ret
-    """
-
-let test51 =
-    "test51",[array;parsing3;console],"Does the array parsing function work?",
-    """
-//https://www.hackerrank.com/challenges/simple-array-sum
-open Console
-open Parsing
-
-run_with_unit_ret (readall()) 
-    (parse_int >>= parse_n_array parse_int |>> (Array.foldl (+) 0 >> writeline)) 
-    """
-
-let test52 =
-    "test52",[array;parsing3;console],"HackerRank warmup: Diagonal Sum Difference",
-    """
-//https://www.hackerrank.com/challenges/diagonal-difference
-open Console
-open Parsing
-
-inl abs x = if x >= 0 then x else -x
-
-run_with_unit_ret (readall()) 
-    (parse_int >>= inl n -> parse_n_array parse_int (n*n) |>> inl ar ->
-        inl load row col = 
-            inl f x = x >= 0 || x < n
-            assert (f row && f col) "Out of bounds."
-            ar (n * row + col)
-        met rec loop (!dyn i) (d1,d2 as s) =
-            if i < n then loop (i+1) (d1 + load i i, d2 + load i (n-i-1))
-            else s
-            : s
-        inl a,b = loop 0 (0,0)
-        abs (a-b) |> writeline
-        )
-    """
-
-let test53 =
-    "test53",[array;parsing3;console],"HackerRank warmup: Birthday Cake Candles",
-    """
-//https://www.hackerrank.com/challenges/birthday-cake-candles
-open Console
-open Parsing
-
-run_with_unit_ret (readall()) 
-    (parse_int >>= inl n -> parse_n_array parse_int n |>> inl ar ->
-        Array.foldl (inl (min,score as s) x ->
-            if x > score then (1,x)
-            elif x = score then (min+1,score)
-            else s
-            ) (0,mscorlib ."System.Int64" .MinValue) ar
-        |> fst
-        |> writeline
-        )
-    """
-
 let test54 =
     "test54",[tuple],"Does the monadic bind `inm` work?",
     """
@@ -803,7 +731,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
+    test54;test55;test56;test57;test58;test59
     hacker_rank_1
     |] |> Array.map module_
 
