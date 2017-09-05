@@ -763,6 +763,8 @@ inl solve n field =
     inl cells_visited = Array.init n (inl _ -> Array.init n false)
     cells_visited row col <- true
 
+    inl ar = Array.singleton ((row,col), List.empty string)
+
     met rec loop on_fail on_succ =
         inl row,col = Queue.dequeue p
         match ar row col with

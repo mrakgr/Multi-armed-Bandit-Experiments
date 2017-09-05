@@ -112,6 +112,12 @@ let array =
     (
     "Array",[],"The array module",
     """
+inl empty t = array_create 0 t
+inl singleton x =
+    inl ar = array_create 1 x
+    ar 0 <- x
+    ar
+
 inl foldl f s ar =
     met rec loop (!dyn i) s =
         if i < array_length ar then loop (i+1) (f s (ar i))
@@ -120,21 +126,93 @@ inl foldl f s ar =
     loop 0 s
 
 inl init n f =
-    assert (n > 0) "n > 0"
-    inl ar = array_create n (type (f 0))
+    assert (n >= 0) "The input to init needs to be greater or equal than 0."
+    inl typ = type (f 0)
+    inl ar = array_create n typ
     met rec loop (!dyn i) =
-        if i < n then ar i <- f i
-        else ()
-    loop 0
+        if i < n then (ar i <- f i); loop (i+1)
+        : ()
+    loop 0 |> ignore
     ar
 
-module (foldl,init)
+inl map f ar = init (array_length ar) (ar >> f)
+inl filter f ar =
+    inl count = foldl (inl s x -> if f x then s+1 else s) 0 ar
+    inl filtered = array_create (array_length ar) (array_type ar)
+    foldl (inl s x ->
+        if f x then (filtered s <- x); s + 1
+        else s
+        ) 0 ar |> ignore
+    filtered
+
+inl concat ar =
+    inl count = foldl (inl s ar -> s + array_length ar) 0 ar
+    inl ar' = array_create (type_unload t |> type_unload)
+    foldl (foldl <| inl i x -> (ar' i <- x); i+1) 0 ar |> ignore
+    ar'
+
+module (empty,singleton,foldl,init,map,filter,concat)
     """) |> module_
+
+let list =
+    "List",[tuple],"The queue module.",
+    """
+met rec list x =
+    type
+        ()
+        x, list x
+
+inl empty x = list x ()
+inl cons a b = list a (a, list a b)
+inl singleton x = cons (x,())
+
+inl init n f =
+    inl t = type (f 0)
+    met rec loop !dyn i =
+        if i < n then cons (f i) (loop (i+1))
+        else empty t
+        : list t
+    loop 0
+
+met rec map f l =
+    inl t = typec_map f (type_unload l)
+    match l with
+    | x :: xs -> cons (f x) (map f xs)
+    | () -> empty t
+    : list t
+
+met rec foldl f s l = 
+    match l with
+    | x :: xs -> foldl (f s x) xs
+    | () -> s
+    : s
+
+met rec foldr f l s = 
+    match l with
+    | x :: xs -> f x (foldr f xs s)
+    | () -> s
+    : s
+
+inl append a b = match b with | () -> a | b -> foldlr cons a b
+inl concat l = foldr append l (empty (type_unload l))
+
+module (init,map,foldl,foldr,empty,cons,singleton,append,concat)
+    """
+
 
 let queue =
     (
     "Queue",[tuple],"The queue module.",
     """
+// I started this because I realized I cannot pass Spiral's inbuilt tuples as generic types to the .NET side.
+// This queue uses a tuple of queues representation and serves as an example of how this might be done with 
+// arrays, in order to go from array of structs to struct of array representantion.
+
+// Unfortuantely, the queue can't take Spiral's inbuilt union types either, so it is not particularly useful.
+// I will have to either build all the essential datatypes directly into the language, or preferably implement them in it
+// so that I can apply the full power of partial evaluation to them.
+
+// This module is a of yet, untested.
 inl queue = mscorlib ."System.Collections.Generic.Queue"
 
 inl rec create = function
@@ -269,8 +347,7 @@ inl parse_int =
 inl parse_n_array p n x =
     inl f =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
-        inl ar = array_create n x
-        ar 0 <- x
+        inl ar = array_create n (type_unload p)
         met rec loop (!dyn i) state d =
             ifm (i < n)
             <| inl _ ->
@@ -281,7 +358,7 @@ inl parse_n_array p n x =
                 succ ar
             <| state <| d
             : d.ret.on_type
-        loop 1
+        loop 0
     f x
         
 inl with_unit_ret = {
