@@ -147,7 +147,7 @@ inl filter f ar =
 
 inl concat ar =
     inl count = foldl (inl s ar -> s + array_length ar) 0 ar
-    inl ar' = array_create (array_elem_type t |> array_elem_type)
+    inl ar' = array_create (t.elem_type.elem_type)
     foldl (foldl <| inl i x -> (ar' i <- x); i+1) 0 ar |> ignore
     ar'
 
@@ -183,7 +183,7 @@ inl list =
         loop n x on_succ
     function
     | .var, {elem elem_type} & x on_succ on_fail -> 
-        match list elem_type = x with
+        match eq_type (list elem_type) x with
         | true -> on_succ x
         | _ -> on_fail ()
     | (.cons & typ, n, x | .tup & typ, n, x) on_succ on_fail -> loop typ n x on_fail on_succ
@@ -260,23 +260,27 @@ inl rec dequeue = function
     | x -> x.Dequeue()
     """) |> module_
 
-let parsing4 =
+let parsing =
     (
     "Parsing",[tuple],"Parser combinators.",
     """
 // Primitives
-inl goto point x state _ = point state x
-inl succ x state {{ret with on_succ}} = on_succ state x
-inl fail x state {{ret with on_fail}} = on_fail state x
-inl fatal_fail x state {{ret with on_fatal_fail}} = on_fatal_fail state x
-inl type_ state {d.ret with on_succ on_type} = on_succ state on_type
-inl state state {{ret with on_succ}} = on_succ state state
-inl set_state state _ {{ret with on_succ}} = on_succ state ()
-inl (>>=) a b state d = a state {d.ret with on_succ = inl state x -> b x state d}
-inl try_with handle handler state d = handle state {d.ret with on_fail = inl state _ -> handler state d}
-inl guard cond handler state d = if cond then d.ret.on_succ state () else handler state d
-inl ifm cond tr fl state d = if cond then tr () state d else fl () state d
-inl attempt a state d = a state { d.ret with on_fail = inl _ -> self state}
+inl m x parser = { elem = parser; elem_type = type x}
+inl goto point x = m () <| inl _ state -> point state x
+inl succ x = m x <| inl {on_succ} state -> on_succ state x
+inl fail () = m x <| inl {on_fail} state -> on_fail state x
+inl fatal_fail () = m x <| inl {on_fatal_fail} state -> on_fatal_fail state x
+inl type_ = m on_type <| inl {on_succ on_type} state -> on_succ state on_type
+inl state = m state <| inl {on_succ} state -> on_succ state state
+inl set_state state = m () <| inl {ret with on_succ} _ -> on_succ state ()
+inl (>>=) a b = {
+    elem = inl d state -> a .elem {d with on_succ = inl state x -> b x .elem d state} state
+    elem_type = typec_map (inl a -> b a .elem_type) (a.elem_type)
+    }
+inl try_with handle handler = m (handle.elem_type) <| inl d state -> handle .elem {d with on_fail = inl state _ -> handler .elem d state} state
+inl guard cond handler = m () <| inl d state -> if cond then d .on_succ state () else handler .elem d state
+inl ifm cond tr fl = m (union (tr.elem_type) (fl.elem_type)) <| inl d state -> if cond then tr () .elem d state else fl () .elem d state
+inl attempt a = m (a.elem_type) <| inl d state -> a { d with on_fail = inl _ -> self state} state
 
 inl rec tuple = function
     | () -> succ ()
@@ -284,7 +288,6 @@ inl rec tuple = function
         inm x = x
         inm xs = tuple xs
         succ (x :: xs)
-    
 
 inl (|>>) a f = a >>= inl x -> succ (f x)
 inl (.>>.) a b = tuple (a,b)
@@ -295,7 +298,13 @@ inl (>>%) a b = a |>> inl _ -> b
 // TODO: Instead of just passing the old state on failure to the next parser, the parser should
 // compare states and fail if the state changed. Right now that cannot be done because Spiral is missing
 // polymorphic structural equality on all but primitive types. I want to be able to structurally compare anything.
+
+// Though to be fair, in all the times I've used `choice`, I don't think there has been a single time it was without `attempt`.
+// Unlike with Fparsec, backing up the state in Spiral is essentially a no-op due to inlining.
 inl (<|>) a b = try_with (attempt a) b
+inl choice = function
+    | x :: xs -> Tuple.foldl (<|>) x xs
+    | () -> error_type "choice require at lease one parser as input"
 
 // CharParsers
 inl convert = mscorlib ."System.Convert"
@@ -311,7 +320,7 @@ inl string_stream str {idx on_succ on_fail} =
     | a, b when f a && f b | idx when f idx -> on_succ (str idx)
     | _ -> on_fail "string index out of bounds"
 
-inl stream_char {state with pos} {d with stream {ret with on_succ on_fail}} = 
+inl stream_char = m char <| inl {d with stream on_succ on_fail} {state with pos} ->
     stream {
         idx = pos
         on_succ = inl c -> on_succ {state with pos=pos+1} c
@@ -333,17 +342,17 @@ inl pdigit = satisfyL is_digit "digit"
 inl pchar c = satisfyL ((=) c) "char"
 
 inl pstring (!dyn str) x =
-    met rec loop (!dyn i) state d =
+    met rec loop (!dyn i) = m string <| inl d state ->
         inl f =
             ifm (i < string_length str)
             <| inl _ -> pchar (str i) >>. loop (i+1)
             <| inl _ -> succ str
-        f state d
-        : d.ret.on_type
+        f d state
+        : d.on_type
     loop 0 x
 
 inl pint64 =
-    met rec loop handler i state {d.ret with on_succ on_type} =
+    met rec loop handler i = m int64 <| {d with on_succ on_type} state ->
         inl f =
             inm c = try_with pdigit handler
             inl x = to_int64 c - to_int64 '0'
@@ -351,20 +360,20 @@ inl pint64 =
             inm _ = guard (i = max && x <= 7 || i < max) (fail "integer overflow")
             inl i = i * 10 + x
             loop (goto on_succ i) i
-        f state d : on_type
+        f d state : on_type
     loop (fail "pint64") 0
 
 inl spaces x =
-    met rec loop (!dyn i) state {d.ret with on_succ on_type} =
+    met rec loop (!dyn i) = m () <| inl {d with on_succ on_type} state ->
         inl f = try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
-        f state d : on_type
+        f d state : on_type
     loop 0 x
 
 inl run data parser ret = 
     match data with
     | _ : string -> 
-        parser { pos = if is_static data then 0 else dyn 0 }
-            { stream = string_stream data; ret = ret }
+        parser .elem { ret with stream = string_stream data}
+            { pos = if is_static data then 0 else dyn 0 }
     | _ -> error_type "Only strings supported for now."
 
 inl parse_int =
@@ -375,7 +384,7 @@ inl parse_n_array p n x =
     inl f =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
         inl ar = array_create n (p.elem_type)
-        met rec loop (!dyn i) state d =
+        met rec loop (!dyn i) = m ar <| inl d state ->
             ifm (i < n)
             <| inl _ ->
                 inm x = p
@@ -384,7 +393,7 @@ inl parse_n_array p n x =
             <| inl _ -> 
                 succ ar
             <| state <| d
-            : d.ret.on_type
+            : d.on_type
         loop 0
     f x
         
@@ -420,9 +429,9 @@ inl sprintf_parser append =
             | 'A' -> id
             | _ -> error_type "Unexpected literal in sprintf."
             |> inl guard_type -> 
-                inl state d -> d.ret.on_succ state (inl x -> append x; sprintf_parser .None state d)
+                m () <| inl d state -> d.on_succ state (inl x -> append x; sprintf_parser .None d state)
 
-        inl append_state state {d with stream {ret with on_succ on_fail}} =
+        inl append_state {d with stream on_succ on_fail} state =
             match sprintf_state with
             | .None -> on_succ state ()
             | ab -> stream {
@@ -454,13 +463,13 @@ inl sprintf format =
 
 module 
     (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,pstring,succ,fail,fatal_fail,type_,state,parse_int,
-     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),attempt,(>>.),(.>>),try_with,guard,(>>%))
+     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),choice,attempt,(>>.),(.>>),(.>>.),try_with,guard,(>>%))
     """) |> module_
 
 
 let console =
     (
-    "Console",[parsing4],"IO printing functions.",
+    "Console",[parsing],"IO printing functions.",
     """
 inl console = mscorlib."System.Console"
 inl readall () = console.OpenStandardInput() |> mscorlib ."System.IO.StreamReader" |> inl x -> x.ReadToEnd()

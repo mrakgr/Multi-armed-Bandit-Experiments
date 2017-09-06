@@ -165,6 +165,7 @@ type Op =
     | EnvUnseal
     | TypeConstructorCreate
     | TypeConstructorUnion
+    | TypeConstructorMap
     | EqType
     | ModuleHasMember
 
@@ -1039,7 +1040,7 @@ let spiral_peval module_main output_path =
             | false, _ -> 
                 memoized_methods.[key] <- MemoTypeInEvaluation (RecT memoized_methods.Count)
                 tev_seq d x |> get_type |> typec_strip |> if_recursive_type_add_to_type_dict |> add_to_memo_dict |> ret
-                
+
         let inline wrap_exception d f =
             try f()
             with 
@@ -1120,6 +1121,9 @@ let spiral_peval module_main output_path =
                 | DotNetHeap, idx -> on_type_er d.trace <| sprintf "The index into an array is not an int. Got: %A" idx
                 | DotNetReference, TyVV(N []) -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
+                | _, TypeString x -> 
+                    if x = "elem_type" then elem_ty |> typec_strip |> typect |> make_tyv_and_push_ty d
+                    else failwithf "Unknown type string applied to array. Got: %s" x
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
@@ -1202,6 +1206,11 @@ let spiral_peval module_main output_path =
             | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
         let apply_tev d expr args = apply d (tev d expr) (tev d args)
+
+        let typec_map d f x =
+            let f = tev d f 
+            let x = tev d x |> get_type |> typec_strip |> make_tyv_and_push_ty d
+            apply {d with seq = ref id} f x |> get_type |> typec_strip |> typect |> make_tyv_and_push_ty d
 
         let inline vv_index_template f d v i =
             let v,i = tev2 d v i
@@ -1354,17 +1363,22 @@ let spiral_peval module_main output_path =
                     | _ -> bool_helper t a b
                     ) a b t
 
-        let prim_bool_op d a b t = 
+        let prim_bool_op d a b t =
             let er a b = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A" a b
             let check a b = is_bool a && get_type a = get_type b
-            prim_bin_op_template d er check (fun t a b ->
-                match t, (a, b) with
-                | And, (TyLit (LitBool false), _ | _,TyLit (LitBool false)) -> LitBool false |> TyLit
-                | Or, (TyLit (LitBool true),_ | _, TyLit (LitBool true)) -> LitBool true |> TyLit
-                | And, (TyLit (LitBool a), TyLit (LitBool b)) -> LitBool (a && b) |> TyLit
-                | Or, (TyLit (LitBool a), TyLit (LitBool b)) -> LitBool (a || b) |> TyLit
-                | _ -> bool_helper t a b            
-                ) a b t
+            let els a b = if check a b then bool_helper t a b else failwith (er a b)
+            match t, tev d a with
+            | And, TyLit (LitBool false) -> LitBool false |> TyLit
+            | Or, TyLit (LitBool true) -> LitBool true |> TyLit
+            | And, a ->
+                match a, apply d (tev d b) TyB with
+                | TyLit (LitBool a), TyLit (LitBool b) -> (a && b) |> LitBool |> TyLit
+                | a, b -> els a b
+            | Or, a ->
+                match a, apply d (tev d b) TyB with
+                | TyLit (LitBool a), TyLit (LitBool b) -> (a || b) |> LitBool |> TyLit
+                | a, b -> els a b
+            | _ -> failwith "impossible"
 
         let prim_shift_op d a b t =
             let er a b = sprintf "`is_int a && is_int b` is false.\na=%A, b=%A" a b
@@ -1608,6 +1622,8 @@ let spiral_peval module_main output_path =
 
             | TypeAnnot,[a;b] -> type_annot d a b
             | TypeConstructorUnion,[a;b] -> typec_union d a b
+            | TypeConstructorCreate,[a] -> typec_create d a
+            | TypeConstructorMap,[a;b] -> typec_map d a b
             | EqType,[a;b] -> eq_type d a b
             | ModuleHasMember,[a;b] -> module_has_member d a b
             | Neg,[a] -> prim_un_numeric d a Neg
@@ -1620,7 +1636,6 @@ let spiral_peval module_main output_path =
             | FailWith,[a] -> failwith_ d a
 
             // Constants
-            | TypeConstructorCreate,[a] -> typec_create d a
             | x -> failwithf "Missing Op case. %A" x
 
 
@@ -2670,7 +2685,9 @@ let spiral_peval module_main output_path =
             b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
 
             b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
-            b "||" Or; b "&&" And; b "::" VVCons
+            b "::" VVCons
+            l "&&" (p2 <| fun a b -> op(And,[a;inl "" b]))
+            l "||" (p2 <| fun a b -> op(Or,[a;inl "" b]))
 
             l "fst" (p <| fun x -> tuple_index x 0L)
             l "snd" (p <| fun x -> tuple_index x 1L)
@@ -2684,6 +2701,8 @@ let spiral_peval module_main output_path =
             l "is_static" (p <| fun x -> op(IsStatic,[x]))
             l "failwith" (p <| fun x -> op(FailWith,[x]))
             l "assert" (p2 <| fun c x -> if_static (eq c (lit (LitBool false))) (op(FailWith,[x])) B)
+            b "typec_map" TypeConstructorMap
+            b "eq_type" EqType
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =
