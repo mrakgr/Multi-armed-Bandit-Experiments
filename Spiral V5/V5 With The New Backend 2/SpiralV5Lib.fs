@@ -147,7 +147,7 @@ inl filter f ar =
 
 inl concat ar =
     inl count = foldl (inl s ar -> s + array_length ar) 0 ar
-    inl ar' = array_create (type_unload t |> type_unload)
+    inl ar' = array_create (array_elem_type t |> array_elem_type)
     foldl (foldl <| inl i x -> (ar' i <- x); i+1) 0 ar |> ignore
     ar'
 
@@ -157,14 +157,41 @@ module (empty,singleton,foldl,init,map,filter,concat)
 let list =
     "List",[tuple],"The queue module.",
     """
-met rec list x =
-    type
-        ()
-        x, list x
+inl list = 
+    met rec list x =
+        type
+            { 
+            elem = 
+                type
+                    ()
+                    x, list x
+            elem_type = type x
+            }
 
-inl empty x = list x ()
-inl cons a b = list a (a, list a b)
-inl singleton x = cons (x,())
+    inl rec loop tup_type n x on_fail on_succ =
+        if n > 0 then
+            match x.elem with
+            | () -> on_fail()
+            | a, b -> loop (n-1) b on_fail <| fun b -> on_succ (a :: b)
+        else
+            match tup_type with
+            | .tup ->
+                match x.elem with
+                | () -> on_succ()
+                | _ -> on_fail()
+            | .cons -> on_succ x
+        loop n x on_succ
+    function
+    | .var, {elem elem_type} & x on_succ on_fail -> 
+        match list elem_type = x with
+        | true -> on_succ x
+        | _ -> on_fail ()
+    | (.cons & typ, n, x | .tup & typ, n, x) on_succ on_fail -> loop typ n x on_fail on_succ
+    | typ -> list typ
+
+inl empty x = list x {elem=(); elem_type=type x}
+inl singleton x = list x {elem=x, empty x; elem_type=type x}
+inl cons a b = list a {elem=a, list a b; elem_type=type a}
 
 inl init n f =
     inl t = type (f 0)
@@ -174,29 +201,29 @@ inl init n f =
         : list t
     loop 0
 
-met rec map f l =
-    inl t = typec_map f (type_unload l)
+met rec map f {l with elem_type=t} =
+    inl t = typec_map f t
     match l with
-    | x :: xs -> cons (f x) (map f xs)
-    | () -> empty t
+    | #list (x :: xs) -> cons (f x) (map f xs)
+    | #list () -> empty t
     : list t
 
 met rec foldl f s l = 
     match l with
-    | x :: xs -> foldl (f s x) xs
-    | () -> s
+    | #list (x :: xs) -> foldl (f s x) xs
+    | #list () -> s
     : s
 
 met rec foldr f l s = 
     match l with
-    | x :: xs -> f x (foldr f xs s)
-    | () -> s
+    | #list (x :: xs) -> f x (foldr f xs s)
+    | #list () -> s
     : s
 
-inl append a b = match b with | () -> a | b -> foldlr cons a b
-inl concat l = foldr append l (empty (type_unload l))
+inl append a b = match b with | #list () -> a | b -> foldlr cons a b
+inl concat {l with elem_type=t} = foldr append l (empty t)
 
-module (init,map,foldl,foldr,empty,cons,singleton,append,concat)
+module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
     """
 
 
@@ -347,7 +374,7 @@ inl parse_int =
 inl parse_n_array p n x =
     inl f =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
-        inl ar = array_create n (type_unload p)
+        inl ar = array_create n (p.elem_type)
         met rec loop (!dyn i) state d =
             ifm (i < n)
             <| inl _ ->

@@ -211,12 +211,6 @@ and FunType =
     | FunTypeRecFunction of FunctionCore * string
     | FunTypeModule
 
-    override t.ToString() =
-        match t with
-        | FunTypeModule -> "<module>"
-        | FunTypeFunction (str, expr) -> "<function>"
-        | FunTypeRecFunction (_, name) -> sprintf "<rec_function: %s>" name
-
 and Pattern =
     | E
     | PatVar of string
@@ -1019,9 +1013,10 @@ let spiral_peval module_main output_path =
             | TyTypeC (N a), TyTypeC (N b) -> set_field a + set_field b |> uniont |> typect |> make_tyv_and_push_ty d
             | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
-        let rec typec_strip = function 
-            | TyTypeC (N x) -> x
+        let rec typec_strip = function
+            | FunT(N(N env,t)) -> funt (Map.map (fun _ -> typec_strip) env |> nodify_env_ty,t)
             | VVT (N l) -> vvt (List.map typec_strip l)
+            | TyTypeC (N x) -> x 
             | x -> x
 
         let typec_create d x = 
