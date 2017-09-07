@@ -1,20 +1,7 @@
-let (var_25: int64) = 1L
-let (var_26: int64) = 2L
-let (var_30: System.Text.StringBuilder) = System.Text.StringBuilder(64)
-let (var_87: System.Text.StringBuilder) = var_30.Append(var_25)
-let (var_212: System.Text.StringBuilder) = var_30.Append(" + ")
-let (var_232: System.Text.StringBuilder) = var_30.Append(var_26)
-let (var_357: System.Text.StringBuilder) = var_30.Append(" = ")
-let (var_376: int64) = (var_25 + var_26)
-let (var_378: System.Text.StringBuilder) = var_30.Append(var_376)
-let (var_416: string) = var_30.ToString()
-System.Console.Write("(")
-System.Console.Write(1L)
-System.Console.Write(",")
-System.Console.Write(2.000000f)
-System.Console.Write(",")
-System.Console.Write(true)
-System.Console.Write(",")
-System.Console.Write("4")
-System.Console.Write(")")
-System.Console.WriteLine()
+let (var_16: bool) = false
+let (var_17: bool) = (var_16 || true)
+if var_17 then
+    5L
+else
+    10L
+

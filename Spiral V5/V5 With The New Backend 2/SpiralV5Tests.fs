@@ -788,7 +788,11 @@ Array.foldl (inl a,b c,d -> a+c,b+d) (dyn (1,2)) ar
 let test61 =
     "test61",[],"Does the handling of || and && operators work correctly?",
     """
-false || true
+inl x = dyn false
+if dyn x || dyn x || true then
+    dyn 5
+else
+    dyn 10
     """
 
 let tests =

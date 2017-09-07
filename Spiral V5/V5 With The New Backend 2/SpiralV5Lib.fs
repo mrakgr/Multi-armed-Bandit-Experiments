@@ -8,6 +8,7 @@ let tuple =
 inl rec foldl f s = function
     | x :: xs -> foldl f (f s x) xs
     | () -> s
+
 inl rec foldr f l s = 
     match l with
     | x :: xs -> f x (foldr f xs s)

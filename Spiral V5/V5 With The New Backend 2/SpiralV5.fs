@@ -935,7 +935,11 @@ let spiral_peval module_main output_path =
                 tev d branch
             | cond -> if_cond d tr fl cond
 
-        let if_ d cond tr fl = tev d cond |> if_cond d tr fl
+        let if_ d cond tr fl = 
+            printfn "expr_cond=%A" cond
+            let cond = tev d cond
+            printfn "tev_cond=%A" cond
+            if_cond d tr fl cond
 
         let eval_method memo_type used_vars d expr =
             let key_args = nodify_memo_key (expr, d.env) 
