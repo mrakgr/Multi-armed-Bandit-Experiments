@@ -2311,7 +2311,7 @@ let spiral_peval module_main output_path =
                     sprintf "let %s =" (print_tyv_with_type v) |> state
                     enter' <| fun _ -> f()
         
-            let inline if_ print_if cond tr fl =
+            let inline if_ v cond tr fl =
                 let enter f =
                     enter <| fun _ ->
                         let x = buffer.Count
@@ -2320,15 +2320,25 @@ let spiral_peval module_main output_path =
                         | x -> x
                 
                 let inline f op a b = codegen (TyOp(op,[a;b],PrimT BoolT))
+
+                let print_op x =
+                    match v with
+                    | Some tyv -> sprintf "let %s = %s" (print_tyv_with_type tyv) x
+                    | None -> x
+                    |> state
+
                 match cond,tr,fl with
-                | (TyOp _ | TyLit _ | TyV _),(TyOp _ | TyLit _ | TyV _),TyLit(LitBool false) -> f And cond tr
-                | (TyOp _ | TyLit _ | TyV _),TyLit(LitBool true),(TyOp _ | TyLit _ | TyV _) -> f Or cond fl
+                | (TyOp _ | TyLit _ | TyV _),(TyOp _ | TyLit _ | TyV _),TyLit(LitBool false) -> f And cond tr |> print_op
+                | (TyOp _ | TyLit _ | TyV _),TyLit(LitBool true),(TyOp _ | TyLit _ | TyV _) -> f Or cond fl |> print_op
                 | _ ->
-                    print_if <| fun _ ->
+                    let inline k() = 
                         sprintf "if %s then" (codegen cond) |> state
                         enter <| fun _ -> codegen tr
                         "else" |> state
                         enter <| fun _ -> codegen fl
+                    match v with
+                    | Some tyv -> print_if tyv k
+                    | None -> k()
 
             let make_struct l on_empty on_rest =
                 Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
@@ -2415,7 +2425,7 @@ let spiral_peval module_main output_path =
                     let b = codegen b
                     if b <> "" then sprintf "%s" b |> state
                 codegen rest
-            | TyLet(_,tyv,TyOp(If,[cond;tr;fl],t),rest,_) -> if_ (print_if tyv) cond tr fl; codegen rest
+            | TyLet(_,tyv,TyOp(If,[cond;tr;fl],t),rest,_) -> if_ (Some tyv) cond tr fl; codegen rest
             | TyLet(_,tyv,TyOp(Case,v :: cases,t),rest,_) -> match_with (print_if tyv) v cases; codegen rest
             | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
             | TyLit x -> print_value x
@@ -2455,7 +2465,7 @@ let spiral_peval module_main output_path =
                     let b = tuple_field b |> List.map codegen |> String.concat ", "
                     sprintf "%s(%s)" (codegen a) b
                 | Case,v :: cases -> match_with print_if_tail v cases; ""
-                | If,[cond;tr;fl] -> if_ print_if_tail cond tr fl; ""
+                | If,[cond;tr;fl] -> if_ None cond tr fl; ""
                 | ArrayCreate,[a] -> array_create a t
                 | ReferenceCreate,[a] -> reference_create a
                 | ArrayIndex,[b & TyType(ArrayT(N (DotNetHeap,_)));c] -> array_index b c
