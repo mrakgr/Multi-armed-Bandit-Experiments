@@ -1364,20 +1364,9 @@ let spiral_peval module_main output_path =
                     ) a b t
 
         let prim_bool_op d a b t =
-            let er a b = sprintf "`is_bool a && get_type a = get_type b` is false.\na=%A, b=%A" a b
-            let check a b = is_bool a && get_type a = get_type b
-            let els a b = if check a b then bool_helper t a b else failwith (er a b)
-            match t, tev d a with
-            | And, TyLit (LitBool false) -> LitBool false |> TyLit
-            | Or, TyLit (LitBool true) -> LitBool true |> TyLit
-            | And, a ->
-                match a, apply d (tev d b) TyB with
-                | TyLit (LitBool a), TyLit (LitBool b) -> (a && b) |> LitBool |> TyLit
-                | a, b -> els a b
-            | Or, a ->
-                match a, apply d (tev d b) TyB with
-                | TyLit (LitBool a), TyLit (LitBool b) -> (a || b) |> LitBool |> TyLit
-                | a, b -> els a b
+            match t with
+            | And -> if_ d a b (lit (LitBool false))
+            | Or -> if_ d a (lit (LitBool true)) b
             | _ -> failwith "impossible"
 
         let prim_shift_op d a b t =
@@ -2120,9 +2109,13 @@ let spiral_peval module_main output_path =
                 (poperator >>=? function
                     | "->" | ":=" | "<-" -> fail "forbidden operator"
                     | orig_op -> 
-                        let rec calculate on_fail op = 
-                            match dict_operator.TryGetValue op with
-                            | true, (prec,asoc) -> preturn (prec,asoc,fun a b -> expr_pos p (ap' (v orig_op) [a; b]))
+                        let rec calculate on_fail op' = 
+                            match dict_operator.TryGetValue op' with
+                            | true, (prec,asoc) -> preturn (prec,asoc,fun a b -> 
+                                match orig_op with
+                                | "||" -> expr_pos p (op(Or, [a; b]))
+                                | "&&" -> expr_pos p (op(And, [a; b]))
+                                | _ -> expr_pos p (ap' (v orig_op) [a; b]))
                             | false, _ -> on_fail ()
 
                         let on_fail () =
@@ -2326,11 +2319,16 @@ let spiral_peval module_main output_path =
                         | "" when buffer.Count = x -> "()"
                         | x -> x
                 
-                print_if <| fun _ ->
-                    sprintf "if %s then" (codegen cond) |> state
-                    enter <| fun _ -> codegen tr
-                    "else" |> state
-                    enter <| fun _ -> codegen fl
+                let inline f op a b = codegen (TyOp(op,[a;b],PrimT BoolT))
+                match cond,tr,fl with
+                | (TyOp _ | TyLit _ | TyV _),(TyOp _ | TyLit _ | TyV _),TyLit(LitBool false) -> f And cond tr
+                | (TyOp _ | TyLit _ | TyV _),TyLit(LitBool true),(TyOp _ | TyLit _ | TyV _) -> f Or cond fl
+                | _ ->
+                    print_if <| fun _ ->
+                        sprintf "if %s then" (codegen cond) |> state
+                        enter <| fun _ -> codegen tr
+                        "else" |> state
+                        enter <| fun _ -> codegen fl
 
             let make_struct l on_empty on_rest =
                 Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
@@ -2685,9 +2683,7 @@ let spiral_peval module_main output_path =
             b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
 
             b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
-            b "::" VVCons
-            l "&&" (p2 <| fun a b -> op(And,[a;inl "" b]))
-            l "||" (p2 <| fun a b -> op(Or,[a;inl "" b]))
+            b "::" VVCons; b "&&" And; b "||" Or
 
             l "fst" (p <| fun x -> tuple_index x 0L)
             l "snd" (p <| fun x -> tuple_index x 1L)
