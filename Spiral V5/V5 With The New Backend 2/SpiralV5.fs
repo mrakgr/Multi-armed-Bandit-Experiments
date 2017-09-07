@@ -935,11 +935,7 @@ let spiral_peval module_main output_path =
                 tev d branch
             | cond -> if_cond d tr fl cond
 
-        let if_ d cond tr fl = 
-            printfn "expr_cond=%A" cond
-            let cond = tev d cond
-            printfn "tev_cond=%A" cond
-            if_cond d tr fl cond
+        let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
         let eval_method memo_type used_vars d expr =
             let key_args = nodify_memo_key (expr, d.env) 
@@ -1431,9 +1427,8 @@ let spiral_peval module_main output_path =
                 | TyBox(N(_, (UnionT _ | RecT _))) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
                 | TyVV(N l) -> tyvv (List.map loop l)
                 | a -> a
-            let ds = tev d a
-            printfn "ds = %A" ds
-            loop ds
+            
+            loop (tev d a)
 
         let module_create d l =
             let rec loop acc = function
@@ -1575,10 +1570,7 @@ let spiral_peval module_main output_path =
             | ModuleCreateAlt,l -> module_create_alt d l
             | ModuleWithAlt, l -> module_with_alt d l
             | TypeLitCreate,[a] -> type_lit_create d a
-            | Dynamize,[a] -> 
-                let x = dynamize d a
-                printfn "x = %A" x
-                x
+            | Dynamize,[a] -> dynamize d a
             | IsStatic,[a] -> is_static d a
             | ModuleIs,[a] -> module_is d a
 
@@ -1651,57 +1643,58 @@ let spiral_peval module_main output_path =
     
         let is_identifier_starting_char c = isAsciiLetter c || c = '_'
         let is_identifier_char c = is_identifier_starting_char c || c = ''' || isDigit c 
+        let is_operator_char c = (is_identifier_char c || isAnyOf [|' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
 
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
                 | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm"
-                | "print_expr" | "rec" | "if" | "then" | "elif" | "else" | "true" | "false" as x -> 
+                | "type" | "print_expr" | "rec" | "if" | "then" | "elif" | "else" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
         let between_brackets l p r = between (skipChar l .>> spaces) (skipChar r .>> spaces) p
         let rounds p = between_brackets '(' p ')'
         let curlies p = between_brackets '{' p '}'
-        let quares p = between_brackets '[' p ']'
-
-        let keywordChar x = skipChar x .>> spaces
-        let keywordString x = skipString x .>> spaces
-        let keywordString1 x = skipString x .>> spaces1
+        let squares p = between_brackets '[' p ']'
+        
+        let keywordString x = attempt (skipString x >>. nextCharSatisfiesNot is_identifier_char >>. spaces)
+        let operatorChar x = attempt (skipChar x >>. nextCharSatisfiesNot is_operator_char >>. spaces)
+        let operatorString x = attempt (skipString x >>. nextCharSatisfiesNot is_operator_char >>. spaces)
 
         let when_ = keywordString "when"
         let as_ = keywordString "as"
-        let negate_ = keywordChar '-'
-        let comma = keywordChar ','
-        let dot = keywordChar '.'
-        let grave = keywordChar '`' 
-        let pp = keywordChar ':'
-        let semicolon = keywordChar ';' 
-        let eq = keywordChar '=' 
-        let bar = keywordChar '|' 
-        let amphersand = keywordChar '&'
-        let barbar = keywordString "||" 
-        let lam = keywordString "->"
-        let set_ref = keywordString ":="
-        let set_array = keywordString "<-"
+        let negate_ = operatorChar '-'
+        let comma = operatorChar ','
+        let dot = operatorChar '.'
+        let grave = operatorChar '`' 
+        let pp = operatorChar ':'
+        let semicolon = operatorChar ';' 
+        let eq = operatorChar '=' 
+        let bar = operatorChar '|' 
+        let amphersand = operatorChar '&'
+        let barbar = operatorString "||" 
+        let lam = operatorString "->"
+        let set_ref = operatorString ":="
+        let set_array = operatorString "<-"
         let inl_ = keywordString "inl"
         let inm_ = keywordString "inm"
         let met_ = keywordString "met"
-        let inl_rec = keywordString1 "inl" .>> keywordString "rec"
-        let met_rec = keywordString1 "met" .>> keywordString "rec"
+        let inl_rec = keywordString "inl" .>> keywordString "rec"
+        let met_rec = keywordString "met" .>> keywordString "rec"
         let match_ = keywordString "match"
         let function_ = keywordString "function"
         let module_ = keywordString "module"
         let with_ = keywordString "with"
         let open_ = keywordString "open"
-        let cons = keywordString "::"
-        let active_pat = keywordChar '!'
-        let part_active_pat = keywordChar '@'
-        let ext_active_pat = keywordChar '#'
+        let cons = operatorString "::"
+        let active_pat = operatorChar '!'
+        let part_active_pat = operatorChar '@'
+        let ext_active_pat = operatorChar '#'
         let type_' = keywordString "type"
-        let wildcard = keywordChar '_'
+        let wildcard = operatorChar '_'
 
-        let pbool = (skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)
+        let pbool = ((skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)) .>> spaces
         let pnumber : Parser<_,_> =
             let numberFormat =  NumberLiteralOptions.AllowFraction
                                 ||| NumberLiteralOptions.AllowExponent
@@ -1735,7 +1728,7 @@ let spiral_peval module_main output_path =
 
             let followedBySuffix x is_x_integer =
                 let f c l = 
-                    let l = Array.map (fun (k,m) -> skipString k >>= fun _ -> m x) l
+                    let l = Array.map (fun (k,m) -> keywordString k >>= fun _ -> m x) l
                     skipChar c >>. choice l
                 choice
                     [|
@@ -1760,7 +1753,7 @@ let spiral_peval module_main output_path =
                         "32", float32
                         "64", float64
                         |]
-                    (if is_x_integer then default_int x else default_float x)
+                    (if is_x_integer then default_int x else default_float x) .>> spaces
                     |]
 
             fun s ->
@@ -1786,7 +1779,7 @@ let spiral_peval module_main output_path =
             let escapedChar = pchar '\\' >>. (anyOf "\\nrt'" |>> unescape)
             let a = (normalChar <|> escapedChar) .>> pchar ''' |>> LitChar
             let b = pstring "''" >>% LitChar '''
-            pchar ''' >>. (a <|> b)
+            pchar ''' >>. (a <|> b) .>> spaces
 
         let quoted_string =
             let normalChar = satisfy (fun c -> c <> '\\' && c <> '"')
@@ -1796,7 +1789,7 @@ let spiral_peval module_main output_path =
                              | 't' -> '\t'
                              | c   -> c
             let escapedChar = pchar '\\' >>. (anyOf "\\nrt\"" |>> unescape)
-            between (pchar '"') (pchar '"')
+            between (pchar '"') (pchar '"' .>> spaces)
                     (manyChars (normalChar <|> escapedChar))
             |>> LitString
 
@@ -1804,10 +1797,10 @@ let spiral_peval module_main output_path =
             choice 
                 [|
                 pbool
-                pnumber .>> nextCharSatisfiesNot is_identifier_char
+                pnumber
                 quoted_string
                 quoted_char
-                |] .>> spaces
+                |]
             <| s
 
         let pat_e = wildcard >>% E
@@ -1815,11 +1808,7 @@ let spiral_peval module_main output_path =
         let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
         let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
         let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
-        // TODO: That `notFollowedBy cons` is such a hack.
-        // I should have made the whole parser follow the pattern of reading a whole token first and then comparing
-        // instead of the thing I do now where I use skipString. It is too bad it did not occur to me that designing
-        // this way would be a good idea. I am going to reimplement it like that on the next redesign.
-        let pat_type expr pattern = tuple2 pattern (opt (notFollowedBy cons >>. pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
+        let pat_type expr pattern = tuple2 pattern (opt (pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
         let pat_active pattern = 
             let active_pat = choice [active_pat >>% PatActive; part_active_pat >>% PatPartActive; ext_active_pat >>% PatExtActive]
             (pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)) <|> pattern
@@ -1839,7 +1828,7 @@ let spiral_peval module_main output_path =
             | _ -> failwith "Invalid state"
         let rec pat_module_outer expr s = 
             let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-            curlies (opt (attempt (sepBy1 var_name dot .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding)) //|>> PatModuleOuter <| s
+            curlies (opt (attempt (sepBy1 var_name dot .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding))
             |>> function
                 | Some (n :: (_ :: _ as ns)), bindings -> PatModuleOuter(Some n, [pat_module_helper (ns,bindings)])
                 | Some [n], bindings -> PatModuleOuter(Some n,bindings)
@@ -1866,7 +1855,7 @@ let spiral_peval module_main output_path =
         let if_then_else expr (s: CharStream<_>) =
             let i = (col s)
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
-            let inline f' str = skipString str >>. spaces1 >>. expr
+            let inline f' str = keywordString str >>. expr
             let inline f str = expr_indent (f' str)
             pipe4 (f' "if") (f "then") (many (f "elif" .>>. f "then")) (opt (f "else"))
                 (fun cond tr elifs fl -> 
@@ -1876,8 +1865,7 @@ let spiral_peval module_main output_path =
                     op(If,[cond;tr;fl]))
             <| s
 
-        let is_operator c = (is_identifier_char c || isAnyOf [|' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
-        let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator .>> spaces <| s
+        let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator_char .>> spaces <| s
 
         let name = var_name <|> rounds poperator
 
@@ -2058,12 +2046,13 @@ let spiral_peval module_main output_path =
             |>> function [x] -> x | x -> vv x
             <| s
 
-        let type_ expr =
+        let type_ expr s =
             let type_parse (s: CharStream<_>) = 
                 let i = (col s)
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
                 many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
-            attempt (type_' >>. nextCharSatisfiesNot is_identifier_char >>. type_parse) <|> expr
+            attempt (type_' >>. type_parse) <|> expr
+            <| s
 
         let mset statements expressions (s: CharStream<_>) = 
             let i = (col s)
@@ -2336,9 +2325,18 @@ let spiral_peval module_main output_path =
                     | None -> x
                     |> state
 
+                let tail_rec_opt = function
+                    | TyLet(_,tyv,b,TyV tyv',_) when tyv = tyv' -> b
+                    | x -> x
+
+                let (|SimpleExpr|_|) x = 
+                    match tail_rec_opt x with
+                    | TyJoinPoint _ | TyOp _ | TyLit _ | TyV _ -> Some() 
+                    | _ -> None
+
                 match cond,tr,fl with
-                | (TyOp _ | TyLit _ | TyV _),(TyOp _ | TyLit _ | TyV _),TyLit(LitBool false) -> f And cond tr |> print_op
-                | (TyOp _ | TyLit _ | TyV _),TyLit(LitBool true),(TyOp _ | TyLit _ | TyV _) -> f Or cond fl |> print_op
+                | SimpleExpr,SimpleExpr,TyLit(LitBool false) -> f And cond tr |> print_op
+                | SimpleExpr,TyLit(LitBool true),SimpleExpr -> f Or cond fl |> print_op
                 | _ ->
                     let inline k() = 
                         sprintf "if %s then" (codegen cond) |> state

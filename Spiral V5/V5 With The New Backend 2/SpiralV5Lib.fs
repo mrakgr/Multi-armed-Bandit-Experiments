@@ -156,6 +156,7 @@ module (empty,singleton,foldl,init,map,filter,concat)
     """) |> module_
 
 let list =
+    (
     "List",[tuple],"The queue module.",
     """
 inl list = 
@@ -166,14 +167,14 @@ inl list =
                 type
                     ()
                     x, list x
-            elem_type = type x
+            elem_type = (type x)
             }
 
     inl rec loop tup_type n x on_fail on_succ =
         if n > 0 then
             match x.elem with
             | () -> on_fail()
-            | a, b -> loop (n-1) b on_fail <| fun b -> on_succ (a :: b)
+            | a, b -> loop (n-1) b on_fail <| inl b -> on_succ (a :: b)
         else
             match tup_type with
             | .tup ->
@@ -225,7 +226,7 @@ inl append a b = match b with | #list () -> a | b -> foldlr cons a b
 inl concat {l with elem_type=t} = foldr append l (empty t)
 
 module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
-    """
+    """) |> module_
 
 
 let queue =

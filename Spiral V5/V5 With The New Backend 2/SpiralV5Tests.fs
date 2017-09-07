@@ -786,14 +786,83 @@ Array.foldl (inl a,b c,d -> a+c,b+d) (dyn (1,2)) ar
 //    """
 
 let test61 =
-    "test61",[],"Does dyn act like id on already dyned variables?",
+    "test61",[],"Does dyn act like id on already dyned variables? It should not.",
     """
 inl x = dyn false
-inl id = dyn
-id x || id x || id x
+dyn x || dyn x || dyn x
+
+// The following is in fact the correct behavior. What happens is that x gets assumed to be true or false
+// in one of the branches and then rewritten before being passed into dyn again and turned into a new variable.
+
+//let (var_16: bool) = false
+//if var_16 then
+//    true
+//else
+//    let (var_17: bool) = false
+//    if var_17 then
+//        true
+//    else
+//        false
     """
 
-//"Does the handling of || and && operators work correctly?",
+let test62 =
+    "test62",[],"Do && and || work correctly?",
+    """
+inl a,b,c,d,e = dyn (true, false, true, false, true)
+met f x = x
+f a && f b || f c && f d || f e
+
+//let (var_21: bool) = method_14((var_16: bool))
+//let (var_23: bool) = (var_21 && method_14((var_17: bool)))
+//if var_23 then
+//    true
+//else
+//    let (var_24: bool) = method_14((var_18: bool))
+//    let (var_26: bool) = (var_24 && method_14((var_19: bool)))
+//    (var_26 || method_14((var_20: bool)))
+    """
+
+let test63 =
+    "test63",[],"Does the List.empty work?",
+    """
+inl list = 
+    met rec list x =
+        type
+            { 
+            elem = 
+                type
+                    ()
+                    x, list x
+            elem_type = type x
+            }
+
+    inl rec loop tup_type n x on_fail on_succ =
+        if n > 0 then
+            match x.elem with
+            | () -> on_fail()
+            | a, b -> loop (n-1) b on_fail <| inl b -> on_succ (a :: b)
+        else
+            match tup_type with
+            | .tup ->
+                match x.elem with
+                | () -> on_succ()
+                | _ -> on_fail()
+            | .cons -> on_succ x
+        loop n x on_succ
+    function
+    | .var, {elem elem_type} & x on_succ on_fail -> 
+        match eq_type (list elem_type) x with
+        | true -> on_succ x
+        | _ -> on_fail ()
+    | (.cons & typ, n, x | .tup & typ, n, x) on_succ on_fail -> loop typ n x on_fail on_succ
+    | typ -> list typ
+
+inl empty x = list x {elem=(); elem_type=type x}
+inl singleton x = list x {elem=x, empty x; elem_type=type x}
+inl cons a b = list a {elem=a, list a b; elem_type=type a}
+
+empty int64
+    """
 
 let tests =
     [|
@@ -802,7 +871,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test54;test58;test61
+    test54;test58;test61;test62;test63
     hacker_rank_1
     |] |> Array.map module_
 
@@ -822,4 +891,4 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test61" false
+run_test "test63" false
