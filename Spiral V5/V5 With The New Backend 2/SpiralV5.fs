@@ -1431,7 +1431,9 @@ let spiral_peval module_main output_path =
                 | TyBox(N(_, (UnionT _ | RecT _))) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
                 | TyVV(N l) -> tyvv (List.map loop l)
                 | a -> a
-            loop (tev d a)
+            let ds = tev d a
+            printfn "ds = %A" ds
+            loop ds
 
         let module_create d l =
             let rec loop acc = function
@@ -1573,7 +1575,10 @@ let spiral_peval module_main output_path =
             | ModuleCreateAlt,l -> module_create_alt d l
             | ModuleWithAlt, l -> module_with_alt d l
             | TypeLitCreate,[a] -> type_lit_create d a
-            | Dynamize,[a] -> dynamize d a
+            | Dynamize,[a] -> 
+                let x = dynamize d a
+                printfn "x = %A" x
+                x
             | IsStatic,[a] -> is_static d a
             | ModuleIs,[a] -> module_is d a
 

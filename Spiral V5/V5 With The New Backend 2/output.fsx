@@ -1,7 +1,10 @@
 let (var_16: bool) = false
-let (var_17: bool) = (var_16 || true)
-if var_17 then
-    5L
+if var_16 then
+    true
 else
-    10L
+    let (var_17: bool) = false
+    if var_17 then
+        true
+    else
+        false
 
