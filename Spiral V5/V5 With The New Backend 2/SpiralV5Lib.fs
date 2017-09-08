@@ -159,41 +159,50 @@ let list =
     (
     "List",[tuple],"The queue module.",
     """
-inl list = 
-    met rec list x =
-        type
-            { 
-            elem = 
-                type
-                    ()
-                    x, list x
-            elem_type = (type x)
-            }
+met rec list x =
+    type
+        ()
+        x, list x
 
+inl is x = 
+    typec_choose <| inl on_fail on_succ -> function
+        | (),(a,b) | (a,b),() when eq_type (list a) b -> on_succ x
+        | _ -> on_fail()
+    <| typec_split x
+
+inl elem_type x =
+    inl elem_type = function
+        | (),(a,b) | (a,b),() -> a
+        | _ -> error_type "Expected a list type." 
+    
+    typec_choose <| inl on_fail on_succ -> function
+        | @is !elem_type typ -> on_succ typ
+        | _ -> on_fail()
+    <| typec_split x
+
+inl list = 
     inl rec loop tup_type n x on_fail on_succ =
         if n > 0 then
-            match x.elem with
+            match x with
             | () -> on_fail()
             | a, b -> loop (n-1) b on_fail <| inl b -> on_succ (a :: b)
         else
             match tup_type with
             | .tup ->
-                match x.elem with
+                match x with
                 | () -> on_succ()
                 | _ -> on_fail()
             | .cons -> on_succ x
         loop n x on_succ
+
     function
-    | .var, {elem elem_type} & x on_succ on_fail -> 
-        match eq_type (list elem_type) x with
-        | true -> on_succ x
-        | _ -> on_fail ()
-    | (.cons & typ, n, x | .tup & typ, n, x) on_succ on_fail -> loop typ n x on_fail on_succ
+    | .var, !is true & x -> x
+    | ((.tup | .cons) & typ, n, !is true & x) on_succ on_fail -> loop typ n x on_fail on_succ
     | typ -> list typ
 
-inl empty x = list x {elem=(); elem_type=type x}
-inl singleton x = list x {elem=x, empty x; elem_type=type x}
-inl cons a b = list a {elem=a, list a b; elem_type=type a}
+inl empty x = list x ()
+inl singleton x = list x (x, empty x)
+inl cons a b = list a (a, list a b)
 
 inl init n f =
     inl t = type (f 0)
@@ -203,12 +212,9 @@ inl init n f =
         : list t
     loop 0
 
-met rec map f {l with elem_type=t} =
-    inl t = typec_map f t
-    match l with
-    | #list (x :: xs) -> cons (f x) (map f xs)
-    | #list () -> empty t
-    : list t
+met rec map f = function
+    | #list (x :: xs) & elem_type t -> cons (f x) (map f xs) : list t
+    | #list () & elem_type t -> empty t : list t
 
 met rec foldl f s l = 
     match l with

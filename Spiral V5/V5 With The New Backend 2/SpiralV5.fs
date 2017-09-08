@@ -166,6 +166,7 @@ type Op =
     | TypeConstructorCreate
     | TypeConstructorUnion
     | TypeConstructorMap
+    | TypeConstructorSplit
     | EqType
     | ModuleHasMember
 
@@ -485,6 +486,8 @@ let spiral_peval module_main output_path =
 
     let type_create a = op(TypeConstructorCreate,[a])
     let type_union a b = op(TypeConstructorUnion,[a;b])
+    let type_split a = op(TypeConstructorSplit,[a])
+    let type_map a b = op(TypeConstructorMap,[a;b])
 
     // Aux outer functions
     let flip f a b = f b a
@@ -982,25 +985,35 @@ let spiral_peval module_main output_path =
             memoize_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
                 ty_join_point memo_key (JoinPointClosure fv,args,rev_renamer) (closuret(arg_ty,ret_ty))) d x
 
+        let rec case_type d args_ty =
+            let union_case = function
+                | UnionT (N l) -> Set.toList l
+                | _ -> [args_ty]
+            match args_ty with
+            | TyRec t -> union_case t
+            | x -> union_case x
+
+        let rec typec_strip = function
+            | FunT(N(N env,t)) -> funt (Map.map (fun _ -> typec_strip) env |> nodify_env_ty,t)
+            | VVT (N l) -> vvt (List.map typec_strip l)
+            | TyTypeC (N x) -> x 
+            | x -> x
+
+        let typec_split d x =
+            tev d x |> get_type |> typec_strip |> case_type d
+            |> List.map (typect >> make_tyv_and_push_ty d)
+            |> tyvv
+
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
             match tev d v with
             | TyV(_, t & (UnionT _ | RecT _)) as v ->
-                let rec case_destructure d args_ty =
-                    let inline f x = make_tyv_and_push_ty d x
-                    let union_case = function
-                        | UnionT (N l) -> Set.toList l |> List.map f
-                        | _ -> [f args_ty]
-                    match args_ty with
-                    | TyRec t -> union_case t
-                    | x -> union_case x
-
                 let rec map_cases l =
                     match l with
                     | x :: xs -> (x, assume d v x case) :: map_cases xs
                     | _ -> []
                             
-                match map_cases (case_destructure d t) with
+                match map_cases (case_type d t |> List.map (make_tyv_and_push_ty d)) with
                 | (_, TyType p) :: _ as cases -> 
                     if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> make_tyv_and_push_typed_expr d
                     else 
@@ -1015,12 +1028,6 @@ let spiral_peval module_main output_path =
             match get_type a, get_type b with
             | TyTypeC (N a), TyTypeC (N b) -> set_field a + set_field b |> uniont |> typect |> make_tyv_and_push_ty d
             | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
-
-        let rec typec_strip = function
-            | FunT(N(N env,t)) -> funt (Map.map (fun _ -> typec_strip) env |> nodify_env_ty,t)
-            | VVT (N l) -> vvt (List.map typec_strip l)
-            | TyTypeC (N x) -> x 
-            | x -> x
 
         let typec_create d x = 
             let key = nodify_memo_key (x, d.env)
@@ -1616,6 +1623,7 @@ let spiral_peval module_main output_path =
             | TypeConstructorUnion,[a;b] -> typec_union d a b
             | TypeConstructorCreate,[a] -> typec_create d a
             | TypeConstructorMap,[a;b] -> typec_map d a b
+            | TypeConstructorSplit,[a] -> typec_split d a
             | EqType,[a;b] -> eq_type d a b
             | ModuleHasMember,[a;b] -> module_has_member d a b
             | Neg,[a] -> prim_un_numeric d a Neg
@@ -1844,8 +1852,8 @@ let spiral_peval module_main output_path =
 
         and patterns_template expr pat_module s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr pat_module s
-            pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr ^<| pat_active 
-            ^<| choice [|pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_module expr|] <| s
+            pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr 
+            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_module expr|] <| s
 
         let inline patterns expr s = patterns_template expr pat_module_outer s
     
@@ -2669,7 +2677,9 @@ let spiral_peval module_main output_path =
         s  [l "error_type" (p error_type)
             l "print_static" (p print_static)
             l "dyn" (p dynamize)
-            l "union" (p2 type_union)
+            l "typec_union" (p2 type_union)
+            l "typec_split" (p type_split)
+            l "typec_map" (p2 type_map)
 
             l "bool" (op(TypeConstructorCreate,[lit <| LitBool true]))
             l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
@@ -2716,7 +2726,6 @@ let spiral_peval module_main output_path =
             l "is_static" (p <| fun x -> op(IsStatic,[x]))
             l "failwith" (p <| fun x -> op(FailWith,[x]))
             l "assert" (p2 <| fun c x -> if_static (eq c (lit (LitBool false))) (op(FailWith,[x])) B)
-            b "typec_map" TypeConstructorMap
             b "eq_type" EqType
             ]
 

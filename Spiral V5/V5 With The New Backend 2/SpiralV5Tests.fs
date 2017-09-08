@@ -242,7 +242,7 @@ write (a + b)
 let test16 = // 
     "test16",[],"Do var union types work?",
     """
-inl t = type (union (type int64) (type float32))
+inl t = type (typec_union (type int64) (type float32))
 if dyn true then t 0
 else t 0.0
     """
@@ -293,7 +293,7 @@ f (1,(2,5),3)
 let test20 = // 
     "test20",[],"Does pattern matching on union non-tuple types work? Do type annotation patterns work?",
     """
-inl t = union (type int64) (type float32)
+inl t = typec_union (type int64) (type float32)
 inl x = t 3.5
 match x with
 | q : float32 -> x + x
@@ -828,38 +828,8 @@ let test63 =
 inl list = 
     met rec list x =
         type
-            { 
-            elem = 
-                type
-                    ()
-                    x, list x
-            elem_type = type x
-            }
-
-    inl rec loop tup_type n x on_fail on_succ =
-        if n > 0 then
-            match x.elem with
-            | () -> on_fail()
-            | a, b -> loop (n-1) b on_fail <| inl b -> on_succ (a :: b)
-        else
-            match tup_type with
-            | .tup ->
-                match x.elem with
-                | () -> on_succ()
-                | _ -> on_fail()
-            | .cons -> on_succ x
-        loop n x on_succ
-    function
-    | .var, {elem elem_type} & x on_succ on_fail -> 
-        match eq_type (list elem_type) x with
-        | true -> on_succ x
-        | _ -> on_fail ()
-    | (.cons & typ, n, x | .tup & typ, n, x) on_succ on_fail -> loop typ n x on_fail on_succ
-    | typ -> list typ
-
-inl empty x = list x {elem=(); elem_type=type x}
-inl singleton x = list x {elem=x, empty x; elem_type=type x}
-inl cons a b = list a {elem=a, list a b; elem_type=type a}
+            ()
+            x, list x
 
 empty int64
     """
