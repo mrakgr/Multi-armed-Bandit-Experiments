@@ -918,10 +918,12 @@ let spiral_peval module_main output_path =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then
                 if_is_returnable type_tr <| fun () ->
-                    match cond with
-                    | TyLit(LitBool true) -> tr
-                    | TyLit(LitBool false) -> fl
-                    | _ -> TyOp(If,[cond;tr;fl],type_tr) |> make_tyv_and_push_typed_expr d
+                    if tr = fl then tr
+                    else 
+                        match cond with
+                        | TyLit(LitBool true) -> tr
+                        | TyLit(LitBool false) -> fl
+                        | _ -> TyOp(If,[cond;tr;fl],type_tr) |> make_tyv_and_push_typed_expr d
             else on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
         let if_cond d tr fl cond =
