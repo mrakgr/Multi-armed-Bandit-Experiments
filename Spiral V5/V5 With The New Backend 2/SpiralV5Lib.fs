@@ -109,6 +109,18 @@ inl repeat n x = init_template id n (inl _ -> x)
 module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon',init,repeat,append,singleton)
     """) |> module_
 
+let typec =
+    (
+    "TypeC",[],"The type constructor module",
+    """
+inl chain a f on_fail on_succ =
+    inl x = typec_map f a
+    if eq_type x typec_error then on_fail()
+    else on_succ x
+
+module(chain)
+    """) |> module_
+
 let array =
     (
     "Array",[],"The array module",
@@ -157,7 +169,7 @@ module (empty,singleton,foldl,init,map,filter,concat)
 
 let list =
     (
-    "List",[tuple],"The queue module.",
+    "List",[tuple;typec],"The queue module.",
     """
 met rec list x =
     type
@@ -165,19 +177,15 @@ met rec list x =
         x, list x
 
 inl is x = 
-    typec_choose <| inl on_fail on_succ -> function
-        | (),(a,b) | (a,b),() when eq_type (list a) b -> on_succ x
-        | _ -> on_fail()
+    TypeC.chain a <| function
+        | (),(a,b) | (a,b),() when eq_type (list a) b -> x
+        | _ -> typec_error
     <| typec_split x
 
 inl elem_type x =
-    inl elem_type = function
-        | (),(a,b) | (a,b),() -> a
-        | _ -> error_type "Expected a list type." 
-    
-    typec_choose <| inl on_fail on_succ -> function
-        | @is !elem_type typ -> on_succ typ
-        | _ -> on_fail()
+    TypeC.chain x <| function
+        | @is ((),(a,b) | (a,b),()) -> a
+        | _ -> typec_error
     <| typec_split x
 
 inl list = 
@@ -196,8 +204,8 @@ inl list =
         loop n x on_succ
 
     function
-    | .var, !is true & x -> x
-    | ((.tup | .cons) & typ, n, !is true & x) on_succ on_fail -> loop typ n x on_fail on_succ
+    | .var, @is x _ _ -> x
+    | ((.tup | .cons) & typ, n, @is x) -> loop typ n x
     | typ -> list typ
 
 inl empty x = list x ()
@@ -213,8 +221,8 @@ inl init n f =
     loop 0
 
 met rec map f = function
-    | #list (x :: xs) & elem_type t -> cons (f x) (map f xs) : list t
-    | #list () & elem_type t -> empty t : list t
+    | #list (x :: xs) -> cons (f x) (map f xs) : list x
+    | @elem_type t -> empty t : list t
 
 met rec foldl f s l = 
     match l with
@@ -228,8 +236,12 @@ met rec foldr f l s =
     | #list () -> s
     : s
 
-inl append a b = match b with | #list () -> a | b -> foldlr cons a b
-inl concat {l with elem_type=t} = foldr append l (empty t)
+inl append a b = 
+    match a,b with 
+    | _,#list () -> a 
+    | #list (),_ -> b
+    | _ -> foldlr cons a b
+inl concat l & @elem_type t = foldr append l (empty t)
 
 module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
     """) |> module_

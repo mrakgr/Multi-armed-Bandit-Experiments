@@ -2680,6 +2680,7 @@ let spiral_peval module_main output_path =
             l "typec_union" (p2 type_union)
             l "typec_split" (p type_split)
             l "typec_map" (p2 type_map)
+            l "typec_error" (op(TypeConstructorCreate,[lit <| LitString "TypeConstructorError"]))
 
             l "bool" (op(TypeConstructorCreate,[lit <| LitBool true]))
             l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
