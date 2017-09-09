@@ -825,13 +825,48 @@ f a && f b || f c && f d || f e
 let test63 =
     "test63",[],"Does the List.empty work?",
     """
-inl list = 
-    met rec list x =
-        type
-            ()
-            x, list x
+met rec list x =
+    type
+        ()
+        x, list x
 
-empty int64
+inl is x = 
+    TypeC.chain a <| function
+        | (),(a,b) | (a,b),() when eq_type (list a) x -> x
+        | _ -> typec_error
+    <| typec_split x
+
+inl elem_type x =
+    TypeC.chain x <| function
+        | @is ((),(a,b) | (a,b),()) -> a
+        | _ -> typec_error
+    <| typec_split x
+
+inl list = 
+    inl rec loop tup_type n x on_fail on_succ =
+        if n > 0 then
+            match x with
+            | () -> on_fail()
+            | a, b -> loop (n-1) b on_fail <| inl b -> on_succ (a :: b)
+        else
+            match tup_type with
+            | .tup ->
+                match x with
+                | () -> on_succ()
+                | _ -> on_fail()
+            | .cons -> on_succ x
+        loop n x on_succ
+
+    function
+    | .var, @is x _ _ -> x
+    | ((.tup | .cons) & typ, n, @is x) -> loop typ n x
+    | typ -> list typ
+
+inl empty x = list (type x) ()
+inl singleton x = list (type x) (x, empty x)
+inl cons a b = list (type a) (a, list (type a) b)
+
+cons 3 () |> cons 2 |> cons 1
     """
 
 let tests =

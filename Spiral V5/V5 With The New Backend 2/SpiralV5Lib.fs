@@ -171,10 +171,9 @@ let list =
     (
     "List",[tuple;typec],"The queue module.",
     """
-met rec list x =
-    type
-        ()
-        x, list x
+type list x =
+    ()
+    x, list x
 
 inl is x = 
     TypeC.chain a <| function

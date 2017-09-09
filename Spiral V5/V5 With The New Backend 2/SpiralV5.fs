@@ -1663,7 +1663,7 @@ let spiral_peval module_main output_path =
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
-        let between_brackets l p r = between (skipChar l .>> spaces) (skipChar r .>> spaces) p
+        let between_brackets l p r = between (skipChar l >>. spaces) (skipChar r >>. spaces) p
         let rounds p = between_brackets '(' p ')'
         let curlies p = between_brackets '{' p '}'
         let squares p = between_brackets '[' p ']'
@@ -1675,7 +1675,7 @@ let spiral_peval module_main output_path =
         let when_ = keywordString "when"
         let as_ = keywordString "as"
         let negate_ = operatorChar '-'
-        let comma = operatorChar ','
+        let comma = skipChar ',' >>. spaces
         let dot = operatorChar '.'
         let grave = operatorChar '`' 
         let pp = operatorChar ':'
@@ -1690,8 +1690,8 @@ let spiral_peval module_main output_path =
         let inl_ = keywordString "inl"
         let inm_ = keywordString "inm"
         let met_ = keywordString "met"
-        let inl_rec = keywordString "inl" .>> keywordString "rec"
-        let met_rec = keywordString "met" .>> keywordString "rec"
+        let inl_rec = keywordString "inl" >>. keywordString "rec"
+        let met_rec = keywordString "met" >>. keywordString "rec"
         let match_ = keywordString "match"
         let function_ = keywordString "function"
         let module_ = keywordString "module"
@@ -1799,7 +1799,7 @@ let spiral_peval module_main output_path =
                              | 't' -> '\t'
                              | c   -> c
             let escapedChar = pchar '\\' >>. (anyOf "\\nrt\"" |>> unescape)
-            between (pchar '"') (pchar '"' .>> spaces)
+            between (pchar '"') (pchar '"' >>. spaces)
                     (manyChars (normalChar <|> escapedChar))
             |>> LitString
 
@@ -1821,7 +1821,7 @@ let spiral_peval module_main output_path =
         let pat_type expr pattern = tuple2 pattern (opt (pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
         let pat_active pattern = 
             let active_pat = choice [active_pat >>% PatActive; part_active_pat >>% PatPartActive; ext_active_pat >>% PatExtActive]
-            (pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)) <|> pattern
+            pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)
         let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
         let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
         let pat_type_lit = dot >>. (lit_ <|> (var_name |>> LitString)) |>> PatTypeLit
