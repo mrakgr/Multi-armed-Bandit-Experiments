@@ -260,12 +260,14 @@ and Ty =
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
+    | TyT of Ty
     | TyV of TyTag
     | TyVV of Node<TypedExpr list>
     | TyFun of Node<EnvTerm * FunType>
     | TyBox of Node<TypedExpr * Ty>
 
-    | TyLet of LetType * TyTag * TypedExpr * TypedExpr * Ty
+    | TyLet of TyTag * TypedExpr * TypedExpr * Ty
+    | TyState of TypedExpr * TypedExpr * Ty
     | TyLit of Value
     | TyOp of Op * TypedExpr list * Ty
     | TyJoinPoint of JoinPointKey * Ty
@@ -291,10 +293,6 @@ and MemoKey = Node<Expr * EnvTerm>
 
 and Arguments = LinkedHashSet<TyTag>
 and Renamer = Dictionary<Tag,Tag>
-
-and LetType =
-    | LetStd
-    | LetInvisible
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
 and MemoDict = Dictionary<MemoKey, MemoCases>
@@ -342,6 +340,17 @@ and ProgramNode =
 
 // #Main
 let spiral_peval module_main output_path = 
+    // #Unit types
+    let rec is_unit_tuple t = List.forall is_unit t
+    and is_unit_env env = Map.forall (fun _ -> is_unit) env
+    and is_unit = function
+        | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
+        | ArrayT (N(_,t)) -> is_unit t
+        | FunT (N(N env,_)) -> is_unit_env env
+        | VVT (N t) -> is_unit_tuple t
+
+    // #Smart constructors
     let inline force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
@@ -360,9 +369,7 @@ let spiral_peval module_main output_path =
             let x' = Node(x,id)
             dict.[x] <- id
             x'
- 
-    // #Smart constructors
-    
+   
     // nodify_expr variants.
     let nodify_v = nodify_expr <| d0()
     let nodify_lit = nodify_expr <| d0()
@@ -516,10 +523,9 @@ let spiral_peval module_main output_path =
         | TyVV (N l) -> List.map get_type l |> vvt
         | TyFun (N(N l, t)) -> funt (env_to_ty l, t)
 
-        | TyV(_,t)
-        | TyBox(N(_,t))
-        | TyLet(_,_,_,_,t) | TyJoinPoint(_,t)
-        | TyOp(_,_,t) -> t
+        | TyT t | TyV(_,t) | TyBox(N(_,t))
+        | TyLet(_,_,_,t) | TyJoinPoint(_,t)
+        | TyState (_,_,t) | TyOp(_,_,t) -> t
 
     let (|TyTypeC|_|) x =
         match x with
@@ -761,7 +767,7 @@ let spiral_peval module_main output_path =
         let inline f e = renamer_apply_typedexpr r e
         let inline rename (n,t as k) =
             match renamer.TryGetValue n with
-            | true, _ -> failwith "Should be caught be the memoize call."
+            | true, _ -> failwith "Should have been caught be the memoize call."
             | false, _ ->
                 let n' = renamer.Count
                 renamer.Add(n,n')
@@ -772,6 +778,7 @@ let spiral_peval module_main output_path =
                 k'
         memoize memo_dict e <| fun () ->
             match e with
+            | TyT _ -> e
             | TyBox (N(n,t)) -> tybox(f n,t)
             | TyVV (N l) -> tyvv(List.map f l)
             | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
@@ -779,7 +786,7 @@ let spiral_peval module_main output_path =
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
             | TyLit _ -> e
-            | TyJoinPoint _ | TyOp _ | TyLet _ -> failwithf "Only data structures can be renamed. Got: %A" e
+            | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the env can be renamed. Got: %A" e
 
     // #Conversion
     let rec dotnet_type_to_ty (x: System.Type) =
@@ -855,20 +862,27 @@ let spiral_peval module_main output_path =
             t
 
         let make_tyv_ty d ty = get_tag d, ty
-        let make_tyv_typed_expr d ty_exp = make_tyv_ty d (get_type ty_exp)
 
-        let make_tyv_and_push_typed_expr d ty_exp =
-            let v = make_tyv_typed_expr d ty_exp
-            let seq = !d.seq
-            d.seq := fun rest -> TyLet(LetStd,v,ty_exp,rest,get_type rest) |> seq
-            tyv v
+        let make_up_vars_for_ty d ty = TyV <| make_tyv_ty d ty
 
-        let make_tyv_and_push_ty d ty =
-            let v = make_tyv_ty d ty
-            let v' = tyv v
+        let state d ty_exp =
             let seq = !d.seq
-            d.seq := fun rest -> TyLet(LetInvisible,v,v',rest,get_type rest) |> seq
-            v'
+            d.seq := fun rest -> TyState(ty_exp,rest,get_type rest) |> seq
+            TyB
+
+        let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
+            let ty = get_type ty_exp
+            if is_unit ty then
+                if even_if_unit then state d ty_exp
+                else TyT ty
+            else
+                let v = make_tyv_ty d ty
+                let seq = !d.seq
+                d.seq := fun rest -> TyLet(v,ty_exp,rest,get_type rest) |> seq
+                tyv v
+            
+        let make_tyv_and_push_typed_expr_even_if_unit d ty_exp = make_tyv_and_push_typed_expr_template true d ty_exp
+        let make_tyv_and_push_typed_expr d ty_exp = make_tyv_and_push_typed_expr_template false d ty_exp
 
         let cse_add' d r x = let e = !d.cse_env in if r <> x then Map.add r x e else e
         let cse_add d r x = d.cse_env := cse_add' d r x
@@ -907,8 +921,10 @@ let spiral_peval module_main output_path =
             
             match r with
             | TyFun _ | TyVV _ | TyLit _ -> r
-            | TyBox _ | TyV _ -> destructure_var r
-            | TyJoinPoint _ | TyLet _ | TyOp _ -> destructure_cse r
+            | TyBox _ -> chase_recurse r
+            | TyT _ | TyV _ -> destructure_var r
+            | TyOp _ -> destructure_cse r
+            | TyJoinPoint _ | TyLet _ | TyState _ -> failwith "These two should never appear in destructure. They should go directly into d.seq."
 
         let inline if_is_returnable ty_x f =
             if is_returnable' ty_x then f()
@@ -921,8 +937,6 @@ let spiral_peval module_main output_path =
                 | TyOp(EQ,[b & TyLit _; a & TyV _],_) | TyOp(EQ,[a & TyV _; b & TyLit _],_) -> tev_assume (cse_add' d a b) d tr
                 | _ -> tev_assume (b true) d tr
             let fl = tev_assume (b false) d fl
-            printfn "tr=%A" tr
-            printfn "fl=%A" fl
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then
                 if_is_returnable type_tr <| fun () ->
@@ -931,7 +945,7 @@ let spiral_peval module_main output_path =
                         match cond with
                         | TyLit(LitBool true) -> tr
                         | TyLit(LitBool false) -> fl
-                        | _ -> TyOp(If,[cond;tr;fl],type_tr) |> make_tyv_and_push_typed_expr d
+                        | _ -> TyOp(If,[cond;tr;fl],type_tr) |> make_tyv_and_push_typed_expr_even_if_unit d
             else on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
         let if_cond d tr fl cond =
@@ -983,7 +997,7 @@ let spiral_peval module_main output_path =
             if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else memo_key, fv, renamer_reversed, typed_expr_ty
 
-        let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr d
+        let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr_even_if_unit d
         let memoize_method d x = 
             let memo_type = JoinPointMethod
             memoize_helper (fun _ -> memo_type) (fun (memo_key,args,rev_renamer,ret_ty) -> 
@@ -991,9 +1005,9 @@ let spiral_peval module_main output_path =
 
         let memoize_type d x = 
             let memo_type _ = JoinPointType
-            let env = d.env.Expression |> Map.map (fun _ -> get_type >> typec_strip >> make_tyv_and_push_ty d) |> nodify_env_term
+            let env = d.env.Expression |> Map.map (fun _ -> get_type >> typec_strip >> TyT) |> nodify_env_term
             let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
-            make_tyv_and_push_ty d ret_ty
+            TyT ret_ty
                 
         let memoize_closure arg d x =
             let _,_,_,fv,_ as r = renamables0()
@@ -1012,7 +1026,7 @@ let spiral_peval module_main output_path =
 
         let typec_split d x =
             tev d x |> get_type |> typec_strip |> case_type d
-            |> List.map (typect >> make_tyv_and_push_ty d)
+            |> List.map (typect >> TyT)
             |> tyvv
 
         let case_ d v case =
@@ -1024,9 +1038,11 @@ let spiral_peval module_main output_path =
                     | x :: xs -> (x, assume d v x case) :: map_cases xs
                     | _ -> []
                             
-                match map_cases (case_type d t |> List.map (make_tyv_and_push_ty d)) with
+                match map_cases (case_type d t |> List.map (make_up_vars_for_ty d)) with
                 | (_, TyType p) :: _ as cases -> 
-                    if List.forall (fun (_, TyType x) -> x = p) cases then TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) |> make_tyv_and_push_typed_expr d
+                    if List.forall (fun (_, TyType x) -> x = p) cases then 
+                        TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) 
+                        |> make_tyv_and_push_typed_expr_even_if_unit d
                     else 
                         let l = List.map (snd >> get_type) cases
                         on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
@@ -1037,12 +1053,12 @@ let spiral_peval module_main output_path =
         let typec_union d a b =
             let a, b = tev2 d a b
             match get_type a, get_type b with
-            | TyTypeC (N a), TyTypeC (N b) -> set_field a + set_field b |> uniont |> typect |> make_tyv_and_push_ty d
+            | TyTypeC (N a), TyTypeC (N b) -> set_field a + set_field b |> uniont |> typect |> TyT
             | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
         let typec_create d x = 
             let key = nodify_memo_key (x, d.env)
-            let inline ret x = make_tyv_and_push_ty d (typect x)
+            let inline ret x = TyT (typect x)
 
             let inline add_to_memo_dict x = 
                 memoized_methods.[key] <- MemoType x
@@ -1071,7 +1087,7 @@ let spiral_peval module_main output_path =
             match tev d x with
             | TypeString x ->
                 wrap_exception d <| fun _ ->
-                    System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> make_tyv_and_push_ty d
+                    System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> TyT
             | _ -> on_type_er d.trace "Expected a type level string."
 
         let (|TyDotNetType|_|) = function
@@ -1093,15 +1109,15 @@ let spiral_peval module_main output_path =
             | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
             | _ -> on_type_er d.trace "Expected a string."
 
-        let rec apply d a b = 
+        let rec apply d a b =
             match destructure d a, destructure d b with
             // It might make more sense to use TyType rather than TyTag here, but I do not want get_type to be triggered on everything here
             // as it is an expensive operation.
 
             // apply_for_cast
-            | recf & TyFun(N(N env_term,fun_type)), TyV (_,ForCastT (N args_ty)) -> 
+            | recf & TyFun(N(N env_term,fun_type)), TyT (ForCastT (N args_ty)) -> 
                 let instantiate_type_as_variable d args_ty =
-                    let f x = make_tyv_and_push_ty d x
+                    let f x = make_up_vars_for_ty d x
                     match args_ty with
                     | VVT (N l) -> tyvv(List.map f l)
                     | x -> f x
@@ -1142,7 +1158,7 @@ let spiral_peval module_main output_path =
                 | DotNetReference, TyVV(N []) -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _, TypeString x -> 
-                    if x = "elem_type" then elem_ty |> typec_strip |> typect |> make_tyv_and_push_ty d
+                    if x = "elem_type" then elem_ty |> typec_strip |> typect |> TyT
                     else failwithf "Unknown type string applied to array. Got: %s" x
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
@@ -1152,7 +1168,7 @@ let spiral_peval module_main output_path =
                         | null -> on_type_er d.trace "A type cannot be found inside the assembly."
                         | x -> 
                             if x.IsPublic then
-                                x |> dotnet_type_runtimet |> make_tyv_and_push_ty d
+                                x |> dotnet_type_runtimet |> TyT
                             else
                                 on_type_er d.trace "Cannot load a private type from an assembly."
             | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
@@ -1165,7 +1181,7 @@ let spiral_peval module_main output_path =
                 | field ->
                     if field.IsPublic then
                         TyOp(DotNetTypeGetField,[dotnet_type;method_name],field.FieldType |> dotnet_type_to_ty)
-                        |> make_tyv_and_push_typed_expr d
+                        |> make_tyv_and_push_typed_expr_even_if_unit d
                     else
                         on_type_er d.trace "Cannot get a private field."            
             | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
@@ -1175,21 +1191,21 @@ let spiral_peval module_main output_path =
                     | meth -> 
                         if meth.IsPublic then
                             TyOp(DotNetTypeCallMethod,[dotnet_type;args],meth.ReturnType |> dotnet_type_to_ty)
-                            |> make_tyv_and_push_typed_expr d
+                            |> make_tyv_and_push_typed_expr_even_if_unit d
                         else
                             on_type_er d.trace "Cannot call a private method."
             | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TyTuple (TySystemTypeArgs system_type_args) ->
                 wrap_exception d <| fun _ ->
                     if runtime_type.ContainsGenericParameters then // instantiate generic type params
                         runtime_type.MakeGenericType system_type_args 
-                        |> dotnet_type_runtimet |> make_tyv_and_push_ty d
+                        |> dotnet_type_runtimet |> TyT
                     else // construct the type
                         match runtime_type.GetConstructor system_type_args with
                         | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
                         | con ->
                             if con.IsPublic then
                                 let instance_type = dotnet_type_instancet runtime_type
-                                TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr d
+                                TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
                             else
                                 on_type_er d.trace "Cannot call a private constructor."    
             | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
@@ -1229,8 +1245,8 @@ let spiral_peval module_main output_path =
 
         let typec_map d f x =
             let f = tev d f 
-            let x = tev d x |> get_type |> typec_strip |> make_tyv_and_push_ty d
-            apply {d with seq = ref id} f x |> get_type |> typec_strip |> typect |> make_tyv_and_push_ty d
+            let x = tev d x |> get_type |> typec_strip |> TyT
+            apply {d with seq = ref id} f x |> get_type |> typec_strip |> typect |> TyT
 
         let inline vv_index_template f d v i =
             let v,i = tev2 d v i
@@ -1268,7 +1284,7 @@ let spiral_peval module_main output_path =
             | TyVV (N b) -> tyvv(a::b)
             | _ -> on_type_er d.trace "Expected a tuple on the right in VVCons."
 
-        let type_lit_create' d x = litt x |> make_tyv_and_push_ty d
+        let type_lit_create' d x = litt x |> TyT
 
         let module_open d a b =
             let a = tev d a
@@ -1301,7 +1317,7 @@ let spiral_peval module_main output_path =
 
         let type_annot d a b =
             match d.rbeh with
-            | AnnotationReturn -> tev d b |> get_type |> typec_strip |> make_tyv_and_push_ty d
+            | AnnotationReturn -> tev d b |> get_type |> typec_strip |> TyT
             | AnnotationDive ->
                 let f a = typec_strip (get_type a) 
                 let a, b = tev d a, tev_seq d b
@@ -1431,7 +1447,7 @@ let spiral_peval module_main output_path =
                 | _ -> prim_un_op_helper t a
                 ) a t
 
-        let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> make_tyv_and_push_ty d
+        let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> TyT
         let error_non_unit d a =
             let x = tev d a 
             if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
@@ -1477,18 +1493,18 @@ let spiral_peval module_main output_path =
 
         let array_set d ar idx r =
             match tev3 d ar idx r with
-            | ar & TyType (ArrayT(N(DotNetHeap,t))), idx, r when is_int idx && t = get_type r -> 
-                make_tyv_and_push_typed_expr d (TyOp(ArraySet,[ar;idx;r],BVVT))
+            | ar & TyType (ArrayT(N(DotNetHeap,t))), idx, r when is_int idx && t = get_type r ->
+                if is_unit t then TyB
+                else state d (TyOp(ArraySet,[ar;idx;r],BVVT))
             | ar & TyType (ArrayT(N(DotNetReference,t))), idx & TyVV(N []), r when t = get_type r -> 
-                make_tyv_and_push_typed_expr d (TyOp(ArraySet,[ar;idx;r],BVVT))
+                if is_unit t then TyB
+                else state d (TyOp(ArraySet,[ar;idx;r],BVVT))
             | x -> on_type_er d.trace <| sprintf "The two sides in array set have different types. %A" x
 
         let array_length d ar =
             match tev d ar with
-            | ar & TyType (ArrayT(N(DotNetHeap,t)))-> 
-                make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
-            | ar & TyType (ArrayT(N(DotNetReference,t)))-> 
-                TyLit (LitInt64 1L)
+            | ar & TyType (ArrayT(N(DotNetHeap,t)))-> make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
+            | ar & TyType (ArrayT(N(DotNetReference,t)))-> TyLit (LitInt64 1L)
             | x -> on_type_er d.trace <| sprintf "ArrayLength is only supported for .NET arrays. Got: %A" x
 
         let is_static d x = 
@@ -2201,15 +2217,6 @@ let spiral_peval module_main output_path =
                 | "" -> ()
                 | s -> state s
 
-        let rec is_unit_tuple t = List.forall is_unit t
-        and is_unit_env env = Map.forall (fun _ -> is_unit) env
-        and is_unit = function
-            | VVT (N []) | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
-            | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
-            | ArrayT(N(_,t)) -> is_unit t
-            | FunT (N(N env,_)) -> is_unit_env env
-            | VVT (N t) -> is_unit_tuple t
-
         let (|Unit|_|) x = if is_unit x then Some () else None
 
         let definitions_set = h0()
@@ -2352,7 +2359,7 @@ let spiral_peval module_main output_path =
                     |> state
 
                 let tail_rec_opt = function
-                    | TyLet(_,tyv,b,TyV tyv',_) when tyv = tyv' -> b
+                    | TyLet(tyv,b,TyV tyv',_) when tyv = tyv' -> b
                     | x -> x
 
                 let (|SimpleExpr|_|) x = 
@@ -2385,33 +2392,16 @@ let spiral_peval module_main output_path =
             let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
             let array_create size = function
-                | Unit -> ""
                 | ArrayT(N(_,t)) -> sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) (codegen size)
                 | _ -> failwith "impossible"
 
-            let reference_create = function
-                | TyType Unit -> ""
-                | x -> sprintf "(ref %s)" (codegen x)
-
-            let array_index ar idx =
-                match ar with
-                | TyType Unit -> ""
-                | _ -> sprintf "%s.[int32 %s]" (codegen ar) (codegen idx)
-
+            let reference_create x = sprintf "(ref %s)" (codegen x)
+            let array_index ar idx = sprintf "%s.[int32 %s]" (codegen ar) (codegen idx)
             let array_length ar = sprintf "%s.LongLength" (codegen ar)
+            let reference_index x = sprintf "(!%s)" (codegen x)
 
-            let reference_index = function
-                | TyType Unit -> ""
-                | x -> sprintf "(!%s)" (codegen x)
-
-            let array_set ar idx r = 
-                match ar with
-                | TyType Unit -> ()
-                | _ -> sprintf "%s <- %s" (array_index ar idx) (codegen r) |> state
-            let reference_set l r = 
-                match l with
-                | TyType Unit -> ()
-                | _ -> sprintf "%s := %s" (codegen l) (codegen r) |> state
+            let array_set ar idx r = sprintf "%s <- %s" (array_index ar idx) (codegen r) |> state
+            let reference_set l r = sprintf "%s := %s" (codegen l) (codegen r) |> state
 
             let string_length str = sprintf "(int64 %s.Length)" (codegen str)
             let string_index str idx = sprintf "%s.[int32 %s]" (codegen str) (codegen idx)
@@ -2443,11 +2433,10 @@ let spiral_peval module_main output_path =
                     loop 0 cases
 
             match expr with
-            | TyV (_, Unit) | TyBox (N(_, Unit)) -> ""
+            | TyT _ | TyV (_, Unit) -> ""
             | TyV v -> print_tyv v
-            | TyLet(LetInvisible, _, _, rest, _) -> codegen rest
-            | TyLet(_,tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
-            | TyLet(_,(_,Unit),b,rest,_) ->
+            | TyLet(tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
+            | TyState(b,rest,_) ->
                 match b with
                 | TyOp(ArraySet,[ar;idx;b],_) ->
                     match get_type ar with
@@ -2458,9 +2447,9 @@ let spiral_peval module_main output_path =
                     let b = codegen b
                     if b <> "" then sprintf "%s" b |> state
                 codegen rest
-            | TyLet(_,tyv,TyOp(If,[cond;tr;fl],t),rest,_) -> if_ (Some tyv) cond tr fl; codegen rest
-            | TyLet(_,tyv,TyOp(Case,v :: cases,t),rest,_) -> match_with (print_if tyv) v cases; codegen rest
-            | TyLet(_,tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
+            | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_) -> if_ (Some tyv) cond tr fl; codegen rest
+            | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_) -> match_with (print_if tyv) v cases; codegen rest
+            | TyLet(tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
             | TyLit x -> print_value x
             | TyJoinPoint((S method_tag,_ as key),_) ->
                 let method_name = print_method method_tag
@@ -2589,11 +2578,14 @@ let spiral_peval module_main output_path =
                 sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
                 "end" |> state
 
-        let print_method_definition is_first tag (join_point_type, fv, body) = 
-            let prefix = if is_first then "let rec" else "and"
+        let mutable is_first_method = true
+
+        let print_method_definition tag (join_point_type, fv, body) = 
+            let prefix = if is_first_method then "let rec" else "and"
             let method_name = print_method tag
 
             let print_body() =
+                is_first_method <- false
                 enter <| fun _ -> 
                     let c = buffer.Count
                     let x = codegen body
@@ -2611,10 +2603,10 @@ let spiral_peval module_main output_path =
                 print_body()
             | JoinPointType -> ()
 
-        memoized_methods |> Seq.fold (fun is_first x -> 
+        memoized_methods |> Seq.iter (fun x -> 
             match x.Value with
-            | MemoMethod (join_point_type, fv, body) -> print_method_definition is_first x.Key.Symbol (join_point_type, fv, body); false
-            | _ -> is_first) true |> ignore
+            | MemoMethod (join_point_type, fv, body) -> print_method_definition x.Key.Symbol (join_point_type, fv, body)
+            | _ -> ()) |> ignore
         codegen main |> state // Can't forget the non-method
 
         buffer_code.AddRange(buffer)

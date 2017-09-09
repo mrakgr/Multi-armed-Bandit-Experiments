@@ -128,7 +128,7 @@ inl foldl f s ar =
 
 inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
-    inl typ = type (f 0)
+    type typ = f 0
     inl ar = array_create n typ
     met rec loop (!dyn i) =
         if i < n then (ar i <- f i); loop (i+1)
@@ -283,7 +283,7 @@ let parsing =
     "Parsing",[tuple],"Parser combinators.",
     """
 // Primitives
-inl m x parser = { elem = parser; elem_type = type x}
+inl m x parser = { elem = parser; elem_type = typec x}
 inl goto point x = m () <| inl _ state -> point state x
 inl succ x = m x <| inl {on_succ} state -> on_succ state x
 inl fail () = m x <| inl {on_fail} state -> on_fail state x

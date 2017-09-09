@@ -438,7 +438,7 @@ met f = to_int64 (dyn 'a')
 f
     """
 
-let test33 = //
+let test33 = // 1.33s
     "test33",[],"Does a simple loop have superlinear scaling?",
     """
 inl rec loop = function
@@ -701,14 +701,11 @@ on_succ (x+y+z) // Tuple2(20L, Tuple1(2L, 7L, 11L))
 //        """
 
 let test58 =
-    "test58",[array;console],"Does the fold function get duplicated?",
+    "test58",[array],"Does the fold function get duplicated?",
     """
-open Console
-
 inl ar = array_create 128 (int64,int64)
 Array.foldl (inl a,b c,d -> a+c,b+d) (dyn (1,2)) ar
 |> inl a,b -> a*b
-|> writeline
     """
 
 //let test59 =
@@ -865,5 +862,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test13
+run_test' false test64
 
