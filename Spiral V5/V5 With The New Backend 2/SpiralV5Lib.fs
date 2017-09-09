@@ -178,7 +178,7 @@ met rec list x =
 
 inl is x = 
     TypeC.chain a <| function
-        | (),(a,b) | (a,b),() when eq_type (list a) b -> x
+        | (),(a,b) | (a,b),() when eq_type (list a) x -> x
         | _ -> typec_error
     <| typec_split x
 
