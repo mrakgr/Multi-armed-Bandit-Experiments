@@ -109,18 +109,6 @@ inl repeat n x = init_template id n (inl _ -> x)
 module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon',init,repeat,append,singleton)
     """) |> module_
 
-let typec =
-    (
-    "TypeC",[],"The type constructor module",
-    """
-inl chain a f on_fail on_succ =
-    inl x = typec_map f a
-    if eq_type x typec_error then on_fail()
-    else on_succ x
-
-module(chain)
-    """) |> module_
-
 let array =
     (
     "Array",[],"The array module",
@@ -167,6 +155,19 @@ inl concat ar =
 module (empty,singleton,foldl,init,map,filter,concat)
     """) |> module_
 
+let typec =
+    (
+    "TypeC",[],"The type constructor module",
+    """
+inl chain a f on_fail on_succ =
+    inl x = typec_map f a
+    match eq_type x typec_error with
+    | true -> on_fail()
+    | _ -> on_succ x
+
+module(chain)
+    """) |> module_
+
 let list =
     (
     "List",[tuple;typec],"The queue module.",
@@ -176,16 +177,14 @@ type list x =
     x, list x
 
 inl is x = 
-    TypeC.chain a <| function
+    TypeC.chain (typec_split x) <| function
         | (),(a,b) | (a,b),() when eq_type (list a) x -> x
         | _ -> typec_error
-    <| typec_split x
 
 inl elem_type x =
-    TypeC.chain x <| function
+    TypeC.chain (typec_split x) <| function
         | @is ((),(a,b) | (a,b),()) -> a
         | _ -> typec_error
-    <| typec_split x
 
 inl list = 
     inl rec loop tup_type n x on_fail on_succ =
@@ -203,8 +202,8 @@ inl list =
         loop n x on_succ
 
     function
-    | .var, @is x _ _ -> x
-    | ((.tup | .cons) & typ, n, @is x) -> loop typ n x
+    | .var, x & @is _ -> inl _ _ -> x
+    | (.tup | .cons) & typ, n, x & !is _ -> loop typ n x
     | typ -> list typ
 
 inl empty x = list x ()
@@ -212,7 +211,7 @@ inl singleton x = list x (x, empty x)
 inl cons a b = list a (a, list a b)
 
 inl init n f =
-    inl t = type (f 0)
+    inl t = typec (f 0)
     met rec loop !dyn i =
         if i < n then cons (f i) (loop (i+1))
         else empty t

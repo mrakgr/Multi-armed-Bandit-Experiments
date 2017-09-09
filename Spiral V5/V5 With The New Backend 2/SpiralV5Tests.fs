@@ -97,12 +97,11 @@ a, b, c
 let test8 = // 
     "test8",[],"Does the basic union type work?",
     """
-met x =
-    inl option_int = 
-        type 
-            .Some, 1 
-            .None
-    option_int .None //(.Some, 10)
+type option_int = 
+    .Some, 1 
+    .None
+
+met x = option_int .None //(.Some, 10)
 match x with
 | .Some, x -> x
 | .None -> 0
@@ -111,9 +110,9 @@ match x with
 let test9 = // 
     "test9",[],"Does the partial evaluator optimize unused match cases?",
     """
-inl ab = 
-    type .A
-         .B
+type ab = 
+    .A
+    .B
 met x = (ab .A, ab .A, ab .A)
 match x with
 | .A, _, _ -> 1
@@ -125,9 +124,9 @@ match x with
 let test10 = // 
     "test10",[],"The worst case for partially evaluated pattern matchers.",
     """
-inl ab = 
-    type .A
-         .B
+type ab = 
+    .A
+    .B
 met x = (ab .A, ab .A, ab .A, ab .A)
 match x with
 | .A, .A, _, _ -> 1
@@ -139,8 +138,8 @@ match x with
 let test11 = // 
     "test1",[],"Do the nested patterns work on dynamic data?",
     """
-inl a = type (1,2)
-inl b = type (1,a,a)
+type a = (1,2)
+type b = (1,a,a)
 met x = b (1, a (2,3), a (4,5))
 match x with
 | _, (x, _), (_, y) -> x + y
@@ -160,11 +159,10 @@ p (.Some, .None)
 let test13 = // 
     "test13",[],"A more complex interpreter example on static data.",
     """
-met rec expr x = 
-    type 
-        .V, x
-        .Add, expr x, expr x
-        .Mult, expr x, expr x
+type expr x = 
+    .V, x
+    .Add, expr x, expr x
+    .Mult, expr x, expr x
 inl int_expr = expr int64
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
@@ -182,11 +180,10 @@ interpreter_static c
 let test14 =
     "test14",[],"Does recursive pattern matching work on partially static data?",
     """
-met rec expr x = 
-    type 
-        .V, x
-        .Add, expr x, expr x
-        .Mult, expr x, expr x
+type expr x = 
+    .V, x
+    .Add, expr x, expr x
+    .Mult, expr x, expr x
 inl int_expr = expr int64
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
@@ -242,7 +239,9 @@ write (a + b)
 let test16 = // 
     "test16",[],"Do var union types work?",
     """
-inl t = type (typec_union (type int64) (type float32))
+type t = 
+    int64
+    float32
 if dyn true then t 0
 else t 0.0
     """
@@ -293,7 +292,9 @@ f (1,(2,5),3)
 let test20 = // 
     "test20",[],"Does pattern matching on union non-tuple types work? Do type annotation patterns work?",
     """
-inl t = typec_union (type int64) (type float32)
+type t = 
+    int64
+    float32
 inl x = t 3.5
 match x with
 | q : float32 -> x + x
@@ -385,10 +386,9 @@ a(0),b(0)
 let test29 =
     "test29",[],"Does pattern matching work redux?",
     """
-inl t = 
-    type 
-        int64, int64
-        int64
+type t = 
+    int64, int64
+    int64
 
 inl x = (1,1) |> t |> dyn
 match x with
@@ -399,10 +399,9 @@ match x with
 let test30 = // 
     "test30",[],"Do recursive algebraic datatypes work?",
     """
-met rec List x =
-    type
-        .ListCons, (x, List x)
-        .ListNil
+type List x =
+    .ListCons, (x, List x)
+    .ListNil
 
 inl t = List int64
 inl nil = t .ListNil
@@ -420,15 +419,13 @@ nil |> cons 3 |> cons 2 |> cons 1 |> dyn |> sum 0
 let test31 = // 
     "test31",[],"Does passing types into types work?",
     """
-inl a = 
-    type 
-        .A, (int64, int64)
-        .B, string
+type a = 
+    .A, (int64, int64)
+    .B, string
 
-inl b = 
-    type 
-        a
-        .Hello
+type b = 
+    a
+    .Hello
 (.A, (2,3)) |> a |> dyn |> b
     """
 
@@ -452,16 +449,14 @@ loop 50000
 let test35 = // 
     "test35",[],"Does case on union types with recursive types work properly?",
     """
-met rec List x = 
-    type
-        .Nil
-        .Cons, (int64, List x)
+type List x = 
+    .Nil
+    .Cons, (int64, List x)
 
-inl Res =
-    type
-        int64
-        int64, int64
-        List int64
+type Res =
+    int64
+    int64, int64
+    List int64
 
 match Res 1 |> dyn with
 | x : int64 -> 1
@@ -823,50 +818,21 @@ f a && f b || f c && f d || f e
     """
 
 let test63 =
-    "test63",[],"Does the List.empty work?",
+    "test63",[list],"Does the List.empty work?",
     """
-met rec list x =
-    type
-        ()
-        x, list x
+open List
+cons 1 (cons 2 (cons 3 (empty int64)))
+    """
 
-inl is x = 
-    TypeC.chain a <| function
-        | (),(a,b) | (a,b),() when eq_type (list a) x -> x
-        | _ -> typec_error
-    <| typec_split x
-
-inl elem_type x =
-    TypeC.chain x <| function
-        | @is ((),(a,b) | (a,b),()) -> a
-        | _ -> typec_error
-    <| typec_split x
-
-inl list = 
-    inl rec loop tup_type n x on_fail on_succ =
-        if n > 0 then
-            match x with
-            | () -> on_fail()
-            | a, b -> loop (n-1) b on_fail <| inl b -> on_succ (a :: b)
-        else
-            match tup_type with
-            | .tup ->
-                match x with
-                | () -> on_succ()
-                | _ -> on_fail()
-            | .cons -> on_succ x
-        loop n x on_succ
-
-    function
-    | .var, @is x _ _ -> x
-    | ((.tup | .cons) & typ, n, @is x) -> loop typ n x
-    | typ -> list typ
-
-inl empty x = list (type x) ()
-inl singleton x = list (type x) (x, empty x)
-inl cons a b = list (type a) (a, list (type a) b)
-
-cons 3 () |> cons 2 |> cons 1
+let test64 =
+    "test64",[list],"Does the list pattern work?",
+    """
+open List
+inl l = empty int64 |> dyn
+match l with
+| #list (a,b,c) -> a+b+c
+| #list (a,b) -> a*b
+| _ -> 0
     """
 
 let tests =
@@ -876,7 +842,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test54;test58;test61;test62;test63
+    test54;test58;test61;test62;test63;test64
     hacker_rank_1
     |] |> Array.map module_
 
@@ -896,5 +862,5 @@ let run_test name is_big_test =
 
     System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test63" false
+run_test "test64" false
 

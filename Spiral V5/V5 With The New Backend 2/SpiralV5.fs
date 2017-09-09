@@ -154,7 +154,8 @@ type Op =
     | Fix
     | Apply
     | ForCast
-    | JoinPoint
+    | FuncJoinPoint
+    | TypeJoinPoint
     | StructCreate
     | VVIndex
     | VVSliceFrom
@@ -272,6 +273,7 @@ and TypedExpr =
 and JoinPointType =
     | JoinPointClosure of Arguments
     | JoinPointMethod
+    | JoinPointType
 and JoinPointKey = MemoKey * Tag
 and JoinPointValue = JoinPointType * Arguments * Renamer
 
@@ -440,7 +442,8 @@ let spiral_peval module_main output_path =
 
     let inl' args body = List.foldBack inl args body
     
-    let meth_memo y = (JoinPoint,[y]) |> op
+    let meth_memo y = (FuncJoinPoint,[y]) |> op
+    let type_memo y = (TypeJoinPoint,[y]) |> op
     let meth x y = inl x (meth_memo y)
 
     let module_create l = (ModuleCreate,[l]) |> op
@@ -942,6 +945,12 @@ let spiral_peval module_main output_path =
 
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
+        let rec typec_strip = function
+            | FunT(N(N env,t)) -> funt (Map.map (fun _ -> typec_strip) env |> nodify_env_ty,t)
+            | VVT (N l) -> vvt (List.map typec_strip l)
+            | TyTypeC (N x) -> x 
+            | x -> x
+
         let eval_method memo_type used_vars d expr =
             let key_args = nodify_memo_key (expr, d.env) 
 
@@ -978,6 +987,12 @@ let spiral_peval module_main output_path =
             memoize_helper (fun _ -> memo_type) (fun (memo_key,args,rev_renamer,ret_ty) -> 
                 ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty) d x
 
+        let memoize_type d x = 
+            let memo_type _ = JoinPointType
+            let env = d.env.Expression |> Map.map (fun _ -> get_type >> typec_strip >> make_tyv_and_push_ty d) |> nodify_env_term
+            let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
+            make_tyv_and_push_ty d ret_ty
+                
         let memoize_closure arg d x =
             let _,_,_,fv,_ as r = renamables0()
             let arg_ty = renamer_apply_typedexpr r arg |> get_type
@@ -992,12 +1007,6 @@ let spiral_peval module_main output_path =
             match args_ty with
             | TyRec t -> union_case t
             | x -> union_case x
-
-        let rec typec_strip = function
-            | FunT(N(N env,t)) -> funt (Map.map (fun _ -> typec_strip) env |> nodify_env_ty,t)
-            | VVT (N l) -> vvt (List.map typec_strip l)
-            | TyTypeC (N x) -> x 
-            | x -> x
 
         let typec_split d x =
             tev d x |> get_type |> typec_strip |> case_type d
@@ -1560,16 +1569,16 @@ let spiral_peval module_main output_path =
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
                 | TyFun(N(env_term,FunTypeFunction core)) -> tyfun(env_term,FunTypeRecFunction(core,name))
-                | x -> failwithf "Invalid use of Fix. Got: %A" x
+                | x -> x
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
             | If,[cond;tr;fl] -> if_ d cond tr fl
-            | JoinPoint,[a] -> memoize_method d a
+            | FuncJoinPoint,[a] -> memoize_method d a
+            | TypeJoinPoint,[a] -> memoize_type d a
             | ForCast,[x] -> for_cast d x
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
             | PrintEnv,[a] -> 
                 Map.iter (fun k _ -> printfn "%s" k) (n d.env)
-                //printfn "%A" d.env; 
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | ModuleOpen,[a;b] -> module_open d a b
@@ -1881,10 +1890,12 @@ let spiral_peval module_main output_path =
 
         let filter_env x = ap (inl "" x) B
         let inl_pat' (args: Pattern list) body = List.foldBack inl_pat args body
-        let meth_pat' args body = 
-            let body = meth_memo body
+        let inline x_pat' memo args body = 
+            let body = memo body
             if List.isEmpty args then filter_env body else body
             |> inl_pat' args
+        let meth_pat' args body = x_pat' meth_memo args body
+        let type_pat' args body = x_pat' type_memo args body
     
         let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (eq >>. expr) lp
         let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
@@ -1894,14 +1905,22 @@ let spiral_peval module_main output_path =
         let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
         let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (eq >>. expr) <| fun name pattern body -> l_rec name (meth_pat' pattern body)
 
+        let case_type_name_pat_list_statement expressions expr = 
+            let type_parse (s: CharStream<_>) = 
+                let i = col s
+                let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
+                many1 (expr_indent expressions) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
+            pipe3 (type_' >>. name) (pattern_list expr) (eq >>. type_parse) <| fun name pattern body -> 
+                l_rec name (type_pat' pattern body)
+
         let case_open expr = open_ >>. expr |>> module_open
 
         let case_inm_pat_statement expr = pipe2 (inm_ >>. patterns expr) (eq >>. expr) inmp
 
-        let statements expr = 
+        let statements expressions expr = 
             [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
              case_met_pat_statement; case_met_name_pat_list_statement; case_met_rec_name_pat_list_statement
-             case_open; case_inm_pat_statement]
+             case_open; case_inm_pat_statement; case_type_name_pat_list_statement expressions]
             |> List.map (fun x -> x expr |> attempt)
             |> choice
 
@@ -2056,14 +2075,6 @@ let spiral_peval module_main output_path =
             |>> function [x] -> x | x -> vv x
             <| s
 
-        let type_ expr s =
-            let type_parse (s: CharStream<_>) = 
-                let i = (col s)
-                let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
-                many1 (expr_indent expr) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
-            attempt (type_' >>. type_parse) <|> expr
-            <| s
-
         let mset statements expressions (s: CharStream<_>) = 
             let i = (col s)
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
@@ -2155,7 +2166,10 @@ let spiral_peval module_main output_path =
             let term s = expr_indent expr s
             tdop op term 0 s
 
-        let rec expr s = annotations ^<| indentations (statements ^<| change_semicolon_ignore_to_true expr) (mset expr ^<| type_ ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr) <| s
+        let rec expr s = 
+            let expressions s = mset expr ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr <| s
+            let statements s = statements expressions ^<| change_semicolon_ignore_to_true expr <| s
+            annotations ^<| indentations statements expressions <| s
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; ignore_semicolon=true} module_name module_code
 
     // #Codegen
@@ -2449,6 +2463,7 @@ let spiral_peval module_main output_path =
             | TyJoinPoint((S method_tag,_ as key),_) ->
                 let method_name = print_method method_tag
                 match join_point_dict.[key] with
+                | JoinPointType, _, _ -> ""
                 | JoinPointMethod, fv, _ ->
                     sprintf "%s(%s)" method_name (print_args fv)
                 | JoinPointClosure args, fv, rev_renamer ->
@@ -2580,9 +2595,9 @@ let spiral_peval module_main output_path =
                 let printed_fv = 
                     Seq.filter (fun x -> args.Contains x = false) fv
                     |> fun fv -> if Seq.isEmpty fv then "" else sprintf "(%s) " (print_args fv)
-                sprintf "%s %s %s(%s): %s =" prefix method_name printed_fv (print_args args) (print_type (get_type body))
-            | JoinPointMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args fv) (print_type (get_type body))
-            |> state
+                sprintf "%s %s %s(%s): %s =" prefix method_name printed_fv (print_args args) (print_type (get_type body)) |> state
+            | JoinPointMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args fv) (print_type (get_type body)) |> state
+            | JoinPointType -> ()
 
             enter <| fun _ -> 
                 let c = buffer.Count
@@ -2677,10 +2692,11 @@ let spiral_peval module_main output_path =
         s  [l "error_type" (p error_type)
             l "print_static" (p print_static)
             l "dyn" (p dynamize)
+            l "typec" (p type_create)
             l "typec_union" (p2 type_union)
             l "typec_split" (p type_split)
             l "typec_map" (p2 type_map)
-            l "typec_error" (op(TypeConstructorCreate,[lit <| LitString "TypeConstructorError"]))
+            l "typec_error" (op(TypeConstructorCreate,[type_lit_create <| LitString "TypeConstructorError"]))
 
             l "bool" (op(TypeConstructorCreate,[lit <| LitBool true]))
             l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
