@@ -156,7 +156,7 @@ inl rec p = function
 p (.Some, .None)
     """
 
-let test13 = // 
+let test13 = 
     "test13",[],"A more complex interpreter example on static data.",
     """
 type expr x = 
@@ -170,7 +170,8 @@ inl mult a b = int_expr (.Mult, a, b)
 inl a = add (v 1) (v 2)
 inl b = add (v 3) (v 4)
 inl c = mult a b
-inl rec interpreter_static = function
+inl rec interpreter_static x = 
+    match x with
     | .V, x -> x
     | .Add, a, b -> interpreter_static a + interpreter_static b
     | .Mult, a, b -> interpreter_static a * interpreter_static b
@@ -846,21 +847,23 @@ let tests =
     hacker_rank_1
     |] |> Array.map module_
 
-let run_test name is_big_test =
-    let (Module(N(name,aux,desc,body)) as main_module) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
+let run_test' is_big_test (name,aux,desc,body as m) =
+    let main_module = module_ m
+    printfn "%s - %s" name desc
+    if is_big_test then
+        let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.txt"))
+        printfn "Time spent in renaming: %A" total_time
+        //printfn "%A" x
+    else
+        let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.fsx"))
+        printfn "Time spent in renaming: %A" total_time
+        printfn "%A" x
 
-    let f () =
-        printfn "%s - %s" name desc
-        if is_big_test then
-            let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.txt"))
-            printfn "Time spent in renaming: %A" total_time
-            //printfn "%A" x
-        else
-            let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.fsx"))
-            printfn "Time spent in renaming: %A" total_time
-            printfn "%A" x
+let run_test is_big_test name =
+    let (Module(N x)) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
+    run_test' is_big_test x
 
-    System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
+    //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test "test64" false
+run_test' false test13
 

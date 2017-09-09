@@ -921,6 +921,8 @@ let spiral_peval module_main output_path =
                 | TyOp(EQ,[b & TyLit _; a & TyV _],_) | TyOp(EQ,[a & TyV _; b & TyLit _],_) -> tev_assume (cse_add' d a b) d tr
                 | _ -> tev_assume (b true) d tr
             let fl = tev_assume (b false) d fl
+            printfn "tr=%A" tr
+            printfn "fl=%A" fl
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then
                 if_is_returnable type_tr <| fun () ->
@@ -2590,19 +2592,24 @@ let spiral_peval module_main output_path =
         let print_method_definition is_first tag (join_point_type, fv, body) = 
             let prefix = if is_first then "let rec" else "and"
             let method_name = print_method tag
+
+            let print_body() =
+                enter <| fun _ -> 
+                    let c = buffer.Count
+                    let x = codegen body
+                    if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
+
             match join_point_type with
             | JoinPointClosure args -> 
                 let printed_fv = 
                     Seq.filter (fun x -> args.Contains x = false) fv
                     |> fun fv -> if Seq.isEmpty fv then "" else sprintf "(%s) " (print_args fv)
                 sprintf "%s %s %s(%s): %s =" prefix method_name printed_fv (print_args args) (print_type (get_type body)) |> state
-            | JoinPointMethod -> sprintf "%s %s(%s): %s =" prefix method_name (print_args fv) (print_type (get_type body)) |> state
+                print_body()
+            | JoinPointMethod -> 
+                sprintf "%s %s(%s): %s =" prefix method_name (print_args fv) (print_type (get_type body)) |> state
+                print_body()
             | JoinPointType -> ()
-
-            enter <| fun _ -> 
-                let c = buffer.Count
-                let x = codegen body
-                if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
 
         memoized_methods |> Seq.fold (fun is_first x -> 
             match x.Value with
