@@ -852,7 +852,7 @@ open List
 inl a = cons 3 () |> cons 2 |> cons 1 |> dyn
 inl b = cons 6 () |> cons 5 |> cons 4 |> dyn
 
-append a b
+concat (cons a (singleton b))
     """
 
 let test67 =
@@ -909,5 +909,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test68
+run_test' false test66
 

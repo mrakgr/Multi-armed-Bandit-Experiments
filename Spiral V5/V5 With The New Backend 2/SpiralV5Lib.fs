@@ -190,12 +190,13 @@ inl list x =
                 | _ -> on_fail()
             | .cons -> on_succ (x :: ())
 
+    inl typ = typec x // This is so the argument does not forget its type during destructuring.
     match x with
-//    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
-//    | (.tup | .cons) & typ, n, x -> loop typ n x
-    | typ -> list typ
+    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
+    | (.tup | .cons) & typ, n, x -> loop typ n x
+    | _ -> list typ
 
-inl empty x = list x ()
+inl empty !typec x = list x ()
 inl singleton x = list x (x, empty x)
 inl cons a b = list a (a, list a b)
 
@@ -238,10 +239,7 @@ inl rec foldr f l s =
         : s) f s l
 
 inl append a b = foldr cons a b
-
-inl concat l =
-    inl t = elem_type l
-    foldr append l (empty t)
+inl concat l & !elem_type t = foldr append l (empty t)
 
 module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
     """) |> module_

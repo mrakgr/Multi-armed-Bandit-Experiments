@@ -868,13 +868,12 @@ let spiral_peval module_main output_path =
         let state d ty_exp =
             let seq = !d.seq
             d.seq := fun rest -> TyState(ty_exp,rest,get_type rest) |> seq
-            TyB
 
         let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
             let ty = get_type ty_exp
             if is_unit ty then
                 if even_if_unit then state d ty_exp
-                else TyT ty
+                ty_exp
             else
                 let v = make_tyv_ty d ty
                 let seq = !d.seq
@@ -1254,7 +1253,7 @@ let spiral_peval module_main output_path =
             | TyVV (N l), TyLitIndex i ->
                 if i >= 0 || i < List.length l then f l i
                 else on_type_er d.trace "Tuple index not within bounds."
-            | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should ways be destructured."
+            | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should always be destructured."
             | v, TyLitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
             | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
@@ -1264,7 +1263,7 @@ let spiral_peval module_main output_path =
         let inline vv_unop_template on_succ on_fail d v =
             match tev d v with
             | TyVV (N l) -> on_succ l
-            | v & TyType (VVT ts) -> failwith "The tuple should ways be destructured."
+            | v & TyType (VVT ts) -> failwith "The tuple should always be destructured."
             | v -> on_fail()
 
         let vv_length x = 
@@ -1495,10 +1494,10 @@ let spiral_peval module_main output_path =
             match tev3 d ar idx r with
             | ar & TyType (ArrayT(N(DotNetHeap,t))), idx, r when is_int idx && t = get_type r ->
                 if is_unit t then TyB
-                else state d (TyOp(ArraySet,[ar;idx;r],BVVT))
+                else state d (TyOp(ArraySet,[ar;idx;r],BVVT)); TyB
             | ar & TyType (ArrayT(N(DotNetReference,t))), idx & TyVV(N []), r when t = get_type r -> 
                 if is_unit t then TyB
-                else state d (TyOp(ArraySet,[ar;idx;r],BVVT))
+                else state d (TyOp(ArraySet,[ar;idx;r],BVVT)); TyB
             | x -> on_type_er d.trace <| sprintf "The two sides in array set have different types. %A" x
 
         let array_length d ar =
