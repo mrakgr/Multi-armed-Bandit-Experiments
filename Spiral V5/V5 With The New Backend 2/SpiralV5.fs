@@ -1509,7 +1509,7 @@ let spiral_peval module_main output_path =
 
         let is_static d x = 
             match tev d x with
-            | TyFun _ | TyVV _ | TyLit _ -> TyLit <| LitBool true
+            | TyBox _ | TyFun _ | TyVV _ | TyLit _ -> TyLit <| LitBool true
             | _ -> TyLit <| LitBool false
 
         let module_is d a =
@@ -1894,12 +1894,14 @@ let spiral_peval module_main output_path =
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
             let inline f' str = keywordString str >>. expr
             let inline f str = expr_indent (f' str)
-            pipe4 (f' "if") (f "then") (many (f "elif" .>>. f "then")) (opt (f "else"))
-                (fun cond tr elifs fl -> 
+            let if_ = f' "if" |>> fun x -> If, x
+            let if_static = f' "if_static" |>> fun x -> IfStatic, x
+            pipe4 (if_ <|> if_static) (f "then") (many (f "elif" .>>. f "then")) (opt (f "else"))
+                (fun (if_op,cond) tr elifs fl -> 
                     let fl = 
                         match fl with Some x -> x | None -> B
-                        |> List.foldBack (fun (cond,tr) fl -> op(If,[cond;tr;fl])) elifs
-                    op(If,[cond;tr;fl]))
+                        |> List.foldBack (fun (cond,tr) fl -> op(if_op,[cond;tr;fl])) elifs
+                    op(if_op,[cond;tr;fl]))
             <| s
 
         let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator_char .>> spaces <| s
@@ -2264,7 +2266,7 @@ let spiral_peval module_main output_path =
                 | UInt32T -> "uint32"
                 | UInt64T -> "uint64"
                 | Float32T -> "float32"
-                | Float64T -> "float64"
+                | Float64T -> "float"
                 | BoolT -> "bool"
                 | StringT -> "string"
                 | CharT -> "char"

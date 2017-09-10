@@ -172,38 +172,28 @@ let list =
     (
     "List",[tuple;typec],"The queue module.",
     """
-type list x =
-    ()
-    x, list x
+inl list x = 
+    type list x =
+        ()
+        x, list x
 
-inl is x = 
-    TypeC.chain (typec_split x) <| function
-        | (),(a,b) | (a,b),() when eq_type (list a) x -> x
-        | _ -> typec_error
-
-inl elem_type x =
-    TypeC.chain (typec_split x) <| function
-        | @is ((),(a,b) | (a,b),()) -> a
-        | _ -> typec_error
-
-inl lw x on_fail on_succ = 
     inl rec loop tup_type n x on_fail on_succ =
-        if n > 0 then
+        if_static n > 0 then
             match x with
             | () -> on_fail()
-            | a, b -> loop (n-1) b on_fail <| inl b -> on_succ (a :: b)
+            | a, b -> loop tup_type (n-1) b on_fail <| inl b -> on_succ (a :: b)
         else
             match tup_type with
             | .tup ->
                 match x with
                 | () -> on_succ()
                 | _ -> on_fail()
-            | .cons -> on_succ x
-        loop n x on_succ
+            | .cons -> on_succ ()
 
     match x with
-    | .var, x & @is _ -> on_succ x
-    | (.tup | .cons) & typ, n, x & @is _ -> loop typ n x on_fail on_succ
+    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
+    | (.tup | .cons) & typ, n, x -> loop typ n x
+    | typ -> list typ
 
 inl empty x = list x ()
 inl singleton x = list x (x, empty x)
@@ -217,30 +207,43 @@ inl init n f =
         : list t
     loop 0
 
-met rec map f = function
-    | #lw (x :: xs) -> cons (f x) (map f xs) : list x
-    | @elem_type t -> empty t : list t
+inl rec map f x = 
+    met rec loop typ xs =
+        match x with
+        | #list (x :: xs) -> cons (f x) (loop f xs)
+        | #list () -> ()
+        : list typ
+    match x with
+    | #list (x :: xs) -> 
+        if_static is_static xs then cons (f x) (map f xs)
+        else loop x xs
+    | #list () -> ()
 
-met rec foldl f s l = 
-    match l with
-    | #lw (x :: xs) -> foldl (f s x) xs
-    | #lw () -> s
-    : s
+inl fold_template loop f s l = 
+    if_static (is_static s && is_static l) then loop f s l
+    else (met () -> loop f (dyn s) (dyn l)) ()
 
-met rec foldr f l s = 
-    match l with
-    | #lw (x :: xs) -> f x (foldr f xs s)
-    | #lw () -> s
-    : s
+inl rec foldl x =
+    fold_template (inl f s l ->
+        match l with
+        | #list (x :: xs) -> foldl f (f s x) xs
+        | #list () -> s
+        : s) x
 
-inl append a b = 
-    match a,b with 
-    | _,#lw () -> a 
-    | #lw (),_ -> b
-    | _ -> foldlr cons a b
-inl concat l & @elem_type t = foldr append l (empty t)
+inl rec foldr f l s = 
+    fold_template (inl f s l ->
+        match l with
+        | #list (x :: xs) -> f x (foldr f xs s)
+        | #list () -> s
+        : s) f s l
 
-module (list,lw,init,map,foldl,foldr,empty,cons,singleton,append,concat)
+inl append a b = foldr cons a b
+
+inl concat = function
+    | #list () -> singleton (empty ())
+    | #list (t :: _) as l -> foldr append l (empty t)
+
+module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
     """) |> module_
 
 

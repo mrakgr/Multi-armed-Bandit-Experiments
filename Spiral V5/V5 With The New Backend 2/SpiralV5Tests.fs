@@ -825,35 +825,7 @@ cons 1 (cons 2 (cons 3 (empty int64)))
 let test64 =
     "test64",[tuple;list],"Does the list pattern work?",
     """
-inl list x = 
-    type list x =
-        ()
-        x, list x
-
-    inl rec loop tup_type n x on_fail on_succ =
-        match n > 0 with
-        | true ->
-            match x with
-            | () -> on_fail()
-            | a, b -> 
-                print_static x
-                loop tup_type (n-1) b on_fail <| inl b -> on_succ (a :: b)
-        | _ ->
-            match tup_type with
-            | .tup ->
-                match x with
-                | () -> on_succ()
-                | _ -> on_fail()
-            | .cons -> on_succ ()
-
-    match x with
-    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
-    | (.tup | .cons) & typ, n, x -> loop typ n x
-    | typ -> list typ
-
-inl empty x = list x ()
-inl singleton x = list x (x, empty x)
-inl cons a b = list a (a, list a b)
+open List
 
 match dyn (empty int64) with
 | #list (a,b) -> a + b + 10
@@ -861,6 +833,25 @@ match dyn (empty int64) with
 | #list (x :: xs) -> 55
 | #list () -> 0
 | _ -> 1 // Does not get triggered.
+    """
+
+let test65 =
+    "test65",[tuple;list],"Do the list module folds work?",
+    """
+open List
+
+foldl (+) 0.0 (dyn (empty float32)),
+foldr (+) (dyn (empty float64)) 0.0f64
+    """
+
+let test66 =
+    "test66",[tuple;list],"Does the list module append work?",
+    """
+open List
+
+inl a = cons 3 () |> cons 2 |> cons 1
+
+List.map ((*) 2) a
     """
 
 let f = function
@@ -898,5 +889,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test64
+run_test' false test66
 
