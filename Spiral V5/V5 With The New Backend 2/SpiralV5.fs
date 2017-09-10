@@ -873,7 +873,7 @@ let spiral_peval module_main output_path =
             let ty = get_type ty_exp
             if is_unit ty then
                 if even_if_unit then state d ty_exp
-                ty_exp
+                TyT ty
             else
                 let v = make_tyv_ty d ty
                 let seq = !d.seq

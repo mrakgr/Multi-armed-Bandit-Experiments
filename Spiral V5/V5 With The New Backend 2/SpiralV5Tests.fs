@@ -851,8 +851,12 @@ open List
 
 inl a = cons 3 () |> cons 2 |> cons 1 |> dyn
 inl b = cons 6 () |> cons 5 |> cons 4 |> dyn
-
-concat (cons a (singleton b))
+inl c = (cons a (singleton b))
+()
+//append a b
+//match c with
+//| (a,(b,())) -> 
+//append a b
     """
 
 let test67 =
