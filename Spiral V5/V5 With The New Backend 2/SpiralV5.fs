@@ -673,7 +673,7 @@ let spiral_peval module_main output_path =
                 let rec f pat' on_fail = function
                     | PatAnd _ as pat -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> pat_part_active a (pat' pat) on_fail
                     | PatOr l -> List.foldBack (fun pat on_fail -> lazy f pat' on_fail pat) l on_fail |> force
-                    | PatCons l as pat -> vv [type_lit_create (LitString "cons"); l.Length-1 |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' pat) on_fail
+                    | PatCons l -> vv [type_lit_create (LitString "cons"); l.Length-1 |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' <| PatTuple l) on_fail
                     | PatTuple l as pat -> vv [type_lit_create (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' pat) on_fail
                     | PatType (a,typ) -> f (fun a -> PatType(a,typ) |> pat') on_fail a
                     | PatWhen (pat, e) -> f (fun pat -> PatWhen(pat,e) |> pat') on_fail pat

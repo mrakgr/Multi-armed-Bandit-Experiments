@@ -845,13 +845,33 @@ foldr (+) (dyn (empty float64)) 0.0f64
     """
 
 let test66 =
-    "test66",[tuple;list],"Does the list module append work?",
+    "test66",[tuple;list],"Does the list module concat (and by extension append) work?",
     """
 open List
 
-inl a = cons 3 () |> cons 2 |> cons 1
+inl a = cons 3 () |> cons 2 |> cons 1 |> dyn
+inl b = cons 6 () |> cons 5 |> cons 4 |> dyn
 
-List.map ((*) 2) a
+append a b
+    """
+
+let test67 =
+    "test67",[tuple;list],"Does the list module map work?",
+    """
+open List
+
+inl a = cons 3 () |> cons 2 |> cons 1 |> dyn
+
+map ((*) 2) a
+    """
+
+let test68 =
+    "test68",[tuple;list],"Is it possible to make a list of lists?",
+    """
+open List
+
+inl a = empty int64 |> dyn
+empty a
     """
 
 let f = function
@@ -867,7 +887,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38
     test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test54;test58;test61;test62;test63;test64
+    test54;test58;test61;test62;test63;test64;test65;test66;test67
     hacker_rank_1
     |] |> Array.map module_
 
@@ -889,5 +909,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test66
+run_test' false test68
 

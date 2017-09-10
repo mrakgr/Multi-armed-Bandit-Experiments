@@ -188,11 +188,11 @@ inl list x =
                 match x with
                 | () -> on_succ()
                 | _ -> on_fail()
-            | .cons -> on_succ ()
+            | .cons -> on_succ (x :: ())
 
     match x with
-    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
-    | (.tup | .cons) & typ, n, x -> loop typ n x
+//    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
+//    | (.tup | .cons) & typ, n, x -> loop typ n x
     | typ -> list typ
 
 inl empty x = list x ()
@@ -207,17 +207,17 @@ inl init n f =
         : list t
     loop 0
 
-inl rec map f x = 
-    met rec loop typ xs =
-        match x with
-        | #list (x :: xs) -> cons (f x) (loop f xs)
-        | #list () -> ()
-        : list typ
-    match x with
-    | #list (x :: xs) -> 
-        if_static is_static xs then cons (f x) (map f xs)
-        else loop x xs
-    | #list () -> ()
+inl elem_type l = typec_map (function | (), (a,b) -> a) (typec_split l)
+
+inl rec map f l = 
+    inl t' = typec_map f (elem_type l)
+    inl loop map =
+        match l with
+        | #list (x :: xs) -> cons (f x) (map f xs)
+        | #list () -> empty t'
+        : list t'
+    if_static is_static l then loop map
+    else (met _ -> loop map) ()
 
 inl fold_template loop f s l = 
     if_static (is_static s && is_static l) then loop f s l
@@ -239,9 +239,9 @@ inl rec foldr f l s =
 
 inl append a b = foldr cons a b
 
-inl concat = function
-    | #list () -> singleton (empty ())
-    | #list (t :: _) as l -> foldr append l (empty t)
+inl concat l =
+    inl t = elem_type l
+    foldr append l (empty t)
 
 module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
     """) |> module_
