@@ -823,15 +823,51 @@ cons 1 (cons 2 (cons 3 (empty int64)))
     """
 
 let test64 =
-    "test64",[list],"Does the list pattern work?",
+    "test64",[tuple;list],"Does the list pattern work?",
     """
-open List
-inl l = empty int64 |> dyn
-match l with
-| #list (a,b,c) -> a+b+c
-| #list (a,b) -> a*b
-| _ -> 0
+inl list x = 
+    type list x =
+        ()
+        x, list x
+
+    inl rec loop tup_type n x on_fail on_succ =
+        match n > 0 with
+        | true ->
+            match x with
+            | () -> on_fail()
+            | a, b -> 
+                print_static x
+                loop tup_type (n-1) b on_fail <| inl b -> on_succ (a :: b)
+        | _ ->
+            match tup_type with
+            | .tup ->
+                match x with
+                | () -> on_succ()
+                | _ -> on_fail()
+            | .cons -> on_succ ()
+
+    match x with
+    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
+    | (.tup | .cons) & typ, n, x -> loop typ n x
+    | typ -> list typ
+
+inl empty x = list x ()
+inl singleton x = list x (x, empty x)
+inl cons a b = list a (a, list a b)
+
+match dyn (empty int64) with
+| #list (a,b) -> a + b + 10
+| #list (x :: x2 :: xs) -> x + x2
+| #list (x :: xs) -> 55
+| #list () -> 0
+| _ -> 1 // Does not get triggered.
     """
+
+let f = function
+    | [a;b] -> a+b+10
+    | x :: x2 :: xs -> x + x2
+    | x :: xs -> 55
+    | [] ->  0
 
 let tests =
     [|

@@ -186,7 +186,7 @@ inl elem_type x =
         | @is ((),(a,b) | (a,b),()) -> a
         | _ -> typec_error
 
-inl list = 
+inl lw x on_fail on_succ = 
     inl rec loop tup_type n x on_fail on_succ =
         if n > 0 then
             match x with
@@ -201,10 +201,9 @@ inl list =
             | .cons -> on_succ x
         loop n x on_succ
 
-    function
-    | .var, x & @is _ -> inl _ _ -> x
-    | (.tup | .cons) & typ, n, x & !is _ -> loop typ n x
-    | typ -> list typ
+    match x with
+    | .var, x & @is _ -> on_succ x
+    | (.tup | .cons) & typ, n, x & @is _ -> loop typ n x on_fail on_succ
 
 inl empty x = list x ()
 inl singleton x = list x (x, empty x)
@@ -219,29 +218,29 @@ inl init n f =
     loop 0
 
 met rec map f = function
-    | #list (x :: xs) -> cons (f x) (map f xs) : list x
+    | #lw (x :: xs) -> cons (f x) (map f xs) : list x
     | @elem_type t -> empty t : list t
 
 met rec foldl f s l = 
     match l with
-    | #list (x :: xs) -> foldl (f s x) xs
-    | #list () -> s
+    | #lw (x :: xs) -> foldl (f s x) xs
+    | #lw () -> s
     : s
 
 met rec foldr f l s = 
     match l with
-    | #list (x :: xs) -> f x (foldr f xs s)
-    | #list () -> s
+    | #lw (x :: xs) -> f x (foldr f xs s)
+    | #lw () -> s
     : s
 
 inl append a b = 
     match a,b with 
-    | _,#list () -> a 
-    | #list (),_ -> b
+    | _,#lw () -> a 
+    | #lw (),_ -> b
     | _ -> foldlr cons a b
 inl concat l & @elem_type t = foldr append l (empty t)
 
-module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
+module (list,lw,init,map,foldl,foldr,empty,cons,singleton,append,concat)
     """) |> module_
 
 
