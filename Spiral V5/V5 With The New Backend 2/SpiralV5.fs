@@ -260,7 +260,7 @@ and Ty =
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
-    | TyT of Ty * Trace
+    | TyT of Ty
     | TyV of TyTag
     | TyVV of Node<TypedExpr list>
     | TyFun of Node<EnvTerm * FunType>
@@ -523,7 +523,7 @@ let spiral_peval module_main output_path =
         | TyVV (N l) -> List.map get_type l |> vvt
         | TyFun (N(N l, t)) -> funt (env_to_ty l, t)
 
-        | TyT (t,_) | TyV(_,t) | TyBox(N(_,t))
+        | TyT t | TyV(_,t) | TyBox(N(_,t))
         | TyLet(_,_,_,t) | TyJoinPoint(_,t)
         | TyState (_,_,t) | TyOp(_,_,t) -> t
 
@@ -870,11 +870,13 @@ let spiral_peval module_main output_path =
             let seq = !d.seq
             d.seq := fun rest -> TyState(ty_exp,rest,get_type rest) |> seq
 
+        let tyt x = TyT x
+
         let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
             let ty = get_type ty_exp
             if is_unit ty then
                 if even_if_unit then state d ty_exp
-                TyT (ty,d.trace)
+                tyt ty
             else
                 let v = make_tyv_ty d ty
                 let seq = !d.seq
@@ -1005,9 +1007,9 @@ let spiral_peval module_main output_path =
 
         let memoize_type d x = 
             let memo_type _ = JoinPointType
-            let env = d.env.Expression |> Map.map (fun _ -> get_type >> typec_strip >> (fun x -> TyT(x,d.trace))) |> nodify_env_term
+            let env = d.env.Expression |> Map.map (fun _ -> get_type >> typec_strip >> tyt) |> nodify_env_term
             let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
-            TyT (ret_ty,d.trace)
+            tyt ret_ty
                 
         let memoize_closure arg d x =
             let _,_,_,fv,_ as r = renamables0()
@@ -1026,7 +1028,7 @@ let spiral_peval module_main output_path =
 
         let typec_split d x =
             tev d x |> get_type |> typec_strip |> case_type d
-            |> List.map (typect >> (fun x -> TyT(x,d.trace)))
+            |> List.map (typect >> tyt)
             |> tyvv
 
         let case_ d v case =
@@ -1053,12 +1055,12 @@ let spiral_peval module_main output_path =
         let typec_union d a b =
             let a, b = tev2 d a b
             match get_type a, get_type b with
-            | TyTypeC (N a), TyTypeC (N b) -> set_field a + set_field b |> uniont |> typect |> (fun x -> TyT(x,d.trace))
+            | TyTypeC (N a), TyTypeC (N b) -> set_field a + set_field b |> uniont |> typect |> tyt
             | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
 
         let typec_create d x = 
             let key = nodify_memo_key (x, d.env)
-            let inline ret x = TyT (typect x,d.trace)
+            let inline ret x = tyt (typect x)
 
             let inline add_to_memo_dict x = 
                 memoized_methods.[key] <- MemoType x
@@ -1087,7 +1089,7 @@ let spiral_peval module_main output_path =
             match tev d x with
             | TypeString x ->
                 wrap_exception d <| fun _ ->
-                    System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> (fun x -> TyT(x,d.trace))
+                    System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> tyt
             | _ -> on_type_er d.trace "Expected a type level string."
 
         let (|TyDotNetType|_|) = function
@@ -1115,7 +1117,7 @@ let spiral_peval module_main output_path =
             // as it is an expensive operation.
 
             // apply_for_cast
-            | recf & TyFun(N(N env_term,fun_type)), TyT (ForCastT (N args_ty),_) -> 
+            | recf & TyFun(N(N env_term,fun_type)), TyT (ForCastT (N args_ty)) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_up_vars_for_ty d x
                     match args_ty with
@@ -1158,7 +1160,7 @@ let spiral_peval module_main output_path =
                 | DotNetReference, TyVV(N []) -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _, TypeString x -> 
-                    if x = "elem_type" then elem_ty |> typec_strip |> typect |> (fun x -> TyT(x,d.trace))
+                    if x = "elem_type" then elem_ty |> typec_strip |> typect |> tyt
                     else failwithf "Unknown type string applied to array. Got: %s" x
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
@@ -1168,7 +1170,7 @@ let spiral_peval module_main output_path =
                         | null -> on_type_er d.trace "A type cannot be found inside the assembly."
                         | x -> 
                             if x.IsPublic then
-                                x |> dotnet_type_runtimet |> (fun x -> TyT(x,d.trace))
+                                x |> dotnet_type_runtimet |> tyt
                             else
                                 on_type_er d.trace "Cannot load a private type from an assembly."
             | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
@@ -1198,7 +1200,7 @@ let spiral_peval module_main output_path =
                 wrap_exception d <| fun _ ->
                     if runtime_type.ContainsGenericParameters then // instantiate generic type params
                         runtime_type.MakeGenericType system_type_args 
-                        |> dotnet_type_runtimet |> (fun x -> TyT(x,d.trace))
+                        |> dotnet_type_runtimet |> tyt
                     else // construct the type
                         match runtime_type.GetConstructor system_type_args with
                         | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
@@ -1245,8 +1247,8 @@ let spiral_peval module_main output_path =
 
         let typec_map d f x =
             let f = tev d f 
-            let x = tev d x |> get_type |> typec_strip |> (fun x -> TyT(x,d.trace))
-            apply {d with seq = ref id} f x |> get_type |> typec_strip |> typect |> (fun x -> TyT(x,d.trace))
+            let x = tev d x |> get_type |> typec_strip |> tyt
+            apply {d with seq = ref id} f x |> get_type |> typec_strip |> typect |> tyt
 
         let inline vv_index_template f d v i =
             let v,i = tev2 d v i
@@ -1284,7 +1286,7 @@ let spiral_peval module_main output_path =
             | TyVV (N b) -> tyvv(a::b)
             | _ -> on_type_er d.trace "Expected a tuple on the right in VVCons."
 
-        let type_lit_create' d x = litt x |> (fun x -> TyT(x,d.trace))
+        let type_lit_create' d x = litt x |> tyt
 
         let module_open d a b =
             let a = tev d a
@@ -1317,7 +1319,7 @@ let spiral_peval module_main output_path =
 
         let type_annot d a b =
             match d.rbeh with
-            | AnnotationReturn -> tev d b |> get_type |> typec_strip |> (fun x -> TyT(x,d.trace))
+            | AnnotationReturn -> tev d b |> get_type |> typec_strip |> tyt
             | AnnotationDive ->
                 let f a = typec_strip (get_type a) 
                 let a, b = tev d a, tev_seq d b
@@ -1447,7 +1449,7 @@ let spiral_peval module_main output_path =
                 | _ -> prim_un_op_helper t a
                 ) a t
 
-        let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> (fun x -> TyT(x,d.trace))
+        let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> tyt
         let error_non_unit d a =
             let x = tev d a 
             if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
@@ -2435,8 +2437,8 @@ let spiral_peval module_main output_path =
                     loop 0 cases
 
             match expr with
-            | TyT (Unit,_) | TyV (_, Unit) -> ""
-            | TyT (t,trace) -> on_type_er trace <| sprintf "Usage of type %A as an instance on the term level is invalid." t
+            | TyT Unit | TyV (_, Unit) -> ""
+            | TyT t -> on_type_er [] <| sprintf "Usage of type %A as an instance on the term level is invalid." t
             | TyV v -> print_tyv v
             | TyLet(tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
             | TyState(b,rest,_) ->
