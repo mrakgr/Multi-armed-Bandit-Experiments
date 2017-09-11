@@ -164,10 +164,12 @@ type Op =
     | VVIs
     | TypeAnnot
     | EnvUnseal
-    | TypeConstructorCreate
-    | TypeConstructorUnion
-    | TypeConstructorMap
-    | TypeConstructorSplit
+    | TypeCreate
+    | TypeUnion
+    | TypeSplit
+    | TypeBox
+    | TypeIn
+    | TypeOut
     | EqType
     | ModuleHasMember
 
@@ -251,16 +253,16 @@ and Ty =
     | FunT of Node<EnvTy * FunType>
     | UnionT of Node<Set<Ty>>
     | RecT of int
-    | TypeConstructorT of Node<Ty>
     | ClosureT of Node<Ty * Ty>
     | ArrayT of Node<ArrayType * Ty>
     | ForCastT of Node<Ty> // For casting type level function to term (ClosureT) level ones.
+    | TypeInTypeT of Node<Ty>
     | DotNetTypeRuntimeT of Node<Type> 
     | DotNetTypeInstanceT of Node<Type>
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
-    | TyT of Ty
+    | TyT of TraceNode<Ty>
     | TyV of TyTag
     | TyVV of Node<TypedExpr list>
     | TyFun of Node<EnvTerm * FunType>
@@ -300,6 +302,25 @@ and MemoDict = Dictionary<MemoKey, MemoCases>
 and CSEDict = Map<TypedExpr,TypedExpr> ref
 
 and Trace = PosKey list
+
+and TraceNode<'a when 'a:equality>(expr:'a, trace:Trace) = 
+    member x.Expression = expr
+    member x.Trace = trace
+    override x.ToString() = sprintf "%A" expr
+    override x.GetHashCode() = expr.GetHashCode()
+    override x.Equals(y) = 
+        match y with 
+        | :? TraceNode<'a> as y -> trace = y.Trace
+        | _ -> failwith "Invalid equality for TraceNode."
+
+    interface IComparable with
+        member x.CompareTo(y) = 
+            match y with
+            | :? TraceNode<'a> as y -> compare trace y.Trace
+            | _ -> failwith "Invalid comparison for TraceNode."
+
+let inline t (x: TraceNode<_>) = x.Expression
+let (|T|) x = t x
 
 type RecursiveBehavior =
     | AnnotationDive
@@ -343,7 +364,7 @@ let spiral_peval module_main output_path =
     let rec is_unit_tuple t = List.forall is_unit t
     and is_unit_env env = Map.forall (fun _ -> is_unit) env
     and is_unit = function
-        | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+        | TypeInTypeT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | ArrayT (N(_,t)) -> is_unit t
         | FunT (N(N env,_)) -> is_unit_env env
@@ -395,7 +416,6 @@ let spiral_peval module_main output_path =
     let (|TyRec|_|) = function
         | RecT x -> Some rect_dict.[x]
         | _ -> None
-    let nodify_typect = nodify <| d0()
     let nodify_closuret = nodify <| d0()
     let nodify_arrayt = nodify <| d0()
     let nodify_for_castt = nodify <| d0()
@@ -404,18 +424,19 @@ let spiral_peval module_main output_path =
     let nodify_dotnet_assemblyt = nodify <| d0()
     let nodify_vvt = nodify <| d0()
     let nodify_funt = nodify <| d0()
+    let nodify_typeintypet = nodify <| d0()
 
     let vvt x = nodify_vvt x |> VVT
     let litt x = LitT x
     let funt (x, core) = nodify_funt (x, core) |> FunT
     let uniont x = nodify_uniont x |> UnionT
-    let typect x = nodify_typect x |> TypeConstructorT
     let closuret x = nodify_closuret x |> ClosureT
     let arrayt x = nodify_arrayt x |> ArrayT
     let for_castt x = nodify_for_castt x |> ForCastT
     let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
     let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
     let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
+    let typeintypet x = nodify_typeintypet x |> TypeInTypeT
 
     let nodify_memo_key = nodify <| d0()
     let nodify_env_term = nodify <| d0()
@@ -493,10 +514,12 @@ let spiral_peval module_main output_path =
     let expr_pos pos x = ExprPos(Pos(pos,x))
     let pat_pos pos x = PatPos(Pos(pos,x))
 
-    let type_create a = op(TypeConstructorCreate,[a])
-    let type_union a b = op(TypeConstructorUnion,[a;b])
-    let type_split a = op(TypeConstructorSplit,[a])
-    let type_map a b = op(TypeConstructorMap,[a;b])
+    let type_create a = op(TypeCreate,[a])
+    let type_union a b = op(TypeUnion,[a;b])
+    let type_split a = op(TypeSplit,[a])
+    let type_box a b = op(TypeBox,[a;b])
+    let type_in a = op(TypeIn,[a])
+    let type_out a = op(TypeOut,[a])
 
     // Aux outer functions
     let flip f a b = f b a
@@ -522,14 +545,9 @@ let spiral_peval module_main output_path =
         | TyVV (N l) -> List.map get_type l |> vvt
         | TyFun (N(N l, t)) -> funt (env_to_ty l, t)
 
-        | TyT t | TyV(_,t) | TyBox(N(_,t))
+        | TyT (T t) | TyV(_,t) | TyBox(N(_,t))
         | TyLet(_,_,_,t) | TyJoinPoint(_,t)
         | TyState (_,_,t) | TyOp(_,_,t) -> t
-
-    let (|TyTypeC|_|) x =
-        match x with
-        | TypeConstructorT x -> Some x
-        | _ -> None
 
     /// Wraps the argument in a list if not a tuple.
     let tuple_field = function 
@@ -869,7 +887,7 @@ let spiral_peval module_main output_path =
             let seq = !d.seq
             d.seq := fun rest -> TyState(ty_exp,rest,get_type rest) |> seq
 
-        let tyt x = TyT x
+        let tyt x = TyT (TraceNode(x,d.trace))
 
         let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
             let ty = get_type ty_exp
@@ -963,12 +981,6 @@ let spiral_peval module_main output_path =
 
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
-        let rec typec_strip = function
-            | FunT(N(N env,t)) -> funt (Map.map (fun _ -> typec_strip) env |> nodify_env_ty,t)
-            | VVT (N l) -> vvt (List.map typec_strip l)
-            | TyTypeC (N x) -> x 
-            | x -> x
-
         let eval_method memo_type used_vars d expr =
             let key_args = nodify_memo_key (expr, d.env) 
 
@@ -1007,7 +1019,7 @@ let spiral_peval module_main output_path =
 
         let memoize_type d x = 
             let memo_type _ = JoinPointType
-            let env = d.env.Expression |> Map.map (fun _ -> get_type >> typec_strip >> tyt) |> nodify_env_term
+            let env = d.env.Expression |> Map.map (fun _ -> get_type >> tyt) |> nodify_env_term
             let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
             tyt ret_ty
                 
@@ -1026,9 +1038,9 @@ let spiral_peval module_main output_path =
             | TyRec t -> union_case t
             | x -> union_case x
 
-        let typec_split d x =
-            tev d x |> get_type |> typec_strip |> case_type d
-            |> List.map (typect >> tyt)
+        let type_split d x =
+            tev d x |> get_type |> case_type d
+            |> List.map tyt
             |> tyvv
 
         let case_ d v case =
@@ -1052,15 +1064,14 @@ let spiral_peval module_main output_path =
             | a & TyBox(N(b,_)) -> cse_add d a b; tev d case
             | _ -> tev d case
            
-        let typec_union d a b =
+        let type_union d a b =
             let a, b = tev2 d a b
-            match get_type a, get_type b with
-            | TyTypeC (N a), TyTypeC (N b) -> set_field a + set_field b |> uniont |> typect |> tyt
-            | a, b -> on_type_er d.trace <| sprintf "In type constructor union expected both types to be type constructors. Got: %A and %A" a b
+            let f x = set_field (get_type x)
+            f a + f b |> uniont |> tyt
 
-        let typec_create d x = 
+        let type_create d x = 
             let key = nodify_memo_key (x, d.env)
-            let inline ret x = tyt (typect x)
+            let inline ret x = tyt x
 
             let inline add_to_memo_dict x = 
                 memoized_methods.[key] <- MemoType x
@@ -1077,7 +1088,7 @@ let spiral_peval module_main output_path =
             | true, _ -> failwith "Expected a type in the dictionary."
             | false, _ -> 
                 memoized_methods.[key] <- MemoTypeInEvaluation (RecT memoized_methods.Count)
-                tev_seq d x |> get_type |> typec_strip |> if_recursive_type_add_to_type_dict |> add_to_memo_dict |> ret
+                tev_seq d x |> get_type |> if_recursive_type_add_to_type_dict |> add_to_memo_dict |> ret
 
         let inline wrap_exception d f =
             try f()
@@ -1096,7 +1107,7 @@ let spiral_peval module_main output_path =
             | TyType (DotNetTypeRuntimeT (N x) | DotNetTypeInstanceT (N x)) -> Some x
             | _ -> None
 
-        let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> typec_strip >> dotnet_ty_to_type)
+        let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
 
         let (|TyLitIndex|_|) = function
             | TyLit (LitInt32 i) -> Some i
@@ -1117,7 +1128,7 @@ let spiral_peval module_main output_path =
             // as it is an expensive operation.
 
             // apply_for_cast
-            | recf & TyFun(N(N env_term,fun_type)), TyT (ForCastT (N args_ty)) -> 
+            | recf & TyFun(N(N env_term,fun_type)), TyT (T (ForCastT (N args_ty))) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_up_vars_for_ty d x
                     match args_ty with
@@ -1160,7 +1171,7 @@ let spiral_peval module_main output_path =
                 | DotNetReference, TyVV(N []) -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _, TypeString x -> 
-                    if x = "elem_type" then elem_ty |> typec_strip |> typect |> tyt
+                    if x = "elem_type" then elem_ty |> tyt
                     else failwithf "Unknown type string applied to array. Got: %s" x
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
@@ -1211,24 +1222,6 @@ let spiral_peval module_main output_path =
                             else
                                 on_type_er d.trace "Cannot call a private constructor."    
             | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
-            // apply_typec
-            | typec & TyType(TyTypeC (N ty)), args ->
-                let substitute_ty = function
-                    | TyBox(N(x,_)) -> tybox(x,ty)
-                    | x -> tybox(x,ty)
-
-                let (|TyRecUnion|_|) = function
-                    | UnionT (N ty') -> Some ty'
-                    | TyRec t -> Some (set_field t)
-                    | _ -> None
-
-                match ty, args with
-                | x, TyType r when x = r -> args
-                | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' ->
-                    let lam = inl' ["typec"; "args"] (op(Case,[v "args"; ap (v "typec") (v "args")])) |> inner_compile
-                    apply d (apply d lam typec) args
-                | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
-                | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
             // apply_string
             | TyType(PrimT StringT) & str, TyVV(N [a;b]) -> 
                 if is_int a && is_int b then TyOp(StringSlice,[str;a;b],PrimT StringT) |> destructure d
@@ -1243,12 +1236,32 @@ let spiral_peval module_main output_path =
                 else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
             | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
-        let apply_tev d expr args = apply d (tev d expr) (tev d args)
+        let type_box d typec args =
+            let typec & TyType ty, args = tev2 d typec args
+            let substitute_ty = function
+                | TyBox(N(x,_)) -> tybox(x,ty)
+                | x -> tybox(x,ty)
 
-        let typec_map d f x =
-            let f = tev d f 
-            let x = tev d x |> get_type |> typec_strip |> tyt
-            apply {d with seq = ref id} f x |> get_type |> typec_strip |> typect |> tyt
+            let (|TyRecUnion|_|) = function
+                | UnionT (N ty') -> Some ty'
+                | TyRec t -> Some (set_field t)
+                | _ -> None
+
+            match ty, args with
+            | x, TyType r when x = r -> args
+            | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' ->
+                let lam = inl' ["typec"; "args"] (op(Case,[v "args"; type_box (v "typec") (v "args")])) |> inner_compile
+                apply d (apply d lam typec) args
+            | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
+            | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
+
+        let type_in d a = tev d a |> get_type |> typeintypet |> tyt
+        let type_out d a = 
+            match tev d a |> get_type with
+            | TypeInTypeT (N x) -> tyt x
+            | x -> on_type_er d.trace <| sprintf "Expected a TypeInTypeT in type_out. Got: %A" x
+
+        let apply_tev d expr args = apply d (tev d expr) (tev d args)
 
         let inline vv_index_template f d v i =
             let v,i = tev2 d v i
@@ -1276,9 +1289,8 @@ let spiral_peval module_main output_path =
         let vv_is x = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false)) x
 
         let eq_type d a b =
-            let f a = typec_strip (get_type a) 
             let a, b = tev2 d a b 
-            LitBool (f a = f b) |> TyLit
+            LitBool (get_type a = get_type b) |> TyLit
     
         let vv_cons d a b =
             let a, b = tev2 d a b
@@ -1319,11 +1331,10 @@ let spiral_peval module_main output_path =
 
         let type_annot d a b =
             match d.rbeh with
-            | AnnotationReturn -> tev d b |> get_type |> typec_strip |> tyt
+            | AnnotationReturn -> tev d b
             | AnnotationDive ->
-                let f a = typec_strip (get_type a) 
                 let a, b = tev d a, tev_seq d b
-                let ta, tb = f a, f b
+                let ta, tb = get_type a, get_type b
                 if ta = tb then a else on_type_er d.trace <| sprintf "Type annotation mismatch.\n%A <> %A" ta tb
 
         let inline prim_bin_op_template d check_error is_check k a b t =
@@ -1449,7 +1460,7 @@ let spiral_peval module_main output_path =
                 | _ -> prim_un_op_helper t a
                 ) a t
 
-        let for_cast d x = tev_seq d x |> get_type |> typec_strip |> for_castt |> tyt
+        let for_cast d x = tev_seq d x |> get_type |> for_castt |> tyt
         let error_non_unit d a =
             let x = tev d a 
             if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
@@ -1479,7 +1490,7 @@ let spiral_peval module_main output_path =
             tyfun(env, FunTypeModule)
 
         let array_create d size typ =
-            let typ = tev_seq d typ |> get_type |> typec_strip
+            let typ = tev_seq d typ |> get_type
 
             let size,array_type =
                 match tev d size with
@@ -1649,10 +1660,12 @@ let spiral_peval module_main output_path =
             | VVCons,[a;b] -> vv_cons d a b
 
             | TypeAnnot,[a;b] -> type_annot d a b
-            | TypeConstructorUnion,[a;b] -> typec_union d a b
-            | TypeConstructorCreate,[a] -> typec_create d a
-            | TypeConstructorMap,[a;b] -> typec_map d a b
-            | TypeConstructorSplit,[a] -> typec_split d a
+            | TypeUnion,[a;b] -> type_union d a b
+            | TypeBox,[a;b] -> type_box d a b
+            | TypeCreate,[a] -> type_create d a
+            | TypeIn,[a] -> type_in d a
+            | TypeOut,[a] -> type_out d a
+            | TypeSplit,[a] -> type_split d a
             | EqType,[a;b] -> eq_type d a b
             | ModuleHasMember,[a;b] -> module_has_member d a b
             | Neg,[a] -> prim_un_numeric d a Neg
@@ -2031,8 +2044,6 @@ let spiral_peval module_main output_path =
                 x
             | false, false -> many1 (if_ (=) expr') s
             
-                
-
         let case_module_alt expr s =
             let mp_binding (n,e) = vv [lit_string n; e]
             let mp_create l = op(ModuleCreateAlt,l)
@@ -2055,13 +2066,15 @@ let spiral_peval module_main output_path =
             curlies (module_with <|> (module_create |>> mp_create))
             <| s
 
+        let case_type expr = type_' >>. rounds expr |>> type_create
+
         let rec expressions expr s =
             let unary_ops = 
                 [case_for_cast; case_lit_lift]
                 |> List.map (fun x -> x (expressions expr) |> attempt)
                 |> choice
             let rest = 
-                [case_print_env; case_print_expr
+                [case_print_env; case_print_expr; case_type
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
                  case_rounds; case_typecase; case_typeinl; case_var; case_module; case_module_alt]
                 |> List.map (fun x -> x expr |> attempt)
@@ -2269,7 +2282,7 @@ let spiral_peval module_main output_path =
                 | BoolT -> "bool"
                 | StringT -> "string"
                 | CharT -> "char"
-            | TypeConstructorT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
+            | TypeInTypeT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
                 failwith "Should be covered in Unit."
                 
 
@@ -2435,8 +2448,8 @@ let spiral_peval module_main output_path =
                     loop 0 cases
 
             match expr with
-            | TyT Unit | TyV (_, Unit) -> ""
-            | TyT t -> on_type_er [] <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
+            | TyT (T Unit) | TyV (_, Unit) -> ""
+            | TyT t -> on_type_er t.Trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t.Expression
             | TyV v -> print_tyv v
             | TyLet(tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
             | TyState(b,rest,_) ->
@@ -2691,26 +2704,27 @@ let spiral_peval module_main output_path =
         s  [l "error_type" (p error_type)
             l "print_static" (p print_static)
             l "dyn" (p dynamize)
-            l "typec" (p type_create)
-            l "typec_union" (p2 type_union)
-            l "typec_split" (p type_split)
-            l "typec_map" (p2 type_map)
-            l "typec_error" (op(TypeConstructorCreate,[type_lit_create <| LitString "TypeConstructorError"]))
+            l "union" (p2 type_union)
+            l "split" (p type_split)
+            l "box" (p2 type_box)
+            l "in" (p type_in)
+            l "out" (p type_out)
+            l "type_error" (type_lit_create <| LitString "TypeConstructorError")
 
-            l "bool" (op(TypeConstructorCreate,[lit <| LitBool true]))
-            l "int64" (op(TypeConstructorCreate,[lit <| LitInt64 0L]))
-            l "int32" (op(TypeConstructorCreate,[lit <| LitInt32 0]))
-            l "int16" (op(TypeConstructorCreate,[lit <| LitInt16 0s]))
-            l "int8" (op(TypeConstructorCreate,[lit <| LitInt8 0y]))
-            l "uint64" (op(TypeConstructorCreate,[lit <| LitUInt64 0UL]))
-            l "uint32" (op(TypeConstructorCreate,[lit <| LitUInt32 0u]))
-            l "uint16" (op(TypeConstructorCreate,[lit <| LitUInt16 0us]))
-            l "uint8" (op(TypeConstructorCreate,[lit <| LitUInt8 0uy]))
-            l "float64" (op(TypeConstructorCreate,[lit <| LitFloat64 0.0]))
-            l "float32" (op(TypeConstructorCreate,[lit <| LitFloat32 0.0f]))
-            l "string" (op(TypeConstructorCreate,[lit <| LitString ""]))
-            l "char" (op(TypeConstructorCreate,[lit <| LitChar ' ']))
-            l "unit" (op(TypeConstructorCreate,[B]))
+            l "bool" (op(TypeCreate,[lit <| LitBool true]))
+            l "int64" (op(TypeCreate,[lit <| LitInt64 0L]))
+            l "int32" (op(TypeCreate,[lit <| LitInt32 0]))
+            l "int16" (op(TypeCreate,[lit <| LitInt16 0s]))
+            l "int8" (op(TypeCreate,[lit <| LitInt8 0y]))
+            l "uint64" (op(TypeCreate,[lit <| LitUInt64 0UL]))
+            l "uint32" (op(TypeCreate,[lit <| LitUInt32 0u]))
+            l "uint16" (op(TypeCreate,[lit <| LitUInt16 0us]))
+            l "uint8" (op(TypeCreate,[lit <| LitUInt8 0uy]))
+            l "float64" (op(TypeCreate,[lit <| LitFloat64 0.0]))
+            l "float32" (op(TypeCreate,[lit <| LitFloat32 0.0f]))
+            l "string" (op(TypeCreate,[lit <| LitString ""]))
+            l "char" (op(TypeCreate,[lit <| LitChar ' ']))
+            l "unit" (op(TypeCreate,[B]))
 
             l "lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
             l "for_cast" (p for_cast)
