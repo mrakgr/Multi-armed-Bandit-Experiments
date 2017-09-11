@@ -851,8 +851,12 @@ open List
 
 inl a = cons 3 () |> cons 2 |> cons 1 |> dyn
 inl b = cons 6 () |> cons 5 |> cons 4 |> dyn
-inl c = (cons a (singleton b))
-concat (dyn c)
+inl c = dyn (cons a (singleton b))
+match c with
+| .Q -> int64
+| x -> int64
+|> ignore
+concat c
     """
 
 let test67 =
@@ -872,6 +876,14 @@ open List
 
 inl a = empty int64 |> dyn
 empty a
+    """
+
+let test69 =
+    "test69",[tuple;list],"Does the list module init work?",
+    """
+open List
+
+init 10 (inl x -> 2.2)
     """
 
 let f = function
@@ -909,5 +921,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test66
+run_test' false test69
 

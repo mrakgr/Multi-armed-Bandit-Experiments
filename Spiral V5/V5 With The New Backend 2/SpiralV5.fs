@@ -336,7 +336,6 @@ and ProgramNode =
     | Statement of string
     | Indent
     | Dedent
-    | Statements of Buf
 
 // #Main
 let spiral_peval module_main output_path = 
@@ -926,7 +925,8 @@ let spiral_peval module_main output_path =
             | TyBox _ -> chase_recurse r
             | TyT _ | TyV _ -> destructure_var r
             | TyOp _ -> destructure_cse r
-            | TyJoinPoint _ | TyLet _ | TyState _ -> failwith "These two should never appear in destructure. They should go directly into d.seq."
+            | TyJoinPoint _ | TyLet _ | TyState _ -> failwithf "This should never appear in destructure. It should go directly into d.seq. Got: %A" r
+
 
         let inline if_is_returnable ty_x f =
             if is_returnable' ty_x then f()
@@ -1049,7 +1049,7 @@ let spiral_peval module_main output_path =
                         let l = List.map (snd >> get_type) cases
                         on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
                 | _ -> failwith "There should always be at least one clause here."
-            | a & TyBox(N(b,_)) -> assume d a b case
+            | a & TyBox(N(b,_)) -> cse_add d a b; tev d case
             | _ -> tev d case
            
         let typec_union d a b =
@@ -2202,15 +2202,12 @@ let spiral_peval module_main output_path =
         let exp x = String.concat "" x
 
         let process_statements (statements: ResizeArray<ProgramNode>) =
-            let rec process_statement (code: StringBuilder,ind as state) statement =
+            let process_statement (code: StringBuilder,ind as state) statement =
                 match statement with
                 | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp |> code.Append, ind
                 | Indent -> code, ind+4
                 | Dedent -> code, ind-4
-                | Statements x -> process_statements state x
-            and process_statements state (statements: ResizeArray<ProgramNode>) =
-                Seq.fold process_statement state statements
-            process_statements (StringBuilder(),0) statements
+            Seq.fold process_statement (StringBuilder(),0) statements
             |> fun (code,ind) -> code.ToString()
 
         let state x = buffer.Add <| Statement x
@@ -2306,6 +2303,15 @@ let spiral_peval module_main output_path =
         let print_case_rec x i = print_tag_rec x + sprintf "Case%i" i
         let print_case_union x i = print_tag_union x + sprintf "Case%i" i
 
+        let inline handle_unit_in_last_position f =
+            let x = buffer.Count
+            match f () with
+            | "" ->
+                match Seq.last buffer with
+                | Statement s when s.StartsWith "let " -> "()"
+                | _ -> ""
+            | x -> x
+
         let rec codegen expr =
             let print_value = function
                 | LitInt8 x -> sprintf "%iy" x
@@ -2345,14 +2351,9 @@ let spiral_peval module_main output_path =
                 | _ ->
                     sprintf "let %s =" (print_tyv_with_type v) |> state
                     enter' <| fun _ -> f()
-        
+
             let inline if_ v cond tr fl =
-                let enter f =
-                    enter <| fun _ ->
-                        let x = buffer.Count
-                        match f () with
-                        | "" when buffer.Count = x -> "()"
-                        | x -> x
+                let enter f = enter <| fun _ -> handle_unit_in_last_position f
                 
                 let inline f op a b = codegen (TyOp(op,[a;b],PrimT BoolT))
 
@@ -2427,10 +2428,7 @@ let spiral_peval module_main output_path =
                     let rec loop i = function
                         | case :: body :: rest -> 
                             print_case i case
-                            enter <| fun _ -> 
-                                let c = buffer.Count
-                                let x = codegen body
-                                if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
+                            enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
                             loop (i+1) rest
                         | [] -> ()
                         | _ -> failwith "The cases should always be in pairs."
@@ -2438,7 +2436,7 @@ let spiral_peval module_main output_path =
 
             match expr with
             | TyT Unit | TyV (_, Unit) -> ""
-            | TyT t -> on_type_er [] <| sprintf "Usage of type %A as an instance on the term level is invalid." t
+            | TyT t -> on_type_er [] <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
             | TyV v -> print_tyv v
             | TyLet(tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
             | TyState(b,rest,_) ->
@@ -2591,10 +2589,7 @@ let spiral_peval module_main output_path =
 
             let print_body() =
                 is_first_method <- false
-                enter <| fun _ -> 
-                    let c = buffer.Count
-                    let x = codegen body
-                    if String.IsNullOrEmpty x && buffer.Count = c then "()" else x
+                enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
 
             match join_point_type with
             | JoinPointClosure args -> 

@@ -155,22 +155,9 @@ inl concat ar =
 module (empty,singleton,foldl,init,map,filter,concat)
     """) |> module_
 
-let typec =
-    (
-    "TypeC",[],"The type constructor module",
-    """
-inl chain a f on_fail on_succ =
-    inl x = typec_map f a
-    match eq_type x typec_error with
-    | true -> on_fail()
-    | _ -> on_succ x
-
-module(chain)
-    """) |> module_
-
 let list =
     (
-    "List",[tuple;typec],"The queue module.",
+    "List",[tuple],"The queue module.",
     """
 type list x =
     ()
@@ -190,7 +177,6 @@ inl lw x =
                 | _ -> on_fail()
             | .cons -> on_succ (x :: ())
 
-    inl typ = typec x // This is so the argument does not forget its type during destructuring.
     match x with
     | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
     | (.tup | .cons) & typ, n, x -> loop typ n x
@@ -221,7 +207,9 @@ inl rec map f l =
 
 inl fold_template loop f s l = 
     if_static (is_static s && is_static l) then loop f s l
-    else (met () -> loop f (dyn s) (dyn l)) ()
+    else 
+        inl s,l = dyn s, dyn l
+        (met () -> loop f s l) ()
 
 inl rec foldl x =
     fold_template (inl f s l ->
@@ -231,13 +219,11 @@ inl rec foldl x =
         : s) x
 
 inl rec foldr f l s = 
-    inl loop f l s =
+    fold_template (inl f s l ->
         match l with
         | #lw (x :: xs) -> f x (foldr f xs s)
         | #lw () -> s
-        : s
-    if_static (is_static s && is_static l) then loop f l s
-    else (met () -> loop f (dyn l) (dyn s)) ()
+        : s) f s l
 
 inl append a b = foldr cons a b
 inl concat l & !elem_type !elem_type t = foldr append l (empty t)
