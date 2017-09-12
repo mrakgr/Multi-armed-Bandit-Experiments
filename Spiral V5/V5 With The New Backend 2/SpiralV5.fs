@@ -303,20 +303,20 @@ and CSEDict = Map<TypedExpr,TypedExpr> ref
 
 and Trace = PosKey list
 
-and TraceNode<'a when 'a:equality>(expr:'a, trace:Trace) = 
+and TraceNode<'a when 'a:equality and 'a:comparison>(expr:'a, trace:Trace) = 
     member x.Expression = expr
     member x.Trace = trace
     override x.ToString() = sprintf "%A" expr
     override x.GetHashCode() = expr.GetHashCode()
     override x.Equals(y) = 
         match y with 
-        | :? TraceNode<'a> as y -> trace = y.Trace
+        | :? TraceNode<'a> as y -> expr = y.Expression
         | _ -> failwith "Invalid equality for TraceNode."
 
     interface IComparable with
         member x.CompareTo(y) = 
             match y with
-            | :? TraceNode<'a> as y -> compare trace y.Trace
+            | :? TraceNode<'a> as y -> compare expr y.Expression
             | _ -> failwith "Invalid comparison for TraceNode."
 
 let inline t (x: TraceNode<_>) = x.Expression
@@ -883,16 +883,14 @@ let spiral_peval module_main output_path =
 
         let make_up_vars_for_ty d ty = TyV <| make_tyv_ty d ty
 
-        let state d ty_exp =
-            let seq = !d.seq
-            d.seq := fun rest -> TyState(ty_exp,rest,get_type rest) |> seq
-
         let tyt x = TyT (TraceNode(x,d.trace))
 
         let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
             let ty = get_type ty_exp
             if is_unit ty then
-                if even_if_unit then state d ty_exp
+                if even_if_unit then 
+                    let seq = !d.seq
+                    d.seq := fun rest -> TyState(ty_exp,rest,get_type rest) |> seq
                 tyt ty
             else
                 let v = make_tyv_ty d ty
@@ -917,12 +915,12 @@ let spiral_peval module_main output_path =
                 | None -> on_fail r
             let inline chase_recurse r = chase_cse destructure id r
 
-            let destructure_var r =
+            let inline destructure_var r un_template =
                 let index_tuple_args tuple_types = 
-                    List.mapi (fun i typ -> 
-                        destructure <| TyOp(VVIndex,[r;TyLit <| LitInt64 (int64 i)],typ)) tuple_types
+                    let unpack i typ = un_template typ <| fun () -> destructure <| TyOp(VVIndex,[r;TyLit <| LitInt64 (int64 i)],typ)
+                    List.mapi unpack tuple_types
                 let env_unseal x =
-                    let unseal k v = destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], v)
+                    let unseal k typ = un_template typ <| fun () -> destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], typ)
                     Map.map unseal x
                 match get_type r with
                 | VVT (N tuple_types) -> tyvv(index_tuple_args tuple_types)
@@ -941,7 +939,12 @@ let spiral_peval module_main output_path =
             match r with
             | TyFun _ | TyVV _ | TyLit _ -> r
             | TyBox _ -> chase_recurse r
-            | TyT _ | TyV _ -> destructure_var r
+            | TyT _ -> 
+                destructure_var r <| fun typ f ->
+                    match r with
+                    | TyT _ -> destructure <| tyt typ
+                    | _ -> f()
+            | TyV _ -> destructure_var r <| fun _ f -> f()
             | TyOp _ -> destructure_cse r
             | TyJoinPoint _ | TyLet _ | TyState _ -> failwithf "This should never appear in destructure. It should go directly into d.seq. Got: %A" r
 
@@ -1046,7 +1049,8 @@ let spiral_peval module_main output_path =
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
             match tev d v with
-            | TyV(_, t & (UnionT _ | RecT _)) as v ->
+            | a & TyBox(N(b,_)) -> cse_add d a b; tev d case
+            | TyType(t & (UnionT _ | RecT _)) as v ->
                 let rec map_cases l =
                     match l with
                     | x :: xs -> (x, assume d v x case) :: map_cases xs
@@ -1061,7 +1065,6 @@ let spiral_peval module_main output_path =
                         let l = List.map (snd >> get_type) cases
                         on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
                 | _ -> failwith "There should always be at least one clause here."
-            | a & TyBox(N(b,_)) -> cse_add d a b; tev d case
             | _ -> tev d case
            
         let type_union d a b =
@@ -1508,10 +1511,10 @@ let spiral_peval module_main output_path =
             match tev3 d ar idx r with
             | ar & TyType (ArrayT(N(DotNetHeap,t))), idx, r when is_int idx && t = get_type r ->
                 if is_unit t then TyB
-                else state d (TyOp(ArraySet,[ar;idx;r],BVVT)); TyB
+                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BVVT))
             | ar & TyType (ArrayT(N(DotNetReference,t))), idx & TyVV(N []), r when t = get_type r -> 
                 if is_unit t then TyB
-                else state d (TyOp(ArraySet,[ar;idx;r],BVVT)); TyB
+                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BVVT))
             | x -> on_type_er d.trace <| sprintf "The two sides in array set have different types. %A" x
 
         let array_length d ar =
@@ -2066,7 +2069,7 @@ let spiral_peval module_main output_path =
             curlies (module_with <|> (module_create |>> mp_create))
             <| s
 
-        let case_type expr = type_' >>. rounds expr |>> type_create
+        let case_type expr = type_' >>. expr |>> type_create
 
         let rec expressions expr s =
             let unary_ops = 

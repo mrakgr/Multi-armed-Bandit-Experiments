@@ -177,26 +177,30 @@ inl lw x =
                 | _ -> on_fail()
             | .cons -> on_succ (x :: ())
 
+    // Testing for whether the type is a list is not possible since the types are stripped away so ruthlesly in case.
     match x with
-    | .var, (() | (a,b when eq_type (list a) b)) & x _ on_succ -> on_succ x
+    | .var, x _ on_succ -> on_succ x
     | (.tup | .cons) & typ, n, x -> loop typ n x
 
-inl empty !typec x = list x ()
-inl singleton x = list x (x, empty x)
-inl cons a b = list a (a, list a b)
+inl empty x = box (list x) ()
+inl singleton x = box (list x) (x, empty x)
+inl cons a b = box (list a) (a, box (list a) b)
 
 inl init n f =
-    inl t = typec (f 0)
+    inl t = type (f 0)
     met rec loop !dyn i =
         if i < n then cons (f i) (loop (i+1))
         else empty t
         : list t
     loop 0
 
-inl elem_type l = typec_map (function | (), (a,b) -> a) (typec_split l)
+inl elem_type l =
+    match split l with
+    | (), (a,b) when eq_type (list a) l -> a
+    | _ -> error_type "Expected a list in elem_type."
 
 inl rec map f l = 
-    inl t' = typec_map f (elem_type l)
+    inl t' = type f (elem_type l)
     inl loop map =
         match l with
         | #lw (x :: xs) -> cons (f x) (map f xs)
@@ -228,7 +232,7 @@ inl rec foldr f l s =
 inl append a b = foldr cons a b
 inl concat l & !elem_type !elem_type t = foldr append l (empty t)
 
-module (list,init,map,foldl,foldr,empty,cons,singleton,append,concat)
+module (list,lw,init,map,foldl,foldr,empty,cons,singleton,append,concat)
     """) |> module_
 
 

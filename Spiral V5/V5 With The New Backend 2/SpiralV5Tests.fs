@@ -101,7 +101,7 @@ type option_int =
     .Some, 1 
     .None
 
-met x = option_int .None //(.Some, 10)
+met x = box option_int .None
 match x with
 | .Some, x -> x
 | .None -> 0
@@ -113,6 +113,7 @@ let test9 = //
 type ab = 
     .A
     .B
+inl ab = box ab
 met x = (ab .A, ab .A, ab .A)
 match x with
 | .A, _, _ -> 1
@@ -127,6 +128,7 @@ let test10 = //
 type ab = 
     .A
     .B
+inl ab = box ab
 met x = (ab .A, ab .A, ab .A, ab .A)
 match x with
 | .A, .A, _, _ -> 1
@@ -140,6 +142,7 @@ let test11 = //
     """
 type a = (1,2)
 type b = (1,a,a)
+inl a,b = box a, box b
 met x = b (1, a (2,3), a (4,5))
 match x with
 | _, (x, _), (_, y) -> x + y
@@ -163,7 +166,7 @@ type expr x =
     .V, x
     .Add, expr x, expr x
     .Mult, expr x, expr x
-inl int_expr = expr int64
+inl int_expr = box (expr int64)
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
 inl mult a b = int_expr (.Mult, a, b)
@@ -185,7 +188,7 @@ type expr x =
     .V, x
     .Add, expr x, expr x
     .Mult, expr x, expr x
-inl int_expr = expr int64
+inl int_expr = box (expr int64)
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
 inl mult a b = int_expr (.Mult, a, b)
@@ -197,7 +200,7 @@ met rec inter x =
     | .V, x -> x
     | .Add, a, b -> inter a + inter b
     | .Mult, a, b -> inter a * inter b
-    : 0
+    : int64
 inter c
     """
 
@@ -243,8 +246,8 @@ let test16 = //
 type t = 
     int64
     float32
-if dyn true then t 0
-else t 0.0
+if dyn true then box t 0
+else box t 0.0
     """
 
 let test17 = // 
@@ -296,10 +299,10 @@ let test20 = //
 type t = 
     int64
     float32
-inl x = t 3.5
+inl x = box t 3.5
 match x with
-| q : float32 -> x + x
 | q : int64 -> x * x
+| q : float32 -> x + x
     """
 
 let test21 = // 
@@ -391,7 +394,7 @@ type t =
     int64, int64
     int64
 
-inl x = (1,1) |> t |> dyn
+inl x = (1,1) |> box t |> dyn
 match x with
 | a,b -> 0
 | c -> c
@@ -404,11 +407,11 @@ type List x =
     .ListCons, (x, List x)
     .ListNil
 
-inl t = List int64
+inl t = box (List int64)
 inl nil = t .ListNil
 inl cons x xs = t (.ListCons, (x, xs))
 
-met rec sum (!int64 (!dyn s)) l = 
+met rec sum (!dyn s) l = 
     match l with
     | .ListCons, (x, xs) -> sum (s + x) xs
     | .ListNil -> s
@@ -427,7 +430,7 @@ type a =
 type b = 
     a
     .Hello
-(.A, (2,3)) |> a |> dyn |> b
+(.A, (2,3)) |> box a |> dyn |> box b
     """
 
 let test32 = // 
@@ -459,7 +462,7 @@ type Res =
     int64, int64
     List int64
 
-match Res 1 |> dyn with
+match box Res 1 |> dyn with
 | x : int64 -> 1
 | (a, b) as x -> 2
 | _ -> 3
@@ -468,7 +471,7 @@ match Res 1 |> dyn with
 let test38 =
     "test38",[],"Is type constructor of an int64 an int64?",
     """
-inl t = int64 (dyn 1)
+inl t = box int64 (dyn 1)
 print_static t
     """
 
@@ -498,31 +501,6 @@ inl m m1 = function
     | x -> error_type "The call to m1 failed."
 
 m f 2
-    """
-
-let test43 =
-    "test43",[tuple],"Do extension active patterns work?",
-    """
-// This test is a bit strange since I expect the extension patterns to be used to implement views
-// instead of doing general tranformations.
-inl f x on_fail on_succ =
-    match x with
-    | .tup, n, (_ :: _ as x) when n = tuple_length x -> Tuple.repeat n x |> on_succ
-    | .cons, n, x -> "rest" :: Tuple.repeat n x |> Tuple.rev |> on_succ 
-    | .var, x -> on_succ ("is_var",x)
-    | _ -> on_fail()
-
-inl m m1 = function
-    | #m1 (q,w,e) -> q, w, e
-    | #m1 (q,w) -> q, w
-    | #m1 (a :: b) -> a :: b
-    | #m1 q -> q
-    | _ -> error_type "The call to m1 failed."
-
-m f true, // Tuple1(true, true, "rest")
-m f (2.2,3.3), // Tuple3(Tuple2(2.200000f, 3.300000f), Tuple2(2.200000f, 3.300000f))
-m f ("a","b","c"), // Tuple5(Tuple4("a", "b", "c"), Tuple4("a", "b", "c"), Tuple4("a", "b", "c"))
-m f (1,2,3,4) // Tuple7(Tuple6(1L, 2L, 3L, 4L), Tuple6(1L, 2L, 3L, 4L), "rest")
     """
 
 let test44 =
@@ -828,10 +806,10 @@ let test64 =
 open List
 
 match dyn (empty int64) with
-| #list (a,b) -> a + b + 10
-| #list (x :: x2 :: xs) -> x + x2
-| #list (x :: xs) -> 55
-| #list () -> 0
+| #lw (a,b) -> a + b + 10
+| #lw (x :: x2 :: xs) -> x + x2
+| #lw (x :: xs) -> 55
+| #lw () -> 0
 | _ -> 1 // Does not get triggered.
     """
 
@@ -852,10 +830,6 @@ open List
 inl a = cons 3 () |> cons 2 |> cons 1 |> dyn
 inl b = cons 6 () |> cons 5 |> cons 4 |> dyn
 inl c = dyn (cons a (singleton b))
-match c with
-| .Q -> int64
-| x -> int64
-|> ignore
 concat c
     """
 
@@ -898,8 +872,9 @@ let tests =
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test35;test38
-    test40;test42;test43;test44;test45;test46;test47;test48;test49
-    test54;test58;test61;test62;test63;test64;test65;test66;test67
+    test40;test42;test44;test45;test46;test47;test48;test49
+    test54;test58
+    test61;test62;test63;test64;test65;test66;test67;test68;test69
     hacker_rank_1
     |] |> Array.map module_
 
