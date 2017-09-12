@@ -163,7 +163,8 @@ type Op =
     | VVLength
     | VVIs
     | TypeAnnot
-    | EnvUnseal
+    | RecordIndividualUnseal
+    | RecordBoxedUnseal
     | TypeCreate
     | TypeUnion
     | TypeSplit
@@ -248,15 +249,15 @@ and Expr =
 
 and Ty =
     | PrimT of PrimitiveType
-    | VVT of Node<Ty list>
+    | VVT of Ty list
     | LitT of Value
-    | FunT of Node<EnvTy * FunType>
-    | UnionT of Node<Set<Ty>>
+    | FunT of EnvTy * FunType
+    | UnionT of Set<Ty>
     | RecT of int
-    | ClosureT of Node<Ty * Ty>
-    | ArrayT of Node<ArrayType * Ty>
-    | ForCastT of Node<Ty> // For casting type level function to term (ClosureT) level ones.
-    | TypeInTypeT of Node<Ty>
+    | ClosureT of Ty * Ty
+    | ArrayT of ArrayType * Ty
+    | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
+    | TypeInTypeT of Ty
     | DotNetTypeRuntimeT of Node<Type> 
     | DotNetTypeInstanceT of Node<Type>
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
@@ -264,9 +265,9 @@ and Ty =
 and TypedExpr =
     | TyT of TraceNode<Ty>
     | TyV of TyTag
-    | TyVV of Node<TypedExpr list>
-    | TyFun of Node<EnvTerm * FunType>
-    | TyBox of Node<TypedExpr * Ty>
+    | TyVV of TypedExpr list
+    | TyFun of EnvTerm * FunType
+    | TyBox of TypedExpr * Ty
 
     | TyLet of TyTag * TypedExpr * TypedExpr * Ty
     | TyState of TypedExpr * TypedExpr * Ty
@@ -289,9 +290,17 @@ and MemoCases =
 
 and Tag = int
 and TyTag = Tag * Ty
-and EnvTerm = Node<Map<string, TypedExpr>>
-and EnvTy = Node<Map<string, Ty>>
-and MemoKey = Node<Expr * EnvTerm>
+and EnvCoreTerm = Map<string, TypedExpr>
+and EnvCoreTy = Map<string, Ty>
+and EnvTerm = 
+    | RecordHeap of Node<EnvCoreTerm>
+    | RecordStack of Node<EnvCoreTerm>
+    | RecordIndividual of EnvCoreTerm
+and EnvTy = 
+    | RecordHeapT of Node<EnvCoreTerm>
+    | RecordStackT of Node<EnvCoreTerm>
+    | RecordIndividualT of EnvCoreTy
+and MemoKey = Node<Expr * EnvCoreTerm>
 
 and Arguments = LinkedHashSet<TyTag>
 and Renamer = Dictionary<Tag,Tag>
@@ -331,7 +340,7 @@ type LangEnv =
     rbeh: RecursiveBehavior
     ltag : int ref
     seq : (TypedExpr -> TypedExpr) ref
-    env : EnvTerm
+    env : EnvCoreTerm
     cse_env : CSEDict
     trace : Trace
     }
@@ -360,16 +369,6 @@ and ProgramNode =
 
 // #Main
 let spiral_peval module_main output_path = 
-    // #Unit types
-    let rec is_unit_tuple t = List.forall is_unit t
-    and is_unit_env env = Map.forall (fun _ -> is_unit) env
-    and is_unit = function
-        | TypeInTypeT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
-        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
-        | ArrayT (N(_,t)) -> is_unit t
-        | FunT (N(N env,_)) -> is_unit_env env
-        | VVT (N t) -> is_unit_tuple t
-
     // #Smart constructors
     let inline force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
@@ -408,48 +407,33 @@ let spiral_peval module_main output_path =
     let vv x = nodify_vv x |> VV
 
     // nodify_ty variants
-    let env_ty_dict = d0()
-    let nodify_env_ty = nodify env_ty_dict
-    let uniont_dict = d0()
-    let nodify_uniont = nodify uniont_dict
     let rect_dict = d0()
     let (|TyRec|_|) = function
         | RecT x -> Some rect_dict.[x]
         | _ -> None
-    let nodify_closuret = nodify <| d0()
-    let nodify_arrayt = nodify <| d0()
-    let nodify_for_castt = nodify <| d0()
     let nodify_dotnet_type_runtimet = nodify <| d0()
     let nodify_dotnet_type_instancet = nodify <| d0()
     let nodify_dotnet_assemblyt = nodify <| d0()
-    let nodify_vvt = nodify <| d0()
-    let nodify_funt = nodify <| d0()
-    let nodify_typeintypet = nodify <| d0()
 
-    let vvt x = nodify_vvt x |> VVT
+    let vvt x = VVT x
     let litt x = LitT x
-    let funt (x, core) = nodify_funt (x, core) |> FunT
-    let uniont x = nodify_uniont x |> UnionT
-    let closuret x = nodify_closuret x |> ClosureT
-    let arrayt x = nodify_arrayt x |> ArrayT
-    let for_castt x = nodify_for_castt x |> ForCastT
+    let funt (x, core) = FunT (x, core)
+    let uniont x = UnionT x
+    let closuret x = ClosureT x
+    let arrayt x = ArrayT x
+    let for_castt x = ForCastT x
     let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
     let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
     let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
-    let typeintypet x = nodify_typeintypet x |> TypeInTypeT
+    let typeintypet x = TypeInTypeT x
 
     let nodify_memo_key = nodify <| d0()
     let nodify_env_term = nodify <| d0()
 
-//    let nodify_tyv = nodify <| d0()
-    let nodify_tyvv = nodify <| d0()
-    let nodify_tyfun = nodify <| d0()
-    let nodify_tybox = nodify <| d0()
-    
-    let tyv x = x |> TyV
-    let tyvv x = nodify_tyvv x |> TyVV
-    let tyfun (a,t) = nodify_tyfun (a,t) |> TyFun
-    let tybox x = nodify_tybox x |> TyBox
+    let tyv x = TyV x
+    let tyvv x = TyVV x
+    let tyfun (a,t) = TyFun (a,t)
+    let tybox x = TyBox x
 
     let lit_int i = LitInt64 i |> lit
     let lit_string x = LitString x |> lit
@@ -539,33 +523,49 @@ let spiral_peval module_main output_path =
         | LitString _ -> PrimT StringT
         | LitChar _ -> PrimT CharT
 
-    let rec env_to_ty env = Map.map (fun _ -> get_type) env |> nodify_env_ty
+    let rec env_to_ty = function
+        | RecordIndividual env -> RecordIndividualT (Map.map (fun _ -> get_type) env)
+        | RecordStack env -> RecordStackT env
+        | RecordHeap env -> RecordHeapT env
     and get_type = function
         | TyLit x -> get_type_of_value x
-        | TyVV (N l) -> List.map get_type l |> vvt
-        | TyFun (N(N l, t)) -> funt (env_to_ty l, t)
+        | TyVV l -> List.map get_type l |> vvt
+        | TyFun (l, t) -> funt (env_to_ty l, t)
 
-        | TyT (T t) | TyV(_,t) | TyBox(N(_,t))
+        | TyT (T t) | TyV(_,t) | TyBox(_,t)
         | TyLet(_,_,_,t) | TyJoinPoint(_,t)
         | TyState (_,_,t) | TyOp(_,_,t) -> t
 
+    // #Unit types
+    let rec is_unit_tuple t = List.forall is_unit t
+    and is_unit_env = function
+        | RecordStackT (N x) | RecordHeapT (N x) -> Map.forall (fun _ -> get_type >> is_unit) x
+        | RecordIndividualT x -> Map.forall (fun _ -> is_unit) x
+    and is_unit = function
+        | TypeInTypeT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
+        | ArrayT (_,t) -> is_unit t
+        | FunT (env,_) -> is_unit_env env
+        | VVT t -> is_unit_tuple t
+
+
     /// Wraps the argument in a list if not a tuple.
     let tuple_field = function 
-        | TyVV (N args) -> args
+        | TyVV args -> args
         | x -> [x]
 
     let (|TyTuple|) x = tuple_field x
 
     /// Wraps the argument in a set if not a UnionT.
     let set_field = function
-        | UnionT (N t) -> t
+        | UnionT t -> t
         | t -> Set.singleton t
 
     let (|TySet|) x = set_field x
 
     /// Wraps the argument in a list if not a tuple type.
     let tuple_field_ty = function 
-        | VVT (N x) -> x
+        | VVT x -> x
         | x -> [x]
 
     let (|TyType|) x = get_type x
@@ -777,7 +777,10 @@ let spiral_peval module_main output_path =
         m |> Seq.iter (fun kv -> m'.[kv.Key] <- r.[kv.Value])
         m'
 
-    let rec renamer_apply_env r e = Map.map (fun k v -> renamer_apply_typedexpr r v) e |> nodify_env_term
+    let rec renamer_apply_env r = function
+        | RecordIndividual e -> RecordIndividual (renamer_apply_env_core r e)
+        | RecordStack _ | RecordHeap _ as e -> e
+    and renamer_apply_env_core r = Map.map (fun k v -> renamer_apply_typedexpr r v)
     and renamer_apply_typedexpr
         (memo_dict: Dictionary<_,_>, renamer: Dictionary<_,_>, renamer_reversed: Dictionary<_,_>, 
          fv: LinkedHashSet<_>, renamed_fv: LinkedHashSet<_> as r) e =
@@ -796,9 +799,9 @@ let spiral_peval module_main output_path =
         memoize memo_dict e <| fun () ->
             match e with
             | TyT _ -> e
-            | TyBox (N(n,t)) -> tybox(f n,t)
-            | TyVV (N l) -> tyvv(List.map f l)
-            | TyFun(N(N l,t)) -> tyfun(renamer_apply_env r l, t)
+            | TyBox (n,t) -> tybox(f n,t)
+            | TyVV l -> tyvv(List.map f l)
+            | TyFun(l,t) -> tyfun(renamer_apply_env r l, t)
             | TyV (n,t as k) -> 
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
@@ -846,8 +849,8 @@ let spiral_peval module_main output_path =
         | PrimT Float64T -> typeof<float>
         | PrimT StringT -> typeof<string>
         | PrimT CharT -> typeof<char>
-        | ArrayT(N(DotNetHeap,t)) -> (dotnet_ty_to_type t).MakeArrayType()
-        | ArrayT(N(DotNetReference,t)) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
+        | ArrayT(DotNetHeap,t) -> (dotnet_ty_to_type t).MakeArrayType()
+        | ArrayT(DotNetReference,t) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
         | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
@@ -920,11 +923,14 @@ let spiral_peval module_main output_path =
                     let unpack i typ = un_template typ <| fun () -> destructure <| TyOp(VVIndex,[r;TyLit <| LitInt64 (int64 i)],typ)
                     List.mapi unpack tuple_types
                 let env_unseal x =
-                    let unseal k typ = un_template typ <| fun () -> destructure <| TyOp(EnvUnseal,[r; TyLit (LitString k)], typ)
-                    Map.map unseal x
+                    let unseal k typ = un_template typ <| fun () -> destructure <| TyOp(RecordIndividualUnseal,[r; TyLit (LitString k)], typ)
+                    match x with
+                    | RecordIndividualT x -> RecordIndividual(Map.map unseal x)
+                    | RecordStackT e -> RecordStack e
+                    | RecordHeapT e -> RecordHeap e
                 match get_type r with
-                | VVT (N tuple_types) -> tyvv(index_tuple_args tuple_types)
-                | FunT (N (N env,t)) -> tyfun(env_unseal env |> nodify_env_term, t)
+                | VVT tuple_types -> tyvv(index_tuple_args tuple_types)
+                | FunT (env,t) -> tyfun(env_unseal env, t)
                 | _ -> chase_recurse r
            
             let inline destructure_cse r = 
@@ -1002,10 +1008,10 @@ let spiral_peval module_main output_path =
 
         let inline renamables0() = d0(), d0(), d0(), lh0(), lh0()
         let inline eval_renaming memo_type d expr =
-            let env = d.env.Expression
+            let env = d.env
             let stopwatch = Diagnostics.Stopwatch.StartNew()
             let _, renamer, renamer_reversed, fv, renamed_fv as k = renamables0()
-            let renamed_env = renamer_apply_env k env
+            let renamed_env = renamer_apply_env_core k env
             total_time <- total_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
@@ -1022,7 +1028,7 @@ let spiral_peval module_main output_path =
 
         let memoize_type d x = 
             let memo_type _ = JoinPointType
-            let env = d.env.Expression |> Map.map (fun _ -> get_type >> tyt) |> nodify_env_term
+            let env = d.env |> Map.map (fun _ -> get_type >> tyt)
             let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
             tyt ret_ty
                 
@@ -1035,7 +1041,7 @@ let spiral_peval module_main output_path =
 
         let rec case_type d args_ty =
             let union_case = function
-                | UnionT (N l) -> Set.toList l
+                | UnionT l -> Set.toList l
                 | _ -> [args_ty]
             match args_ty with
             | TyRec t -> union_case t
@@ -1049,7 +1055,7 @@ let spiral_peval module_main output_path =
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
             match tev d v with
-            | a & TyBox(N(b,_)) -> cse_add d a b; tev d case
+            | a & TyBox(b,_) -> cse_add d a b; tev d case
             | TyType(t & (UnionT _ | RecT _)) as v ->
                 let rec map_cases l =
                     match l with
@@ -1125,17 +1131,34 @@ let spiral_peval module_main output_path =
             | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
             | _ -> on_type_er d.trace "Expected a string."
 
+        let rec record_boxed_unseal recf x =
+            let inline f x = record_boxed_unseal recf x
+            match x with
+            | TyV _ as v -> TyOp(RecordBoxedUnseal,[recf;v],get_type v)
+            | TyVV l -> tyvv (List.map f l)
+            | TyBox (a,b) -> tybox (f a, b)
+            | TyFun (RecordIndividual env, b) -> tyfun (RecordIndividual <| Map.map (fun _ -> f) env, b)
+            | x -> x
+               
+        let env_term_unseal recf env_term =
+            match env_term with
+            | RecordIndividual env -> env
+            | RecordStack (N env) | RecordHeap (N env) ->
+                Map.map (fun _ v ->
+                    make_tyv_and_push_typed_expr d (record_boxed_unseal recf v)
+                    ) env
+
         let rec apply d a b =
             match destructure d a, destructure d b with
             // It might make more sense to use TyType rather than TyTag here, but I do not want get_type to be triggered on everything here
             // as it is an expensive operation.
 
             // apply_for_cast
-            | recf & TyFun(N(N env_term,fun_type)), TyT (T (ForCastT (N args_ty))) -> 
+            | recf & TyFun(env_term,fun_type), TyT (T (ForCastT args_ty)) -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_up_vars_for_ty d x
                     match args_ty with
-                    | VVT (N l) -> tyvv(List.map f l)
+                    | VVT l -> tyvv(List.map f l)
                     | x -> f x
             
                 let args = instantiate_type_as_variable d args_ty
@@ -1144,22 +1167,30 @@ let spiral_peval module_main output_path =
                 | FunTypeModule -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" fun_type
                 // Usually it is against my principles to do inlining by hand, but apply is directly on the hot path 
                 // and without me doing this, it would need to take higher order functions.
-                | FunTypeRecFunction ((pat,body),name) ->
+                | FunTypeRecFunction ((pat,body),name) -> 
+                    let env_term = env_term_unseal recf env_term
                     let env = if pat <> "" then Map.add pat args env_term else env_term
-                    tev {d with env = Map.add name recf env |> nodify_env_term} body
+                    tev {d with env = Map.add name recf env} body
                 | FunTypeFunction (pat,body) -> 
-                    tev {d with env = nodify_env_term <| if pat <> "" then Map.add pat args env_term else env_term} body
+                    let env_term = env_term_unseal recf env_term
+                    tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
             // apply_function
-            | recf & TyFun(N(N env_term,FunTypeRecFunction ((pat,body),name))), args -> 
+            | recf & TyFun(env_term,FunTypeRecFunction ((pat,body),name)), args -> 
+                let env_term = env_term_unseal recf env_term
                 let env = if pat <> "" then Map.add pat args env_term else env_term
-                tev {d with env = Map.add name recf env |> nodify_env_term} body
-            | TyFun(N(N env_term,FunTypeFunction (pat,body))), args -> 
-                tev {d with env = nodify_env_term <| if pat <> "" then Map.add pat args env_term else env_term} body
+                tev {d with env = Map.add name recf env} body
+            | recf & TyFun(env_term,FunTypeFunction (pat,body)), args -> 
+                let env_term = env_term_unseal recf env_term
+                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
             // apply_module
-            | TyFun(N(N env_term,FunTypeModule)), TypeString n -> v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a function named %s inside the module." n)
-            | TyFun(N(env_term,FunTypeModule)), _ -> on_type_er d.trace "Expected a type level string in module application."
+            | recf & TyFun(env_term,FunTypeModule), TypeString n -> 
+                let f env_term = v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a member named %s inside the module." n)
+                match env_term with
+                | RecordIndividual env_term -> f env_term
+                | RecordStack (N env_term) | RecordHeap (N env_term) -> f env_term |> record_boxed_unseal recf
+            | TyFun(env_term,FunTypeModule), _ -> on_type_er d.trace "Expected a type level string in module application."
             // apply_string_static
-            | TyLit (LitString str), TyVV(N [TyLitIndex a; TyLitIndex b]) -> 
+            | TyLit (LitString str), TyVV [TyLitIndex a; TyLitIndex b] -> 
                 let f x = x >= 0 && x < str.Length
                 if f a && f b then TyLit(LitString str.[a..b])
                 else on_type_er d.trace "The slice into a string literal is out of bounds."
@@ -1167,11 +1198,11 @@ let spiral_peval module_main output_path =
                 if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
                 else on_type_er d.trace "The index into a string literal is out of bounds."
             // apply_array
-            | ar & TyType(ArrayT(N(array_ty,elem_ty))), idx ->
+            | ar & TyType(ArrayT(array_ty,elem_ty)), idx ->
                 match array_ty, idx with
                 | DotNetHeap, idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetHeap, idx -> on_type_er d.trace <| sprintf "The index into an array is not an int. Got: %A" idx
-                | DotNetReference, TyVV(N []) -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
+                | DotNetReference, TyVV [] -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _, TypeString x -> 
                     if x = "elem_type" then elem_ty |> tyt
@@ -1183,10 +1214,8 @@ let spiral_peval module_main output_path =
                         match a.GetType(name) with
                         | null -> on_type_er d.trace "A type cannot be found inside the assembly."
                         | x -> 
-                            if x.IsPublic then
-                                x |> dotnet_type_runtimet |> tyt
-                            else
-                                on_type_er d.trace "Cannot load a private type from an assembly."
+                            if x.IsPublic then dotnet_type_runtimet x |> tyt
+                            else on_type_er d.trace "Cannot load a private type from an assembly."
             | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
             | dotnet_type & TyType (DotNetTypeRuntimeT (N t) | DotNetTypeInstanceT (N t)), method_name & TypeString name ->
                 match t.GetField name with
@@ -1226,14 +1255,14 @@ let spiral_peval module_main output_path =
                                 on_type_er d.trace "Cannot call a private constructor."    
             | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
             // apply_string
-            | TyType(PrimT StringT) & str, TyVV(N [a;b]) -> 
+            | TyType(PrimT StringT) & str, TyVV [a;b] -> 
                 if is_int a && is_int b then TyOp(StringSlice,[str;a;b],PrimT StringT) |> destructure d
                 else on_type_er d.trace "Expected an int as the second argument to string index."
             | TyType(PrimT StringT) & str, idx -> 
                 if is_int idx then TyOp(StringIndex,[str;idx],PrimT CharT) |> destructure d
                 else on_type_er d.trace "Expected an int as the second argument to string index."
             // apply_closure
-            | closure & TyType(ClosureT(N (clo_arg_ty,clo_ret_ty))), args -> 
+            | closure & TyType(ClosureT (clo_arg_ty,clo_ret_ty)), args -> 
                 let arg_ty = get_type args
                 if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
                 else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
@@ -1242,17 +1271,17 @@ let spiral_peval module_main output_path =
         let type_box d typec args =
             let typec & TyType ty, args = tev2 d typec args
             let substitute_ty = function
-                | TyBox(N(x,_)) -> tybox(x,ty)
+                | TyBox(x,_) -> tybox(x,ty)
                 | x -> tybox(x,ty)
 
             let (|TyRecUnion|_|) = function
-                | UnionT (N ty') -> Some ty'
+                | UnionT ty' -> Some ty'
                 | TyRec t -> Some (set_field t)
                 | _ -> None
 
             match ty, args with
             | x, TyType r when x = r -> args
-            | TyRecUnion ty', TyType (UnionT (N ty_args)) when Set.isSubset ty_args ty' ->
+            | TyRecUnion ty', TyType (UnionT ty_args) when Set.isSubset ty_args ty' ->
                 let lam = inl' ["typec"; "args"] (op(Case,[v "args"; type_box (v "typec") (v "args")])) |> inner_compile
                 apply d (apply d lam typec) args
             | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
@@ -1261,7 +1290,7 @@ let spiral_peval module_main output_path =
         let type_in d a = tev d a |> get_type |> typeintypet |> tyt
         let type_out d a = 
             match tev d a |> get_type with
-            | TypeInTypeT (N x) -> tyt x
+            | TypeInTypeT x -> tyt x
             | x -> on_type_er d.trace <| sprintf "Expected a TypeInTypeT in type_out. Got: %A" x
 
         let apply_tev d expr args = apply d (tev d expr) (tev d args)
@@ -1269,7 +1298,7 @@ let spiral_peval module_main output_path =
         let inline vv_index_template f d v i =
             let v,i = tev2 d v i
             match v, i with
-            | TyVV (N l), TyLitIndex i ->
+            | TyVV l, TyLitIndex i ->
                 if i >= 0 || i < List.length l then f l i
                 else on_type_er d.trace "Tuple index not within bounds."
             | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should always be destructured."
@@ -1281,7 +1310,7 @@ let spiral_peval module_main output_path =
 
         let inline vv_unop_template on_succ on_fail d v =
             match tev d v with
-            | TyVV (N l) -> on_succ l
+            | TyVV l -> on_succ l
             | v & TyType (VVT ts) -> failwith "The tuple should always be destructured."
             | v -> on_fail()
 
@@ -1298,7 +1327,7 @@ let spiral_peval module_main output_path =
         let vv_cons d a b =
             let a, b = tev2 d a b
             match b with
-            | TyVV (N b) -> tyvv(a::b)
+            | TyVV b -> tyvv(a::b)
             | _ -> on_type_er d.trace "Expected a tuple on the right in VVCons."
 
         let type_lit_create' d x = litt x |> tyt
@@ -1306,31 +1335,14 @@ let spiral_peval module_main output_path =
         let module_open d a b =
             let a = tev d a
             match a with
-            | TyFun(N(N env_term, FunTypeModule)) -> 
-                let env = Map.fold (fun s k v -> Map.add k v s) d.env.Expression env_term
-                tev {d with env = env |> nodify_env_term} b
+            | TyFun(env_term, FunTypeModule) as recf -> 
+                let inline opt f env =
+                    let env = Map.fold (fun s k v -> Map.add k (f v) s) d.env env
+                    tev {d with env = env} b
+                match env_term with
+                | RecordIndividual env -> opt id env
+                | RecordStack (N env) | RecordHeap (N env) -> opt (record_boxed_unseal recf) env
             | x -> on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
-
-        let module_with_f_extend d module_ name arg =
-            let x = Map.add name arg module_ |> nodify_env_term
-            tyfun(x, FunTypeModule)
-
-        let module_with_f d module_ name arg =
-            match Map.tryFind name module_ with
-            | Some arg' ->
-                if get_type arg = get_type arg' then module_with_f_extend d module_ name arg
-                else on_type_er d.trace <| sprintf "Cannot extend module with %s due to difference in types. Use the extensible `upon'` if that is the desired behavior." name
-            | None -> on_type_er d.trace <| sprintf "Cannot extend module with %s due to it being missing in the module. Use the extensible `upon'` if that is the desired behavior." name
-
-        let inline module_with_template f d module_ name arg =
-            let module_, name, arg = tev3 d module_ name arg
-            match module_, name with
-            | TyFun(N(N module_,FunTypeModule)), TypeString name -> f d module_ name arg
-            | TyFun(N(N module_,FunTypeModule)), _ -> on_type_er d.trace "Expected a type level string as the second argument."
-            | x -> on_type_er d.trace (sprintf "Expected a module as the first argument. Got: %A" x)
-
-        let module_with x = module_with_template module_with_f x
-        let module_with_extend x = module_with_template module_with_f_extend x
 
         let type_annot d a b =
             match d.rbeh with
@@ -1476,8 +1488,8 @@ let spiral_peval module_main output_path =
 
         let dynamize d a =
             let rec loop = function
-                | TyBox(N(_, (UnionT _ | RecT _))) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
-                | TyVV(N l) -> tyvv (List.map loop l)
+                | TyBox(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+                | TyVV l -> tyvv (List.map loop l)
                 | a -> a
             
             loop (tev d a)
@@ -1489,8 +1501,8 @@ let spiral_peval module_main output_path =
                 | ExprPos p -> loop acc p.Expression
                 | x -> on_type_er d.trace <| sprintf "Only variable names are allowed in module create. Got: %A" x
             let er n _ = on_type_er d.trace <| sprintf "In module create, the variable %s was not found." n
-            let env = List.map (fun n -> n, v_find d.env.Expression n (er n)) (loop [] l) |> Map |> nodify_env_term
-            tyfun(env, FunTypeModule)
+            let env = List.fold (fun s n -> Map.add n (v_find d.env n (er n)) s) Map.empty (loop [] l)
+            tyfun(RecordIndividual env, FunTypeModule)
 
         let array_create d size typ =
             let typ = tev_seq d typ |> get_type
@@ -1509,18 +1521,18 @@ let spiral_peval module_main output_path =
 
         let array_set d ar idx r =
             match tev3 d ar idx r with
-            | ar & TyType (ArrayT(N(DotNetHeap,t))), idx, r when is_int idx && t = get_type r ->
+            | ar & TyType (ArrayT(DotNetHeap,t)), idx, r when is_int idx && t = get_type r ->
                 if is_unit t then TyB
                 else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BVVT))
-            | ar & TyType (ArrayT(N(DotNetReference,t))), idx & TyVV(N []), r when t = get_type r -> 
+            | ar & TyType (ArrayT(DotNetReference,t)), idx & TyVV [], r when t = get_type r -> 
                 if is_unit t then TyB
                 else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BVVT))
             | x -> on_type_er d.trace <| sprintf "The two sides in array set have different types. %A" x
 
         let array_length d ar =
             match tev d ar with
-            | ar & TyType (ArrayT(N(DotNetHeap,t)))-> make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
-            | ar & TyType (ArrayT(N(DotNetReference,t)))-> TyLit (LitInt64 1L)
+            | ar & TyType (ArrayT(DotNetHeap,t))-> make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
+            | ar & TyType (ArrayT(DotNetReference,t))-> TyLit (LitInt64 1L)
             | x -> on_type_er d.trace <| sprintf "ArrayLength is only supported for .NET arrays. Got: %A" x
 
         let is_static d x = 
@@ -1530,13 +1542,16 @@ let spiral_peval module_main output_path =
 
         let module_is d a =
             match tev d a with
-            | TyFun(N(_,FunTypeModule)) -> TyLit (LitBool true)
+            | TyFun(_,FunTypeModule) -> TyLit (LitBool true)
             | _ -> TyLit (LitBool false)
 
         let module_has_member d a b =
             match tev2 d a b with
-            | TyFun(N(N env,FunTypeModule)), TypeString b -> TyLit (LitBool <| Map.containsKey b env)
-            | TyFun(N(N env,FunTypeModule)), _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
+            | TyFun(env,FunTypeModule), TypeString b -> 
+                match env with
+                | RecordIndividual env | RecordStack (N env) | RecordHeap (N env) ->
+                    TyLit (LitBool <| Map.containsKey b env)
+            | TyFun(env,FunTypeModule), _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
             | x -> on_type_er d.trace <| sprintf "Expecting a module as the first argument to ModuleHasMember. Got: %A" x
 
         let module_create_alt d l =
@@ -1544,7 +1559,7 @@ let spiral_peval module_main output_path =
                 | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
                 ) Map.empty l
-            |> fun x -> tyfun(nodify_env_term x, FunTypeModule)
+            |> fun x -> tyfun(RecordIndividual x, FunTypeModule)
 
         let module_with_alt (d: LangEnv) l =
             let names, bindings =
