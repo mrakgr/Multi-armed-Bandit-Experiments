@@ -896,5 +896,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test69
+run_test' false test33
 
