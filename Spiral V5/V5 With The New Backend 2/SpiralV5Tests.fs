@@ -288,8 +288,9 @@ a 1 |> ignore
 let test19 = // 
     "test19",[],"Does term level casting for functions work?",
     """
-inl add a b (c, (d, f), e) = a + b + c + d + e + f
-inl f = add 1 (dyn 2) `(int64,(int64,int64),int64)
+inl add a b (c, (d, e), f) = 
+    a + b + c + d + e + f
+inl f = add 8 (dyn 7) `(int64,(int64,int64),int64)
 f (1,(2,5),3)
     """
 
@@ -441,13 +442,23 @@ met f = to_int64 (dyn 'a')
 f
     """
 
-let test33 = // 1.33s
+let test33 = // 0.42s
     "test33",[],"Does a simple loop have superlinear scaling?",
     """
 inl rec loop = function
     | i when i > 0 -> loop (i-1)
     | 0 -> ()
 loop 50000
+    """
+
+let test34 =
+    "test34",[],"Does a simple stackified function work?",
+    """
+inl a = dyn 1
+inl b = dyn 2
+inl add c d = a + b + c + d
+met f g c d = g c d
+f (stack add) (dyn 3) (dyn 4)
     """
 
 let test35 = // 
@@ -468,11 +479,44 @@ match box Res 1 |> dyn with
 | _ -> 3
     """
 
+let test36 =
+    "test36",[],"Does a simple heapified function work?",
+    """
+inl a = dyn 1
+inl b = dyn 2
+inl add c d = a + b + c + d
+met f g c d = g c d
+f (heap add) (dyn 3) (dyn 4)
+    """
+
+let test37 =
+    "test37",[],"Does a simple heapified module work?",
+    """
+inl m = heap {a=dyn 1; b=dyn 2}
+inl add c d = 
+    inl {a b} = m
+    a + b + c + d
+met f g c d = g c d
+f (heap add) (dyn 3) (dyn 4)
+    """
+
 let test38 =
     "test38",[],"Is type constructor of an int64 an int64?",
     """
 inl t = box int64 (dyn 1)
 print_static t
+    """
+
+let test39 =
+    "test39",[],"Does a nested heapified module work?",
+    """
+inl m = heap {a=dyn 1; b=dyn 2; c' = {q=dyn 3; w=dyn 4}}
+inl m' = {m.c' with q=dyn 6}
+inl add c d = 
+    inl {a b {c' with q w}} = m
+    a + b + c + d + q + w
+met f g c d = g c d
+f (heap add) (dyn 3) (dyn 4)
     """
 
 let test40 =
@@ -483,6 +527,19 @@ met rec f a b =
     else a + b
     : 0
 f (dyn 1) (dyn 2)
+    """
+
+let test41 =
+    "test41",[],"Does a nested heapified module work?",
+    """
+inl m = heap {a=dyn 1; b=dyn 2; c' = stack {q=dyn 3; w=dyn 4}}
+inl m' = {m.c' with q=dyn 6}
+n'
+//inl add c d = 
+//    inl {a b {c' with q w}} = m
+//    a + b + c + d + q + w
+//met f g c d = g c d
+//f (heap add) (dyn 3) (dyn 4)
     """
 
 let test42 =
@@ -896,5 +953,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test33
+run_test' false test41
 
