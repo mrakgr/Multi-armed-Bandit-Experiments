@@ -531,7 +531,7 @@ let spiral_peval module_main output_path =
         | TyLet(_,_,_,t) | TyJoinPoint(_,t)
         | TyState (_,_,t) | TyOp(_,_,t) -> t
 
-    // #Unit types
+    // #Unit type tests
     let rec is_unit_tuple t = List.forall is_unit t
     and is_unit_env x = Map.forall (fun _ -> is_unit) x
     and is_unit = function
@@ -764,11 +764,6 @@ let spiral_peval module_main output_path =
         let s' = lh0()
         s |> Seq.iter (fun (tag,ty) -> s'.Add(r.[tag],ty) |> ignore)
         s' 
-
-    let renamer_apply_renamer (r: Dictionary<_,_>) (m: Renamer): Renamer = 
-        let m' = d0()
-        m |> Seq.iter (fun kv -> m'.[kv.Key] <- r.[kv.Value])
-        m'
 
     let inline renamables0() = d0(), d0(), d0(), lh0(), lh0()
     let rec renamer_apply_env r = Map.map (fun k v -> renamer_apply_typedexpr r v)
