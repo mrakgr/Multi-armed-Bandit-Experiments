@@ -772,10 +772,10 @@ let spiral_peval module_main output_path =
             s'.Add(r.[tag],ty) |> ignore)
         s' 
 
-    let inline renamables0() = d0(), d0(), lh0(), lh0()
+    let inline renamables0() = Dictionary(HashIdentity.Reference), d0(), d0(), lh0(), lh0()
     let rec renamer_apply_env r = Map.map (fun k v -> renamer_apply_typedexpr r v)
     and renamer_apply_typedexpr
-        (renamer: Dictionary<_,_>, renamer_reversed: Dictionary<_,_>, 
+        (memo: Dictionary<_,_>, renamer: Dictionary<_,_>, renamer_reversed: Dictionary<_,_>, 
          fv: LinkedHashSet<_>, renamed_fv: LinkedHashSet<_> as r) e =
         let inline f e = renamer_apply_typedexpr r e
         let inline rename (n,t as k) =
@@ -790,16 +790,19 @@ let spiral_peval module_main output_path =
                 renamed_fv.Add (n',t) |> ignore
                 k'
 
-        match e with
-        | TyT _ -> e
-        | TyBox (n,t) -> tybox(f n,t)
-        | TyVV l -> tyvv(List.map f l)
-        | TyFun(l,t) -> tyfun(renamer_apply_env r l, t)
-        | TyV (n,t as k) ->
-            let n', _ as k' = rename k
-            if n' = n then e else tyv k'
-        | TyLit _ -> e
-        | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the env can be renamed. Got: %A" e
+        match memo.TryGetValue e with
+        | true, v -> v
+        | false, _ ->
+            match e with
+            | TyT _ -> e
+            | TyBox (n,t) -> tybox(f n,t)
+            | TyVV l -> tyvv(List.map f l)
+            | TyFun(l,t) -> tyfun(renamer_apply_env r l, t)
+            | TyV (n,t as k) ->
+                let n', _ as k' = rename k
+                if n' = n then e else tyv k'
+            | TyLit _ -> e
+            | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the env can be renamed. Got: %A" e
 
     // #Recordify
     let rec record_map_env g = Map.map (fun _ -> record_map_typed_expr g)
@@ -994,7 +997,7 @@ let spiral_peval module_main output_path =
 
         let inline recordify is_stack d = function
             | TyFun(env,t) as a ->
-                let _,_,fv,_ as r = renamables0()
+                let _,_,_,fv,_ as r = renamables0()
                 let env' = renamer_apply_env r env |> nodify_env_term
                 if fv.Count > 1 then
                     if is_stack then TyOp(RecordStackify,[a],FunStackT(env',t))
@@ -1030,7 +1033,7 @@ let spiral_peval module_main output_path =
         let inline eval_renaming memo_type d expr =
             let env = d.env
             let stopwatch = Diagnostics.Stopwatch.StartNew()
-            let renamer, renamer_reversed, fv, renamed_fv as k = renamables0()
+            let _, renamer, renamer_reversed, fv, renamed_fv as k = renamables0()
             let renamed_env = renamer_apply_env k env
             renaming_time <- renaming_time + stopwatch.Elapsed
 
@@ -1053,7 +1056,7 @@ let spiral_peval module_main output_path =
             tyt ret_ty
                 
         let memoize_closure arg d x =
-            let _,_,fv,_ as r = renamables0()
+            let _,_,_,fv,_ as r = renamables0()
             let arg_ty = renamer_apply_typedexpr r arg |> get_type
             let memo_type renamer = JoinPointClosure <| renamer_apply_pool renamer fv
             memoize_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
@@ -2611,7 +2614,7 @@ let spiral_peval module_main output_path =
                 | RecordIndividualUnseal,[r; TyLit (LitString k)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
                 | RecordBoxedUnseal,[r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
                 | (RecordStackify | RecordHeapify),[a] ->
-                    let _,_,fv,_ as r = renamables0()
+                    let _,_,_,fv,_ as r = renamables0()
                     renamer_apply_typedexpr r a |> ignore
                     match op with
                     | RecordStackify ->
@@ -2721,7 +2724,7 @@ let spiral_peval module_main output_path =
 
         while definitions_queue.Count > 0 do
             let inline print_fun_x is_stack env x =
-                let _,_,fv,_ as r = renamables0()
+                let _,_,_,fv,_ as r = renamables0()
                 renamer_apply_env r env |> ignore
                 if Map.forall (fun _ -> get_type >> is_unit) env = false then
                     let tuple_name = 
