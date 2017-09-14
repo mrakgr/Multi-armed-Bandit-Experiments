@@ -111,7 +111,7 @@ module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,ind
 
 let array =
     (
-    "Array",[],"The array module",
+    "Array",[tuple],"The array module",
     """
 inl empty t = array_create 0 t
 inl singleton x =
@@ -120,15 +120,22 @@ inl singleton x =
     ar
 
 inl foldl f s ar =
-    met rec loop (!dyn i) s =
+    met rec loop (!dyn i) (!dyn s) =
         if i < array_length ar then loop (i+1) (f s (ar i))
         else s
         : s
     loop 0 s
 
+inl foldr f ar s =
+    met rec loop (!dyn i) (!dyn s) =
+        if i >= 0 then loop (i-1) (f (ar i) s)
+        else s
+        : s
+    loop (array_length ar - 1) s
+
 inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
-    type typ = f 0
+    inl typ = type (f 0)
     inl ar = array_create n typ
     met rec loop (!dyn i) =
         if i < n then (ar i <- f i); loop (i+1)
@@ -138,21 +145,23 @@ inl init n f =
 
 inl map f ar = init (array_length ar) (ar >> f)
 inl filter f ar =
-    inl count = foldl (inl s x -> if f x then s+1 else s) 0 ar
-    inl filtered = array_create (array_length ar) (array_type ar)
-    foldl (inl s x ->
-        if f x then (filtered s <- x); s + 1
-        else s
-        ) 0 ar |> ignore
-    filtered
+    inl ar' = array_create (array_length ar) (ar.elem_type)
+    inl count = foldl (inl s x -> if f x then (ar' s <- x); s+1 else s) 0 ar
+    init count ar'
+
+inl append l =
+    inl ar' = array_create (Tuple.foldl (inl s l -> s + array_length l) 0 l) ((fst l).elem_type)
+    inl ap s ar = foldl (inl i x -> (ar' i <- x); i+1) s ar
+    Tuple.foldl ap 0 l |> ignore
+    ar'
 
 inl concat ar =
     inl count = foldl (inl s ar -> s + array_length ar) 0 ar
-    inl ar' = array_create (t.elem_type.elem_type)
-    foldl (foldl <| inl i x -> (ar' i <- x); i+1) 0 ar |> ignore
+    inl ar' = array_create count (ar.elem_type.elem_type)
+    (foldl << foldl) (inl i x -> (ar' i <- x); i+1) 0 ar |> ignore
     ar'
 
-module (empty,singleton,foldl,init,map,filter,concat)
+module (empty,singleton,foldl,foldr,init,map,filter,append,concat)
     """) |> module_
 
 let list =

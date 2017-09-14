@@ -5,8 +5,6 @@ open System
 open System.Collections.Generic
 open Iesi.Collections.Generic
 
-let mutable total_time = TimeSpan()
-
 // Parser open
 open FParsec
 
@@ -370,6 +368,7 @@ and ProgramNode =
 
 // #Main
 let spiral_peval module_main output_path = 
+    let mutable renaming_time = TimeSpan()
     // #Smart constructors
     let inline force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
@@ -1032,8 +1031,8 @@ let spiral_peval module_main output_path =
             let env = d.env
             let stopwatch = Diagnostics.Stopwatch.StartNew()
             let renamer, renamer_reversed, fv, renamed_fv as k = renamables0()
-            let renamed_env = renamer_apply_env k (recordify_env true d env)
-            total_time <- total_time + stopwatch.Elapsed
+            let renamed_env = renamer_apply_env k env
+            renaming_time <- renaming_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
             let typed_expr, memo_key = eval_method memo_type renamed_fv {d with env=renamed_env; ltag=ref renamer.Count} expr
@@ -1222,13 +1221,13 @@ let spiral_peval module_main output_path =
             // apply_array
             | ar & TyType(ArrayT(array_ty,elem_ty)), idx ->
                 match array_ty, idx with
+                | _, TypeString x -> 
+                    if x = "elem_type" then elem_ty |> tyt
+                    else failwithf "Unknown type string applied to array. Got: %s" x
                 | DotNetHeap, idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetHeap, idx -> on_type_er d.trace <| sprintf "The index into an array is not an int. Got: %A" idx
                 | DotNetReference, TyVV [] -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
-                | _, TypeString x -> 
-                    if x = "elem_type" then elem_ty |> tyt
-                    else failwithf "Unknown type string applied to array. Got: %s" x
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
@@ -2906,6 +2905,7 @@ let spiral_peval module_main output_path =
         try
             let x = !d.seq (expr_peval d input)
             printfn "Time for peval was: %A" watch.Elapsed
+            printfn "Time spent in renaming was: %A" renaming_time
             watch.Restart()
             let x = Succ (spiral_codegen x |> copy_to_temporary)
             printfn "Time for codegen was: %A" watch.Elapsed

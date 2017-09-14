@@ -559,6 +559,14 @@ inl m m1 = function
 m f 2
     """
 
+let test43 =
+    "test43",[array],"Do the Array constructors work?",
+    """
+open Array
+
+empty int64, singleton 2.2
+    """
+
 let test44 =
     "test44",[],"Do or extension active patterns work?",
     """
@@ -644,6 +652,43 @@ inl x = { a = { b = { c = 3 } } }
 
 inl f {x.a.b with c q} = c,q
 f {x.a.b with q = 4; c = self + 3; d = {q = 12; w = 23}}
+    """
+
+let test50 =
+    "test50",[array],"Do the Array init and fold work?",
+    """
+open Array
+
+inl ar = init 6 (inl x -> x+1)
+foldl (+) 0 ar, foldr (*) ar 1
+    """
+
+let test51 =
+    "test51",[array],"Do the Array map and filter work?",
+    """
+open Array
+
+inl ar = init 16 id
+map ((*) 2) ar
+|> filter ((<) 15)
+    """
+
+let test52 =
+    "test52",[array],"Does the Array concat work?",
+    """
+open Array
+
+inl ar = init 4 (inl _ -> init 8 id)
+concat ar
+    """
+
+let test53 =
+    "test53",[array],"Does the Array append work?",
+    """
+open Array
+
+inl ar = inl _ -> init 4 id
+append (ar (), ar (), ar())
     """
 
 let test54 =
@@ -922,7 +967,7 @@ let tests =
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
-    test40;test41;test42;test44;test45;test46;test47;test48;test49
+    test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test54;test58
     test61;test62;test63;test64;test65;test66;test67;test68;test69
     hacker_rank_1
@@ -931,14 +976,9 @@ let tests =
 let run_test' is_big_test (name,aux,desc,body as m) =
     let main_module = module_ m
     printfn "%s - %s" name desc
-    if is_big_test then
-        let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.txt"))
-        printfn "Time spent in renaming: %A" total_time
-        //printfn "%A" x
-    else
-        let x = spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,"output.fsx"))
-        printfn "Time spent in renaming: %A" total_time
-        printfn "%A" x
+    let output_file = if is_big_test then "output.txt" else "output.fsx"
+    spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
+
 
 let run_test is_big_test name =
     let (Module(N x)) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
@@ -946,5 +986,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test69
+run_test' false test53 |> printfn "%A"
 
