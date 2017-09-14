@@ -439,6 +439,9 @@ let spiral_peval module_main output_path =
     let lit_int i = LitInt64 i |> lit
     let lit_string x = LitString x |> lit
 
+    let record_stackify a = op(RecordStackify,[a])
+    let record_heapify a = op(RecordHeapify,[a])
+
     let fix name x =
         match name with
         | "" -> x
@@ -451,6 +454,7 @@ let spiral_peval module_main output_path =
     let inmp v' b e = ap (ap (v ">>=") b) (inl_pat v' e)
     let l v b e = ap (inl v e) b
     let l_rec v b e = ap (inl v e) (fix v b)
+    let l_rec_stack v b e = ap (inl v e) (record_stackify (fix v b))
 
     let inl' args body = List.foldBack inl args body
     
@@ -1504,6 +1508,17 @@ let spiral_peval module_main output_path =
             | TyLit a -> type_lit_create' d a
             | _ -> on_type_er d.trace "Expected a literal in type literal create."
 
+        let rec is_static' x =
+            let inline f x = is_static' x
+            match x with
+            | TyBox (x,_) -> f x
+            | Func (_,x,_) -> Map.forall (fun _ -> f) x
+            | TyVV x -> List.forall f x
+            | TyLit _ -> true
+            | _ -> false
+
+        let inline is_static d x = is_static' (tev d x) |> LitBool |> TyLit
+
         let dynamize d a =
             let rec loop = function
                 | TyBox(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
@@ -1552,11 +1567,6 @@ let spiral_peval module_main output_path =
             | ar & TyType (ArrayT(DotNetHeap,t))-> make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
             | ar & TyType (ArrayT(DotNetReference,t))-> TyLit (LitInt64 1L)
             | x -> on_type_er d.trace <| sprintf "ArrayLength is only supported for .NET arrays. Got: %A" x
-
-        let is_static d x = 
-            match tev d x with
-            | TyBox _ | TyFun _ | TyVV _ | TyLit _ -> TyLit <| LitBool true
-            | _ -> TyLit <| LitBool false
 
         let module_is d a =
             match tev d a with
@@ -1994,7 +2004,7 @@ let spiral_peval module_main output_path =
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
                 many1 (expr_indent expressions) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
             pipe3 (type_' >>. name) (pattern_list expr) (eq >>. type_parse) <| fun name pattern body -> 
-                l_rec name (type_pat' pattern body)
+                l_rec_stack name (type_pat' pattern body)
 
         let case_open expr = open_ >>. expr |>> module_open
 
@@ -2376,11 +2386,12 @@ let spiral_peval module_main output_path =
         let print_case_union x i = print_tag_union x + sprintf "Case%i" i
 
         let inline handle_unit_in_last_position f =
-            let x = buffer.Count
+            let c = buffer.Count
             match f () with
             | "" ->
                 match Seq.last buffer with
                 | Statement s when s.StartsWith "let " -> "()"
+                | _ when c = buffer.Count -> "()"
                 | _ -> ""
             | x -> x
 
@@ -2807,8 +2818,8 @@ let spiral_peval module_main output_path =
             l "in" (p type_in)
             l "out" (p type_out)
             l "type_error" (type_lit_create <| LitString "TypeConstructorError")
-            l "stack" (p <| fun a -> op(RecordStackify,[a]))
-            l "heap" (p <| fun a -> op(RecordHeapify,[a]))
+            l "stack" (p record_stackify)
+            l "heap" (p record_heapify)
 
             l "bool" (op(TypeCreate,[lit <| LitBool true]))
             l "int64" (op(TypeCreate,[lit <| LitInt64 0L]))

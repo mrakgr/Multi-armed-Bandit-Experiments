@@ -163,6 +163,8 @@ type list x =
     ()
     x, list x
 
+//inl list = stack list
+
 inl lw x = 
     inl rec loop tup_type n x on_fail on_succ =
         if_static n > 0 then
@@ -184,7 +186,9 @@ inl lw x =
 
 inl empty x = box (list x) ()
 inl singleton x = box (list x) (x, empty x)
-inl cons a b = box (list a) (a, box (list a) b)
+inl cons a b = 
+    inl t = list a
+    box t (a, box t b)
 
 inl init n f =
     inl t = type (f 0)

@@ -850,10 +850,10 @@ f a && f b || f c && f d || f e
     """
 
 let test63 =
-    "test63",[list],"Does the List.empty work?",
+    "test63",[list],"Do the list constructors work?",
     """
 open List
-cons 1 (cons 2 (cons 3 (empty int64)))
+cons 1 (cons 2 (singleton 3))
     """
 
 let test64 =
@@ -916,19 +916,13 @@ open List
 init 10 (inl x -> 2.2)
     """
 
-let f = function
-    | [a;b] -> a+b+10
-    | x :: x2 :: xs -> x + x2
-    | x :: xs -> 55
-    | [] ->  0
-
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;test33;test35;test38
-    test40;test42;test44;test45;test46;test47;test48;test49
+    test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
+    test40;test41;test42;test44;test45;test46;test47;test48;test49
     test54;test58
     test61;test62;test63;test64;test65;test66;test67;test68;test69
     hacker_rank_1
@@ -952,5 +946,5 @@ let run_test is_big_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test41
+run_test' false test69
 
