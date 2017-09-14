@@ -533,13 +533,12 @@ let test41 =
     "test41",[],"Does a nested heapified module work?",
     """
 inl m = heap {a=dyn 1; b=dyn 2; c' = stack {q=dyn 3; w=dyn 4}}
-inl m' = {m.c' with q=dyn 6}
-n'
-//inl add c d = 
-//    inl {a b {c' with q w}} = m
-//    a + b + c + d + q + w
-//met f g c d = g c d
-//f (heap add) (dyn 3) (dyn 4)
+inl m' = {m.c' with q=dyn 9}
+inl add c d = 
+    inl {a b {c' with q w}} = m'
+    a + b + c + d + q + w
+met f g c d = g c d
+f (heap add) (dyn 3) (dyn 4) // 23
     """
 
 let test42 =

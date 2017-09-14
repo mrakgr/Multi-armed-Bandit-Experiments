@@ -993,9 +993,10 @@ let spiral_peval module_main output_path =
             | TyFun(env,t) as a ->
                 let _,_,fv,_ as r = renamables0()
                 let env' = renamer_apply_env r env |> nodify_env_term
-                if fv.Count > 0 then
+                if fv.Count > 1 then
                     if is_stack then TyOp(RecordStackify,[a],FunStackT(env',t))
                     else TyOp(RecordHeapify,[a],FunHeapT(env',t))
+                elif fv.Count = 1 then a
                 else
                     if is_stack then tyt (FunStackT(env',t))
                     else tyt (FunHeapT(env',t))
@@ -1603,7 +1604,7 @@ let spiral_peval module_main output_path =
 
                 match names with
                 | V(N name) :: names -> re_record name <| fun env -> loop env names
-                | Lit(N(LitString name)) :: names -> re_record name <| fun env -> tyfun (Map.add name (loop env names) cur_env, FunTypeModule)
+                | Lit(N(LitString name)) :: names -> tyfun (Map.add name (re_record name <| fun env -> loop env names) cur_env, FunTypeModule)
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString name)); e]) ->
