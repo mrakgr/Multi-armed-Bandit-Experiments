@@ -287,46 +287,22 @@ let parsing =
     "Parsing",[tuple],"Parser combinators.",
     """
 // Primitives
-inl m' typ parser d state = function
-    | .elem -> parser d state
-    | .elem_type -> typ ()
-inl m typ = m' (inl _ -> in typ)
-
+inl m x parser = { elem = parser; elem_type = in x}
 inl goto point x = m () <| inl _ state -> point state x
 inl succ x = m x <| inl {on_succ} state -> on_succ state x
 inl fail x = m () <| inl {on_fail} state -> on_fail state x
 inl fatal_fail x = m () <| inl {on_fatal_fail} state -> on_fatal_fail state x
-inl type_ {d with on_type} state = function
-    | .elem -> on_succ state on_type
-    | .elem_type -> in on_type
-inl elem_type p {d with on_succ} state elem = 
-    inl typ = p d state .elem_type
-    match elem with
-    | .elem -> on_succ state (out typ)
-    | .elem_type -> typ
-inl state d state = 
-    m state <| inl {on_succ} state -> on_succ state state
-    <| d <| state
+inl type_ = m () <| inl {on_succ on_type} state -> on_succ state on_type
+inl state = m () <| inl {on_succ} state -> on_succ state state
 inl set_state state = m () <| inl {ret with on_succ} _ -> on_succ state ()
-inl (>>=) a b d state = function
-    | .elem -> a {d with on_succ = inl state x -> b x d state .elem} state .elem
-    | .elem_type -> type (b (out <| a d state .elem_type) d state .elem_type)
-    
-inl try_with handle handler d state = 
-    m' (inl _ -> handle d state .elem_type) <| inl d state -> handle {d with on_fail = inl state _ -> handler d state .elem} state .elem
-    <| d <| state
-inl guard cond handler = m () <| inl d state -> if cond then d .on_succ state () else handler d state .elem
-inl ifm cond tr fl d state = 
-    m' (inl _ -> in <| union (out <| tr d state .elem_type) (out <| fl d state .elem_type)) <| inl d state -> if cond then tr () d state .elem else fl () d state .elem
-    <| d <| state
-
-inl m x parser d state = function
-    | .elem -> parser d state
-    | .elem_type -> in x
-
-inl attempt a d state = 
-    m (a d state .elem_type) <| inl d state -> a { d with on_fail = inl _ -> self state} state
-    <| d <| state
+inl (>>=) a b = {
+    elem = inl d state -> a .elem {d with on_succ = inl state x -> b x .elem d state} state
+    elem_type = type (b (out <| a .elem_type) .elem_type)
+    }
+inl try_with handle handler = m (handle .elem_type) <| inl d state -> handle .elem {d with on_fail = inl state _ -> handler .elem d state} state
+inl guard cond handler = m () <| inl d state -> if cond then d .on_succ state () else handler .elem d state
+inl ifm cond tr fl = m (in <| union (out <| tr .elem_type) (out <| fl .elem_type)) <| inl d state -> if cond then tr () .elem d state else fl () .elem d state
+inl attempt a = m (a.elem_type) <| inl d state -> a { d with on_fail = inl _ -> self state} state
 
 inl rec tuple = function
     | () -> succ ()
@@ -373,23 +349,6 @@ inl stream_char = m char <| inl {d with stream on_succ on_fail} {state with pos}
         on_fail = inl msg -> on_fail state msg
         }
 
-inl run data parser ret = 
-    match data with
-    | _ : string -> 
-        parser { ret with stream = string_stream data}
-            { pos = if is_static data then 0 else dyn 0 }
-            .elem
-    | _ -> error_type "Only strings supported for now."
-
-inl with_unit_ret = {
-    on_type = ()
-    on_succ = inl state x -> ()
-    on_fail = inl state -> failwith
-    on_fatal_fail = inl state -> failwith
-    }
-
-inl run_with_unit_ret data parser = run data parser with_unit_ret
-
 inl stream_char_pos =
     inm {pos} = state
     stream_char |>> inl x -> x,pos
@@ -404,19 +363,18 @@ inl (<?>) a m = try_with a (fail m)
 inl pdigit = satisfyL is_digit "digit"
 inl pchar c = satisfyL ((=) c) "char"
 
-inl pstring (!dyn str) x = 
-    inl rec loop (!dyn i) d state = function
-        || .elem ->
-            inl f = 
-                ifm (i < string_length str)
-                <| inl _ -> pchar (str i) >>. loop (i+1)
-                <| inl _ -> succ str
-            f d state .elem : d.on_type
-        | .elem_type -> in string
+inl pstring (!dyn str) x =
+    met rec loop (!dyn i) = m string <| inl d state ->
+        inl f =
+            ifm (i < string_length str)
+            <| inl _ -> pchar (str i) >>. loop (i+1)
+            <| inl _ -> succ str
+        f d state
+        : d.on_type
     loop 0 x
 
 inl pint64 =
-    inl rec loop handler i = m int64 <| met {d with on_succ on_type} state ->
+    met rec loop handler i = m int64 <| inl {d with on_succ on_type} state ->
         inl f =
             inm c = try_with pdigit handler
             inl x = to_int64 c - to_int64 '0'
@@ -424,14 +382,21 @@ inl pint64 =
             inm _ = guard (i = max && x <= 7 || i < max) (fail "integer overflow")
             inl i = i * 10 + x
             loop (goto on_succ i) i
-        f d state .elem : on_type
+        f d state : on_type
     loop (fail "pint64") 0
 
 inl spaces x =
-    inl rec loop (!dyn i) = m () <| met {d with on_succ on_type} state ->
+    met rec loop (!dyn i) = m () <| inl {d with on_succ on_type} state ->
         inl f = try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
-        f d state .elem : on_type
+        f d state : on_type
     loop 0 x
+
+inl run data parser ret = 
+    match data with
+    | _ : string -> 
+        parser .elem { ret with stream = string_stream data}
+            { pos = if is_static data then 0 else dyn 0 }
+    | _ -> error_type "Only strings supported for now."
 
 inl parse_int =
     inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
@@ -440,24 +405,87 @@ inl parse_int =
 inl parse_n_array p n x =
     inl f =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
-        inm typ = elem_type p
-        inl ar = array_create n typ
-        inl rec loop (!dyn i) = m ar <| met d state ->
-            inl f = 
-                ifm (i < n)
-                <| inl _ ->
-                    inm x = p
-                    ar i <- x
-                    loop (i+1)
-                <| inl _ -> 
-                    succ ar
-            f d state .elem : d.on_type
+        inl ar = array_create n (out <| p.elem_type)
+        met rec loop (!dyn i) = m ar <| inl d state ->
+            ifm (i < n)
+            <| inl _ ->
+                inm x = p
+                ar i <- x
+                loop (i+1)
+            <| inl _ -> 
+                succ ar
+            <| state <| d
+            : d.on_type
         loop 0
     f x
+        
+inl with_unit_ret = {
+    on_type = ()
+    on_succ = inl state x -> ()
+    on_fail = inl state -> failwith
+    on_fatal_fail = inl state -> failwith
+    }
 
+inl run_with_unit_ret data parser = run data parser with_unit_ret
 
-module (run,run_with_unit_ret,succ,fail,fatal_fail,state,type_,tuple,(>>=),(|>>),(.>>.),(.>>),(>>.),(>>%),(<|>),choice,stream_char,
-        ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array)
+inl sprintf_parser append =
+    inl rec sprintf_parser sprintf_state =
+        inl parse_variable = 
+            inm c = try_with stream_char (inl x -> append '%'; fail "done" x)
+            match c with
+            | 's' -> function
+                | x : string -> x
+                | _ -> error_type "Expected a string in sprintf."
+            | 'c' -> function
+                | x : char -> x
+                | _ -> error_type "Expected a char in sprintf."
+            | 'b' -> function
+                | x : bool -> x
+                | _ -> error_type "Expected a bool in sprintf."
+            | 'i' -> function
+                | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
+                | _ -> error_type "Expected an integer in sprintf."
+            | 'f' -> function
+                | x : float32 | x : float64 -> x
+                | _ -> error_type "Expected a float in sprintf."
+            | 'A' -> id
+            | _ -> error_type "Unexpected literal in sprintf."
+            |> inl guard_type -> 
+                m () <| inl d state -> d.on_succ state (inl x -> append x; sprintf_parser .None d state)
+
+        inl append_state {d with stream on_succ on_fail} state =
+            match sprintf_state with
+            | .None -> on_succ state ()
+            | ab -> stream {
+                idx = ab
+                on_succ = inl r -> append r; on_succ state ()
+                on_fail = inl msg -> on_fail state msg
+                }
+
+        inm c = try_with stream_char_pos (append_state >>. fail "done")
+        match c with
+        | '%', _ -> append_state >>. parse_variable
+        | _, pos ->
+            match sprintf_state with
+            | .None -> (pos, pos)
+            | (start,_) -> (start, pos)
+            |> sprintf_parser
+    sprintf_parser .None
+
+inl sprintf_template append ret format =
+    run format (sprintf_parser append) ret
+
+inl sprintf format = 
+    inl strb = mscorlib."System.Text.StringBuilder"(64i32)
+    inl append x = strb.Append x |> ignore
+    sprintf_template append {
+        on_succ = inl state x -> x
+        on_fail = inl state msg -> strb.ToString()
+        } format
+
+module 
+    (run,spaces,tuple,(>>=),(|>>),pchar,pdigit,pint64,pstring,succ,fail,fatal_fail,type_,state,parse_int,
+     run_with_unit_ret,sprintf,sprintf_template,parse_n_array,(<|>),choice,attempt,(>>.),(.>>),(.>>.),try_with,guard,(>>%))
     """) |> module_
 
 
@@ -471,16 +499,14 @@ inl readline () = console.ReadLine()
 
 inl write = console.Write
 inl writeline = console.WriteLine
-//
-//inl printf_template cont = 
-//    Parsing.sprintf_template write {
-//        on_succ = inl state x -> x
-//        on_fail = inl state msg -> cont()
-//        }
-//
-//inl printf = printf_template id
-//inl printfn = printf_template writeline
 
-module (console,readall,readline,write,writeline)
-//module (console,readall,readline,write,writeline,printf,printfn)
+inl printf_template cont = 
+    Parsing.sprintf_template write {
+        on_succ = inl state x -> x
+        on_fail = inl state msg -> cont()
+        }
+
+inl printf = printf_template id
+inl printfn = printf_template writeline
+module (console,readall,readline,write,writeline,printf,printfn)
     """) |> module_

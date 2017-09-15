@@ -240,6 +240,7 @@
     <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5Lib.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5Tests.fs" />
+    <None Include="V5 With The New Backend 2\Script2.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
