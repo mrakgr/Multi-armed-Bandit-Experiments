@@ -156,7 +156,7 @@ type Op =
 
     | Fix
     | Apply
-    | ForCast
+    | TermCast
     | FuncJoinPoint
     | TypeJoinPoint
     | StructCreate
@@ -200,6 +200,8 @@ type Op =
     | ErrorType
     | ModuleOpen
     | TypeLitCreate
+    | TypeLitCast
+    | TypeLitIs
     | Dynamize
     | IsStatic
 
@@ -235,6 +237,7 @@ and Pattern =
     | PatAnd of Pattern list
     | PatClauses of (Pattern * Expr) list
     | PatTypeLit of Value
+    | PatTypeLitBind of string
     | PatLit of Value
     | PatWhen of Pattern * Expr
     | PatModuleBinding of string * Pattern option
@@ -259,26 +262,27 @@ and Ty =
     | FunT of EnvTy * FunType
     | FunStackT of Node<EnvTerm> * FunType
     | FunHeapT of Node<EnvTerm> * FunType
+    | ClosureT of Ty * Ty
     | UnionT of Set<Ty>
     | RecT of int
-    | ClosureT of Ty * Ty
     | ArrayT of ArrayType * Ty
-    | ForCastT of Ty // For casting type level function to term (ClosureT) level ones.
     | TypeInTypeT of Ty
     | DotNetTypeRuntimeT of Node<Type> 
     | DotNetTypeInstanceT of Node<Type>
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
+    // Data structures
     | TyT of TraceNode<Ty>
     | TyV of TyTag
     | TyVV of TypedExpr list
     | TyFun of EnvTerm * FunType
     | TyBox of TypedExpr * Ty
+    | TyLit of Value
 
+    // Operations
     | TyLet of TyTag * TypedExpr * TypedExpr * Ty
     | TyState of TypedExpr * TypedExpr * Ty
-    | TyLit of Value
     | TyOp of Op * TypedExpr list * Ty
     | TyJoinPoint of JoinPointKey * Ty
 
@@ -421,7 +425,6 @@ let spiral_peval module_main output_path =
     let uniont x = UnionT x
     let closuret x = ClosureT x
     let arrayt x = ArrayT x
-    let for_castt x = ForCastT x
     let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
     let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
     let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
@@ -448,7 +451,7 @@ let spiral_peval module_main output_path =
     let inl x y = (x,y) |> func
     let inl_pat x y = (PatClauses([x,y])) |> pattern
     let ap x y = (Apply,[x;y]) |> op
-    let for_cast x = (ForCast,[x]) |> op
+    let term_cast a b = (TermCast,[a;b]) |> op
     let lp v b e = ap (inl_pat v e) b
     let inmp v' b e = ap (ap (v ">>=") b) (inl_pat v' e)
     let l v b e = ap (inl v e) b
@@ -498,7 +501,10 @@ let spiral_peval module_main output_path =
     let gte a b = binop GTE a b
 
     let error_non_unit x = (ErrorNonUnit, [x]) |> op
-    let type_lit_create x = (TypeLitCreate,[lit x]) |> op
+    let type_lit_lift' x = (TypeLitCreate,[x]) |> op
+    let type_lit_lift x = type_lit_lift' (lit x)
+    let type_lit_cast x = (TypeLitCast,[x]) |> op
+    let type_lit_is x = (TypeLitIs,[x]) |> op
     let expr_pos pos x = ExprPos(Pos(pos,x))
     let pat_pos pos x = PatPos(Pos(pos,x))
 
@@ -537,15 +543,26 @@ let spiral_peval module_main output_path =
         | TyLet(_,_,_,t) | TyJoinPoint(_,t)
         | TyState (_,_,t) | TyOp(_,_,t) -> t
 
+    let rec typed_expr_env_free_var_exists x = Map.exists (fun k v -> typed_expr_free_var_exists v) x
+    and typed_expr_free_var_exists e =
+        let inline f x = typed_expr_free_var_exists x
+        match e with
+        | TyBox (n,t) -> f n
+        | TyVV l -> List.exists f l
+        | TyFun(l,t) -> typed_expr_env_free_var_exists l
+        | TyV (n,t as k) -> true
+        | TyT _ | TyLit _ -> false
+        | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the TypedExpr can be tested for free variable existence. Got: %A" e
+
     // #Unit type tests
     let rec is_unit_tuple t = List.forall is_unit t
     and is_unit_env x = Map.forall (fun _ -> is_unit) x
     and is_unit = function
-        | TypeInTypeT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+        | TypeInTypeT _ | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | ArrayT (_,t) -> is_unit t
         | FunT (env,_) -> is_unit_env env
-        | FunStackT (N x, _) | FunHeapT (N x, _) as q -> Map.forall (fun _ -> get_type >> is_unit) x
+        | FunStackT (N x, _) | FunHeapT (N x, _) -> typed_expr_env_free_var_exists x
         | VVT t -> is_unit_tuple t
 
     /// Wraps the argument in a list if not a tuple.
@@ -689,18 +706,21 @@ let spiral_peval module_main output_path =
                 let rec f pat' on_fail = function
                     | PatAnd _ as pat -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> pat_part_active a (pat' pat) on_fail
                     | PatOr l -> List.foldBack (fun pat on_fail -> lazy f pat' on_fail pat) l on_fail |> force
-                    | PatCons l -> vv [type_lit_create (LitString "cons"); l.Length-1 |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' <| PatTuple l) on_fail
-                    | PatTuple l as pat -> vv [type_lit_create (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' pat) on_fail
+                    | PatCons l -> vv [type_lit_lift (LitString "cons"); l.Length-1 |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' <| PatTuple l) on_fail
+                    | PatTuple l as pat -> vv [type_lit_lift (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' pat) on_fail
                     | PatType (a,typ) -> f (fun a -> PatType(a,typ) |> pat') on_fail a
                     | PatWhen (pat, e) -> f (fun pat -> PatWhen(pat,e) |> pat') on_fail pat
                     | PatClauses _ -> failwith "Clauses should not appear inside other clauses."
-                    | pat -> vv [type_lit_create (LitString "var"); arg] |> pat_part_active a (pat' pat) on_fail
+                    | pat -> vv [type_lit_lift (LitString "var"); arg] |> pat_part_active a (pat' pat) on_fail
                 f id on_fail pat
             | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
             | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
             | PatTypeLit x -> 
-                if_static (eq_type arg (type_lit_create x)) on_succ.Value on_fail.Value 
+                if_static (eq_type arg (type_lit_lift x)) on_succ.Value on_fail.Value 
+                |> case arg
+            | PatTypeLitBind x -> 
+                if_static (type_lit_is arg) (l x (type_lit_cast arg) on_succ.Value) on_fail.Value 
                 |> case arg
             | PatLit x -> 
                 let x = lit x
@@ -710,7 +730,7 @@ let spiral_peval module_main output_path =
             | PatModuleInner(name,bindings) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 let pat_var' = v pat_var
-                let memb = type_lit_create (LitString name)
+                let memb = type_lit_lift (LitString name)
                 
                 pat_module_bindings pat_var' bindings on_succ
                 |> l name pat_var'
@@ -729,7 +749,7 @@ let spiral_peval module_main output_path =
                 |> pat_module_is_module
             | PatModuleBinding (name,pat) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
-                let memb = type_lit_create (LitString name)
+                let memb = type_lit_lift (LitString name)
                 match pat with
                 | Some pat -> l pat_var (ap arg memb) (cp' (v pat_var) pat on_succ on_fail)
                 | None -> l name (ap arg memb) on_succ.Value
@@ -1171,48 +1191,52 @@ let spiral_peval module_main output_path =
             | TyType(FunHeapT(N env,t)) -> Some (RecordHeap,env,t)
             | _ -> None
 
+        let inline apply_func is_term_cast d recf r env_term fun_type args =
+            let unpack () =
+                match r with
+                | RecordIndividual -> env_term
+                | _ -> record_env_term_unseal d recf env_term
+
+            let inline tev x =
+                if is_term_cast then memoize_closure args x
+                else tev x
+
+            match fun_type with
+            | FunTypeRecFunction ((pat,body),name) ->
+                let env_term = unpack()
+                let env = if pat <> "" then Map.add pat args env_term else env_term
+                tev {d with env = Map.add name recf env} body
+            | FunTypeFunction (pat,body) -> 
+                let env_term = unpack()
+                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
+            // apply_module
+            | FunTypeModule when is_term_cast -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" fun_type
+            | FunTypeModule ->
+                match args with
+                | TypeString n -> 
+                    let unpack () = v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a member named %s inside the module." n)
+                    match r with
+                    | RecordIndividual -> unpack()
+                    | RecordStack | RecordHeap -> unpack() |> record_boxed_unseal d recf
+                | _ -> on_type_er d.trace "Expected a type level string in module application."
+
+        let term_cast d a b =
+            match tev d a, tev d b with
+            | recf & Func(r,env_term,fun_type), args -> 
+                let instantiate_type_as_variable d args_ty =
+                    let f x = make_up_vars_for_ty d x
+                    match args_ty with
+                    | VVT l -> tyvv(List.map f l)
+                    | x -> f x
+            
+                let args = instantiate_type_as_variable d (get_type args)
+                apply_func true d recf r env_term fun_type args
+            | x -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" x
+
         let rec apply d a b =
             match destructure d a, destructure d b with
             // apply_function
-            | recf & Func(r,env_term,fun_type), args -> 
-                let unpack () =
-                    match r with
-                    | RecordIndividual -> env_term
-                    | _ -> record_env_term_unseal d recf env_term
-
-                let inline apply throw_error_on_module tev args =
-                    match fun_type with
-                    | FunTypeRecFunction ((pat,body),name) ->
-                        let env_term = unpack()
-                        let env = if pat <> "" then Map.add pat args env_term else env_term
-                        tev {d with env = Map.add name recf env} body
-                    | FunTypeFunction (pat,body) -> 
-                        let env_term = unpack()
-                        tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
-                    // apply_module
-                    | FunTypeModule ->
-                        if throw_error_on_module then
-                            on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" fun_type
-                        else
-                            match args with
-                            | TypeString n -> 
-                                let unpack () = v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a member named %s inside the module." n)
-                                match r with
-                                | RecordIndividual -> unpack()
-                                | RecordStack | RecordHeap -> unpack() |> record_boxed_unseal d recf
-                            | _ -> on_type_er d.trace "Expected a type level string in module application."
-
-                match args with
-                | TyT (T (ForCastT args_ty)) ->
-                    let instantiate_type_as_variable d args_ty =
-                        let f x = make_up_vars_for_ty d x
-                        match args_ty with
-                        | VVT l -> tyvv(List.map f l)
-                        | x -> f x
-            
-                    let args = instantiate_type_as_variable d args_ty
-                    apply true (memoize_closure args) args
-                | _ -> apply false tev args
+            | recf & Func(r,env_term,fun_type), args -> apply_func false d recf r env_term fun_type args
             // apply_string_static
             | TyLit (LitString str), TyVV [TyLitIndex a; TyLitIndex b] -> 
                 let f x = x >= 0 && x < str.Length
@@ -1499,7 +1523,6 @@ let spiral_peval module_main output_path =
                 | _ -> prim_un_op_helper t a
                 ) a t
 
-        let for_cast d x = tev_seq d x |> get_type |> for_castt |> tyt
         let error_non_unit d a =
             let x = tev d a 
             if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
@@ -1509,6 +1532,11 @@ let spiral_peval module_main output_path =
             match tev d a with
             | TyLit a -> type_lit_create' d a
             | _ -> on_type_er d.trace "Expected a literal in type literal create."
+
+        let type_lit_cast d a =
+            match tev d a with
+            | TyT (T (LitT x)) -> TyLit x
+            | _ -> on_type_er d.trace "Expected a literal in type literal cast."
 
         let rec is_static' x =
             let inline f x = is_static' x
@@ -1666,7 +1694,7 @@ let spiral_peval module_main output_path =
             | If,[cond;tr;fl] -> if_ d cond tr fl
             | FuncJoinPoint,[a] -> memoize_method d a
             | TypeJoinPoint,[a] -> memoize_type d a
-            | ForCast,[x] -> for_cast d x
+            | TermCast,[a;b] -> term_cast d a b
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
             | PrintEnv,[a] -> 
                 Map.iter (fun k _ -> printfn "%s" k) d.env
@@ -1679,6 +1707,7 @@ let spiral_peval module_main output_path =
             | RecordStackify,[a] -> record_stack d a
             | RecordHeapify,[a] -> record_heap d a
             | TypeLitCreate,[a] -> type_lit_create d a
+            | TypeLitCast,[a] -> type_lit_cast d a
             | Dynamize,[a] -> dynamize d a
             | IsStatic,[a] -> is_static d a
             | ModuleIs,[a] -> module_is d a
@@ -1760,8 +1789,8 @@ let spiral_peval module_main output_path =
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
-                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm"
-                | "type" | "print_expr" | "rec" | "if" | "then" | "elif" | "else" | "true" | "false" as x -> 
+                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm" 
+                | "type" | "print_expr" | "rec" | "if" | "if_dynamic" | "then" | "elif" | "else" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
@@ -1779,7 +1808,6 @@ let spiral_peval module_main output_path =
         let negate_ = operatorChar '-'
         let comma = skipChar ',' >>. spaces
         let dot = operatorChar '.'
-        let grave = operatorChar '`' 
         let pp = operatorChar ':'
         let semicolon = operatorChar ';' 
         let eq = operatorChar '=' 
@@ -1823,7 +1851,7 @@ let spiral_peval module_main output_path =
                 | false, _ -> Reply(ReplyStatus.FatalError,messageError er_msg)
 
             let default_int x _ = safe_parse Int64.TryParse LitInt64 "default int parse failed" x
-            let default_float x _ = safe_parse Single.TryParse LitFloat32 "default float parse failed" x
+            let default_float x _ = safe_parse Double.TryParse LitFloat64 "default float parse failed" x
 
             let int8 x _ = safe_parse SByte.TryParse LitInt8 "int8 parse failed" x
             let int16 x _ = safe_parse Int16.TryParse LitInt16 "int16 parse failed" x
@@ -1926,7 +1954,10 @@ let spiral_peval module_main output_path =
             pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)
         let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
         let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
-        let pat_type_lit = dot >>. (lit_ <|> (var_name |>> LitString)) |>> PatTypeLit
+        let pat_type_lit = 
+            let literal = lit_ <|> (var_name |>> LitString) |>> PatTypeLit
+            let bind = var_name |>> PatTypeLitBind
+            dot >>. (literal <|> rounds bind)
         let pat_lit = lit_ |>> PatLit
         let pat_when expr pattern = pattern .>>. (opt (when_ >>. expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
         let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
@@ -1969,9 +2000,9 @@ let spiral_peval module_main output_path =
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
             let inline f' str = keywordString str >>. expr
             let inline f str = expr_indent (f' str)
-            let if_ = f' "if" |>> fun x -> If, x
-            let if_static = f' "if_static" |>> fun x -> IfStatic, x
-            pipe4 (if_ <|> if_static) (f "then") (many (f "elif" .>>. f "then")) (opt (f "else"))
+            let if_ = f' "if" |>> fun x -> IfStatic, x
+            let if_dynamic = f' "if_dynamic" |>> fun x -> If, x
+            pipe4 (if_ <|> if_dynamic) (f "then") (many (f "elif" .>>. f "then")) (opt (f "else"))
                 (fun (if_op,cond) tr elifs fl -> 
                     let fl = 
                         match fl with Some x -> x | None -> B
@@ -2071,10 +2102,9 @@ let spiral_peval module_main output_path =
         let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
         let case_module expr = module_ >>. expr |>> module_create
-        let case_for_cast expr = grave >>. expr |>> ap (v "for_cast")
         let case_lit_lift expr = 
-            let var = var_name |>> (LitString >> lit >> ap (v "lit_lift"))
-            let lit = expr |>> ap (v "lit_lift")
+            let var = var_name |>> (LitString >> type_lit_lift)
+            let lit = expr |>> type_lit_lift'
             dot >>. (var <|> lit)
 
         let case_print_env expr s = 
@@ -2130,7 +2160,7 @@ let spiral_peval module_main output_path =
 
         let rec expressions expr s =
             let unary_ops = 
-                [case_for_cast; case_lit_lift]
+                [case_lit_lift]
                 |> List.map (fun x -> x (expressions expr) |> attempt)
                 |> choice
             let rest = 
@@ -2353,7 +2383,7 @@ let spiral_peval module_main output_path =
                 | BoolT -> "bool"
                 | StringT -> "string"
                 | CharT -> "char"
-            | TypeInTypeT _ | LitT _ | ForCastT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
+            | TypeInTypeT _ | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
                 failwith "Should be covered in Unit."
                 
 
@@ -2819,7 +2849,7 @@ let spiral_peval module_main output_path =
             l "box" (p2 type_box)
             l "in" (p type_in)
             l "out" (p type_out)
-            l "type_error" (type_lit_create <| LitString "TypeConstructorError")
+            l "type_error" (type_lit_lift <| LitString "TypeConstructorError")
             l "stack" (p record_stackify)
             l "heap" (p record_heapify)
 
@@ -2838,8 +2868,10 @@ let spiral_peval module_main output_path =
             l "char" (op(TypeCreate,[lit <| LitChar ' ']))
             l "unit" (op(TypeCreate,[B]))
 
-            l "lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
-            l "for_cast" (p for_cast)
+            l "type_lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
+            l "type_lit_cast" (p <| fun x -> op(TypeLitCast,[x]))
+            l "type_lit_is" (p <| fun x -> op(TypeLitIs,[x]))
+            l "term_cast" (p2 term_cast)
             l "negate" (p <| fun x -> op(Neg,[x]))
         
             l "load_assembly" (p <| fun x -> op(DotNetLoadAssembly,[x]))

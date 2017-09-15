@@ -176,7 +176,7 @@ type list x =
 
 inl lw x = 
     inl rec loop tup_type n x on_fail on_succ =
-        if_static n > 0 then
+        if n > 0 then
             match x with
             | () -> on_fail()
             | a, b -> loop tup_type (n-1) b on_fail <| inl b -> on_succ (a :: b)
@@ -219,11 +219,11 @@ inl rec map f l =
         | #lw (x :: xs) -> cons (f x) (map f xs)
         | #lw () -> empty t'
         : list t'
-    if_static is_static l then loop map
+    if is_static l then loop map
     else (met _ -> loop map) ()
 
 inl fold_template loop f s l = 
-    if_static (is_static s && is_static l) then loop f s l
+    if (is_static s && is_static l) then loop f s l
     else 
         inl s,l = dyn s, dyn l
         (met () -> loop f s l) ()
