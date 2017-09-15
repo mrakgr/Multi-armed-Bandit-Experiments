@@ -285,12 +285,11 @@ a 1 <- id
 a 1 |> ignore
     """
 
-let test19 = // 
-    "test19",[],"Does term level casting for functions work?",
+let test19 =
+    "test19",[],"Does term casting for functions work?",
     """
-inl add a b (c, (d, e), f) = 
-    a + b + c + d + e + f
-inl f = add 8 (dyn 7) `(int64,(int64,int64),int64)
+inl add a b (c, (d, e), f) = a + b + c + d + e + f
+inl f = term_cast (add 8 (dyn 7)) (int64,(int64,int64),int64)
 f (1,(2,5),3)
     """
 
@@ -711,6 +710,15 @@ inm _ = on_log z
 on_succ (x+y+z) // Tuple2(20L, Tuple1(2L, 7L, 11L))
     """
 
+let test55 =
+    "test55",[],"Does the type literal rebind pattern work?",
+    """
+inl f = .QWE,.66,.2.3
+match f with
+| .(a), .(b), .(c) -> a,b,c
+    """
+    
+
 //let test55 =
 //    "test55",[array;console;parsing4],"Does the v4 of the (monadic) parsing library work? Birthday Cake Candles problem.",
 //    """
@@ -968,23 +976,25 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
-    test54;test58
+    test50;test51;test52;test53;test54;test55;test58
     test61;test62;test63;test64;test65;test66;test67;test68;test69
     hacker_rank_1
     |] |> Array.map module_
 
-let run_test' is_big_test (name,aux,desc,body as m) =
+let run_test' (name,aux,desc,body as m) =
     let main_module = module_ m
     printfn "%s - %s" name desc
-    let output_file = if is_big_test then "output.txt" else "output.fsx"
-    spiral_peval main_module (System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
+    spiral_peval main_module 
+        (fun file_size -> 
+            let output_file = if file_size > 1024*1024 then "output.txt" else "output.fsx"
+            System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
 
 
-let run_test is_big_test name =
+let run_test name =
     let (Module(N x)) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
-    run_test' is_big_test x
+    run_test' x
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' false test53 |> printfn "%A"
+run_test' test55 |> printfn "%A"
 

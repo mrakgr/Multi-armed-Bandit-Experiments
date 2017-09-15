@@ -1538,6 +1538,11 @@ let spiral_peval module_main output_path =
             | TyT (T (LitT x)) -> TyLit x
             | _ -> on_type_er d.trace "Expected a literal in type literal cast."
 
+        let type_lit_is d a =
+            match tev d a with
+            | TyT (T (LitT _)) -> TyLit <| LitBool true
+            | _ -> TyLit <| LitBool false
+
         let rec is_static' x =
             let inline f x = is_static' x
             match x with
@@ -1708,6 +1713,7 @@ let spiral_peval module_main output_path =
             | RecordHeapify,[a] -> record_heap d a
             | TypeLitCreate,[a] -> type_lit_create d a
             | TypeLitCast,[a] -> type_lit_cast d a
+            | TypeLitIs,[a] -> type_lit_is d a
             | Dynamize,[a] -> dynamize d a
             | IsStatic,[a] -> is_static d a
             | ModuleIs,[a] -> module_is d a
@@ -2875,7 +2881,7 @@ let spiral_peval module_main output_path =
             l "negate" (p <| fun x -> op(Neg,[x]))
         
             l "load_assembly" (p <| fun x -> op(DotNetLoadAssembly,[x]))
-            l "mscorlib" (ap (v "load_assembly") (ap (v "lit_lift") (lit_string "mscorlib")))
+            l "mscorlib" (ap (v "load_assembly") (ap (v "type_lit_lift") (lit_string "mscorlib")))
             l "ignore" (inl "" B)
             l "id" (p <| id)
             l "ref" (p <| fun x -> op(ReferenceCreate,[x]))
@@ -2924,7 +2930,8 @@ let spiral_peval module_main output_path =
 
         loop module_auxes (fun r -> p module_main (r >> ret))
 
-    let copy_to_temporary x =
+    let copy_to_temporary (x: string) =
+        let output_path = output_path x.Length
         IO.File.WriteAllText(output_path,x)
         printfn "Copied the code to: %s" output_path
         x
