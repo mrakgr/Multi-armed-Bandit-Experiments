@@ -2484,27 +2484,14 @@ let spiral_peval module_main output_path =
                     | None -> x
                     |> state
 
-                let tail_rec_opt = function
-                    | TyLet(tyv,b,TyV tyv',_) when tyv = tyv' -> b
-                    | x -> x
-
-                let (|SimpleExpr|_|) x = 
-                    match tail_rec_opt x with
-                    | TyJoinPoint _ | TyOp _ | TyLit _ | TyV _ -> Some() 
-                    | _ -> None
-
-                match cond,tr,fl with
-                | SimpleExpr,SimpleExpr,TyLit(LitBool false) -> f And cond tr |> print_op
-                | SimpleExpr,TyLit(LitBool true),SimpleExpr -> f Or cond fl |> print_op
-                | _ ->
-                    let inline k() = 
-                        sprintf "if %s then" (codegen cond) |> state
-                        enter <| fun _ -> codegen tr
-                        "else" |> state
-                        enter <| fun _ -> codegen fl
-                    match v with
-                    | Some tyv -> print_if tyv k
-                    | None -> k()
+                let inline k() = 
+                    sprintf "if %s then" (codegen cond) |> state
+                    enter <| fun _ -> codegen tr
+                    "else" |> state
+                    enter <| fun _ -> codegen fl
+                match v with
+                | Some tyv -> print_if tyv k
+                | None -> k()
 
             let make_struct l on_empty on_rest =
                 Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
