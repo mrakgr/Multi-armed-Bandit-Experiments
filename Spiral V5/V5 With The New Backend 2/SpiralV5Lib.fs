@@ -287,46 +287,72 @@ let parsing =
     "Parsing",[tuple],"Parser combinators.",
     """
 // Primitives
-inl m' typ parser d state = function
-    | .elem -> parser d state
-    | .elem_type -> typ ()
-inl m typ = m' (inl _ -> in typ)
-
-inl goto point x = m () <| inl _ state -> point state x
-inl succ x = m x <| inl {on_succ} state -> on_succ state x
-inl fail x = m () <| inl {on_fail} state -> on_fail state x
-inl fatal_fail x = m () <| inl {on_fatal_fail} state -> on_fatal_fail state x
-inl type_ {d with on_type} state = function
-    | .elem -> on_succ state on_type
-    | .elem_type -> in on_type
-inl elem_type p {d with on_succ} state elem = 
-    inl typ = p d state .elem_type
+inl m x d state elem = 
     match elem with
-    | .elem -> on_succ state (out typ)
-    | .elem_type -> typ
-inl state d state = 
-    m state <| inl {on_succ} state -> on_succ state state
-    <| d <| state
-inl set_state state = m () <| inl {ret with on_succ} _ -> on_succ state ()
-inl (>>=) a b d state = function
-    | .elem -> a {d with on_succ = inl state x -> b x d state .elem} state .elem
-    | .elem_type -> type (b (out <| a d state .elem_type) d state .elem_type)
-    
-inl try_with handle handler d state = 
-    m' (inl _ -> handle d state .elem_type) <| inl d state -> handle {d with on_fail = inl state _ -> handler d state .elem} state .elem
-    <| d <| state
-inl guard cond handler = m () <| inl d state -> if cond then d .on_succ state () else handler d state .elem
-inl ifm cond tr fl d state = 
-    m' (inl _ -> in <| union (out <| tr d state .elem_type) (out <| fl d state .elem_type)) <| inl d state -> if cond then tr () d state .elem else fl () d state .elem
-    <| d <| state
+    | .elem ->
+        match x with
+        | {rec_parser} -> 
+            (met _ -> 
+                inl {parser annot} = rec_parser d state
+                parser d state .elem : annot) ()
+        | {parser} -> parser d state
+    | .elem_type ->
+        match x with
+        | {typ} -> in typ
+        | {typ_fun} -> typ_fun d state
 
-inl m x parser d state = function
-    | .elem -> parser d state
-    | .elem_type -> in x
-
-inl attempt a d state = 
-    m (a d state .elem_type) <| inl d state -> a { d with on_fail = inl _ -> self state} state
-    <| d <| state
+inl goto point x = m {
+    parser = inl _ state -> point state x
+    typ = ()
+    }
+inl succ x = m {
+    parser = inl {on_succ} state -> on_succ state x
+    typ = x
+    }
+inl fail x = m {
+    parser = inl {on_fail} state -> on_fail state x
+    typ = ()
+    }
+inl fatal_fail x = m {
+    parser = inl {on_fatal_fail} state -> on_fatal_fail state x
+    typ = ()
+    }
+inl type_ = m {
+    parser = inl {on_type on_succ} state -> on_succ state on_type
+    typ_fun = inl {on_type} _ -> in on_type
+    }
+inl elem_type p = m {
+    parser = inl {d with on_succ} state -> on_succ state (out <| p d state .elem_type)
+    typ_fun = inl d state -> p d state .elem_type
+    }
+inl state = m {
+    parser = inl {on_succ} state -> on_succ state state
+    typ_fun = inl _ state -> in state
+    }
+inl set_state state = m {
+    parser = inl {on_succ} _ -> on_succ state ()
+    typ = ()
+    }
+inl (>>=) a b = m {
+    parser = inl d state -> a {d with on_succ = inl state x -> b x d state .elem} state .elem
+    typ_fun = inl d state -> type (b (out <| a d state .elem_type) d state .elem_type)
+    }
+inl try_with handle handler = m {
+    parser = inl d state -> handle {d with on_fail = inl state _ -> handler d state .elem} state .elem
+    typ_fun = inl d state -> handle d state .elem_type
+    }
+inl guard cond handler = m {
+    parser = inl d state -> if cond then d .on_succ state () else handler d state .elem
+    typ = ()
+    }
+inl ifm cond tr fl d state = m {
+    parser = inl d state -> if cond then tr () d state .elem else fl () d state .elem
+    typ_fun = inl d state -> in <| union (out <| tr d state .elem_type) (out <| fl d state .elem_type)
+    }
+inl attempt a = m {
+    parser = inl d state -> a { d with on_fail = inl _ -> self state} state .elem
+    typ_fun = inl d state -> a d state .elem_type
+    }
 
 inl rec tuple = function
     | () -> succ ()
@@ -366,12 +392,15 @@ inl string_stream str {idx on_succ on_fail} =
     | a, b when f a && f b | idx when f idx -> on_succ (str idx)
     | _ -> on_fail "string index out of bounds"
 
-inl stream_char = m char <| inl {d with stream on_succ on_fail} {state with pos} ->
-    stream {
-        idx = pos
-        on_succ = inl c -> on_succ {state with pos=pos+1} c
-        on_fail = inl msg -> on_fail state msg
-        }
+inl stream_char = m {
+    parser = inl {d with stream on_succ on_fail} {state with pos} ->
+            stream {
+                idx = pos
+                on_succ = inl c -> on_succ {state with pos=pos+1} c
+                on_fail = inl msg -> on_fail state msg
+                }
+    typ = char
+    }
 
 inl run data parser ret = 
     match data with
@@ -405,14 +434,16 @@ inl pdigit = satisfyL is_digit "digit"
 inl pchar c = satisfyL ((=) c) "char"
 
 inl pstring (!dyn str) x = 
-    inl rec loop (!dyn i) d state = function
-        || .elem ->
-            inl f = 
+    inl rec loop (!dyn i) = m {
+        rec_parser = inl d state -> {
+            parser =
                 ifm (i < string_length str)
                 <| inl _ -> pchar (str i) >>. loop (i+1)
                 <| inl _ -> succ str
-            f d state .elem : d.on_type
-        | .elem_type -> in string
+            annot = d.on_type
+            }
+        typ = string
+        }
     loop 0 x
 
 inl pint64 =
