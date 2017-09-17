@@ -287,19 +287,19 @@ let parsing =
     "Parsing",[tuple],"Parser combinators.",
     """
 // Primitives
-inl m x d state elem = 
-    match elem with
+inl m x selector = 
+    match selector with
     | .elem ->
         match x with
-        | {rec_parser} -> 
-            (met _ -> 
-                inl {parser annot} = rec_parser d state
-                parser d state .elem : annot) ()
-        | {parser} -> parser d state
+        | {rec_parser} ->
+            (met d -> 
+                inl {parser annot} = rec_parser d
+                parser .elem d : annot) ()
+        | {parser} -> parser
     | .elem_type ->
         match x with
-        | {typ} -> in typ
-        | {typ_fun} -> typ_fun d state
+        | {typ} -> inl _ -> in typ
+        | {typ_fun} -> typ_fun
 
 inl goto point x = m {
     parser = inl _ state -> point state x
