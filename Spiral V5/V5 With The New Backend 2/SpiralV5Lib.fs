@@ -290,67 +290,63 @@ let parsing =
 inl m x = { 
     elem =
         match x with
-        | {rec_parser} ->
-            (met d -> 
-                inl {parser annot} = rec_parser d
-                parser .elem d : annot) ()
+        | {rec_parser} -> (met d state -> rec_parser d .elem d state : annot) ()
         | {parser} -> parser
     elem_type =
         match x with
-        | {typ} -> inl _ -> in typ
+        | {typ} -> inl _ _ -> in typ
         | {typ_fun} -> typ_fun
     }
-
 inl goto point x = m {
-    parser = inl {state} -> point state x
+    parser = inl _ -> point x
     typ = ()
     }
 inl succ x = m {
-    parser = inl {{env with on_succ} state} -> on_succ state x
+    parser = inl {on_succ} -> on_succ x
     typ = x
     }
 inl fail x = m {
-    parser = inl {{env with on_fail} state} -> on_fail state x
+    parser = inl {on_fail} -> on_fail x
     typ = ()
     }
 inl fatal_fail x = m {
-    parser = inl {{env with on_fatal_fail} state} -> on_fatal_fail state x
+    parser = inl {on_fatal_fail} -> on_fatal_fail x
     typ = ()
     }
 inl type_ = m {
-    parser = inl {{env with on_type on_succ} state} -> on_succ state on_type
-    typ_fun = inl {{env with on_type}} -> in on_type
+    parser = inl {on_type on_succ} -> on_succ on_type
+    typ_fun = inl {on_type} _ -> in on_type
     }
 inl elem_type p = m {
-    parser = inl {d with {env with on_succ}} -> on_succ state (out <| p .elem_type d)
+    parser = inl {d with on_succ} state -> on_succ (out <| p .elem_type d state) state
     typ_fun = p .elem_type
     }
 inl state = m {
-    parser = inl {{env with on_succ} state} -> on_succ state state
-    typ_fun = inl {state} -> in state
+    parser = inl {on_succ} state -> on_succ state state
+    typ_fun = inl _ state -> in state
     }
 inl set_state state = m {
-    parser = inl {{env with on_succ}} -> on_succ state ()
+    parser = inl {on_succ} -> on_succ ()
     typ = ()
     }
 inl (>>=) a b = m {
-    parser = inl {d with env state} -> a .elem {d with on_succ = inl state x -> b x .elem {env state}}
-    typ_fun = inl d -> type (b (out <| a .elem_type d) .elem_type d)
+    parser = inl d -> a .elem {d with on_succ = inl x -> b x .elem d}
+    typ_fun = inl d state -> type (b (out <| a .elem_type d state) .elem_type d state)
     }
 inl try_with handle handler = m {
-    parser = inl {d with env state} -> handle .elem {d with on_fail = inl state _ -> handler .elem {env state}}
+    parser = inl d -> handle .elem {d with on_fail = inl _ -> handler .elem d}
     typ_fun = handle .elem_type
     }
 inl guard cond handler = m {
-    parser = inl {d with {env with on_succ} state} -> if cond then on_succ state () else handler .elem d
+    parser = inl {d with on_succ} state -> if cond then on_succ () state else handler .elem d state
     typ = ()
     }
-inl ifm cond tr fl d state = m {
-    parser = inl d -> if cond then tr () .elem d else fl () .elem d
-    typ_fun = inl d -> in <| union (out <| tr .elem_type d) (out <| fl .elem_type d)
+inl ifm cond tr fl = m {
+    parser = inl d state -> if cond then tr () .elem d state else fl () .elem d state
+    typ_fun = inl d state -> in <| union (out <| tr .elem_type d state) (out <| fl .elem_type d state)
     }
 inl attempt a = m {
-    parser = inl {d with state} -> a .elem { d with on_fail = inl _ -> self state }
+    parser = inl d state -> a .elem { d with on_fail = inl x _ -> self x state } state
     typ_fun = a .elem_type
     }
 
@@ -394,27 +390,24 @@ inl string_stream str {idx on_succ on_fail} =
 
 inl stream_char = m {
     parser = inl {d with stream on_succ on_fail} {state with pos} ->
-            stream {
-                idx = pos
-                on_succ = inl c -> on_succ {state with pos=pos+1} c
-                on_fail = inl msg -> on_fail state msg
-                }
+        stream {
+            idx = pos
+            on_succ = inl c -> on_succ c {state with pos=pos+1}
+            on_fail = inl msg -> on_fail msg state
+            }
     typ = char
     }
 
 inl run data parser ret = 
     match data with
-    | _ : string -> 
-        parser { ret with stream = string_stream data}
-            { pos = if is_static data then 0 else dyn 0 }
-            .elem
+    | _ : string -> parser .elem { ret with stream = string_stream data} { pos = if is_static data then 0 else dyn 0 }
     | _ -> error_type "Only strings supported for now."
 
 inl with_unit_ret = {
     on_type = ()
-    on_succ = inl state x -> ()
-    on_fail = inl state -> failwith
-    on_fatal_fail = inl state -> failwith
+    on_succ = inl _ _ -> ()
+    on_fail = inl x _ -> failwith x
+    on_fatal_fail = inl x _ -> failwith x
     }
 
 inl run_with_unit_ret data parser = run data parser with_unit_ret
@@ -435,57 +428,57 @@ inl pchar c = satisfyL ((=) c) "char"
 
 inl pstring (!dyn str) x = 
     inl rec loop (!dyn i) = m {
-        rec_parser = inl d state -> {
-            parser =
-                ifm (i < string_length str)
-                <| inl _ -> pchar (str i) >>. loop (i+1)
-                <| inl _ -> succ str
-            annot = d.on_type
-            }
+        parser_rec = inl d ->
+            ifm (i < string_length str)
+            <| inl _ -> pchar (str i) >>. loop (i+1)
+            <| inl _ -> succ str
         typ = string
         }
     loop 0 x
 
 inl pint64 =
-    inl rec loop handler i = m int64 <| met {d with on_succ on_type} state ->
-        inl f =
+    inl rec loop handler i = m {
+        parser_rec = inl {on_succ} ->
             inm c = try_with pdigit handler
             inl x = to_int64 c - to_int64 '0'
             inl max = 922337203685477580 // max int64 divided by 10
             inm _ = guard (i = max && x <= 7 || i < max) (fail "integer overflow")
             inl i = i * 10 + x
             loop (goto on_succ i) i
-        f d state .elem : on_type
+        typ = int64
+        }
     loop (fail "pint64") 0
 
 inl spaces x =
-    inl rec loop (!dyn i) = m () <| met {d with on_succ on_type} state ->
-        inl f = try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
-        f d state .elem : on_type
+    inl rec loop (!dyn i) = m {
+        parser_rec = inl {on_succ} -> try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
+        typ = ()
+        }
     loop 0 x
 
 inl parse_int =
     inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
     (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
-inl parse_n_array p n x =
-    inl f =
+inl parse_n_array p n = m {
+    parser =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
         inm typ = elem_type p
         inl ar = array_create n typ
-        inl rec loop (!dyn i) = m ar <| met d state ->
-            inl f = 
+        inl rec loop (!dyn i) = m {
+            parser_rec = inl {on_type} ->
                 ifm (i < n)
                 <| inl _ ->
                     inm x = p
                     ar i <- x
                     loop (i+1)
-                <| inl _ -> 
-                    succ ar
-            f d state .elem : d.on_type
-        loop 0
-    f x
-
+                <| inl _ ->
+                    succ ()
+            typ = ()
+            }
+        loop 0 >>. succ ar
+    typ_fun = array_create n << p .elem_type
+    }
 
 module (run,run_with_unit_ret,succ,fail,fatal_fail,state,type_,tuple,(>>=),(|>>),(.>>.),(.>>),(>>.),(>>%),(<|>),choice,stream_char,
         ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array)
