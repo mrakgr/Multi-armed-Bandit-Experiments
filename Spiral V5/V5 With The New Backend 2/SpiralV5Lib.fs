@@ -290,7 +290,7 @@ let parsing =
 inl m x = { 
     elem =
         match x with
-        | {rec_parser} -> (met d state -> rec_parser d .elem d state : annot) ()
+        || {parser_rec} {d with on_type} state -> parser_rec d .elem d state : on_type
         | {parser} -> parser
     elem_type =
         match x with
@@ -338,7 +338,14 @@ inl try_with handle handler = m {
     typ_fun = handle .elem_type
     }
 inl guard cond handler = m {
-    parser = inl {d with on_succ} state -> if cond then on_succ () state else handler .elem d state
+    parser = inl {d with on_succ} state -> 
+        print_static "I am in guard."
+        if cond then 
+            print_static "I am calling on_succ."
+            on_succ () state 
+        else 
+            print_static "I am in else."
+            handler .elem d state
     typ = ()
     }
 inl ifm cond tr fl = m {
@@ -428,7 +435,7 @@ inl pchar c = satisfyL ((=) c) "char"
 
 inl pstring (!dyn str) x = 
     inl rec loop (!dyn i) = m {
-        parser_rec = inl d ->
+        parser_rec = inl {d with on_succ} ->
             ifm (i < string_length str)
             <| inl _ -> pchar (str i) >>. loop (i+1)
             <| inl _ -> succ str
@@ -463,7 +470,9 @@ inl parse_int =
 inl parse_n_array p n = m {
     parser =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
+        print_static "Hello guard past."
         inm typ = elem_type p
+        print_static typ
         inl ar = array_create n typ
         inl rec loop (!dyn i) = m {
             parser_rec = inl {on_type} ->
@@ -477,7 +486,7 @@ inl parse_n_array p n = m {
             typ = ()
             }
         loop 0 >>. succ ar
-    typ_fun = array_create n << p .elem_type
+    typ_fun = inl d state -> array_create n (p .elem_type d state)
     }
 
 module (run,run_with_unit_ret,succ,fail,fatal_fail,state,type_,tuple,(>>=),(|>>),(.>>.),(.>>),(>>.),(>>%),(<|>),choice,stream_char,

@@ -718,19 +718,6 @@ match f with
 | .(a), .(b), .(c) -> a,b,c
     """
 
-let test56 = 
-    "test56",[parsing;console],"Does the Parsing module work?",
-    """
-open Parsing
-open Console
-
-inl p = 
-    parse_n_array parse_int 10
-    |>> writeline
-
-run_with_unit_ret (readall()) p
-    """
-
 let test58 =
     "test58",[array],"Does the fold function get duplicated?",
     """
@@ -843,6 +830,8 @@ open List
 init 10 (inl x -> 2.2)
     """
 
+
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -870,6 +859,72 @@ let run_test name =
 
     //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
-run_test' test56 |> printfn "%A"
+let parsing1 = 
+    "parsing1",[parsing;console],"Does the Parsing module work?",
+    """
+open Parsing
+open Console
+
+inl p = 
+    succ 1
+    |>> writeline
+
+run_with_unit_ret (readall()) p
+    """
+
+let parsing2 = 
+    "parsing2",[parsing;console],"Does the Parsing module work?",
+    """
+open Parsing
+open Console
+
+inl p = 
+    pdigit
+    |>> writeline
+
+run_with_unit_ret (readall()) p
+    """
+
+let parsing3 = 
+    "parsing3",[parsing;console],"Does the Parsing module work?",
+    """
+open Parsing
+open Console
+
+inl p = 
+    pstring "qwe"
+    |>> writeline
+
+run_with_unit_ret (readall()) p
+    """
+
+let parsing4 = 
+    "parsing4",[parsing;console],"Does the Parsing module work?",
+    """
+open Parsing
+open Console
+
+inl p = 
+    parse_int
+    |>> writeline
+
+run_with_unit_ret (readall()) p
+    """
+
+let parsing5 = 
+    "parsing5",[parsing;console],"Does the Parsing module work?",
+    """
+open Parsing
+open Console
+
+inl p = 
+    parse_n_array parse_int 16
+    |>> writeline
+
+run_with_unit_ret (readall()) p
+    """
+
+run_test' parsing5
+|> printfn "%A"
 
 

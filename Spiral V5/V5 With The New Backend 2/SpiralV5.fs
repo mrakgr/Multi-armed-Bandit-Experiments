@@ -1218,7 +1218,7 @@ let spiral_peval module_main output_path =
                     match r with
                     | RecordIndividual -> unpack()
                     | RecordStack | RecordHeap -> unpack() |> record_boxed_unseal d recf
-                | _ -> on_type_er d.trace "Expected a type level string in module application."
+                | x -> on_type_er d.trace "Expected a type level string in module application." 
 
         let term_cast d a b =
             match tev d a, tev d b with
