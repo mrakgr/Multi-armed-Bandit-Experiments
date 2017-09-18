@@ -287,71 +287,71 @@ let parsing =
     "Parsing",[tuple],"Parser combinators.",
     """
 // Primitives
-inl m x selector = 
-    match selector with
-    | .elem ->
+inl m x = { 
+    elem =
         match x with
         | {rec_parser} ->
             (met d -> 
                 inl {parser annot} = rec_parser d
                 parser .elem d : annot) ()
         | {parser} -> parser
-    | .elem_type ->
+    elem_type =
         match x with
         | {typ} -> inl _ -> in typ
         | {typ_fun} -> typ_fun
+    }
 
 inl goto point x = m {
-    parser = inl _ state -> point state x
+    parser = inl {state} -> point state x
     typ = ()
     }
 inl succ x = m {
-    parser = inl {on_succ} state -> on_succ state x
+    parser = inl {{env with on_succ} state} -> on_succ state x
     typ = x
     }
 inl fail x = m {
-    parser = inl {on_fail} state -> on_fail state x
+    parser = inl {{env with on_fail} state} -> on_fail state x
     typ = ()
     }
 inl fatal_fail x = m {
-    parser = inl {on_fatal_fail} state -> on_fatal_fail state x
+    parser = inl {{env with on_fatal_fail} state} -> on_fatal_fail state x
     typ = ()
     }
 inl type_ = m {
-    parser = inl {on_type on_succ} state -> on_succ state on_type
-    typ_fun = inl {on_type} _ -> in on_type
+    parser = inl {{env with on_type on_succ} state} -> on_succ state on_type
+    typ_fun = inl {{env with on_type}} -> in on_type
     }
 inl elem_type p = m {
-    parser = inl {d with on_succ} state -> on_succ state (out <| p d state .elem_type)
-    typ_fun = inl d state -> p d state .elem_type
+    parser = inl {d with {env with on_succ}} -> on_succ state (out <| p .elem_type d)
+    typ_fun = p .elem_type
     }
 inl state = m {
-    parser = inl {on_succ} state -> on_succ state state
-    typ_fun = inl _ state -> in state
+    parser = inl {{env with on_succ} state} -> on_succ state state
+    typ_fun = inl {state} -> in state
     }
 inl set_state state = m {
-    parser = inl {on_succ} _ -> on_succ state ()
+    parser = inl {{env with on_succ}} -> on_succ state ()
     typ = ()
     }
 inl (>>=) a b = m {
-    parser = inl d state -> a {d with on_succ = inl state x -> b x d state .elem} state .elem
-    typ_fun = inl d state -> type (b (out <| a d state .elem_type) d state .elem_type)
+    parser = inl {d with env state} -> a .elem {d with on_succ = inl state x -> b x .elem {env state}}
+    typ_fun = inl d -> type (b (out <| a .elem_type d) .elem_type d)
     }
 inl try_with handle handler = m {
-    parser = inl d state -> handle {d with on_fail = inl state _ -> handler d state .elem} state .elem
-    typ_fun = inl d state -> handle d state .elem_type
+    parser = inl {d with env state} -> handle .elem {d with on_fail = inl state _ -> handler .elem {env state}}
+    typ_fun = handle .elem_type
     }
 inl guard cond handler = m {
-    parser = inl d state -> if cond then d .on_succ state () else handler d state .elem
+    parser = inl {d with {env with on_succ} state} -> if cond then on_succ state () else handler .elem d
     typ = ()
     }
 inl ifm cond tr fl d state = m {
-    parser = inl d state -> if cond then tr () d state .elem else fl () d state .elem
-    typ_fun = inl d state -> in <| union (out <| tr d state .elem_type) (out <| fl d state .elem_type)
+    parser = inl d -> if cond then tr () .elem d else fl () .elem d
+    typ_fun = inl d -> in <| union (out <| tr .elem_type d) (out <| fl .elem_type d)
     }
 inl attempt a = m {
-    parser = inl d state -> a { d with on_fail = inl _ -> self state} state .elem
-    typ_fun = inl d state -> a d state .elem_type
+    parser = inl {d with state} -> a .elem { d with on_fail = inl _ -> self state }
+    typ_fun = a .elem_type
     }
 
 inl rec tuple = function
