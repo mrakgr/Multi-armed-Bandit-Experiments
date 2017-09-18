@@ -292,6 +292,7 @@ inl m x = {
         match x with
         || {parser_rec} {d with on_type} state -> parser_rec d .elem d state : on_type
         | {parser} -> parser
+        | {parser_mon} -> parser_mon .elem
     elem_type =
         match x with
         | {typ} -> inl _ _ -> in typ
@@ -339,13 +340,8 @@ inl try_with handle handler = m {
     }
 inl guard cond handler = m {
     parser = inl {d with on_succ} state -> 
-        print_static "I am in guard."
-        if cond then 
-            print_static "I am calling on_succ."
-            on_succ () state 
-        else 
-            print_static "I am in else."
-            handler .elem d state
+        if cond then on_succ () state 
+        else handler .elem d state
     typ = ()
     }
 inl ifm cond tr fl = m {
@@ -468,11 +464,9 @@ inl parse_int =
     (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
 inl parse_n_array p n = m {
-    parser =
+    parser_mon =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
-        print_static "Hello guard past."
         inm typ = elem_type p
-        print_static typ
         inl ar = array_create n typ
         inl rec loop (!dyn i) = m {
             parser_rec = inl {on_type} ->
@@ -489,6 +483,70 @@ inl parse_n_array p n = m {
     typ_fun = inl d state -> array_create n (p .elem_type d state)
     }
 
+inl sprintf_parser append =
+    inl m = function
+        | {parser} -> m { parser typ = () }
+        | {parser_mon} -> m { parser_mon typ = () }
+    
+    inl rec sprintf_parser sprintf_state =
+        inl parse_variable = m {
+            parser_mon =
+                inm c = try_with stream_char (inl x -> append '%'; fail "done" x)
+                match c with
+                | 's' -> function
+                    | x : string -> x
+                    | _ -> error_type "Expected a string in sprintf."
+                | 'c' -> function
+                    | x : char -> x
+                    | _ -> error_type "Expected a char in sprintf."
+                | 'b' -> function
+                    | x : bool -> x
+                    | _ -> error_type "Expected a bool in sprintf."
+                | 'i' -> function
+                    | x : int32 | x : int64 | x : uint32 | x : uint64 -> x
+                    | _ -> error_type "Expected an integer in sprintf."
+                | 'f' -> function
+                    | x : float32 | x : float64 -> x
+                    | _ -> error_type "Expected a float in sprintf."
+                | 'A' -> id
+                | _ -> error_type "Unexpected literal in sprintf."
+                |> inl guard_type -> 
+                    m { parser = inl d state -> d.on_succ (inl x -> append x; sprintf_parser .None d state) state }
+            }
+
+        inl append_state = m {
+            parser = inl {d with stream on_succ on_fail} state ->
+                match sprintf_state with
+                | .None -> on_succ state ()
+                | ab -> stream {
+                    idx = ab
+                    on_succ = inl r -> append r; on_succ () state 
+                    on_fail = inl msg -> on_fail msg state
+                    }
+            }
+
+        inm c = try_with stream_char_pos (append_state >>. fail "done")
+        match c with
+        | '%', _ -> append_state >>. parse_variable
+        | _, pos ->
+            match sprintf_state with
+            | .None -> (pos, pos)
+            | (start,_) -> (start, pos)
+            |> sprintf_parser
+    sprintf_parser .None
+
+inl sprintf_template append ret format =
+    run format (sprintf_parser append) ret
+
+inl sprintf format = 
+    inl strb = mscorlib."System.Text.StringBuilder"(64i32)
+    inl append x = strb.Append x |> ignore
+    sprintf_template append {
+        on_succ = inl x _ -> x
+        on_fail = inl msg _ -> strb.ToString()
+        } format
+
+
 module (run,run_with_unit_ret,succ,fail,fatal_fail,state,type_,tuple,(>>=),(|>>),(.>>.),(.>>),(>>.),(>>%),(<|>),choice,stream_char,
         ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array)
     """) |> module_
@@ -504,16 +562,15 @@ inl readline () = console.ReadLine()
 
 inl write = console.Write
 inl writeline = console.WriteLine
-//
-//inl printf_template cont = 
-//    Parsing.sprintf_template write {
-//        on_succ = inl state x -> x
-//        on_fail = inl state msg -> cont()
-//        }
-//
-//inl printf = printf_template id
-//inl printfn = printf_template writeline
 
-module (console,readall,readline,write,writeline)
-//module (console,readall,readline,write,writeline,printf,printfn)
+inl printf_template cont = 
+    Parsing.sprintf_template write {
+        on_succ = inl x _ -> x
+        on_fail = inl msg _ -> cont()
+        }
+
+inl printf = printf_template id
+inl printfn = printf_template writeline
+
+module (console,readall,readline,write,writeline,printf,printfn)
     """) |> module_
