@@ -1,0 +1,3140 @@
+type Env0 =
+    struct
+    val mem_on_succ: Env2
+    val mem_stream: Env3
+    new(arg_mem_on_succ, arg_mem_stream) = {mem_on_succ = arg_mem_on_succ; mem_stream = arg_mem_stream}
+    end
+and Env1 =
+    struct
+    val mem_pos: int64
+    new(arg_mem_pos) = {mem_pos = arg_mem_pos}
+    end
+and Env2 =
+    struct
+    val mem_b: Env26
+    val mem_d: Env27
+    new(arg_mem_b, arg_mem_d) = {mem_b = arg_mem_b; mem_d = arg_mem_d}
+    end
+and Env3 =
+    struct
+    val mem_str: string
+    new(arg_mem_str) = {mem_str = arg_mem_str}
+    end
+and EnvStack4 =
+    struct
+    val mem_0: bool
+    val mem_1: Env2
+    val mem_2: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    end
+and EnvStack5 =
+    struct
+    val mem_0: bool
+    val mem_1: Env2
+    val mem_2: Env3
+    val mem_3: EnvStack4
+    val mem_4: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack6 =
+    struct
+    val mem_0: EnvStack5
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: EnvStack4
+    val mem_5: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5}
+    end
+and EnvStack7 =
+    struct
+    val mem_0: EnvStack5
+    val mem_1: EnvStack6
+    val mem_2: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    end
+and EnvStack8 =
+    struct
+    val mem_0: EnvStack5
+    val mem_1: int64
+    val mem_2: EnvStack6
+    val mem_3: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
+    end
+and EnvStack9 =
+    struct
+    val mem_0: EnvStack5
+    val mem_1: char
+    val mem_2: EnvStack6
+    val mem_3: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
+    end
+and EnvStack10 =
+    struct
+    val mem_0: bool
+    val mem_1: Env2
+    val mem_2: Env3
+    val mem_3: int64
+    val mem_4: EnvStack4
+    val mem_5: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5}
+    end
+and EnvStack11 =
+    struct
+    val mem_0: EnvStack5
+    val mem_1: EnvStack9
+    val mem_2: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    end
+and EnvStack12 =
+    struct
+    val mem_0: int64
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: EnvStack4
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack13 =
+    struct
+    val mem_0: EnvStack12
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: bool
+    val mem_7: Env2
+    val mem_8: Env3
+    val mem_9: EnvStack4
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9}
+    end
+and EnvStack14 =
+    struct
+    val mem_0: EnvStack12
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: EnvStack13
+    val mem_6: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6}
+    end
+and EnvStack15 =
+    struct
+    val mem_0: EnvStack12
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: EnvStack13
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack16 =
+    struct
+    val mem_0: EnvStack12
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: char
+    val mem_6: EnvStack13
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack17 =
+    struct
+    val mem_0: int64
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: EnvStack4
+    val mem_6: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6}
+    end
+and EnvStack18 =
+    struct
+    val mem_0: EnvStack12
+    val mem_1: bool
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: EnvStack16
+    val mem_6: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6}
+    end
+and EnvStack19 =
+    struct
+    val mem_0: int64
+    val mem_1: Env2
+    val mem_2: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    end
+and EnvStack20 =
+    struct
+    val mem_0: int64
+    val mem_1: EnvStack19
+    val mem_2: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    end
+and EnvStack21 =
+    struct
+    val mem_0: EnvStack20
+    val mem_1: int64
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: EnvStack19
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack22 =
+    struct
+    val mem_0: EnvStack20
+    val mem_1: int64
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: EnvStack21
+    val mem_6: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6}
+    end
+and EnvStack23 =
+    struct
+    val mem_0: EnvStack20
+    val mem_1: int64
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: EnvStack21
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack24 =
+    struct
+    val mem_0: EnvStack20
+    val mem_1: int64
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: char
+    val mem_6: EnvStack21
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack25 =
+    struct
+    val mem_0: EnvStack20
+    val mem_1: int64
+    val mem_2: Env2
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: EnvStack24
+    val mem_6: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6}
+    end
+and Env26 =
+    struct
+    val mem_xs: Tuple28
+    new(arg_mem_xs) = {mem_xs = arg_mem_xs}
+    end
+and Env27 =
+    struct
+    val mem_on_succ: Env32
+    val mem_stream: Env3
+    new(arg_mem_on_succ, arg_mem_stream) = {mem_on_succ = arg_mem_on_succ; mem_stream = arg_mem_stream}
+    end
+and Tuple28 =
+    struct
+    val mem_0: Env29
+    val mem_1: Env29
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
+    end
+and Env29 =
+    struct
+    val mem_elem: Env30
+    val mem_elem_type: Env31
+    new(arg_mem_elem, arg_mem_elem_type) = {mem_elem = arg_mem_elem; mem_elem_type = arg_mem_elem_type}
+    end
+and Env30 =
+    struct
+    val mem_a: Env33
+    val mem_b: Env34
+    new(arg_mem_a, arg_mem_b) = {mem_a = arg_mem_a; mem_b = arg_mem_b}
+    end
+and Env31 =
+    struct
+    val mem_a: Env33
+    val mem_b: Env34
+    new(arg_mem_a, arg_mem_b) = {mem_a = arg_mem_a; mem_b = arg_mem_b}
+    end
+and Env32 =
+    struct
+    val mem_b: Env118
+    val mem_d: Env119
+    new(arg_mem_b, arg_mem_d) = {mem_b = arg_mem_b; mem_d = arg_mem_d}
+    end
+and Env33 =
+    struct
+    val mem_elem: Env35
+    val mem_elem_type: Env36
+    new(arg_mem_elem, arg_mem_elem_type) = {mem_elem = arg_mem_elem; mem_elem_type = arg_mem_elem_type}
+    end
+and Env34 =
+    struct
+    val mem_pint64: Env50
+    val mem_spaces: Env51
+    new(arg_mem_pint64, arg_mem_spaces) = {mem_pint64 = arg_mem_pint64; mem_spaces = arg_mem_spaces}
+    end
+and Env35 =
+    struct
+    val mem_handle: Env37
+    val mem_handler: Env38
+    new(arg_mem_handle, arg_mem_handler) = {mem_handle = arg_mem_handle; mem_handler = arg_mem_handler}
+    end
+and Env36 =
+    struct
+    val mem_a: Env40
+    val mem_b: Env41
+    new(arg_mem_a, arg_mem_b) = {mem_a = arg_mem_a; mem_b = arg_mem_b}
+    end
+and Env37 =
+    struct
+    val mem_elem: Env39
+    val mem_elem_type: Env36
+    new(arg_mem_elem, arg_mem_elem_type) = {mem_elem = arg_mem_elem; mem_elem_type = arg_mem_elem_type}
+    end
+and Env38 =
+    struct
+    val mem_elem: Env48
+    val mem_elem_type: Env49
+    new(arg_mem_elem, arg_mem_elem_type) = {mem_elem = arg_mem_elem; mem_elem_type = arg_mem_elem_type}
+    end
+and Env39 =
+    struct
+    val mem_a: Env40
+    val mem_b: Env41
+    new(arg_mem_a, arg_mem_b) = {mem_a = arg_mem_a; mem_b = arg_mem_b}
+    end
+and Env40 =
+    struct
+    val mem_elem: Env42
+    val mem_elem_type: Env43
+    new(arg_mem_elem, arg_mem_elem_type) = {mem_elem = arg_mem_elem; mem_elem_type = arg_mem_elem_type}
+    end
+and Env41 =
+    struct
+    val mem_b: Env38
+    new(arg_mem_b) = {mem_b = arg_mem_b}
+    end
+and Env42 =
+    struct
+    val mem_b: Env44
+    new(arg_mem_b) = {mem_b = arg_mem_b}
+    end
+and Env43 =
+    struct
+    val mem_b: Env44
+    new(arg_mem_b) = {mem_b = arg_mem_b}
+    end
+and Env44 =
+    struct
+    val mem_f: Env45
+    val mem_m: string
+    val mem_stream_char: Env46
+    new(arg_mem_f, arg_mem_m, arg_mem_stream_char) = {mem_f = arg_mem_f; mem_m = arg_mem_m; mem_stream_char = arg_mem_stream_char}
+    end
+and Env45 =
+    struct
+    val mem_x: char
+    new(arg_mem_x) = {mem_x = arg_mem_x}
+    end
+and Env46 =
+    struct
+    val mem_elem_type: Env47
+    new(arg_mem_elem_type) = {mem_elem_type = arg_mem_elem_type}
+    end
+and Env47 =
+    struct
+    val mem_typ: char
+    new(arg_mem_typ) = {mem_typ = arg_mem_typ}
+    end
+and Env48 =
+    struct
+    val mem_x: bool
+    new(arg_mem_x) = {mem_x = arg_mem_x}
+    end
+and Env49 =
+    struct
+    val mem_typ: bool
+    new(arg_mem_typ) = {mem_typ = arg_mem_typ}
+    end
+and Env50 =
+    struct
+    val mem_elem: Env52
+    val mem_elem_type: Env53
+    new(arg_mem_elem, arg_mem_elem_type) = {mem_elem = arg_mem_elem; mem_elem_type = arg_mem_elem_type}
+    end
+and Env51 =
+    struct
+    val mem_satisfyL: Env54
+    new(arg_mem_satisfyL) = {mem_satisfyL = arg_mem_satisfyL}
+    end
+and Env52 =
+    struct
+    val mem_parser_rec: Env57
+    new(arg_mem_parser_rec) = {mem_parser_rec = arg_mem_parser_rec}
+    end
+and Env53 =
+    struct
+    val mem_typ: int64
+    new(arg_mem_typ) = {mem_typ = arg_mem_typ}
+    end
+and Env54 =
+    struct
+    val mem_stream_char: Env46
+    new(arg_mem_stream_char) = {mem_stream_char = arg_mem_stream_char}
+    end
+and Env55 =
+    struct
+    val mem_on_succ: Env56
+    val mem_stream: Env3
+    new(arg_mem_on_succ, arg_mem_stream) = {mem_on_succ = arg_mem_on_succ; mem_stream = arg_mem_stream}
+    end
+and Env56 =
+    struct
+    val mem_b: Env87
+    val mem_d: Env88
+    new(arg_mem_b, arg_mem_d) = {mem_b = arg_mem_b; mem_d = arg_mem_d}
+    end
+and Env57 =
+    struct
+    val mem_handler: Env58
+    val mem_i: int64
+    val mem_loop: Env59
+    val mem_pdigit: Env60
+    new(arg_mem_handler, arg_mem_i, arg_mem_loop, arg_mem_pdigit) = {mem_handler = arg_mem_handler; mem_i = arg_mem_i; mem_loop = arg_mem_loop; mem_pdigit = arg_mem_pdigit}
+    end
+and Env58 =
+    struct
+    val mem_elem: Env63
+    new(arg_mem_elem) = {mem_elem = arg_mem_elem}
+    end
+and Env59 =
+    struct
+    val mem_int64: int64
+    val mem_pdigit: Env60
+    new(arg_mem_int64, arg_mem_pdigit) = {mem_int64 = arg_mem_int64; mem_pdigit = arg_mem_pdigit}
+    end
+and Env60 =
+    struct
+    val mem_elem: Env61
+    val mem_elem_type: Env62
+    new(arg_mem_elem, arg_mem_elem_type) = {mem_elem = arg_mem_elem; mem_elem_type = arg_mem_elem_type}
+    end
+and Env61 =
+    struct
+    val mem_b: Env64
+    new(arg_mem_b) = {mem_b = arg_mem_b}
+    end
+and Env62 =
+    struct
+    val mem_b: Env64
+    new(arg_mem_b) = {mem_b = arg_mem_b}
+    end
+and Env63 =
+    struct
+    val mem_x: string
+    new(arg_mem_x) = {mem_x = arg_mem_x}
+    end
+and Env64 =
+    struct
+    val mem_m: string
+    val mem_stream_char: Env46
+    new(arg_mem_m, arg_mem_stream_char) = {mem_m = arg_mem_m; mem_stream_char = arg_mem_stream_char}
+    end
+and EnvStack65 =
+    struct
+    val mem_0: bool
+    val mem_1: Env54
+    val mem_2: Env56
+    val mem_3: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
+    end
+and EnvStack66 =
+    struct
+    val mem_0: int64
+    val mem_1: Env59
+    val mem_2: bool
+    val mem_3: Env54
+    val mem_4: Env56
+    val mem_5: Env3
+    val mem_6: EnvStack65
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack67 =
+    struct
+    val mem_0: EnvStack66
+    val mem_1: Env63
+    val mem_2: int64
+    val mem_3: Env59
+    val mem_4: bool
+    val mem_5: Env54
+    val mem_6: Env56
+    val mem_7: Env3
+    val mem_8: EnvStack65
+    val mem_9: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9}
+    end
+and EnvStack68 =
+    struct
+    val mem_0: EnvStack66
+    val mem_1: Env63
+    val mem_2: Env64
+    val mem_3: EnvStack67
+    val mem_4: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack69 =
+    struct
+    val mem_0: EnvStack66
+    val mem_1: Env63
+    val mem_2: string
+    val mem_3: int64
+    val mem_4: EnvStack67
+    val mem_5: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5}
+    end
+and EnvStack70 =
+    struct
+    val mem_0: EnvStack66
+    val mem_1: Env63
+    val mem_2: char
+    val mem_3: EnvStack67
+    val mem_4: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack71 =
+    struct
+    val mem_0: int64
+    val mem_1: Env59
+    val mem_2: bool
+    val mem_3: Env54
+    val mem_4: Env56
+    val mem_5: Env3
+    val mem_6: int64
+    val mem_7: EnvStack65
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack72 =
+    struct
+    val mem_0: EnvStack66
+    val mem_1: Env63
+    val mem_2: string
+    val mem_3: EnvStack70
+    val mem_4: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack73 =
+    struct
+    val mem_0: int64
+    val mem_1: int64
+    val mem_2: Env60
+    val mem_3: bool
+    val mem_4: Env54
+    val mem_5: Env56
+    val mem_6: Env3
+    val mem_7: EnvStack65
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack74 =
+    struct
+    val mem_0: EnvStack73
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env56
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: int64
+    val mem_7: int64
+    val mem_8: Env60
+    val mem_9: bool
+    val mem_10: Env54
+    val mem_11: Env56
+    val mem_12: Env3
+    val mem_13: EnvStack65
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9, arg_mem_10, arg_mem_11, arg_mem_12, arg_mem_13) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9; mem_10 = arg_mem_10; mem_11 = arg_mem_11; mem_12 = arg_mem_12; mem_13 = arg_mem_13}
+    end
+and EnvStack75 =
+    struct
+    val mem_0: EnvStack73
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env56
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: Env64
+    val mem_7: EnvStack74
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack76 =
+    struct
+    val mem_0: EnvStack73
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env56
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: string
+    val mem_7: int64
+    val mem_8: EnvStack74
+    val mem_9: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9}
+    end
+and EnvStack77 =
+    struct
+    val mem_0: EnvStack73
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env56
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: char
+    val mem_7: EnvStack74
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack78 =
+    struct
+    val mem_0: int64
+    val mem_1: int64
+    val mem_2: Env60
+    val mem_3: bool
+    val mem_4: Env54
+    val mem_5: Env56
+    val mem_6: Env3
+    val mem_7: int64
+    val mem_8: EnvStack65
+    val mem_9: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9}
+    end
+and EnvStack79 =
+    struct
+    val mem_0: EnvStack73
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env56
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: string
+    val mem_7: EnvStack77
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack80 =
+    struct
+    val mem_0: int64
+    val mem_1: Env56
+    val mem_2: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    end
+and EnvStack81 =
+    struct
+    val mem_0: int64
+    val mem_1: Env54
+    val mem_2: EnvStack80
+    val mem_3: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
+    end
+and EnvStack82 =
+    struct
+    val mem_0: EnvStack81
+    val mem_1: int64
+    val mem_2: Env56
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: Env54
+    val mem_7: EnvStack80
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack83 =
+    struct
+    val mem_0: EnvStack81
+    val mem_1: int64
+    val mem_2: Env56
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: Env46
+    val mem_6: EnvStack82
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack84 =
+    struct
+    val mem_0: EnvStack81
+    val mem_1: int64
+    val mem_2: Env56
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: EnvStack82
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack85 =
+    struct
+    val mem_0: EnvStack81
+    val mem_1: int64
+    val mem_2: Env56
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: char
+    val mem_6: EnvStack82
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack86 =
+    struct
+    val mem_0: EnvStack81
+    val mem_1: int64
+    val mem_2: Env56
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: EnvStack85
+    val mem_6: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6}
+    end
+and Env87 =
+    struct
+    val mem_xs: Tuple89
+    new(arg_mem_xs) = {mem_xs = arg_mem_xs}
+    end
+and Env88 =
+    struct
+    val mem_on_succ: Env90
+    val mem_stream: Env3
+    new(arg_mem_on_succ, arg_mem_stream) = {mem_on_succ = arg_mem_on_succ; mem_stream = arg_mem_stream}
+    end
+and Tuple89 =
+    struct
+    val mem_0: Env29
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
+    end
+and Env90 =
+    struct
+    val mem_b: Env117
+    val mem_d: Env27
+    new(arg_mem_b, arg_mem_d) = {mem_b = arg_mem_b; mem_d = arg_mem_d}
+    end
+and Env91 =
+    struct
+    val mem_on_succ: Env92
+    val mem_stream: Env3
+    new(arg_mem_on_succ, arg_mem_stream) = {mem_on_succ = arg_mem_on_succ; mem_stream = arg_mem_stream}
+    end
+and Env92 =
+    struct
+    val mem_d: Env115
+    new(arg_mem_d) = {mem_d = arg_mem_d}
+    end
+and EnvStack93 =
+    struct
+    val mem_0: bool
+    val mem_1: Env54
+    val mem_2: Env92
+    val mem_3: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
+    end
+and EnvStack94 =
+    struct
+    val mem_0: int64
+    val mem_1: Env59
+    val mem_2: bool
+    val mem_3: Env54
+    val mem_4: Env92
+    val mem_5: Env3
+    val mem_6: EnvStack93
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack95 =
+    struct
+    val mem_0: EnvStack94
+    val mem_1: Env63
+    val mem_2: int64
+    val mem_3: Env59
+    val mem_4: bool
+    val mem_5: Env54
+    val mem_6: Env92
+    val mem_7: Env3
+    val mem_8: EnvStack93
+    val mem_9: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9}
+    end
+and EnvStack96 =
+    struct
+    val mem_0: EnvStack94
+    val mem_1: Env63
+    val mem_2: Env64
+    val mem_3: EnvStack95
+    val mem_4: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack97 =
+    struct
+    val mem_0: EnvStack94
+    val mem_1: Env63
+    val mem_2: string
+    val mem_3: int64
+    val mem_4: EnvStack95
+    val mem_5: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5}
+    end
+and EnvStack98 =
+    struct
+    val mem_0: EnvStack94
+    val mem_1: Env63
+    val mem_2: char
+    val mem_3: EnvStack95
+    val mem_4: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack99 =
+    struct
+    val mem_0: int64
+    val mem_1: Env59
+    val mem_2: bool
+    val mem_3: Env54
+    val mem_4: Env92
+    val mem_5: Env3
+    val mem_6: int64
+    val mem_7: EnvStack93
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack100 =
+    struct
+    val mem_0: EnvStack94
+    val mem_1: Env63
+    val mem_2: string
+    val mem_3: EnvStack98
+    val mem_4: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and EnvStack101 =
+    struct
+    val mem_0: int64
+    val mem_1: int64
+    val mem_2: Env60
+    val mem_3: bool
+    val mem_4: Env54
+    val mem_5: Env92
+    val mem_6: Env3
+    val mem_7: EnvStack93
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack102 =
+    struct
+    val mem_0: EnvStack101
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env92
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: int64
+    val mem_7: int64
+    val mem_8: Env60
+    val mem_9: bool
+    val mem_10: Env54
+    val mem_11: Env92
+    val mem_12: Env3
+    val mem_13: EnvStack93
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9, arg_mem_10, arg_mem_11, arg_mem_12, arg_mem_13) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9; mem_10 = arg_mem_10; mem_11 = arg_mem_11; mem_12 = arg_mem_12; mem_13 = arg_mem_13}
+    end
+and EnvStack103 =
+    struct
+    val mem_0: EnvStack101
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env92
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: Env64
+    val mem_7: EnvStack102
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack104 =
+    struct
+    val mem_0: EnvStack101
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env92
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: string
+    val mem_7: int64
+    val mem_8: EnvStack102
+    val mem_9: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9}
+    end
+and EnvStack105 =
+    struct
+    val mem_0: EnvStack101
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env92
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: char
+    val mem_7: EnvStack102
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack106 =
+    struct
+    val mem_0: int64
+    val mem_1: int64
+    val mem_2: Env60
+    val mem_3: bool
+    val mem_4: Env54
+    val mem_5: Env92
+    val mem_6: Env3
+    val mem_7: int64
+    val mem_8: EnvStack93
+    val mem_9: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8, arg_mem_9) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8; mem_9 = arg_mem_9}
+    end
+and EnvStack107 =
+    struct
+    val mem_0: EnvStack101
+    val mem_1: bool
+    val mem_2: Env54
+    val mem_3: Env92
+    val mem_4: Env3
+    val mem_5: int64
+    val mem_6: string
+    val mem_7: EnvStack105
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack108 =
+    struct
+    val mem_0: int64
+    val mem_1: Env92
+    val mem_2: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    end
+and EnvStack109 =
+    struct
+    val mem_0: int64
+    val mem_1: Env54
+    val mem_2: EnvStack108
+    val mem_3: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
+    end
+and EnvStack110 =
+    struct
+    val mem_0: EnvStack109
+    val mem_1: int64
+    val mem_2: Env92
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: Env54
+    val mem_7: EnvStack108
+    val mem_8: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7, arg_mem_8) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7; mem_8 = arg_mem_8}
+    end
+and EnvStack111 =
+    struct
+    val mem_0: EnvStack109
+    val mem_1: int64
+    val mem_2: Env92
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: Env46
+    val mem_6: EnvStack110
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack112 =
+    struct
+    val mem_0: EnvStack109
+    val mem_1: int64
+    val mem_2: Env92
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: int64
+    val mem_6: EnvStack110
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack113 =
+    struct
+    val mem_0: EnvStack109
+    val mem_1: int64
+    val mem_2: Env92
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: char
+    val mem_6: EnvStack110
+    val mem_7: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6, arg_mem_7) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6; mem_7 = arg_mem_7}
+    end
+and EnvStack114 =
+    struct
+    val mem_0: EnvStack109
+    val mem_1: int64
+    val mem_2: Env92
+    val mem_3: Env3
+    val mem_4: int64
+    val mem_5: EnvStack113
+    val mem_6: Env3
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4, arg_mem_5, arg_mem_6) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4; mem_5 = arg_mem_5; mem_6 = arg_mem_6}
+    end
+and Env115 =
+    struct
+    val mem_on_succ: Env116
+    val mem_stream: Env3
+    new(arg_mem_on_succ, arg_mem_stream) = {mem_on_succ = arg_mem_on_succ; mem_stream = arg_mem_stream}
+    end
+and Env116 =
+    struct
+    val mem_b: Env117
+    val mem_d: Env88
+    new(arg_mem_b, arg_mem_d) = {mem_b = arg_mem_b; mem_d = arg_mem_d}
+    end
+and Env117 =
+    struct
+    val mem_x: int64
+    new(arg_mem_x) = {mem_x = arg_mem_x}
+    end
+and Env118 =
+    struct
+    val mem_f: Env120
+    new(arg_mem_f) = {mem_f = arg_mem_f}
+    end
+and Env119 =
+    struct
+    val mem_stream: Env3
+    new(arg_mem_stream) = {mem_stream = arg_mem_stream}
+    end
+and Env120 =
+    struct
+    val mem_x: Env121
+    new(arg_mem_x) = {mem_x = arg_mem_x}
+    end
+and Env121 =
+    struct
+    val mem_s: int64
+    new(arg_mem_s) = {mem_s = arg_mem_s}
+    end
+let rec method_14 ((var_2: bool)) ((var_0: Env0), (var_1: Env1)): unit =
+    let (var_3: Env2) = var_0.mem_on_succ
+    let (var_4: Env3) = var_0.mem_stream
+    let (var_5: int64) = var_1.mem_pos
+    method_15((var_2: bool), (var_3: Env2), (var_4: Env3), (var_5: int64))
+and method_15((var_0: bool), (var_1: Env2), (var_2: Env3), (var_3: int64)): unit =
+    let (var_4: EnvStack4) = EnvStack4((var_0: bool), (var_1: Env2), (var_2: Env3))
+    let (var_5: bool) = var_4.mem_0
+    let (var_6: Env2) = var_4.mem_1
+    let (var_7: Env3) = var_4.mem_2
+    let (var_8: EnvStack5) = EnvStack5((var_0: bool), (var_1: Env2), (var_2: Env3), (var_4: EnvStack4), (var_7: Env3))
+    let (var_9: bool) = var_8.mem_0
+    let (var_10: Env2) = var_8.mem_1
+    let (var_11: Env3) = var_8.mem_2
+    let (var_12: EnvStack4) = var_8.mem_3
+    let (var_13: Env3) = var_8.mem_4
+    let (var_14: EnvStack6) = EnvStack6((var_8: EnvStack5), (var_9: bool), (var_10: Env2), (var_11: Env3), (var_12: EnvStack4), (var_13: Env3))
+    let (var_15: EnvStack5) = var_14.mem_0
+    let (var_16: bool) = var_14.mem_1
+    let (var_17: Env2) = var_14.mem_2
+    let (var_18: Env3) = var_14.mem_3
+    let (var_19: EnvStack4) = var_14.mem_4
+    let (var_20: Env3) = var_14.mem_5
+    let (var_21: EnvStack7) = EnvStack7((var_15: EnvStack5), (var_14: EnvStack6), (var_20: Env3))
+    let (var_22: EnvStack6) = var_21.mem_1
+    let (var_23: EnvStack5) = var_22.mem_0
+    let (var_24: bool) = var_22.mem_1
+    let (var_25: Env2) = var_22.mem_2
+    let (var_26: Env3) = var_22.mem_3
+    let (var_27: EnvStack4) = var_22.mem_4
+    let (var_28: Env3) = var_22.mem_5
+    let (var_29: EnvStack8) = EnvStack8((var_23: EnvStack5), (var_3: int64), (var_22: EnvStack6), (var_28: Env3))
+    let (var_30: Env3) = var_29.mem_3
+    let (var_31: string) = var_30.mem_str
+    let (var_32: int64) = var_29.mem_1
+    let (var_33: EnvStack6) = var_29.mem_2
+    let (var_34: EnvStack5) = var_29.mem_0
+    let (var_36: bool) =
+        if (var_3 >= 0L) then
+            let (var_35: int64) = (int64 var_31.Length)
+            (var_3 < var_35)
+        else
+            false
+    if var_36 then
+        let (var_37: char) = var_31.[int32 var_3]
+        let (var_38: bool) =
+            if (var_37 >= '0') then
+                (var_37 <= '9')
+            else
+                false
+        let (var_39: EnvStack5) = var_33.mem_0
+        let (var_40: bool) = var_33.mem_1
+        let (var_41: Env2) = var_33.mem_2
+        let (var_42: Env3) = var_33.mem_3
+        let (var_43: EnvStack4) = var_33.mem_4
+        let (var_44: Env3) = var_33.mem_5
+        let (var_45: EnvStack9) = EnvStack9((var_39: EnvStack5), (var_37: char), (var_33: EnvStack6), (var_44: Env3))
+        let (var_46: char) = var_45.mem_1
+        let (var_47: EnvStack6) = var_45.mem_2
+        let (var_48: int64) = (var_3 + 1L)
+        if var_38 then
+            let (var_49: bool) = var_47.mem_1
+            let (var_50: Env2) = var_47.mem_2
+            let (var_51: Env3) = var_47.mem_3
+            let (var_52: EnvStack4) = var_47.mem_4
+            let (var_53: int64) = System.Convert.ToInt64(var_46)
+            let (var_54: int64) = System.Convert.ToInt64('0')
+            let (var_55: int64) = (var_53 - var_54)
+            let (var_56: bool) = var_52.mem_0
+            let (var_57: Env2) = var_52.mem_1
+            let (var_58: Env3) = var_52.mem_2
+            let (var_59: EnvStack10) = EnvStack10((var_49: bool), (var_50: Env2), (var_51: Env3), (var_55: int64), (var_52: EnvStack4), (var_58: Env3))
+            let (var_60: bool) = var_59.mem_0
+            let (var_61: Env2) = var_59.mem_1
+            let (var_62: Env3) = var_59.mem_2
+            let (var_63: int64) = var_59.mem_3
+            let (var_64: EnvStack4) = var_59.mem_4
+            let (var_65: int64) = (0L + var_63)
+            method_16((var_64: EnvStack4), (var_60: bool), (var_61: Env2), (var_62: Env3), (var_65: int64), (var_48: int64))
+        else
+            let (var_66: EnvStack5) = var_45.mem_0
+            let (var_67: Env3) = var_45.mem_3
+            let (var_68: EnvStack11) = EnvStack11((var_66: EnvStack5), (var_45: EnvStack9), (var_67: Env3))
+            let (var_69: EnvStack9) = var_68.mem_1
+            let (var_70: EnvStack5) = var_69.mem_0
+            (failwith "pint64")
+    else
+        (failwith "pint64")
+and method_16((var_0: EnvStack4), (var_1: bool), (var_2: Env2), (var_3: Env3), (var_4: int64), (var_5: int64)): unit =
+    let (var_6: bool) = var_0.mem_0
+    let (var_7: Env2) = var_0.mem_1
+    let (var_8: Env3) = var_0.mem_2
+    let (var_9: EnvStack12) = EnvStack12((var_4: int64), (var_6: bool), (var_7: Env2), (var_8: Env3), (var_0: EnvStack4))
+    let (var_10: int64) = var_9.mem_0
+    let (var_11: bool) = var_9.mem_1
+    let (var_12: Env2) = var_9.mem_2
+    let (var_13: Env3) = var_9.mem_3
+    let (var_14: EnvStack4) = var_9.mem_4
+    let (var_15: EnvStack13) = EnvStack13((var_9: EnvStack12), (var_1: bool), (var_2: Env2), (var_3: Env3), (var_4: int64), (var_10: int64), (var_11: bool), (var_12: Env2), (var_13: Env3), (var_14: EnvStack4))
+    let (var_16: EnvStack12) = var_15.mem_0
+    let (var_17: bool) = var_15.mem_1
+    let (var_18: Env2) = var_15.mem_2
+    let (var_19: Env3) = var_15.mem_3
+    let (var_20: int64) = var_15.mem_4
+    let (var_21: int64) = var_15.mem_5
+    let (var_22: bool) = var_15.mem_6
+    let (var_23: Env2) = var_15.mem_7
+    let (var_24: Env3) = var_15.mem_8
+    let (var_25: EnvStack4) = var_15.mem_9
+    let (var_26: EnvStack14) = EnvStack14((var_16: EnvStack12), (var_17: bool), (var_18: Env2), (var_19: Env3), (var_20: int64), (var_15: EnvStack13), (var_24: Env3))
+    let (var_27: EnvStack13) = var_26.mem_5
+    let (var_28: EnvStack12) = var_27.mem_0
+    let (var_29: bool) = var_27.mem_1
+    let (var_30: Env2) = var_27.mem_2
+    let (var_31: Env3) = var_27.mem_3
+    let (var_32: int64) = var_27.mem_4
+    let (var_33: int64) = var_27.mem_5
+    let (var_34: bool) = var_27.mem_6
+    let (var_35: Env2) = var_27.mem_7
+    let (var_36: Env3) = var_27.mem_8
+    let (var_37: EnvStack4) = var_27.mem_9
+    let (var_38: EnvStack15) = EnvStack15((var_28: EnvStack12), (var_29: bool), (var_30: Env2), (var_31: Env3), (var_32: int64), (var_5: int64), (var_27: EnvStack13), (var_36: Env3))
+    let (var_39: Env3) = var_38.mem_7
+    let (var_40: string) = var_39.mem_str
+    let (var_41: int64) = var_38.mem_5
+    let (var_42: EnvStack13) = var_38.mem_6
+    let (var_43: EnvStack12) = var_38.mem_0
+    let (var_44: bool) = var_38.mem_1
+    let (var_45: Env2) = var_38.mem_2
+    let (var_46: Env3) = var_38.mem_3
+    let (var_47: int64) = var_38.mem_4
+    let (var_49: bool) =
+        if (var_5 >= 0L) then
+            let (var_48: int64) = (int64 var_40.Length)
+            (var_5 < var_48)
+        else
+            false
+    if var_49 then
+        let (var_50: char) = var_40.[int32 var_5]
+        let (var_51: bool) =
+            if (var_50 >= '0') then
+                (var_50 <= '9')
+            else
+                false
+        let (var_52: EnvStack12) = var_42.mem_0
+        let (var_53: bool) = var_42.mem_1
+        let (var_54: Env2) = var_42.mem_2
+        let (var_55: Env3) = var_42.mem_3
+        let (var_56: int64) = var_42.mem_4
+        let (var_57: int64) = var_42.mem_5
+        let (var_58: bool) = var_42.mem_6
+        let (var_59: Env2) = var_42.mem_7
+        let (var_60: Env3) = var_42.mem_8
+        let (var_61: EnvStack4) = var_42.mem_9
+        let (var_62: EnvStack16) = EnvStack16((var_52: EnvStack12), (var_53: bool), (var_54: Env2), (var_55: Env3), (var_56: int64), (var_50: char), (var_42: EnvStack13), (var_60: Env3))
+        let (var_63: char) = var_62.mem_5
+        let (var_64: EnvStack13) = var_62.mem_6
+        let (var_65: int64) = (var_5 + 1L)
+        if var_51 then
+            let (var_66: int64) = var_64.mem_5
+            let (var_67: bool) = var_64.mem_6
+            let (var_68: Env2) = var_64.mem_7
+            let (var_69: Env3) = var_64.mem_8
+            let (var_70: EnvStack4) = var_64.mem_9
+            let (var_71: int64) = System.Convert.ToInt64(var_63)
+            let (var_72: int64) = System.Convert.ToInt64('0')
+            let (var_73: int64) = (var_71 - var_72)
+            let (var_74: bool) =
+                if (var_66 = 922337203685477580L) then
+                    (var_73 <= 7L)
+                else
+                    false
+            let (var_75: bool) =
+                if var_74 then
+                    true
+                else
+                    (var_66 < 922337203685477580L)
+            let (var_76: bool) = var_70.mem_0
+            let (var_77: Env2) = var_70.mem_1
+            let (var_78: Env3) = var_70.mem_2
+            let (var_79: EnvStack17) = EnvStack17((var_66: int64), (var_67: bool), (var_68: Env2), (var_69: Env3), (var_73: int64), (var_70: EnvStack4), (var_78: Env3))
+            let (var_80: int64) = var_79.mem_0
+            let (var_81: bool) = var_79.mem_1
+            let (var_82: Env2) = var_79.mem_2
+            let (var_83: Env3) = var_79.mem_3
+            let (var_84: int64) = var_79.mem_4
+            let (var_85: EnvStack4) = var_79.mem_5
+            if var_75 then
+                let (var_86: int64) = (var_80 * 10L)
+                let (var_87: int64) = (var_86 + var_84)
+                method_16((var_85: EnvStack4), (var_81: bool), (var_82: Env2), (var_83: Env3), (var_87: int64), (var_65: int64))
+            else
+                (failwith "integer overflow")
+        else
+            let (var_88: EnvStack12) = var_62.mem_0
+            let (var_89: bool) = var_62.mem_1
+            let (var_90: Env2) = var_62.mem_2
+            let (var_91: Env3) = var_62.mem_3
+            let (var_92: int64) = var_62.mem_4
+            let (var_93: Env3) = var_62.mem_7
+            let (var_94: EnvStack18) = EnvStack18((var_88: EnvStack12), (var_89: bool), (var_90: Env2), (var_91: Env3), (var_92: int64), (var_62: EnvStack16), (var_93: Env3))
+            let (var_95: EnvStack16) = var_94.mem_5
+            let (var_96: EnvStack12) = var_95.mem_0
+            let (var_97: bool) = var_95.mem_1
+            let (var_98: Env2) = var_95.mem_2
+            let (var_99: Env3) = var_95.mem_3
+            let (var_100: int64) = var_95.mem_4
+            let (var_101: int64) =
+                if var_97 then
+                    var_100
+                else
+                    (-var_100)
+            let (var_102: int64) = 0L
+            method_17((var_101: int64), (var_98: Env2), (var_99: Env3), (var_102: int64), (var_65: int64))
+    else
+        let (var_103: int64) =
+            if var_44 then
+                var_47
+            else
+                (-var_47)
+        let (var_104: int64) = 0L
+        method_17((var_103: int64), (var_45: Env2), (var_46: Env3), (var_104: int64), (var_5: int64))
+and method_17((var_0: int64), (var_1: Env2), (var_2: Env3), (var_3: int64), (var_4: int64)): unit =
+    let (var_5: int64) = (var_3 + 1L)
+    let (var_6: EnvStack19) = EnvStack19((var_0: int64), (var_1: Env2), (var_2: Env3))
+    let (var_7: int64) = var_6.mem_0
+    let (var_8: Env2) = var_6.mem_1
+    let (var_9: Env3) = var_6.mem_2
+    let (var_10: EnvStack20) = EnvStack20((var_5: int64), (var_6: EnvStack19), (var_9: Env3))
+    let (var_11: int64) = var_10.mem_0
+    let (var_12: EnvStack19) = var_10.mem_1
+    let (var_13: Env3) = var_10.mem_2
+    let (var_14: EnvStack21) = EnvStack21((var_10: EnvStack20), (var_0: int64), (var_1: Env2), (var_2: Env3), (var_3: int64), (var_11: int64), (var_12: EnvStack19), (var_13: Env3))
+    let (var_15: EnvStack20) = var_14.mem_0
+    let (var_16: int64) = var_14.mem_1
+    let (var_17: Env2) = var_14.mem_2
+    let (var_18: Env3) = var_14.mem_3
+    let (var_19: int64) = var_14.mem_4
+    let (var_20: int64) = var_14.mem_5
+    let (var_21: EnvStack19) = var_14.mem_6
+    let (var_22: Env3) = var_14.mem_7
+    let (var_23: EnvStack22) = EnvStack22((var_15: EnvStack20), (var_16: int64), (var_17: Env2), (var_18: Env3), (var_19: int64), (var_14: EnvStack21), (var_22: Env3))
+    let (var_24: EnvStack21) = var_23.mem_5
+    let (var_25: EnvStack20) = var_24.mem_0
+    let (var_26: int64) = var_24.mem_1
+    let (var_27: Env2) = var_24.mem_2
+    let (var_28: Env3) = var_24.mem_3
+    let (var_29: int64) = var_24.mem_4
+    let (var_30: int64) = var_24.mem_5
+    let (var_31: EnvStack19) = var_24.mem_6
+    let (var_32: Env3) = var_24.mem_7
+    let (var_33: EnvStack23) = EnvStack23((var_25: EnvStack20), (var_26: int64), (var_27: Env2), (var_28: Env3), (var_29: int64), (var_4: int64), (var_24: EnvStack21), (var_32: Env3))
+    let (var_34: Env3) = var_33.mem_7
+    let (var_35: string) = var_34.mem_str
+    let (var_36: int64) = var_33.mem_5
+    let (var_37: EnvStack21) = var_33.mem_6
+    let (var_38: EnvStack20) = var_33.mem_0
+    let (var_39: int64) = var_33.mem_1
+    let (var_40: Env2) = var_33.mem_2
+    let (var_41: Env3) = var_33.mem_3
+    let (var_42: int64) = var_33.mem_4
+    let (var_44: bool) =
+        if (var_4 >= 0L) then
+            let (var_43: int64) = (int64 var_35.Length)
+            (var_4 < var_43)
+        else
+            false
+    if var_44 then
+        let (var_45: char) = var_35.[int32 var_4]
+        let (var_47: bool) =
+            if (var_45 = ' ') then
+                true
+            else
+                if (var_45 = '\n') then
+                    true
+                else
+                    (var_45 = '\r')
+        let (var_48: EnvStack20) = var_37.mem_0
+        let (var_49: int64) = var_37.mem_1
+        let (var_50: Env2) = var_37.mem_2
+        let (var_51: Env3) = var_37.mem_3
+        let (var_52: int64) = var_37.mem_4
+        let (var_53: int64) = var_37.mem_5
+        let (var_54: EnvStack19) = var_37.mem_6
+        let (var_55: Env3) = var_37.mem_7
+        let (var_56: EnvStack24) = EnvStack24((var_48: EnvStack20), (var_49: int64), (var_50: Env2), (var_51: Env3), (var_52: int64), (var_45: char), (var_37: EnvStack21), (var_55: Env3))
+        let (var_57: char) = var_56.mem_5
+        let (var_58: EnvStack21) = var_56.mem_6
+        let (var_59: int64) = (var_4 + 1L)
+        if var_47 then
+            let (var_60: int64) = var_58.mem_5
+            let (var_61: EnvStack19) = var_58.mem_6
+            method_18((var_61: EnvStack19), (var_60: int64), (var_59: int64))
+        else
+            let (var_62: EnvStack20) = var_56.mem_0
+            let (var_63: int64) = var_56.mem_1
+            let (var_64: Env2) = var_56.mem_2
+            let (var_65: Env3) = var_56.mem_3
+            let (var_66: int64) = var_56.mem_4
+            let (var_67: Env3) = var_56.mem_7
+            let (var_68: EnvStack25) = EnvStack25((var_62: EnvStack20), (var_63: int64), (var_64: Env2), (var_65: Env3), (var_66: int64), (var_56: EnvStack24), (var_67: Env3))
+            let (var_69: EnvStack24) = var_68.mem_5
+            let (var_70: EnvStack20) = var_69.mem_0
+            let (var_71: int64) = var_69.mem_1
+            let (var_72: Env2) = var_69.mem_2
+            let (var_73: Env3) = var_69.mem_3
+            let (var_74: int64) = var_69.mem_4
+            let (var_75: Env26) = var_72.mem_b
+            let (var_76: Env27) = var_72.mem_d
+            let (var_77: Tuple28) = var_75.mem_xs
+            let (var_78: Env29) = var_77.mem_0
+            let (var_79: Env29) = var_77.mem_1
+            let (var_80: Env30) = var_78.mem_elem
+            let (var_81: Env31) = var_78.mem_elem_type
+            let (var_82: Env32) = var_76.mem_on_succ
+            let (var_83: Env3) = var_76.mem_stream
+            let (var_84: Env33) = var_80.mem_a
+            let (var_85: Env34) = var_80.mem_b
+            let (var_86: Env35) = var_84.mem_elem
+            let (var_87: Env36) = var_84.mem_elem_type
+            let (var_88: Env37) = var_86.mem_handle
+            let (var_89: Env38) = var_86.mem_handler
+            let (var_90: Env39) = var_88.mem_elem
+            let (var_91: Env36) = var_88.mem_elem_type
+            let (var_92: Env40) = var_90.mem_a
+            let (var_93: Env41) = var_90.mem_b
+            let (var_94: Env42) = var_92.mem_elem
+            let (var_95: Env43) = var_92.mem_elem_type
+            let (var_96: Env44) = var_94.mem_b
+            let (var_97: Env45) = var_96.mem_f
+            let (var_98: string) = var_96.mem_m
+            let (var_99: Env46) = var_96.mem_stream_char
+            let (var_100: Env47) = var_99.mem_elem_type
+            let (var_101: string) = var_83.mem_str
+            let (var_103: bool) =
+                if (var_59 >= 0L) then
+                    let (var_102: int64) = (int64 var_101.Length)
+                    (var_59 < var_102)
+                else
+                    false
+            if var_103 then
+                let (var_104: char) = var_101.[int32 var_59]
+                let (var_105: char) = var_97.mem_x
+                let (var_106: bool) = (var_105 = var_104)
+                let (var_107: int64) = (var_59 + 1L)
+                if var_106 then
+                    let (var_108: Env38) = var_93.mem_b
+                    let (var_109: Env48) = var_108.mem_elem
+                    let (var_110: Env49) = var_108.mem_elem_type
+                    let (var_111: bool) = var_109.mem_x
+                    let (var_112: Env50) = var_85.mem_pint64
+                    let (var_113: Env51) = var_85.mem_spaces
+                    let (var_114: Env52) = var_112.mem_elem
+                    let (var_115: Env53) = var_112.mem_elem_type
+                    let (var_116: Env54) = var_113.mem_satisfyL
+                    let (var_119: (Env55 * Env1 -> unit)) = method_19((var_114: Env52), (var_115: Env53), (var_111: bool), (var_116: Env54))
+                    ()
+                else
+                    let (var_120: Env48) = var_89.mem_elem
+                    let (var_121: Env49) = var_89.mem_elem_type
+                    let (var_122: bool) = var_120.mem_x
+                    let (var_123: Env50) = var_85.mem_pint64
+                    let (var_124: Env51) = var_85.mem_spaces
+                    let (var_125: Env52) = var_123.mem_elem
+                    let (var_126: Env53) = var_123.mem_elem_type
+                    let (var_127: Env54) = var_124.mem_satisfyL
+                    let (var_130: (Env55 * Env1 -> unit)) = method_19((var_125: Env52), (var_126: Env53), (var_122: bool), (var_127: Env54))
+                    ()
+            else
+                let (var_131: Env48) = var_89.mem_elem
+                let (var_132: Env49) = var_89.mem_elem_type
+                let (var_133: bool) = var_131.mem_x
+                let (var_134: Env50) = var_85.mem_pint64
+                let (var_135: Env51) = var_85.mem_spaces
+                let (var_136: Env52) = var_134.mem_elem
+                let (var_137: Env53) = var_134.mem_elem_type
+                let (var_138: Env54) = var_135.mem_satisfyL
+                let (var_141: (Env55 * Env1 -> unit)) = method_19((var_136: Env52), (var_137: Env53), (var_133: bool), (var_138: Env54))
+                ()
+    else
+        let (var_142: Env26) = var_40.mem_b
+        let (var_143: Env27) = var_40.mem_d
+        let (var_144: Tuple28) = var_142.mem_xs
+        let (var_145: Env29) = var_144.mem_0
+        let (var_146: Env29) = var_144.mem_1
+        let (var_147: Env30) = var_145.mem_elem
+        let (var_148: Env31) = var_145.mem_elem_type
+        let (var_149: Env32) = var_143.mem_on_succ
+        let (var_150: Env3) = var_143.mem_stream
+        let (var_151: Env33) = var_147.mem_a
+        let (var_152: Env34) = var_147.mem_b
+        let (var_153: Env35) = var_151.mem_elem
+        let (var_154: Env36) = var_151.mem_elem_type
+        let (var_155: Env37) = var_153.mem_handle
+        let (var_156: Env38) = var_153.mem_handler
+        let (var_157: Env39) = var_155.mem_elem
+        let (var_158: Env36) = var_155.mem_elem_type
+        let (var_159: Env40) = var_157.mem_a
+        let (var_160: Env41) = var_157.mem_b
+        let (var_161: Env42) = var_159.mem_elem
+        let (var_162: Env43) = var_159.mem_elem_type
+        let (var_163: Env44) = var_161.mem_b
+        let (var_164: Env45) = var_163.mem_f
+        let (var_165: string) = var_163.mem_m
+        let (var_166: Env46) = var_163.mem_stream_char
+        let (var_167: Env47) = var_166.mem_elem_type
+        let (var_168: string) = var_150.mem_str
+        let (var_170: bool) =
+            if (var_4 >= 0L) then
+                let (var_169: int64) = (int64 var_168.Length)
+                (var_4 < var_169)
+            else
+                false
+        if var_170 then
+            let (var_171: char) = var_168.[int32 var_4]
+            let (var_172: char) = var_164.mem_x
+            let (var_173: bool) = (var_172 = var_171)
+            let (var_174: int64) = (var_4 + 1L)
+            if var_173 then
+                let (var_175: Env38) = var_160.mem_b
+                let (var_176: Env48) = var_175.mem_elem
+                let (var_177: Env49) = var_175.mem_elem_type
+                let (var_178: bool) = var_176.mem_x
+                let (var_179: Env50) = var_152.mem_pint64
+                let (var_180: Env51) = var_152.mem_spaces
+                let (var_181: Env52) = var_179.mem_elem
+                let (var_182: Env53) = var_179.mem_elem_type
+                let (var_183: Env54) = var_180.mem_satisfyL
+                let (var_186: (Env55 * Env1 -> unit)) = method_19((var_181: Env52), (var_182: Env53), (var_178: bool), (var_183: Env54))
+                ()
+            else
+                let (var_187: Env48) = var_156.mem_elem
+                let (var_188: Env49) = var_156.mem_elem_type
+                let (var_189: bool) = var_187.mem_x
+                let (var_190: Env50) = var_152.mem_pint64
+                let (var_191: Env51) = var_152.mem_spaces
+                let (var_192: Env52) = var_190.mem_elem
+                let (var_193: Env53) = var_190.mem_elem_type
+                let (var_194: Env54) = var_191.mem_satisfyL
+                let (var_197: (Env55 * Env1 -> unit)) = method_19((var_192: Env52), (var_193: Env53), (var_189: bool), (var_194: Env54))
+                ()
+        else
+            let (var_198: Env48) = var_156.mem_elem
+            let (var_199: Env49) = var_156.mem_elem_type
+            let (var_200: bool) = var_198.mem_x
+            let (var_201: Env50) = var_152.mem_pint64
+            let (var_202: Env51) = var_152.mem_spaces
+            let (var_203: Env52) = var_201.mem_elem
+            let (var_204: Env53) = var_201.mem_elem_type
+            let (var_205: Env54) = var_202.mem_satisfyL
+            let (var_208: (Env55 * Env1 -> unit)) = method_19((var_203: Env52), (var_204: Env53), (var_200: bool), (var_205: Env54))
+            ()
+and method_18((var_0: EnvStack19), (var_1: int64), (var_2: int64)): unit =
+    let (var_3: int64) = var_0.mem_0
+    let (var_4: Env2) = var_0.mem_1
+    let (var_5: Env3) = var_0.mem_2
+    let (var_6: int64) = (var_1 + 1L)
+    let (var_7: EnvStack20) = EnvStack20((var_6: int64), (var_0: EnvStack19), (var_5: Env3))
+    let (var_8: int64) = var_7.mem_0
+    let (var_9: EnvStack19) = var_7.mem_1
+    let (var_10: Env3) = var_7.mem_2
+    let (var_11: EnvStack21) = EnvStack21((var_7: EnvStack20), (var_3: int64), (var_4: Env2), (var_5: Env3), (var_1: int64), (var_8: int64), (var_9: EnvStack19), (var_10: Env3))
+    let (var_12: EnvStack20) = var_11.mem_0
+    let (var_13: int64) = var_11.mem_1
+    let (var_14: Env2) = var_11.mem_2
+    let (var_15: Env3) = var_11.mem_3
+    let (var_16: int64) = var_11.mem_4
+    let (var_17: int64) = var_11.mem_5
+    let (var_18: EnvStack19) = var_11.mem_6
+    let (var_19: Env3) = var_11.mem_7
+    let (var_20: EnvStack22) = EnvStack22((var_12: EnvStack20), (var_13: int64), (var_14: Env2), (var_15: Env3), (var_16: int64), (var_11: EnvStack21), (var_19: Env3))
+    let (var_21: EnvStack21) = var_20.mem_5
+    let (var_22: EnvStack20) = var_21.mem_0
+    let (var_23: int64) = var_21.mem_1
+    let (var_24: Env2) = var_21.mem_2
+    let (var_25: Env3) = var_21.mem_3
+    let (var_26: int64) = var_21.mem_4
+    let (var_27: int64) = var_21.mem_5
+    let (var_28: EnvStack19) = var_21.mem_6
+    let (var_29: Env3) = var_21.mem_7
+    let (var_30: EnvStack23) = EnvStack23((var_22: EnvStack20), (var_23: int64), (var_24: Env2), (var_25: Env3), (var_26: int64), (var_2: int64), (var_21: EnvStack21), (var_29: Env3))
+    let (var_31: Env3) = var_30.mem_7
+    let (var_32: string) = var_31.mem_str
+    let (var_33: int64) = var_30.mem_5
+    let (var_34: EnvStack21) = var_30.mem_6
+    let (var_35: EnvStack20) = var_30.mem_0
+    let (var_36: int64) = var_30.mem_1
+    let (var_37: Env2) = var_30.mem_2
+    let (var_38: Env3) = var_30.mem_3
+    let (var_39: int64) = var_30.mem_4
+    let (var_41: bool) =
+        if (var_2 >= 0L) then
+            let (var_40: int64) = (int64 var_32.Length)
+            (var_2 < var_40)
+        else
+            false
+    if var_41 then
+        let (var_42: char) = var_32.[int32 var_2]
+        let (var_44: bool) =
+            if (var_42 = ' ') then
+                true
+            else
+                if (var_42 = '\n') then
+                    true
+                else
+                    (var_42 = '\r')
+        let (var_45: EnvStack20) = var_34.mem_0
+        let (var_46: int64) = var_34.mem_1
+        let (var_47: Env2) = var_34.mem_2
+        let (var_48: Env3) = var_34.mem_3
+        let (var_49: int64) = var_34.mem_4
+        let (var_50: int64) = var_34.mem_5
+        let (var_51: EnvStack19) = var_34.mem_6
+        let (var_52: Env3) = var_34.mem_7
+        let (var_53: EnvStack24) = EnvStack24((var_45: EnvStack20), (var_46: int64), (var_47: Env2), (var_48: Env3), (var_49: int64), (var_42: char), (var_34: EnvStack21), (var_52: Env3))
+        let (var_54: char) = var_53.mem_5
+        let (var_55: EnvStack21) = var_53.mem_6
+        let (var_56: int64) = (var_2 + 1L)
+        if var_44 then
+            let (var_57: int64) = var_55.mem_5
+            let (var_58: EnvStack19) = var_55.mem_6
+            method_18((var_58: EnvStack19), (var_57: int64), (var_56: int64))
+        else
+            let (var_59: EnvStack20) = var_53.mem_0
+            let (var_60: int64) = var_53.mem_1
+            let (var_61: Env2) = var_53.mem_2
+            let (var_62: Env3) = var_53.mem_3
+            let (var_63: int64) = var_53.mem_4
+            let (var_64: Env3) = var_53.mem_7
+            let (var_65: EnvStack25) = EnvStack25((var_59: EnvStack20), (var_60: int64), (var_61: Env2), (var_62: Env3), (var_63: int64), (var_53: EnvStack24), (var_64: Env3))
+            let (var_66: EnvStack24) = var_65.mem_5
+            let (var_67: EnvStack20) = var_66.mem_0
+            let (var_68: int64) = var_66.mem_1
+            let (var_69: Env2) = var_66.mem_2
+            let (var_70: Env3) = var_66.mem_3
+            let (var_71: int64) = var_66.mem_4
+            let (var_72: Env26) = var_69.mem_b
+            let (var_73: Env27) = var_69.mem_d
+            let (var_74: Tuple28) = var_72.mem_xs
+            let (var_75: Env29) = var_74.mem_0
+            let (var_76: Env29) = var_74.mem_1
+            let (var_77: Env30) = var_75.mem_elem
+            let (var_78: Env31) = var_75.mem_elem_type
+            let (var_79: Env32) = var_73.mem_on_succ
+            let (var_80: Env3) = var_73.mem_stream
+            let (var_81: Env33) = var_77.mem_a
+            let (var_82: Env34) = var_77.mem_b
+            let (var_83: Env35) = var_81.mem_elem
+            let (var_84: Env36) = var_81.mem_elem_type
+            let (var_85: Env37) = var_83.mem_handle
+            let (var_86: Env38) = var_83.mem_handler
+            let (var_87: Env39) = var_85.mem_elem
+            let (var_88: Env36) = var_85.mem_elem_type
+            let (var_89: Env40) = var_87.mem_a
+            let (var_90: Env41) = var_87.mem_b
+            let (var_91: Env42) = var_89.mem_elem
+            let (var_92: Env43) = var_89.mem_elem_type
+            let (var_93: Env44) = var_91.mem_b
+            let (var_94: Env45) = var_93.mem_f
+            let (var_95: string) = var_93.mem_m
+            let (var_96: Env46) = var_93.mem_stream_char
+            let (var_97: Env47) = var_96.mem_elem_type
+            let (var_98: string) = var_80.mem_str
+            let (var_100: bool) =
+                if (var_56 >= 0L) then
+                    let (var_99: int64) = (int64 var_98.Length)
+                    (var_56 < var_99)
+                else
+                    false
+            if var_100 then
+                let (var_101: char) = var_98.[int32 var_56]
+                let (var_102: char) = var_94.mem_x
+                let (var_103: bool) = (var_102 = var_101)
+                let (var_104: int64) = (var_56 + 1L)
+                if var_103 then
+                    let (var_105: Env38) = var_90.mem_b
+                    let (var_106: Env48) = var_105.mem_elem
+                    let (var_107: Env49) = var_105.mem_elem_type
+                    let (var_108: bool) = var_106.mem_x
+                    let (var_109: Env50) = var_82.mem_pint64
+                    let (var_110: Env51) = var_82.mem_spaces
+                    let (var_111: Env52) = var_109.mem_elem
+                    let (var_112: Env53) = var_109.mem_elem_type
+                    let (var_113: Env54) = var_110.mem_satisfyL
+                    let (var_116: (Env55 * Env1 -> unit)) = method_19((var_111: Env52), (var_112: Env53), (var_108: bool), (var_113: Env54))
+                    ()
+                else
+                    let (var_117: Env48) = var_86.mem_elem
+                    let (var_118: Env49) = var_86.mem_elem_type
+                    let (var_119: bool) = var_117.mem_x
+                    let (var_120: Env50) = var_82.mem_pint64
+                    let (var_121: Env51) = var_82.mem_spaces
+                    let (var_122: Env52) = var_120.mem_elem
+                    let (var_123: Env53) = var_120.mem_elem_type
+                    let (var_124: Env54) = var_121.mem_satisfyL
+                    let (var_127: (Env55 * Env1 -> unit)) = method_19((var_122: Env52), (var_123: Env53), (var_119: bool), (var_124: Env54))
+                    ()
+            else
+                let (var_128: Env48) = var_86.mem_elem
+                let (var_129: Env49) = var_86.mem_elem_type
+                let (var_130: bool) = var_128.mem_x
+                let (var_131: Env50) = var_82.mem_pint64
+                let (var_132: Env51) = var_82.mem_spaces
+                let (var_133: Env52) = var_131.mem_elem
+                let (var_134: Env53) = var_131.mem_elem_type
+                let (var_135: Env54) = var_132.mem_satisfyL
+                let (var_138: (Env55 * Env1 -> unit)) = method_19((var_133: Env52), (var_134: Env53), (var_130: bool), (var_135: Env54))
+                ()
+    else
+        let (var_139: Env26) = var_37.mem_b
+        let (var_140: Env27) = var_37.mem_d
+        let (var_141: Tuple28) = var_139.mem_xs
+        let (var_142: Env29) = var_141.mem_0
+        let (var_143: Env29) = var_141.mem_1
+        let (var_144: Env30) = var_142.mem_elem
+        let (var_145: Env31) = var_142.mem_elem_type
+        let (var_146: Env32) = var_140.mem_on_succ
+        let (var_147: Env3) = var_140.mem_stream
+        let (var_148: Env33) = var_144.mem_a
+        let (var_149: Env34) = var_144.mem_b
+        let (var_150: Env35) = var_148.mem_elem
+        let (var_151: Env36) = var_148.mem_elem_type
+        let (var_152: Env37) = var_150.mem_handle
+        let (var_153: Env38) = var_150.mem_handler
+        let (var_154: Env39) = var_152.mem_elem
+        let (var_155: Env36) = var_152.mem_elem_type
+        let (var_156: Env40) = var_154.mem_a
+        let (var_157: Env41) = var_154.mem_b
+        let (var_158: Env42) = var_156.mem_elem
+        let (var_159: Env43) = var_156.mem_elem_type
+        let (var_160: Env44) = var_158.mem_b
+        let (var_161: Env45) = var_160.mem_f
+        let (var_162: string) = var_160.mem_m
+        let (var_163: Env46) = var_160.mem_stream_char
+        let (var_164: Env47) = var_163.mem_elem_type
+        let (var_165: string) = var_147.mem_str
+        let (var_167: bool) =
+            if (var_2 >= 0L) then
+                let (var_166: int64) = (int64 var_165.Length)
+                (var_2 < var_166)
+            else
+                false
+        if var_167 then
+            let (var_168: char) = var_165.[int32 var_2]
+            let (var_169: char) = var_161.mem_x
+            let (var_170: bool) = (var_169 = var_168)
+            let (var_171: int64) = (var_2 + 1L)
+            if var_170 then
+                let (var_172: Env38) = var_157.mem_b
+                let (var_173: Env48) = var_172.mem_elem
+                let (var_174: Env49) = var_172.mem_elem_type
+                let (var_175: bool) = var_173.mem_x
+                let (var_176: Env50) = var_149.mem_pint64
+                let (var_177: Env51) = var_149.mem_spaces
+                let (var_178: Env52) = var_176.mem_elem
+                let (var_179: Env53) = var_176.mem_elem_type
+                let (var_180: Env54) = var_177.mem_satisfyL
+                let (var_183: (Env55 * Env1 -> unit)) = method_19((var_178: Env52), (var_179: Env53), (var_175: bool), (var_180: Env54))
+                ()
+            else
+                let (var_184: Env48) = var_153.mem_elem
+                let (var_185: Env49) = var_153.mem_elem_type
+                let (var_186: bool) = var_184.mem_x
+                let (var_187: Env50) = var_149.mem_pint64
+                let (var_188: Env51) = var_149.mem_spaces
+                let (var_189: Env52) = var_187.mem_elem
+                let (var_190: Env53) = var_187.mem_elem_type
+                let (var_191: Env54) = var_188.mem_satisfyL
+                let (var_194: (Env55 * Env1 -> unit)) = method_19((var_189: Env52), (var_190: Env53), (var_186: bool), (var_191: Env54))
+                ()
+        else
+            let (var_195: Env48) = var_153.mem_elem
+            let (var_196: Env49) = var_153.mem_elem_type
+            let (var_197: bool) = var_195.mem_x
+            let (var_198: Env50) = var_149.mem_pint64
+            let (var_199: Env51) = var_149.mem_spaces
+            let (var_200: Env52) = var_198.mem_elem
+            let (var_201: Env53) = var_198.mem_elem_type
+            let (var_202: Env54) = var_199.mem_satisfyL
+            let (var_205: (Env55 * Env1 -> unit)) = method_19((var_200: Env52), (var_201: Env53), (var_197: bool), (var_202: Env54))
+            ()
+and method_19 ((var_2: Env52), (var_3: Env53), (var_4: bool), (var_5: Env54)) ((var_0: Env55), (var_1: Env1)): unit =
+    let (var_6: Env56) = var_0.mem_on_succ
+    let (var_7: Env3) = var_0.mem_stream
+    let (var_8: int64) = var_1.mem_pos
+    let (var_9: Env57) = var_2.mem_parser_rec
+    method_20((var_4: bool), (var_5: Env54), (var_6: Env56), (var_7: Env3), (var_9: Env57), (var_8: int64))
+and method_20((var_0: bool), (var_1: Env54), (var_2: Env56), (var_3: Env3), (var_4: Env57), (var_5: int64)): unit =
+    let (var_6: Env58) = var_4.mem_handler
+    let (var_7: int64) = var_4.mem_i
+    let (var_8: Env59) = var_4.mem_loop
+    let (var_9: Env60) = var_4.mem_pdigit
+    let (var_10: Env61) = var_9.mem_elem
+    let (var_11: Env62) = var_9.mem_elem_type
+    let (var_12: Env63) = var_6.mem_elem
+    let (var_13: Env64) = var_11.mem_b
+    let (var_14: EnvStack65) = EnvStack65((var_0: bool), (var_1: Env54), (var_2: Env56), (var_3: Env3))
+    let (var_15: bool) = var_14.mem_0
+    let (var_16: Env54) = var_14.mem_1
+    let (var_17: Env56) = var_14.mem_2
+    let (var_18: Env3) = var_14.mem_3
+    let (var_19: EnvStack66) = EnvStack66((var_7: int64), (var_8: Env59), (var_0: bool), (var_1: Env54), (var_2: Env56), (var_3: Env3), (var_14: EnvStack65), (var_18: Env3))
+    let (var_20: int64) = var_19.mem_0
+    let (var_21: Env59) = var_19.mem_1
+    let (var_22: bool) = var_19.mem_2
+    let (var_23: Env54) = var_19.mem_3
+    let (var_24: Env56) = var_19.mem_4
+    let (var_25: Env3) = var_19.mem_5
+    let (var_26: EnvStack65) = var_19.mem_6
+    let (var_27: Env3) = var_19.mem_7
+    let (var_28: EnvStack67) = EnvStack67((var_19: EnvStack66), (var_12: Env63), (var_20: int64), (var_21: Env59), (var_22: bool), (var_23: Env54), (var_24: Env56), (var_25: Env3), (var_26: EnvStack65), (var_27: Env3))
+    let (var_29: Env64) = var_10.mem_b
+    let (var_30: EnvStack66) = var_28.mem_0
+    let (var_31: Env63) = var_28.mem_1
+    let (var_32: int64) = var_28.mem_2
+    let (var_33: Env59) = var_28.mem_3
+    let (var_34: bool) = var_28.mem_4
+    let (var_35: Env54) = var_28.mem_5
+    let (var_36: Env56) = var_28.mem_6
+    let (var_37: Env3) = var_28.mem_7
+    let (var_38: EnvStack65) = var_28.mem_8
+    let (var_39: Env3) = var_28.mem_9
+    let (var_40: EnvStack68) = EnvStack68((var_30: EnvStack66), (var_31: Env63), (var_29: Env64), (var_28: EnvStack67), (var_39: Env3))
+    let (var_41: Env64) = var_40.mem_2
+    let (var_42: EnvStack67) = var_40.mem_3
+    let (var_43: string) = var_41.mem_m
+    let (var_44: Env46) = var_41.mem_stream_char
+    let (var_45: Env47) = var_44.mem_elem_type
+    let (var_46: EnvStack66) = var_42.mem_0
+    let (var_47: Env63) = var_42.mem_1
+    let (var_48: int64) = var_42.mem_2
+    let (var_49: Env59) = var_42.mem_3
+    let (var_50: bool) = var_42.mem_4
+    let (var_51: Env54) = var_42.mem_5
+    let (var_52: Env56) = var_42.mem_6
+    let (var_53: Env3) = var_42.mem_7
+    let (var_54: EnvStack65) = var_42.mem_8
+    let (var_55: Env3) = var_42.mem_9
+    let (var_56: EnvStack69) = EnvStack69((var_46: EnvStack66), (var_47: Env63), (var_43: string), (var_5: int64), (var_42: EnvStack67), (var_55: Env3))
+    let (var_57: Env3) = var_56.mem_5
+    let (var_58: string) = var_57.mem_str
+    let (var_59: string) = var_56.mem_2
+    let (var_60: int64) = var_56.mem_3
+    let (var_61: EnvStack67) = var_56.mem_4
+    let (var_62: EnvStack66) = var_56.mem_0
+    let (var_63: Env63) = var_56.mem_1
+    let (var_65: bool) =
+        if (var_5 >= 0L) then
+            let (var_64: int64) = (int64 var_58.Length)
+            (var_5 < var_64)
+        else
+            false
+    if var_65 then
+        let (var_66: char) = var_58.[int32 var_5]
+        let (var_67: bool) =
+            if (var_66 >= '0') then
+                (var_66 <= '9')
+            else
+                false
+        let (var_68: EnvStack66) = var_61.mem_0
+        let (var_69: Env63) = var_61.mem_1
+        let (var_70: int64) = var_61.mem_2
+        let (var_71: Env59) = var_61.mem_3
+        let (var_72: bool) = var_61.mem_4
+        let (var_73: Env54) = var_61.mem_5
+        let (var_74: Env56) = var_61.mem_6
+        let (var_75: Env3) = var_61.mem_7
+        let (var_76: EnvStack65) = var_61.mem_8
+        let (var_77: Env3) = var_61.mem_9
+        let (var_78: EnvStack70) = EnvStack70((var_68: EnvStack66), (var_69: Env63), (var_66: char), (var_61: EnvStack67), (var_77: Env3))
+        let (var_79: char) = var_78.mem_2
+        let (var_80: EnvStack67) = var_78.mem_3
+        let (var_81: int64) = (var_5 + 1L)
+        if var_67 then
+            let (var_82: int64) = var_80.mem_2
+            let (var_83: Env59) = var_80.mem_3
+            let (var_84: bool) = var_80.mem_4
+            let (var_85: Env54) = var_80.mem_5
+            let (var_86: Env56) = var_80.mem_6
+            let (var_87: Env3) = var_80.mem_7
+            let (var_88: EnvStack65) = var_80.mem_8
+            let (var_89: int64) = System.Convert.ToInt64(var_79)
+            let (var_90: int64) = System.Convert.ToInt64('0')
+            let (var_91: int64) = (var_89 - var_90)
+            let (var_92: bool) =
+                if (var_82 = 922337203685477580L) then
+                    (var_91 <= 7L)
+                else
+                    false
+            let (var_93: bool) =
+                if var_92 then
+                    true
+                else
+                    (var_82 < 922337203685477580L)
+            let (var_94: bool) = var_88.mem_0
+            let (var_95: Env54) = var_88.mem_1
+            let (var_96: Env56) = var_88.mem_2
+            let (var_97: Env3) = var_88.mem_3
+            let (var_98: EnvStack71) = EnvStack71((var_82: int64), (var_83: Env59), (var_84: bool), (var_85: Env54), (var_86: Env56), (var_87: Env3), (var_91: int64), (var_88: EnvStack65), (var_97: Env3))
+            let (var_99: int64) = var_98.mem_0
+            let (var_100: Env59) = var_98.mem_1
+            let (var_101: bool) = var_98.mem_2
+            let (var_102: Env54) = var_98.mem_3
+            let (var_103: Env56) = var_98.mem_4
+            let (var_104: Env3) = var_98.mem_5
+            let (var_105: int64) = var_98.mem_6
+            let (var_106: EnvStack65) = var_98.mem_7
+            if var_93 then
+                let (var_107: int64) = (var_99 * 10L)
+                let (var_108: int64) = (var_107 + var_105)
+                let (var_109: int64) = var_100.mem_int64
+                let (var_110: Env60) = var_100.mem_pdigit
+                method_21((var_106: EnvStack65), (var_101: bool), (var_102: Env54), (var_103: Env56), (var_104: Env3), (var_108: int64), (var_109: int64), (var_110: Env60), (var_81: int64))
+            else
+                (failwith "integer overflow")
+        else
+            let (var_111: EnvStack66) = var_78.mem_0
+            let (var_112: Env63) = var_78.mem_1
+            let (var_113: Env3) = var_78.mem_4
+            let (var_114: EnvStack72) = EnvStack72((var_111: EnvStack66), (var_112: Env63), (var_59: string), (var_78: EnvStack70), (var_113: Env3))
+            let (var_115: string) = var_114.mem_2
+            let (var_116: EnvStack70) = var_114.mem_3
+            let (var_117: EnvStack66) = var_116.mem_0
+            let (var_118: Env63) = var_116.mem_1
+            let (var_119: string) = var_118.mem_x
+            (failwith var_119)
+    else
+        let (var_120: string) = var_63.mem_x
+        (failwith var_120)
+and method_21((var_0: EnvStack65), (var_1: bool), (var_2: Env54), (var_3: Env56), (var_4: Env3), (var_5: int64), (var_6: int64), (var_7: Env60), (var_8: int64)): unit =
+    let (var_9: bool) = var_0.mem_0
+    let (var_10: Env54) = var_0.mem_1
+    let (var_11: Env56) = var_0.mem_2
+    let (var_12: Env3) = var_0.mem_3
+    let (var_13: Env61) = var_7.mem_elem
+    let (var_14: Env62) = var_7.mem_elem_type
+    let (var_15: Env64) = var_14.mem_b
+    let (var_16: EnvStack73) = EnvStack73((var_5: int64), (var_6: int64), (var_7: Env60), (var_9: bool), (var_10: Env54), (var_11: Env56), (var_12: Env3), (var_0: EnvStack65))
+    let (var_17: int64) = var_16.mem_0
+    let (var_18: int64) = var_16.mem_1
+    let (var_19: Env60) = var_16.mem_2
+    let (var_20: bool) = var_16.mem_3
+    let (var_21: Env54) = var_16.mem_4
+    let (var_22: Env56) = var_16.mem_5
+    let (var_23: Env3) = var_16.mem_6
+    let (var_24: EnvStack65) = var_16.mem_7
+    let (var_25: EnvStack74) = EnvStack74((var_16: EnvStack73), (var_1: bool), (var_2: Env54), (var_3: Env56), (var_4: Env3), (var_5: int64), (var_17: int64), (var_18: int64), (var_19: Env60), (var_20: bool), (var_21: Env54), (var_22: Env56), (var_23: Env3), (var_24: EnvStack65))
+    let (var_26: Env64) = var_13.mem_b
+    let (var_27: EnvStack73) = var_25.mem_0
+    let (var_28: bool) = var_25.mem_1
+    let (var_29: Env54) = var_25.mem_2
+    let (var_30: Env56) = var_25.mem_3
+    let (var_31: Env3) = var_25.mem_4
+    let (var_32: int64) = var_25.mem_5
+    let (var_33: int64) = var_25.mem_6
+    let (var_34: int64) = var_25.mem_7
+    let (var_35: Env60) = var_25.mem_8
+    let (var_36: bool) = var_25.mem_9
+    let (var_37: Env54) = var_25.mem_10
+    let (var_38: Env56) = var_25.mem_11
+    let (var_39: Env3) = var_25.mem_12
+    let (var_40: EnvStack65) = var_25.mem_13
+    let (var_41: EnvStack75) = EnvStack75((var_27: EnvStack73), (var_28: bool), (var_29: Env54), (var_30: Env56), (var_31: Env3), (var_32: int64), (var_26: Env64), (var_25: EnvStack74), (var_39: Env3))
+    let (var_42: Env64) = var_41.mem_6
+    let (var_43: EnvStack74) = var_41.mem_7
+    let (var_44: string) = var_42.mem_m
+    let (var_45: Env46) = var_42.mem_stream_char
+    let (var_46: Env47) = var_45.mem_elem_type
+    let (var_47: EnvStack73) = var_43.mem_0
+    let (var_48: bool) = var_43.mem_1
+    let (var_49: Env54) = var_43.mem_2
+    let (var_50: Env56) = var_43.mem_3
+    let (var_51: Env3) = var_43.mem_4
+    let (var_52: int64) = var_43.mem_5
+    let (var_53: int64) = var_43.mem_6
+    let (var_54: int64) = var_43.mem_7
+    let (var_55: Env60) = var_43.mem_8
+    let (var_56: bool) = var_43.mem_9
+    let (var_57: Env54) = var_43.mem_10
+    let (var_58: Env56) = var_43.mem_11
+    let (var_59: Env3) = var_43.mem_12
+    let (var_60: EnvStack65) = var_43.mem_13
+    let (var_61: EnvStack76) = EnvStack76((var_47: EnvStack73), (var_48: bool), (var_49: Env54), (var_50: Env56), (var_51: Env3), (var_52: int64), (var_44: string), (var_8: int64), (var_43: EnvStack74), (var_59: Env3))
+    let (var_62: Env3) = var_61.mem_9
+    let (var_63: string) = var_62.mem_str
+    let (var_64: string) = var_61.mem_6
+    let (var_65: int64) = var_61.mem_7
+    let (var_66: EnvStack74) = var_61.mem_8
+    let (var_67: EnvStack73) = var_61.mem_0
+    let (var_68: bool) = var_61.mem_1
+    let (var_69: Env54) = var_61.mem_2
+    let (var_70: Env56) = var_61.mem_3
+    let (var_71: Env3) = var_61.mem_4
+    let (var_72: int64) = var_61.mem_5
+    let (var_74: bool) =
+        if (var_8 >= 0L) then
+            let (var_73: int64) = (int64 var_63.Length)
+            (var_8 < var_73)
+        else
+            false
+    if var_74 then
+        let (var_75: char) = var_63.[int32 var_8]
+        let (var_76: bool) =
+            if (var_75 >= '0') then
+                (var_75 <= '9')
+            else
+                false
+        let (var_77: EnvStack73) = var_66.mem_0
+        let (var_78: bool) = var_66.mem_1
+        let (var_79: Env54) = var_66.mem_2
+        let (var_80: Env56) = var_66.mem_3
+        let (var_81: Env3) = var_66.mem_4
+        let (var_82: int64) = var_66.mem_5
+        let (var_83: int64) = var_66.mem_6
+        let (var_84: int64) = var_66.mem_7
+        let (var_85: Env60) = var_66.mem_8
+        let (var_86: bool) = var_66.mem_9
+        let (var_87: Env54) = var_66.mem_10
+        let (var_88: Env56) = var_66.mem_11
+        let (var_89: Env3) = var_66.mem_12
+        let (var_90: EnvStack65) = var_66.mem_13
+        let (var_91: EnvStack77) = EnvStack77((var_77: EnvStack73), (var_78: bool), (var_79: Env54), (var_80: Env56), (var_81: Env3), (var_82: int64), (var_75: char), (var_66: EnvStack74), (var_89: Env3))
+        let (var_92: char) = var_91.mem_6
+        let (var_93: EnvStack74) = var_91.mem_7
+        let (var_94: int64) = (var_8 + 1L)
+        if var_76 then
+            let (var_95: int64) = var_93.mem_6
+            let (var_96: int64) = var_93.mem_7
+            let (var_97: Env60) = var_93.mem_8
+            let (var_98: bool) = var_93.mem_9
+            let (var_99: Env54) = var_93.mem_10
+            let (var_100: Env56) = var_93.mem_11
+            let (var_101: Env3) = var_93.mem_12
+            let (var_102: EnvStack65) = var_93.mem_13
+            let (var_103: int64) = System.Convert.ToInt64(var_92)
+            let (var_104: int64) = System.Convert.ToInt64('0')
+            let (var_105: int64) = (var_103 - var_104)
+            let (var_106: bool) =
+                if (var_95 = 922337203685477580L) then
+                    (var_105 <= 7L)
+                else
+                    false
+            let (var_107: bool) =
+                if var_106 then
+                    true
+                else
+                    (var_95 < 922337203685477580L)
+            let (var_108: bool) = var_102.mem_0
+            let (var_109: Env54) = var_102.mem_1
+            let (var_110: Env56) = var_102.mem_2
+            let (var_111: Env3) = var_102.mem_3
+            let (var_112: EnvStack78) = EnvStack78((var_95: int64), (var_96: int64), (var_97: Env60), (var_98: bool), (var_99: Env54), (var_100: Env56), (var_101: Env3), (var_105: int64), (var_102: EnvStack65), (var_111: Env3))
+            let (var_113: int64) = var_112.mem_0
+            let (var_114: int64) = var_112.mem_1
+            let (var_115: Env60) = var_112.mem_2
+            let (var_116: bool) = var_112.mem_3
+            let (var_117: Env54) = var_112.mem_4
+            let (var_118: Env56) = var_112.mem_5
+            let (var_119: Env3) = var_112.mem_6
+            let (var_120: int64) = var_112.mem_7
+            let (var_121: EnvStack65) = var_112.mem_8
+            if var_107 then
+                let (var_122: int64) = (var_113 * 10L)
+                let (var_123: int64) = (var_122 + var_120)
+                method_21((var_121: EnvStack65), (var_116: bool), (var_117: Env54), (var_118: Env56), (var_119: Env3), (var_123: int64), (var_114: int64), (var_115: Env60), (var_94: int64))
+            else
+                (failwith "integer overflow")
+        else
+            let (var_124: EnvStack73) = var_91.mem_0
+            let (var_125: bool) = var_91.mem_1
+            let (var_126: Env54) = var_91.mem_2
+            let (var_127: Env56) = var_91.mem_3
+            let (var_128: Env3) = var_91.mem_4
+            let (var_129: int64) = var_91.mem_5
+            let (var_130: Env3) = var_91.mem_8
+            let (var_131: EnvStack79) = EnvStack79((var_124: EnvStack73), (var_125: bool), (var_126: Env54), (var_127: Env56), (var_128: Env3), (var_129: int64), (var_64: string), (var_91: EnvStack77), (var_130: Env3))
+            let (var_132: string) = var_131.mem_6
+            let (var_133: EnvStack77) = var_131.mem_7
+            let (var_134: EnvStack73) = var_133.mem_0
+            let (var_135: bool) = var_133.mem_1
+            let (var_136: Env54) = var_133.mem_2
+            let (var_137: Env56) = var_133.mem_3
+            let (var_138: Env3) = var_133.mem_4
+            let (var_139: int64) = var_133.mem_5
+            let (var_140: int64) =
+                if var_135 then
+                    var_139
+                else
+                    (-var_139)
+            let (var_141: int64) = 0L
+            method_22((var_140: int64), (var_137: Env56), (var_138: Env3), (var_141: int64), (var_136: Env54), (var_94: int64))
+    else
+        let (var_142: int64) =
+            if var_68 then
+                var_72
+            else
+                (-var_72)
+        let (var_143: int64) = 0L
+        method_22((var_142: int64), (var_70: Env56), (var_71: Env3), (var_143: int64), (var_69: Env54), (var_8: int64))
+and method_22((var_0: int64), (var_1: Env56), (var_2: Env3), (var_3: int64), (var_4: Env54), (var_5: int64)): unit =
+    let (var_6: Env46) = var_4.mem_stream_char
+    let (var_7: int64) = (var_3 + 1L)
+    let (var_8: EnvStack80) = EnvStack80((var_0: int64), (var_1: Env56), (var_2: Env3))
+    let (var_9: int64) = var_8.mem_0
+    let (var_10: Env56) = var_8.mem_1
+    let (var_11: Env3) = var_8.mem_2
+    let (var_12: EnvStack81) = EnvStack81((var_7: int64), (var_4: Env54), (var_8: EnvStack80), (var_11: Env3))
+    let (var_13: int64) = var_12.mem_0
+    let (var_14: Env54) = var_12.mem_1
+    let (var_15: EnvStack80) = var_12.mem_2
+    let (var_16: Env3) = var_12.mem_3
+    let (var_17: EnvStack82) = EnvStack82((var_12: EnvStack81), (var_0: int64), (var_1: Env56), (var_2: Env3), (var_3: int64), (var_13: int64), (var_14: Env54), (var_15: EnvStack80), (var_16: Env3))
+    let (var_18: EnvStack81) = var_17.mem_0
+    let (var_19: int64) = var_17.mem_1
+    let (var_20: Env56) = var_17.mem_2
+    let (var_21: Env3) = var_17.mem_3
+    let (var_22: int64) = var_17.mem_4
+    let (var_23: int64) = var_17.mem_5
+    let (var_24: Env54) = var_17.mem_6
+    let (var_25: EnvStack80) = var_17.mem_7
+    let (var_26: Env3) = var_17.mem_8
+    let (var_27: EnvStack83) = EnvStack83((var_18: EnvStack81), (var_19: int64), (var_20: Env56), (var_21: Env3), (var_22: int64), (var_6: Env46), (var_17: EnvStack82), (var_26: Env3))
+    let (var_28: Env46) = var_27.mem_5
+    let (var_29: EnvStack82) = var_27.mem_6
+    let (var_30: Env47) = var_28.mem_elem_type
+    let (var_31: EnvStack81) = var_29.mem_0
+    let (var_32: int64) = var_29.mem_1
+    let (var_33: Env56) = var_29.mem_2
+    let (var_34: Env3) = var_29.mem_3
+    let (var_35: int64) = var_29.mem_4
+    let (var_36: int64) = var_29.mem_5
+    let (var_37: Env54) = var_29.mem_6
+    let (var_38: EnvStack80) = var_29.mem_7
+    let (var_39: Env3) = var_29.mem_8
+    let (var_40: EnvStack84) = EnvStack84((var_31: EnvStack81), (var_32: int64), (var_33: Env56), (var_34: Env3), (var_35: int64), (var_5: int64), (var_29: EnvStack82), (var_39: Env3))
+    let (var_41: Env3) = var_40.mem_7
+    let (var_42: string) = var_41.mem_str
+    let (var_43: int64) = var_40.mem_5
+    let (var_44: EnvStack82) = var_40.mem_6
+    let (var_45: EnvStack81) = var_40.mem_0
+    let (var_46: int64) = var_40.mem_1
+    let (var_47: Env56) = var_40.mem_2
+    let (var_48: Env3) = var_40.mem_3
+    let (var_49: int64) = var_40.mem_4
+    let (var_51: bool) =
+        if (var_5 >= 0L) then
+            let (var_50: int64) = (int64 var_42.Length)
+            (var_5 < var_50)
+        else
+            false
+    if var_51 then
+        let (var_52: char) = var_42.[int32 var_5]
+        let (var_54: bool) =
+            if (var_52 = ' ') then
+                true
+            else
+                if (var_52 = '\n') then
+                    true
+                else
+                    (var_52 = '\r')
+        let (var_55: EnvStack81) = var_44.mem_0
+        let (var_56: int64) = var_44.mem_1
+        let (var_57: Env56) = var_44.mem_2
+        let (var_58: Env3) = var_44.mem_3
+        let (var_59: int64) = var_44.mem_4
+        let (var_60: int64) = var_44.mem_5
+        let (var_61: Env54) = var_44.mem_6
+        let (var_62: EnvStack80) = var_44.mem_7
+        let (var_63: Env3) = var_44.mem_8
+        let (var_64: EnvStack85) = EnvStack85((var_55: EnvStack81), (var_56: int64), (var_57: Env56), (var_58: Env3), (var_59: int64), (var_52: char), (var_44: EnvStack82), (var_63: Env3))
+        let (var_65: char) = var_64.mem_5
+        let (var_66: EnvStack82) = var_64.mem_6
+        let (var_67: int64) = (var_5 + 1L)
+        if var_54 then
+            let (var_68: int64) = var_66.mem_5
+            let (var_69: Env54) = var_66.mem_6
+            let (var_70: EnvStack80) = var_66.mem_7
+            method_23((var_70: EnvStack80), (var_68: int64), (var_69: Env54), (var_67: int64))
+        else
+            let (var_71: EnvStack81) = var_64.mem_0
+            let (var_72: int64) = var_64.mem_1
+            let (var_73: Env56) = var_64.mem_2
+            let (var_74: Env3) = var_64.mem_3
+            let (var_75: int64) = var_64.mem_4
+            let (var_76: Env3) = var_64.mem_7
+            let (var_77: EnvStack86) = EnvStack86((var_71: EnvStack81), (var_72: int64), (var_73: Env56), (var_74: Env3), (var_75: int64), (var_64: EnvStack85), (var_76: Env3))
+            let (var_78: EnvStack85) = var_77.mem_5
+            let (var_79: EnvStack81) = var_78.mem_0
+            let (var_80: int64) = var_78.mem_1
+            let (var_81: Env56) = var_78.mem_2
+            let (var_82: Env3) = var_78.mem_3
+            let (var_83: int64) = var_78.mem_4
+            let (var_84: Env87) = var_81.mem_b
+            let (var_85: Env88) = var_81.mem_d
+            let (var_86: Tuple89) = var_84.mem_xs
+            let (var_87: Env29) = var_86.mem_0
+            let (var_88: Env30) = var_87.mem_elem
+            let (var_89: Env31) = var_87.mem_elem_type
+            let (var_90: Env90) = var_85.mem_on_succ
+            let (var_91: Env3) = var_85.mem_stream
+            let (var_92: Env33) = var_88.mem_a
+            let (var_93: Env34) = var_88.mem_b
+            let (var_94: Env35) = var_92.mem_elem
+            let (var_95: Env36) = var_92.mem_elem_type
+            let (var_96: Env37) = var_94.mem_handle
+            let (var_97: Env38) = var_94.mem_handler
+            let (var_98: Env39) = var_96.mem_elem
+            let (var_99: Env36) = var_96.mem_elem_type
+            let (var_100: Env40) = var_98.mem_a
+            let (var_101: Env41) = var_98.mem_b
+            let (var_102: Env42) = var_100.mem_elem
+            let (var_103: Env43) = var_100.mem_elem_type
+            let (var_104: Env44) = var_102.mem_b
+            let (var_105: Env45) = var_104.mem_f
+            let (var_106: string) = var_104.mem_m
+            let (var_107: Env46) = var_104.mem_stream_char
+            let (var_108: Env47) = var_107.mem_elem_type
+            let (var_109: string) = var_91.mem_str
+            let (var_111: bool) =
+                if (var_67 >= 0L) then
+                    let (var_110: int64) = (int64 var_109.Length)
+                    (var_67 < var_110)
+                else
+                    false
+            if var_111 then
+                let (var_112: char) = var_109.[int32 var_67]
+                let (var_113: char) = var_105.mem_x
+                let (var_114: bool) = (var_113 = var_112)
+                let (var_115: int64) = (var_67 + 1L)
+                if var_114 then
+                    let (var_116: Env38) = var_101.mem_b
+                    let (var_117: Env48) = var_116.mem_elem
+                    let (var_118: Env49) = var_116.mem_elem_type
+                    let (var_119: bool) = var_117.mem_x
+                    let (var_120: Env50) = var_93.mem_pint64
+                    let (var_121: Env51) = var_93.mem_spaces
+                    let (var_122: Env52) = var_120.mem_elem
+                    let (var_123: Env53) = var_120.mem_elem_type
+                    let (var_124: Env54) = var_121.mem_satisfyL
+                    let (var_127: (Env91 * Env1 -> unit)) = method_24((var_122: Env52), (var_123: Env53), (var_119: bool), (var_124: Env54))
+                    ()
+                else
+                    let (var_128: Env48) = var_97.mem_elem
+                    let (var_129: Env49) = var_97.mem_elem_type
+                    let (var_130: bool) = var_128.mem_x
+                    let (var_131: Env50) = var_93.mem_pint64
+                    let (var_132: Env51) = var_93.mem_spaces
+                    let (var_133: Env52) = var_131.mem_elem
+                    let (var_134: Env53) = var_131.mem_elem_type
+                    let (var_135: Env54) = var_132.mem_satisfyL
+                    let (var_138: (Env91 * Env1 -> unit)) = method_24((var_133: Env52), (var_134: Env53), (var_130: bool), (var_135: Env54))
+                    ()
+            else
+                let (var_139: Env48) = var_97.mem_elem
+                let (var_140: Env49) = var_97.mem_elem_type
+                let (var_141: bool) = var_139.mem_x
+                let (var_142: Env50) = var_93.mem_pint64
+                let (var_143: Env51) = var_93.mem_spaces
+                let (var_144: Env52) = var_142.mem_elem
+                let (var_145: Env53) = var_142.mem_elem_type
+                let (var_146: Env54) = var_143.mem_satisfyL
+                let (var_149: (Env91 * Env1 -> unit)) = method_24((var_144: Env52), (var_145: Env53), (var_141: bool), (var_146: Env54))
+                ()
+    else
+        let (var_150: Env87) = var_47.mem_b
+        let (var_151: Env88) = var_47.mem_d
+        let (var_152: Tuple89) = var_150.mem_xs
+        let (var_153: Env29) = var_152.mem_0
+        let (var_154: Env30) = var_153.mem_elem
+        let (var_155: Env31) = var_153.mem_elem_type
+        let (var_156: Env90) = var_151.mem_on_succ
+        let (var_157: Env3) = var_151.mem_stream
+        let (var_158: Env33) = var_154.mem_a
+        let (var_159: Env34) = var_154.mem_b
+        let (var_160: Env35) = var_158.mem_elem
+        let (var_161: Env36) = var_158.mem_elem_type
+        let (var_162: Env37) = var_160.mem_handle
+        let (var_163: Env38) = var_160.mem_handler
+        let (var_164: Env39) = var_162.mem_elem
+        let (var_165: Env36) = var_162.mem_elem_type
+        let (var_166: Env40) = var_164.mem_a
+        let (var_167: Env41) = var_164.mem_b
+        let (var_168: Env42) = var_166.mem_elem
+        let (var_169: Env43) = var_166.mem_elem_type
+        let (var_170: Env44) = var_168.mem_b
+        let (var_171: Env45) = var_170.mem_f
+        let (var_172: string) = var_170.mem_m
+        let (var_173: Env46) = var_170.mem_stream_char
+        let (var_174: Env47) = var_173.mem_elem_type
+        let (var_175: string) = var_157.mem_str
+        let (var_177: bool) =
+            if (var_5 >= 0L) then
+                let (var_176: int64) = (int64 var_175.Length)
+                (var_5 < var_176)
+            else
+                false
+        if var_177 then
+            let (var_178: char) = var_175.[int32 var_5]
+            let (var_179: char) = var_171.mem_x
+            let (var_180: bool) = (var_179 = var_178)
+            let (var_181: int64) = (var_5 + 1L)
+            if var_180 then
+                let (var_182: Env38) = var_167.mem_b
+                let (var_183: Env48) = var_182.mem_elem
+                let (var_184: Env49) = var_182.mem_elem_type
+                let (var_185: bool) = var_183.mem_x
+                let (var_186: Env50) = var_159.mem_pint64
+                let (var_187: Env51) = var_159.mem_spaces
+                let (var_188: Env52) = var_186.mem_elem
+                let (var_189: Env53) = var_186.mem_elem_type
+                let (var_190: Env54) = var_187.mem_satisfyL
+                let (var_193: (Env91 * Env1 -> unit)) = method_24((var_188: Env52), (var_189: Env53), (var_185: bool), (var_190: Env54))
+                ()
+            else
+                let (var_194: Env48) = var_163.mem_elem
+                let (var_195: Env49) = var_163.mem_elem_type
+                let (var_196: bool) = var_194.mem_x
+                let (var_197: Env50) = var_159.mem_pint64
+                let (var_198: Env51) = var_159.mem_spaces
+                let (var_199: Env52) = var_197.mem_elem
+                let (var_200: Env53) = var_197.mem_elem_type
+                let (var_201: Env54) = var_198.mem_satisfyL
+                let (var_204: (Env91 * Env1 -> unit)) = method_24((var_199: Env52), (var_200: Env53), (var_196: bool), (var_201: Env54))
+                ()
+        else
+            let (var_205: Env48) = var_163.mem_elem
+            let (var_206: Env49) = var_163.mem_elem_type
+            let (var_207: bool) = var_205.mem_x
+            let (var_208: Env50) = var_159.mem_pint64
+            let (var_209: Env51) = var_159.mem_spaces
+            let (var_210: Env52) = var_208.mem_elem
+            let (var_211: Env53) = var_208.mem_elem_type
+            let (var_212: Env54) = var_209.mem_satisfyL
+            let (var_215: (Env91 * Env1 -> unit)) = method_24((var_210: Env52), (var_211: Env53), (var_207: bool), (var_212: Env54))
+            ()
+and method_23((var_0: EnvStack80), (var_1: int64), (var_2: Env54), (var_3: int64)): unit =
+    let (var_4: int64) = var_0.mem_0
+    let (var_5: Env56) = var_0.mem_1
+    let (var_6: Env3) = var_0.mem_2
+    let (var_7: Env46) = var_2.mem_stream_char
+    let (var_8: int64) = (var_1 + 1L)
+    let (var_9: EnvStack81) = EnvStack81((var_8: int64), (var_2: Env54), (var_0: EnvStack80), (var_6: Env3))
+    let (var_10: int64) = var_9.mem_0
+    let (var_11: Env54) = var_9.mem_1
+    let (var_12: EnvStack80) = var_9.mem_2
+    let (var_13: Env3) = var_9.mem_3
+    let (var_14: EnvStack82) = EnvStack82((var_9: EnvStack81), (var_4: int64), (var_5: Env56), (var_6: Env3), (var_1: int64), (var_10: int64), (var_11: Env54), (var_12: EnvStack80), (var_13: Env3))
+    let (var_15: EnvStack81) = var_14.mem_0
+    let (var_16: int64) = var_14.mem_1
+    let (var_17: Env56) = var_14.mem_2
+    let (var_18: Env3) = var_14.mem_3
+    let (var_19: int64) = var_14.mem_4
+    let (var_20: int64) = var_14.mem_5
+    let (var_21: Env54) = var_14.mem_6
+    let (var_22: EnvStack80) = var_14.mem_7
+    let (var_23: Env3) = var_14.mem_8
+    let (var_24: EnvStack83) = EnvStack83((var_15: EnvStack81), (var_16: int64), (var_17: Env56), (var_18: Env3), (var_19: int64), (var_7: Env46), (var_14: EnvStack82), (var_23: Env3))
+    let (var_25: Env46) = var_24.mem_5
+    let (var_26: EnvStack82) = var_24.mem_6
+    let (var_27: Env47) = var_25.mem_elem_type
+    let (var_28: EnvStack81) = var_26.mem_0
+    let (var_29: int64) = var_26.mem_1
+    let (var_30: Env56) = var_26.mem_2
+    let (var_31: Env3) = var_26.mem_3
+    let (var_32: int64) = var_26.mem_4
+    let (var_33: int64) = var_26.mem_5
+    let (var_34: Env54) = var_26.mem_6
+    let (var_35: EnvStack80) = var_26.mem_7
+    let (var_36: Env3) = var_26.mem_8
+    let (var_37: EnvStack84) = EnvStack84((var_28: EnvStack81), (var_29: int64), (var_30: Env56), (var_31: Env3), (var_32: int64), (var_3: int64), (var_26: EnvStack82), (var_36: Env3))
+    let (var_38: Env3) = var_37.mem_7
+    let (var_39: string) = var_38.mem_str
+    let (var_40: int64) = var_37.mem_5
+    let (var_41: EnvStack82) = var_37.mem_6
+    let (var_42: EnvStack81) = var_37.mem_0
+    let (var_43: int64) = var_37.mem_1
+    let (var_44: Env56) = var_37.mem_2
+    let (var_45: Env3) = var_37.mem_3
+    let (var_46: int64) = var_37.mem_4
+    let (var_48: bool) =
+        if (var_3 >= 0L) then
+            let (var_47: int64) = (int64 var_39.Length)
+            (var_3 < var_47)
+        else
+            false
+    if var_48 then
+        let (var_49: char) = var_39.[int32 var_3]
+        let (var_51: bool) =
+            if (var_49 = ' ') then
+                true
+            else
+                if (var_49 = '\n') then
+                    true
+                else
+                    (var_49 = '\r')
+        let (var_52: EnvStack81) = var_41.mem_0
+        let (var_53: int64) = var_41.mem_1
+        let (var_54: Env56) = var_41.mem_2
+        let (var_55: Env3) = var_41.mem_3
+        let (var_56: int64) = var_41.mem_4
+        let (var_57: int64) = var_41.mem_5
+        let (var_58: Env54) = var_41.mem_6
+        let (var_59: EnvStack80) = var_41.mem_7
+        let (var_60: Env3) = var_41.mem_8
+        let (var_61: EnvStack85) = EnvStack85((var_52: EnvStack81), (var_53: int64), (var_54: Env56), (var_55: Env3), (var_56: int64), (var_49: char), (var_41: EnvStack82), (var_60: Env3))
+        let (var_62: char) = var_61.mem_5
+        let (var_63: EnvStack82) = var_61.mem_6
+        let (var_64: int64) = (var_3 + 1L)
+        if var_51 then
+            let (var_65: int64) = var_63.mem_5
+            let (var_66: Env54) = var_63.mem_6
+            let (var_67: EnvStack80) = var_63.mem_7
+            method_23((var_67: EnvStack80), (var_65: int64), (var_66: Env54), (var_64: int64))
+        else
+            let (var_68: EnvStack81) = var_61.mem_0
+            let (var_69: int64) = var_61.mem_1
+            let (var_70: Env56) = var_61.mem_2
+            let (var_71: Env3) = var_61.mem_3
+            let (var_72: int64) = var_61.mem_4
+            let (var_73: Env3) = var_61.mem_7
+            let (var_74: EnvStack86) = EnvStack86((var_68: EnvStack81), (var_69: int64), (var_70: Env56), (var_71: Env3), (var_72: int64), (var_61: EnvStack85), (var_73: Env3))
+            let (var_75: EnvStack85) = var_74.mem_5
+            let (var_76: EnvStack81) = var_75.mem_0
+            let (var_77: int64) = var_75.mem_1
+            let (var_78: Env56) = var_75.mem_2
+            let (var_79: Env3) = var_75.mem_3
+            let (var_80: int64) = var_75.mem_4
+            let (var_81: Env87) = var_78.mem_b
+            let (var_82: Env88) = var_78.mem_d
+            let (var_83: Tuple89) = var_81.mem_xs
+            let (var_84: Env29) = var_83.mem_0
+            let (var_85: Env30) = var_84.mem_elem
+            let (var_86: Env31) = var_84.mem_elem_type
+            let (var_87: Env90) = var_82.mem_on_succ
+            let (var_88: Env3) = var_82.mem_stream
+            let (var_89: Env33) = var_85.mem_a
+            let (var_90: Env34) = var_85.mem_b
+            let (var_91: Env35) = var_89.mem_elem
+            let (var_92: Env36) = var_89.mem_elem_type
+            let (var_93: Env37) = var_91.mem_handle
+            let (var_94: Env38) = var_91.mem_handler
+            let (var_95: Env39) = var_93.mem_elem
+            let (var_96: Env36) = var_93.mem_elem_type
+            let (var_97: Env40) = var_95.mem_a
+            let (var_98: Env41) = var_95.mem_b
+            let (var_99: Env42) = var_97.mem_elem
+            let (var_100: Env43) = var_97.mem_elem_type
+            let (var_101: Env44) = var_99.mem_b
+            let (var_102: Env45) = var_101.mem_f
+            let (var_103: string) = var_101.mem_m
+            let (var_104: Env46) = var_101.mem_stream_char
+            let (var_105: Env47) = var_104.mem_elem_type
+            let (var_106: string) = var_88.mem_str
+            let (var_108: bool) =
+                if (var_64 >= 0L) then
+                    let (var_107: int64) = (int64 var_106.Length)
+                    (var_64 < var_107)
+                else
+                    false
+            if var_108 then
+                let (var_109: char) = var_106.[int32 var_64]
+                let (var_110: char) = var_102.mem_x
+                let (var_111: bool) = (var_110 = var_109)
+                let (var_112: int64) = (var_64 + 1L)
+                if var_111 then
+                    let (var_113: Env38) = var_98.mem_b
+                    let (var_114: Env48) = var_113.mem_elem
+                    let (var_115: Env49) = var_113.mem_elem_type
+                    let (var_116: bool) = var_114.mem_x
+                    let (var_117: Env50) = var_90.mem_pint64
+                    let (var_118: Env51) = var_90.mem_spaces
+                    let (var_119: Env52) = var_117.mem_elem
+                    let (var_120: Env53) = var_117.mem_elem_type
+                    let (var_121: Env54) = var_118.mem_satisfyL
+                    let (var_124: (Env91 * Env1 -> unit)) = method_24((var_119: Env52), (var_120: Env53), (var_116: bool), (var_121: Env54))
+                    ()
+                else
+                    let (var_125: Env48) = var_94.mem_elem
+                    let (var_126: Env49) = var_94.mem_elem_type
+                    let (var_127: bool) = var_125.mem_x
+                    let (var_128: Env50) = var_90.mem_pint64
+                    let (var_129: Env51) = var_90.mem_spaces
+                    let (var_130: Env52) = var_128.mem_elem
+                    let (var_131: Env53) = var_128.mem_elem_type
+                    let (var_132: Env54) = var_129.mem_satisfyL
+                    let (var_135: (Env91 * Env1 -> unit)) = method_24((var_130: Env52), (var_131: Env53), (var_127: bool), (var_132: Env54))
+                    ()
+            else
+                let (var_136: Env48) = var_94.mem_elem
+                let (var_137: Env49) = var_94.mem_elem_type
+                let (var_138: bool) = var_136.mem_x
+                let (var_139: Env50) = var_90.mem_pint64
+                let (var_140: Env51) = var_90.mem_spaces
+                let (var_141: Env52) = var_139.mem_elem
+                let (var_142: Env53) = var_139.mem_elem_type
+                let (var_143: Env54) = var_140.mem_satisfyL
+                let (var_146: (Env91 * Env1 -> unit)) = method_24((var_141: Env52), (var_142: Env53), (var_138: bool), (var_143: Env54))
+                ()
+    else
+        let (var_147: Env87) = var_44.mem_b
+        let (var_148: Env88) = var_44.mem_d
+        let (var_149: Tuple89) = var_147.mem_xs
+        let (var_150: Env29) = var_149.mem_0
+        let (var_151: Env30) = var_150.mem_elem
+        let (var_152: Env31) = var_150.mem_elem_type
+        let (var_153: Env90) = var_148.mem_on_succ
+        let (var_154: Env3) = var_148.mem_stream
+        let (var_155: Env33) = var_151.mem_a
+        let (var_156: Env34) = var_151.mem_b
+        let (var_157: Env35) = var_155.mem_elem
+        let (var_158: Env36) = var_155.mem_elem_type
+        let (var_159: Env37) = var_157.mem_handle
+        let (var_160: Env38) = var_157.mem_handler
+        let (var_161: Env39) = var_159.mem_elem
+        let (var_162: Env36) = var_159.mem_elem_type
+        let (var_163: Env40) = var_161.mem_a
+        let (var_164: Env41) = var_161.mem_b
+        let (var_165: Env42) = var_163.mem_elem
+        let (var_166: Env43) = var_163.mem_elem_type
+        let (var_167: Env44) = var_165.mem_b
+        let (var_168: Env45) = var_167.mem_f
+        let (var_169: string) = var_167.mem_m
+        let (var_170: Env46) = var_167.mem_stream_char
+        let (var_171: Env47) = var_170.mem_elem_type
+        let (var_172: string) = var_154.mem_str
+        let (var_174: bool) =
+            if (var_3 >= 0L) then
+                let (var_173: int64) = (int64 var_172.Length)
+                (var_3 < var_173)
+            else
+                false
+        if var_174 then
+            let (var_175: char) = var_172.[int32 var_3]
+            let (var_176: char) = var_168.mem_x
+            let (var_177: bool) = (var_176 = var_175)
+            let (var_178: int64) = (var_3 + 1L)
+            if var_177 then
+                let (var_179: Env38) = var_164.mem_b
+                let (var_180: Env48) = var_179.mem_elem
+                let (var_181: Env49) = var_179.mem_elem_type
+                let (var_182: bool) = var_180.mem_x
+                let (var_183: Env50) = var_156.mem_pint64
+                let (var_184: Env51) = var_156.mem_spaces
+                let (var_185: Env52) = var_183.mem_elem
+                let (var_186: Env53) = var_183.mem_elem_type
+                let (var_187: Env54) = var_184.mem_satisfyL
+                let (var_190: (Env91 * Env1 -> unit)) = method_24((var_185: Env52), (var_186: Env53), (var_182: bool), (var_187: Env54))
+                ()
+            else
+                let (var_191: Env48) = var_160.mem_elem
+                let (var_192: Env49) = var_160.mem_elem_type
+                let (var_193: bool) = var_191.mem_x
+                let (var_194: Env50) = var_156.mem_pint64
+                let (var_195: Env51) = var_156.mem_spaces
+                let (var_196: Env52) = var_194.mem_elem
+                let (var_197: Env53) = var_194.mem_elem_type
+                let (var_198: Env54) = var_195.mem_satisfyL
+                let (var_201: (Env91 * Env1 -> unit)) = method_24((var_196: Env52), (var_197: Env53), (var_193: bool), (var_198: Env54))
+                ()
+        else
+            let (var_202: Env48) = var_160.mem_elem
+            let (var_203: Env49) = var_160.mem_elem_type
+            let (var_204: bool) = var_202.mem_x
+            let (var_205: Env50) = var_156.mem_pint64
+            let (var_206: Env51) = var_156.mem_spaces
+            let (var_207: Env52) = var_205.mem_elem
+            let (var_208: Env53) = var_205.mem_elem_type
+            let (var_209: Env54) = var_206.mem_satisfyL
+            let (var_212: (Env91 * Env1 -> unit)) = method_24((var_207: Env52), (var_208: Env53), (var_204: bool), (var_209: Env54))
+            ()
+and method_24 ((var_2: Env52), (var_3: Env53), (var_4: bool), (var_5: Env54)) ((var_0: Env91), (var_1: Env1)): unit =
+    let (var_6: Env92) = var_0.mem_on_succ
+    let (var_7: Env3) = var_0.mem_stream
+    let (var_8: int64) = var_1.mem_pos
+    let (var_9: Env57) = var_2.mem_parser_rec
+    method_25((var_4: bool), (var_5: Env54), (var_6: Env92), (var_7: Env3), (var_9: Env57), (var_8: int64))
+and method_25((var_0: bool), (var_1: Env54), (var_2: Env92), (var_3: Env3), (var_4: Env57), (var_5: int64)): unit =
+    let (var_6: Env58) = var_4.mem_handler
+    let (var_7: int64) = var_4.mem_i
+    let (var_8: Env59) = var_4.mem_loop
+    let (var_9: Env60) = var_4.mem_pdigit
+    let (var_10: Env61) = var_9.mem_elem
+    let (var_11: Env62) = var_9.mem_elem_type
+    let (var_12: Env63) = var_6.mem_elem
+    let (var_13: Env64) = var_11.mem_b
+    let (var_14: EnvStack93) = EnvStack93((var_0: bool), (var_1: Env54), (var_2: Env92), (var_3: Env3))
+    let (var_15: bool) = var_14.mem_0
+    let (var_16: Env54) = var_14.mem_1
+    let (var_17: Env92) = var_14.mem_2
+    let (var_18: Env3) = var_14.mem_3
+    let (var_19: EnvStack94) = EnvStack94((var_7: int64), (var_8: Env59), (var_0: bool), (var_1: Env54), (var_2: Env92), (var_3: Env3), (var_14: EnvStack93), (var_18: Env3))
+    let (var_20: int64) = var_19.mem_0
+    let (var_21: Env59) = var_19.mem_1
+    let (var_22: bool) = var_19.mem_2
+    let (var_23: Env54) = var_19.mem_3
+    let (var_24: Env92) = var_19.mem_4
+    let (var_25: Env3) = var_19.mem_5
+    let (var_26: EnvStack93) = var_19.mem_6
+    let (var_27: Env3) = var_19.mem_7
+    let (var_28: EnvStack95) = EnvStack95((var_19: EnvStack94), (var_12: Env63), (var_20: int64), (var_21: Env59), (var_22: bool), (var_23: Env54), (var_24: Env92), (var_25: Env3), (var_26: EnvStack93), (var_27: Env3))
+    let (var_29: Env64) = var_10.mem_b
+    let (var_30: EnvStack94) = var_28.mem_0
+    let (var_31: Env63) = var_28.mem_1
+    let (var_32: int64) = var_28.mem_2
+    let (var_33: Env59) = var_28.mem_3
+    let (var_34: bool) = var_28.mem_4
+    let (var_35: Env54) = var_28.mem_5
+    let (var_36: Env92) = var_28.mem_6
+    let (var_37: Env3) = var_28.mem_7
+    let (var_38: EnvStack93) = var_28.mem_8
+    let (var_39: Env3) = var_28.mem_9
+    let (var_40: EnvStack96) = EnvStack96((var_30: EnvStack94), (var_31: Env63), (var_29: Env64), (var_28: EnvStack95), (var_39: Env3))
+    let (var_41: Env64) = var_40.mem_2
+    let (var_42: EnvStack95) = var_40.mem_3
+    let (var_43: string) = var_41.mem_m
+    let (var_44: Env46) = var_41.mem_stream_char
+    let (var_45: Env47) = var_44.mem_elem_type
+    let (var_46: EnvStack94) = var_42.mem_0
+    let (var_47: Env63) = var_42.mem_1
+    let (var_48: int64) = var_42.mem_2
+    let (var_49: Env59) = var_42.mem_3
+    let (var_50: bool) = var_42.mem_4
+    let (var_51: Env54) = var_42.mem_5
+    let (var_52: Env92) = var_42.mem_6
+    let (var_53: Env3) = var_42.mem_7
+    let (var_54: EnvStack93) = var_42.mem_8
+    let (var_55: Env3) = var_42.mem_9
+    let (var_56: EnvStack97) = EnvStack97((var_46: EnvStack94), (var_47: Env63), (var_43: string), (var_5: int64), (var_42: EnvStack95), (var_55: Env3))
+    let (var_57: Env3) = var_56.mem_5
+    let (var_58: string) = var_57.mem_str
+    let (var_59: string) = var_56.mem_2
+    let (var_60: int64) = var_56.mem_3
+    let (var_61: EnvStack95) = var_56.mem_4
+    let (var_62: EnvStack94) = var_56.mem_0
+    let (var_63: Env63) = var_56.mem_1
+    let (var_65: bool) =
+        if (var_5 >= 0L) then
+            let (var_64: int64) = (int64 var_58.Length)
+            (var_5 < var_64)
+        else
+            false
+    if var_65 then
+        let (var_66: char) = var_58.[int32 var_5]
+        let (var_67: bool) =
+            if (var_66 >= '0') then
+                (var_66 <= '9')
+            else
+                false
+        let (var_68: EnvStack94) = var_61.mem_0
+        let (var_69: Env63) = var_61.mem_1
+        let (var_70: int64) = var_61.mem_2
+        let (var_71: Env59) = var_61.mem_3
+        let (var_72: bool) = var_61.mem_4
+        let (var_73: Env54) = var_61.mem_5
+        let (var_74: Env92) = var_61.mem_6
+        let (var_75: Env3) = var_61.mem_7
+        let (var_76: EnvStack93) = var_61.mem_8
+        let (var_77: Env3) = var_61.mem_9
+        let (var_78: EnvStack98) = EnvStack98((var_68: EnvStack94), (var_69: Env63), (var_66: char), (var_61: EnvStack95), (var_77: Env3))
+        let (var_79: char) = var_78.mem_2
+        let (var_80: EnvStack95) = var_78.mem_3
+        let (var_81: int64) = (var_5 + 1L)
+        if var_67 then
+            let (var_82: int64) = var_80.mem_2
+            let (var_83: Env59) = var_80.mem_3
+            let (var_84: bool) = var_80.mem_4
+            let (var_85: Env54) = var_80.mem_5
+            let (var_86: Env92) = var_80.mem_6
+            let (var_87: Env3) = var_80.mem_7
+            let (var_88: EnvStack93) = var_80.mem_8
+            let (var_89: int64) = System.Convert.ToInt64(var_79)
+            let (var_90: int64) = System.Convert.ToInt64('0')
+            let (var_91: int64) = (var_89 - var_90)
+            let (var_92: bool) =
+                if (var_82 = 922337203685477580L) then
+                    (var_91 <= 7L)
+                else
+                    false
+            let (var_93: bool) =
+                if var_92 then
+                    true
+                else
+                    (var_82 < 922337203685477580L)
+            let (var_94: bool) = var_88.mem_0
+            let (var_95: Env54) = var_88.mem_1
+            let (var_96: Env92) = var_88.mem_2
+            let (var_97: Env3) = var_88.mem_3
+            let (var_98: EnvStack99) = EnvStack99((var_82: int64), (var_83: Env59), (var_84: bool), (var_85: Env54), (var_86: Env92), (var_87: Env3), (var_91: int64), (var_88: EnvStack93), (var_97: Env3))
+            let (var_99: int64) = var_98.mem_0
+            let (var_100: Env59) = var_98.mem_1
+            let (var_101: bool) = var_98.mem_2
+            let (var_102: Env54) = var_98.mem_3
+            let (var_103: Env92) = var_98.mem_4
+            let (var_104: Env3) = var_98.mem_5
+            let (var_105: int64) = var_98.mem_6
+            let (var_106: EnvStack93) = var_98.mem_7
+            if var_93 then
+                let (var_107: int64) = (var_99 * 10L)
+                let (var_108: int64) = (var_107 + var_105)
+                let (var_109: int64) = var_100.mem_int64
+                let (var_110: Env60) = var_100.mem_pdigit
+                method_26((var_106: EnvStack93), (var_101: bool), (var_102: Env54), (var_103: Env92), (var_104: Env3), (var_108: int64), (var_109: int64), (var_110: Env60), (var_81: int64))
+            else
+                (failwith "integer overflow")
+        else
+            let (var_111: EnvStack94) = var_78.mem_0
+            let (var_112: Env63) = var_78.mem_1
+            let (var_113: Env3) = var_78.mem_4
+            let (var_114: EnvStack100) = EnvStack100((var_111: EnvStack94), (var_112: Env63), (var_59: string), (var_78: EnvStack98), (var_113: Env3))
+            let (var_115: string) = var_114.mem_2
+            let (var_116: EnvStack98) = var_114.mem_3
+            let (var_117: EnvStack94) = var_116.mem_0
+            let (var_118: Env63) = var_116.mem_1
+            let (var_119: string) = var_118.mem_x
+            (failwith var_119)
+    else
+        let (var_120: string) = var_63.mem_x
+        (failwith var_120)
+and method_26((var_0: EnvStack93), (var_1: bool), (var_2: Env54), (var_3: Env92), (var_4: Env3), (var_5: int64), (var_6: int64), (var_7: Env60), (var_8: int64)): unit =
+    let (var_9: bool) = var_0.mem_0
+    let (var_10: Env54) = var_0.mem_1
+    let (var_11: Env92) = var_0.mem_2
+    let (var_12: Env3) = var_0.mem_3
+    let (var_13: Env61) = var_7.mem_elem
+    let (var_14: Env62) = var_7.mem_elem_type
+    let (var_15: Env64) = var_14.mem_b
+    let (var_16: EnvStack101) = EnvStack101((var_5: int64), (var_6: int64), (var_7: Env60), (var_9: bool), (var_10: Env54), (var_11: Env92), (var_12: Env3), (var_0: EnvStack93))
+    let (var_17: int64) = var_16.mem_0
+    let (var_18: int64) = var_16.mem_1
+    let (var_19: Env60) = var_16.mem_2
+    let (var_20: bool) = var_16.mem_3
+    let (var_21: Env54) = var_16.mem_4
+    let (var_22: Env92) = var_16.mem_5
+    let (var_23: Env3) = var_16.mem_6
+    let (var_24: EnvStack93) = var_16.mem_7
+    let (var_25: EnvStack102) = EnvStack102((var_16: EnvStack101), (var_1: bool), (var_2: Env54), (var_3: Env92), (var_4: Env3), (var_5: int64), (var_17: int64), (var_18: int64), (var_19: Env60), (var_20: bool), (var_21: Env54), (var_22: Env92), (var_23: Env3), (var_24: EnvStack93))
+    let (var_26: Env64) = var_13.mem_b
+    let (var_27: EnvStack101) = var_25.mem_0
+    let (var_28: bool) = var_25.mem_1
+    let (var_29: Env54) = var_25.mem_2
+    let (var_30: Env92) = var_25.mem_3
+    let (var_31: Env3) = var_25.mem_4
+    let (var_32: int64) = var_25.mem_5
+    let (var_33: int64) = var_25.mem_6
+    let (var_34: int64) = var_25.mem_7
+    let (var_35: Env60) = var_25.mem_8
+    let (var_36: bool) = var_25.mem_9
+    let (var_37: Env54) = var_25.mem_10
+    let (var_38: Env92) = var_25.mem_11
+    let (var_39: Env3) = var_25.mem_12
+    let (var_40: EnvStack93) = var_25.mem_13
+    let (var_41: EnvStack103) = EnvStack103((var_27: EnvStack101), (var_28: bool), (var_29: Env54), (var_30: Env92), (var_31: Env3), (var_32: int64), (var_26: Env64), (var_25: EnvStack102), (var_39: Env3))
+    let (var_42: Env64) = var_41.mem_6
+    let (var_43: EnvStack102) = var_41.mem_7
+    let (var_44: string) = var_42.mem_m
+    let (var_45: Env46) = var_42.mem_stream_char
+    let (var_46: Env47) = var_45.mem_elem_type
+    let (var_47: EnvStack101) = var_43.mem_0
+    let (var_48: bool) = var_43.mem_1
+    let (var_49: Env54) = var_43.mem_2
+    let (var_50: Env92) = var_43.mem_3
+    let (var_51: Env3) = var_43.mem_4
+    let (var_52: int64) = var_43.mem_5
+    let (var_53: int64) = var_43.mem_6
+    let (var_54: int64) = var_43.mem_7
+    let (var_55: Env60) = var_43.mem_8
+    let (var_56: bool) = var_43.mem_9
+    let (var_57: Env54) = var_43.mem_10
+    let (var_58: Env92) = var_43.mem_11
+    let (var_59: Env3) = var_43.mem_12
+    let (var_60: EnvStack93) = var_43.mem_13
+    let (var_61: EnvStack104) = EnvStack104((var_47: EnvStack101), (var_48: bool), (var_49: Env54), (var_50: Env92), (var_51: Env3), (var_52: int64), (var_44: string), (var_8: int64), (var_43: EnvStack102), (var_59: Env3))
+    let (var_62: Env3) = var_61.mem_9
+    let (var_63: string) = var_62.mem_str
+    let (var_64: string) = var_61.mem_6
+    let (var_65: int64) = var_61.mem_7
+    let (var_66: EnvStack102) = var_61.mem_8
+    let (var_67: EnvStack101) = var_61.mem_0
+    let (var_68: bool) = var_61.mem_1
+    let (var_69: Env54) = var_61.mem_2
+    let (var_70: Env92) = var_61.mem_3
+    let (var_71: Env3) = var_61.mem_4
+    let (var_72: int64) = var_61.mem_5
+    let (var_74: bool) =
+        if (var_8 >= 0L) then
+            let (var_73: int64) = (int64 var_63.Length)
+            (var_8 < var_73)
+        else
+            false
+    if var_74 then
+        let (var_75: char) = var_63.[int32 var_8]
+        let (var_76: bool) =
+            if (var_75 >= '0') then
+                (var_75 <= '9')
+            else
+                false
+        let (var_77: EnvStack101) = var_66.mem_0
+        let (var_78: bool) = var_66.mem_1
+        let (var_79: Env54) = var_66.mem_2
+        let (var_80: Env92) = var_66.mem_3
+        let (var_81: Env3) = var_66.mem_4
+        let (var_82: int64) = var_66.mem_5
+        let (var_83: int64) = var_66.mem_6
+        let (var_84: int64) = var_66.mem_7
+        let (var_85: Env60) = var_66.mem_8
+        let (var_86: bool) = var_66.mem_9
+        let (var_87: Env54) = var_66.mem_10
+        let (var_88: Env92) = var_66.mem_11
+        let (var_89: Env3) = var_66.mem_12
+        let (var_90: EnvStack93) = var_66.mem_13
+        let (var_91: EnvStack105) = EnvStack105((var_77: EnvStack101), (var_78: bool), (var_79: Env54), (var_80: Env92), (var_81: Env3), (var_82: int64), (var_75: char), (var_66: EnvStack102), (var_89: Env3))
+        let (var_92: char) = var_91.mem_6
+        let (var_93: EnvStack102) = var_91.mem_7
+        let (var_94: int64) = (var_8 + 1L)
+        if var_76 then
+            let (var_95: int64) = var_93.mem_6
+            let (var_96: int64) = var_93.mem_7
+            let (var_97: Env60) = var_93.mem_8
+            let (var_98: bool) = var_93.mem_9
+            let (var_99: Env54) = var_93.mem_10
+            let (var_100: Env92) = var_93.mem_11
+            let (var_101: Env3) = var_93.mem_12
+            let (var_102: EnvStack93) = var_93.mem_13
+            let (var_103: int64) = System.Convert.ToInt64(var_92)
+            let (var_104: int64) = System.Convert.ToInt64('0')
+            let (var_105: int64) = (var_103 - var_104)
+            let (var_106: bool) =
+                if (var_95 = 922337203685477580L) then
+                    (var_105 <= 7L)
+                else
+                    false
+            let (var_107: bool) =
+                if var_106 then
+                    true
+                else
+                    (var_95 < 922337203685477580L)
+            let (var_108: bool) = var_102.mem_0
+            let (var_109: Env54) = var_102.mem_1
+            let (var_110: Env92) = var_102.mem_2
+            let (var_111: Env3) = var_102.mem_3
+            let (var_112: EnvStack106) = EnvStack106((var_95: int64), (var_96: int64), (var_97: Env60), (var_98: bool), (var_99: Env54), (var_100: Env92), (var_101: Env3), (var_105: int64), (var_102: EnvStack93), (var_111: Env3))
+            let (var_113: int64) = var_112.mem_0
+            let (var_114: int64) = var_112.mem_1
+            let (var_115: Env60) = var_112.mem_2
+            let (var_116: bool) = var_112.mem_3
+            let (var_117: Env54) = var_112.mem_4
+            let (var_118: Env92) = var_112.mem_5
+            let (var_119: Env3) = var_112.mem_6
+            let (var_120: int64) = var_112.mem_7
+            let (var_121: EnvStack93) = var_112.mem_8
+            if var_107 then
+                let (var_122: int64) = (var_113 * 10L)
+                let (var_123: int64) = (var_122 + var_120)
+                method_26((var_121: EnvStack93), (var_116: bool), (var_117: Env54), (var_118: Env92), (var_119: Env3), (var_123: int64), (var_114: int64), (var_115: Env60), (var_94: int64))
+            else
+                (failwith "integer overflow")
+        else
+            let (var_124: EnvStack101) = var_91.mem_0
+            let (var_125: bool) = var_91.mem_1
+            let (var_126: Env54) = var_91.mem_2
+            let (var_127: Env92) = var_91.mem_3
+            let (var_128: Env3) = var_91.mem_4
+            let (var_129: int64) = var_91.mem_5
+            let (var_130: Env3) = var_91.mem_8
+            let (var_131: EnvStack107) = EnvStack107((var_124: EnvStack101), (var_125: bool), (var_126: Env54), (var_127: Env92), (var_128: Env3), (var_129: int64), (var_64: string), (var_91: EnvStack105), (var_130: Env3))
+            let (var_132: string) = var_131.mem_6
+            let (var_133: EnvStack105) = var_131.mem_7
+            let (var_134: EnvStack101) = var_133.mem_0
+            let (var_135: bool) = var_133.mem_1
+            let (var_136: Env54) = var_133.mem_2
+            let (var_137: Env92) = var_133.mem_3
+            let (var_138: Env3) = var_133.mem_4
+            let (var_139: int64) = var_133.mem_5
+            let (var_140: int64) =
+                if var_135 then
+                    var_139
+                else
+                    (-var_139)
+            let (var_141: int64) = 0L
+            method_27((var_140: int64), (var_137: Env92), (var_138: Env3), (var_141: int64), (var_136: Env54), (var_94: int64))
+    else
+        let (var_142: int64) =
+            if var_68 then
+                var_72
+            else
+                (-var_72)
+        let (var_143: int64) = 0L
+        method_27((var_142: int64), (var_70: Env92), (var_71: Env3), (var_143: int64), (var_69: Env54), (var_8: int64))
+and method_27((var_0: int64), (var_1: Env92), (var_2: Env3), (var_3: int64), (var_4: Env54), (var_5: int64)): unit =
+    let (var_6: Env46) = var_4.mem_stream_char
+    let (var_7: int64) = (var_3 + 1L)
+    let (var_8: EnvStack108) = EnvStack108((var_0: int64), (var_1: Env92), (var_2: Env3))
+    let (var_9: int64) = var_8.mem_0
+    let (var_10: Env92) = var_8.mem_1
+    let (var_11: Env3) = var_8.mem_2
+    let (var_12: EnvStack109) = EnvStack109((var_7: int64), (var_4: Env54), (var_8: EnvStack108), (var_11: Env3))
+    let (var_13: int64) = var_12.mem_0
+    let (var_14: Env54) = var_12.mem_1
+    let (var_15: EnvStack108) = var_12.mem_2
+    let (var_16: Env3) = var_12.mem_3
+    let (var_17: EnvStack110) = EnvStack110((var_12: EnvStack109), (var_0: int64), (var_1: Env92), (var_2: Env3), (var_3: int64), (var_13: int64), (var_14: Env54), (var_15: EnvStack108), (var_16: Env3))
+    let (var_18: EnvStack109) = var_17.mem_0
+    let (var_19: int64) = var_17.mem_1
+    let (var_20: Env92) = var_17.mem_2
+    let (var_21: Env3) = var_17.mem_3
+    let (var_22: int64) = var_17.mem_4
+    let (var_23: int64) = var_17.mem_5
+    let (var_24: Env54) = var_17.mem_6
+    let (var_25: EnvStack108) = var_17.mem_7
+    let (var_26: Env3) = var_17.mem_8
+    let (var_27: EnvStack111) = EnvStack111((var_18: EnvStack109), (var_19: int64), (var_20: Env92), (var_21: Env3), (var_22: int64), (var_6: Env46), (var_17: EnvStack110), (var_26: Env3))
+    let (var_28: Env46) = var_27.mem_5
+    let (var_29: EnvStack110) = var_27.mem_6
+    let (var_30: Env47) = var_28.mem_elem_type
+    let (var_31: EnvStack109) = var_29.mem_0
+    let (var_32: int64) = var_29.mem_1
+    let (var_33: Env92) = var_29.mem_2
+    let (var_34: Env3) = var_29.mem_3
+    let (var_35: int64) = var_29.mem_4
+    let (var_36: int64) = var_29.mem_5
+    let (var_37: Env54) = var_29.mem_6
+    let (var_38: EnvStack108) = var_29.mem_7
+    let (var_39: Env3) = var_29.mem_8
+    let (var_40: EnvStack112) = EnvStack112((var_31: EnvStack109), (var_32: int64), (var_33: Env92), (var_34: Env3), (var_35: int64), (var_5: int64), (var_29: EnvStack110), (var_39: Env3))
+    let (var_41: Env3) = var_40.mem_7
+    let (var_42: string) = var_41.mem_str
+    let (var_43: int64) = var_40.mem_5
+    let (var_44: EnvStack110) = var_40.mem_6
+    let (var_45: EnvStack109) = var_40.mem_0
+    let (var_46: int64) = var_40.mem_1
+    let (var_47: Env92) = var_40.mem_2
+    let (var_48: Env3) = var_40.mem_3
+    let (var_49: int64) = var_40.mem_4
+    let (var_51: bool) =
+        if (var_5 >= 0L) then
+            let (var_50: int64) = (int64 var_42.Length)
+            (var_5 < var_50)
+        else
+            false
+    if var_51 then
+        let (var_52: char) = var_42.[int32 var_5]
+        let (var_54: bool) =
+            if (var_52 = ' ') then
+                true
+            else
+                if (var_52 = '\n') then
+                    true
+                else
+                    (var_52 = '\r')
+        let (var_55: EnvStack109) = var_44.mem_0
+        let (var_56: int64) = var_44.mem_1
+        let (var_57: Env92) = var_44.mem_2
+        let (var_58: Env3) = var_44.mem_3
+        let (var_59: int64) = var_44.mem_4
+        let (var_60: int64) = var_44.mem_5
+        let (var_61: Env54) = var_44.mem_6
+        let (var_62: EnvStack108) = var_44.mem_7
+        let (var_63: Env3) = var_44.mem_8
+        let (var_64: EnvStack113) = EnvStack113((var_55: EnvStack109), (var_56: int64), (var_57: Env92), (var_58: Env3), (var_59: int64), (var_52: char), (var_44: EnvStack110), (var_63: Env3))
+        let (var_65: char) = var_64.mem_5
+        let (var_66: EnvStack110) = var_64.mem_6
+        let (var_67: int64) = (var_5 + 1L)
+        if var_54 then
+            let (var_68: int64) = var_66.mem_5
+            let (var_69: Env54) = var_66.mem_6
+            let (var_70: EnvStack108) = var_66.mem_7
+            method_28((var_70: EnvStack108), (var_68: int64), (var_69: Env54), (var_67: int64))
+        else
+            let (var_71: EnvStack109) = var_64.mem_0
+            let (var_72: int64) = var_64.mem_1
+            let (var_73: Env92) = var_64.mem_2
+            let (var_74: Env3) = var_64.mem_3
+            let (var_75: int64) = var_64.mem_4
+            let (var_76: Env3) = var_64.mem_7
+            let (var_77: EnvStack114) = EnvStack114((var_71: EnvStack109), (var_72: int64), (var_73: Env92), (var_74: Env3), (var_75: int64), (var_64: EnvStack113), (var_76: Env3))
+            let (var_78: EnvStack113) = var_77.mem_5
+            let (var_79: EnvStack109) = var_78.mem_0
+            let (var_80: int64) = var_78.mem_1
+            let (var_81: Env92) = var_78.mem_2
+            let (var_82: Env3) = var_78.mem_3
+            let (var_83: int64) = var_78.mem_4
+            let (var_84: Env115) = var_81.mem_d
+            let (var_85: Env116) = var_84.mem_on_succ
+            let (var_86: Env3) = var_84.mem_stream
+            let (var_87: Env117) = var_85.mem_b
+            let (var_88: Env88) = var_85.mem_d
+            let (var_89: int64) = var_87.mem_x
+            let (var_90: Env90) = var_88.mem_on_succ
+            let (var_91: Env3) = var_88.mem_stream
+            let (var_92: Env117) = var_90.mem_b
+            let (var_93: Env27) = var_90.mem_d
+            let (var_94: int64) = var_92.mem_x
+            let (var_95: Env32) = var_93.mem_on_succ
+            let (var_96: Env3) = var_93.mem_stream
+            let (var_97: Env118) = var_95.mem_b
+            let (var_98: Env119) = var_95.mem_d
+            let (var_99: Env120) = var_97.mem_f
+            let (var_100: Env121) = var_99.mem_x
+            let (var_101: int64) = var_100.mem_s
+            let (var_102: int64) = (var_101 + var_94)
+            let (var_103: int64) = (var_102 + var_89)
+            let (var_104: int64) = (var_103 + var_80)
+            System.Console.WriteLine(var_104)
+            let (var_105: Env3) = var_98.mem_stream
+            ()
+    else
+        let (var_106: Env115) = var_47.mem_d
+        let (var_107: Env116) = var_106.mem_on_succ
+        let (var_108: Env3) = var_106.mem_stream
+        let (var_109: Env117) = var_107.mem_b
+        let (var_110: Env88) = var_107.mem_d
+        let (var_111: int64) = var_109.mem_x
+        let (var_112: Env90) = var_110.mem_on_succ
+        let (var_113: Env3) = var_110.mem_stream
+        let (var_114: Env117) = var_112.mem_b
+        let (var_115: Env27) = var_112.mem_d
+        let (var_116: int64) = var_114.mem_x
+        let (var_117: Env32) = var_115.mem_on_succ
+        let (var_118: Env3) = var_115.mem_stream
+        let (var_119: Env118) = var_117.mem_b
+        let (var_120: Env119) = var_117.mem_d
+        let (var_121: Env120) = var_119.mem_f
+        let (var_122: Env121) = var_121.mem_x
+        let (var_123: int64) = var_122.mem_s
+        let (var_124: int64) = (var_123 + var_116)
+        let (var_125: int64) = (var_124 + var_111)
+        let (var_126: int64) = (var_125 + var_46)
+        System.Console.WriteLine(var_126)
+        let (var_127: Env3) = var_120.mem_stream
+        ()
+and method_28((var_0: EnvStack108), (var_1: int64), (var_2: Env54), (var_3: int64)): unit =
+    let (var_4: int64) = var_0.mem_0
+    let (var_5: Env92) = var_0.mem_1
+    let (var_6: Env3) = var_0.mem_2
+    let (var_7: Env46) = var_2.mem_stream_char
+    let (var_8: int64) = (var_1 + 1L)
+    let (var_9: EnvStack109) = EnvStack109((var_8: int64), (var_2: Env54), (var_0: EnvStack108), (var_6: Env3))
+    let (var_10: int64) = var_9.mem_0
+    let (var_11: Env54) = var_9.mem_1
+    let (var_12: EnvStack108) = var_9.mem_2
+    let (var_13: Env3) = var_9.mem_3
+    let (var_14: EnvStack110) = EnvStack110((var_9: EnvStack109), (var_4: int64), (var_5: Env92), (var_6: Env3), (var_1: int64), (var_10: int64), (var_11: Env54), (var_12: EnvStack108), (var_13: Env3))
+    let (var_15: EnvStack109) = var_14.mem_0
+    let (var_16: int64) = var_14.mem_1
+    let (var_17: Env92) = var_14.mem_2
+    let (var_18: Env3) = var_14.mem_3
+    let (var_19: int64) = var_14.mem_4
+    let (var_20: int64) = var_14.mem_5
+    let (var_21: Env54) = var_14.mem_6
+    let (var_22: EnvStack108) = var_14.mem_7
+    let (var_23: Env3) = var_14.mem_8
+    let (var_24: EnvStack111) = EnvStack111((var_15: EnvStack109), (var_16: int64), (var_17: Env92), (var_18: Env3), (var_19: int64), (var_7: Env46), (var_14: EnvStack110), (var_23: Env3))
+    let (var_25: Env46) = var_24.mem_5
+    let (var_26: EnvStack110) = var_24.mem_6
+    let (var_27: Env47) = var_25.mem_elem_type
+    let (var_28: EnvStack109) = var_26.mem_0
+    let (var_29: int64) = var_26.mem_1
+    let (var_30: Env92) = var_26.mem_2
+    let (var_31: Env3) = var_26.mem_3
+    let (var_32: int64) = var_26.mem_4
+    let (var_33: int64) = var_26.mem_5
+    let (var_34: Env54) = var_26.mem_6
+    let (var_35: EnvStack108) = var_26.mem_7
+    let (var_36: Env3) = var_26.mem_8
+    let (var_37: EnvStack112) = EnvStack112((var_28: EnvStack109), (var_29: int64), (var_30: Env92), (var_31: Env3), (var_32: int64), (var_3: int64), (var_26: EnvStack110), (var_36: Env3))
+    let (var_38: Env3) = var_37.mem_7
+    let (var_39: string) = var_38.mem_str
+    let (var_40: int64) = var_37.mem_5
+    let (var_41: EnvStack110) = var_37.mem_6
+    let (var_42: EnvStack109) = var_37.mem_0
+    let (var_43: int64) = var_37.mem_1
+    let (var_44: Env92) = var_37.mem_2
+    let (var_45: Env3) = var_37.mem_3
+    let (var_46: int64) = var_37.mem_4
+    let (var_48: bool) =
+        if (var_3 >= 0L) then
+            let (var_47: int64) = (int64 var_39.Length)
+            (var_3 < var_47)
+        else
+            false
+    if var_48 then
+        let (var_49: char) = var_39.[int32 var_3]
+        let (var_51: bool) =
+            if (var_49 = ' ') then
+                true
+            else
+                if (var_49 = '\n') then
+                    true
+                else
+                    (var_49 = '\r')
+        let (var_52: EnvStack109) = var_41.mem_0
+        let (var_53: int64) = var_41.mem_1
+        let (var_54: Env92) = var_41.mem_2
+        let (var_55: Env3) = var_41.mem_3
+        let (var_56: int64) = var_41.mem_4
+        let (var_57: int64) = var_41.mem_5
+        let (var_58: Env54) = var_41.mem_6
+        let (var_59: EnvStack108) = var_41.mem_7
+        let (var_60: Env3) = var_41.mem_8
+        let (var_61: EnvStack113) = EnvStack113((var_52: EnvStack109), (var_53: int64), (var_54: Env92), (var_55: Env3), (var_56: int64), (var_49: char), (var_41: EnvStack110), (var_60: Env3))
+        let (var_62: char) = var_61.mem_5
+        let (var_63: EnvStack110) = var_61.mem_6
+        let (var_64: int64) = (var_3 + 1L)
+        if var_51 then
+            let (var_65: int64) = var_63.mem_5
+            let (var_66: Env54) = var_63.mem_6
+            let (var_67: EnvStack108) = var_63.mem_7
+            method_28((var_67: EnvStack108), (var_65: int64), (var_66: Env54), (var_64: int64))
+        else
+            let (var_68: EnvStack109) = var_61.mem_0
+            let (var_69: int64) = var_61.mem_1
+            let (var_70: Env92) = var_61.mem_2
+            let (var_71: Env3) = var_61.mem_3
+            let (var_72: int64) = var_61.mem_4
+            let (var_73: Env3) = var_61.mem_7
+            let (var_74: EnvStack114) = EnvStack114((var_68: EnvStack109), (var_69: int64), (var_70: Env92), (var_71: Env3), (var_72: int64), (var_61: EnvStack113), (var_73: Env3))
+            let (var_75: EnvStack113) = var_74.mem_5
+            let (var_76: EnvStack109) = var_75.mem_0
+            let (var_77: int64) = var_75.mem_1
+            let (var_78: Env92) = var_75.mem_2
+            let (var_79: Env3) = var_75.mem_3
+            let (var_80: int64) = var_75.mem_4
+            let (var_81: Env115) = var_78.mem_d
+            let (var_82: Env116) = var_81.mem_on_succ
+            let (var_83: Env3) = var_81.mem_stream
+            let (var_84: Env117) = var_82.mem_b
+            let (var_85: Env88) = var_82.mem_d
+            let (var_86: int64) = var_84.mem_x
+            let (var_87: Env90) = var_85.mem_on_succ
+            let (var_88: Env3) = var_85.mem_stream
+            let (var_89: Env117) = var_87.mem_b
+            let (var_90: Env27) = var_87.mem_d
+            let (var_91: int64) = var_89.mem_x
+            let (var_92: Env32) = var_90.mem_on_succ
+            let (var_93: Env3) = var_90.mem_stream
+            let (var_94: Env118) = var_92.mem_b
+            let (var_95: Env119) = var_92.mem_d
+            let (var_96: Env120) = var_94.mem_f
+            let (var_97: Env121) = var_96.mem_x
+            let (var_98: int64) = var_97.mem_s
+            let (var_99: int64) = (var_98 + var_91)
+            let (var_100: int64) = (var_99 + var_86)
+            let (var_101: int64) = (var_100 + var_77)
+            System.Console.WriteLine(var_101)
+            let (var_102: Env3) = var_95.mem_stream
+            ()
+    else
+        let (var_103: Env115) = var_44.mem_d
+        let (var_104: Env116) = var_103.mem_on_succ
+        let (var_105: Env3) = var_103.mem_stream
+        let (var_106: Env117) = var_104.mem_b
+        let (var_107: Env88) = var_104.mem_d
+        let (var_108: int64) = var_106.mem_x
+        let (var_109: Env90) = var_107.mem_on_succ
+        let (var_110: Env3) = var_107.mem_stream
+        let (var_111: Env117) = var_109.mem_b
+        let (var_112: Env27) = var_109.mem_d
+        let (var_113: int64) = var_111.mem_x
+        let (var_114: Env32) = var_112.mem_on_succ
+        let (var_115: Env3) = var_112.mem_stream
+        let (var_116: Env118) = var_114.mem_b
+        let (var_117: Env119) = var_114.mem_d
+        let (var_118: Env120) = var_116.mem_f
+        let (var_119: Env121) = var_118.mem_x
+        let (var_120: int64) = var_119.mem_s
+        let (var_121: int64) = (var_120 + var_113)
+        let (var_122: int64) = (var_121 + var_108)
+        let (var_123: int64) = (var_122 + var_43)
+        System.Console.WriteLine(var_123)
+        let (var_124: Env3) = var_117.mem_stream
+        ()
+let (var_0: System.IO.Stream) = System.Console.OpenStandardInput()
+let (var_1: System.IO.StreamReader) = System.IO.StreamReader(var_0)
+let (var_2: string) = var_1.ReadToEnd()
+let (var_3: int64) = 0L
+let (var_5: bool) =
+    if (var_3 >= 0L) then
+        let (var_4: int64) = (int64 var_2.Length)
+        (var_3 < var_4)
+    else
+        false
+if var_5 then
+    let (var_6: char) = var_2.[int32 var_3]
+    let (var_7: bool) = ('-' = var_6)
+    let (var_8: int64) = (var_3 + 1L)
+    if var_7 then
+        let (var_9: bool) = false
+        let (var_12: (Env0 * Env1 -> unit)) = method_14((var_9: bool))
+        ()
+    else
+        let (var_13: bool) = true
+        let (var_16: (Env0 * Env1 -> unit)) = method_14((var_13: bool))
+        ()
+else
+    let (var_17: bool) = true
+    let (var_20: (Env0 * Env1 -> unit)) = method_14((var_17: bool))
+    ()
+

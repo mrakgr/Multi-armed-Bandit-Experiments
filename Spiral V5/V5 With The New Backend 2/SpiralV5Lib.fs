@@ -166,13 +166,11 @@ module (empty,singleton,foldl,foldr,init,map,filter,append,concat)
 
 let list =
     (
-    "List",[tuple],"The queue module.",
+    "List",[tuple],"The list module.",
     """
 type list x =
     ()
     x, list x
-
-//inl list = stack list
 
 inl lw x = 
     inl rec loop tup_type n x on_fail on_succ =
@@ -290,7 +288,7 @@ let parsing =
 inl m x = { 
     elem =
         match x with
-        || {parser_rec} {d with on_type} state -> parser_rec d .elem d state : on_type
+        || {parser_rec} {d with on_type} state -> parser_rec d .elem (stack d) state : on_type
         | {parser} -> parser
         | {parser_mon} -> parser_mon .elem
     elem_type =

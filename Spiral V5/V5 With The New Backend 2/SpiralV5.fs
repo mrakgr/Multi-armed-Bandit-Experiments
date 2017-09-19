@@ -1023,6 +1023,7 @@ let spiral_peval module_main =
                     if is_stack then tyt (FunStackT(env',t))
                     else tyt (FunHeapT(env',t))
                 |> destructure d
+            | TyType (FunStackT _ | FunHeapT _) as a -> a
             | x -> on_type_er d.trace <| sprintf "Cannot turn the seleted type into a record. Got: %A" x
 
         let inline recordify_env is_stack d = record_map_env (recordify is_stack d)

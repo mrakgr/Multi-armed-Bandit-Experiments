@@ -924,7 +924,7 @@ let output_test_to_string test =
 let output_test_to_temp test = 
     match spiral_peval (module_ test) with
     | Succ x | Fail x -> 
-        let file = if x.Length > 1024*1024 then "output.txt" else "output.fsx"
+        let file = if x.Length > 1024*128 then "output.txt" else "output.fsx"
         File.WriteAllText(Path.Combine(__SOURCE_DIRECTORY__,file),x)
         x
 
@@ -967,11 +967,13 @@ open Parsing
 open Console
 
 inl p = 
-    tuple (Tuple.repeat 20 parse_int)
+    tuple (Tuple.repeat 3 parse_int)
     |>> (Tuple.foldl (+) 0 >> writeline)
 
 run_with_unit_ret (readall()) p
     """
 
-output_test_to_temp speed1 |> ignore
+output_test_to_temp speed1 
+//|> ignore
+|> printfn "%s"
 
