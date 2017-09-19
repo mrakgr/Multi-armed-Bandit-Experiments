@@ -1,0 +1,7 @@
+let rec method_14(): int64 =
+    5L
+and method_15(): int64 =
+    10L
+let (var_0: int64) = method_14()
+let (var_1: int64) = method_15()
+(var_0 + var_1)

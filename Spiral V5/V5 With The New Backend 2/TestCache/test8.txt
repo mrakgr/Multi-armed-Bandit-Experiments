@@ -1,0 +1,17 @@
+type Union0 =
+    | Union0Case0 of Tuple1
+    | Union0Case1
+and Tuple1 =
+    struct
+    val mem_1: int64
+    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    end
+let rec method_18(): Union0 =
+    Union0Case1
+let (var_0: Union0) = method_18()
+match var_0 with
+| Union0Case0(var_1) ->
+    var_1.mem_1
+| Union0Case1 ->
+    0L
+

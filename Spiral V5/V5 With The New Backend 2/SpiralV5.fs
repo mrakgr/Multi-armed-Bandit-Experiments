@@ -371,7 +371,7 @@ and ProgramNode =
     | Dedent
 
 // #Main
-let spiral_peval module_main output_path = 
+let spiral_peval module_main = 
     let mutable renaming_time = TimeSpan()
     // #Smart constructors
     let inline force (x: Lazy<_>) = x.Value
@@ -456,7 +456,6 @@ let spiral_peval module_main output_path =
     let inmp v' b e = ap (ap (v ">>=") b) (inl_pat v' e)
     let l v b e = ap (inl v e) b
     let l_rec v b e = ap (inl v e) (fix v b)
-    let l_rec_stack v b e = ap (inl v e) (record_stackify (fix v b))
 
     let inl' args body = List.foldBack inl args body
     
@@ -562,7 +561,7 @@ let spiral_peval module_main output_path =
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | ArrayT (_,t) -> is_unit t
         | FunT (env,_) -> is_unit_env env
-        | FunStackT (N x, _) | FunHeapT (N x, _) -> typed_expr_env_free_var_exists x
+        | FunStackT (N x, _) | FunHeapT (N x, _) -> typed_expr_env_free_var_exists x = false
         | VVT t -> is_unit_tuple t
 
     /// Wraps the argument in a list if not a tuple.
@@ -2043,7 +2042,7 @@ let spiral_peval module_main output_path =
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
                 many1 (expr_indent expressions) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
             pipe3 (type_' >>. name) (pattern_list expr) (eq >>. type_parse) <| fun name pattern body -> 
-                l_rec_stack name (type_pat' pattern body)
+                l_rec name (type_pat' pattern body)
 
         let case_open expr = open_ >>. expr |>> module_open
 
@@ -2917,12 +2916,6 @@ let spiral_peval module_main output_path =
 
         loop module_auxes (fun r -> p module_main (r >> ret))
 
-    let copy_to_temporary (x: string) =
-        let output_path = output_path x.Length
-        IO.File.WriteAllText(output_path,x)
-        printfn "Copied the code to: %s" output_path
-        x
-
     let watch = System.Diagnostics.Stopwatch.StartNew()
     parse_modules module_main Fail <| fun body -> 
         printfn "Time for parse: %A" watch.Elapsed
@@ -2936,7 +2929,7 @@ let spiral_peval module_main output_path =
             printfn "Time for peval was: %A" watch.Elapsed
             printfn "Time spent in renaming was: %A" renaming_time
             watch.Restart()
-            let x = Succ (spiral_codegen x |> copy_to_temporary)
+            let x = Succ (spiral_codegen x)
             printfn "Time for codegen was: %A" watch.Elapsed
             x
         with 

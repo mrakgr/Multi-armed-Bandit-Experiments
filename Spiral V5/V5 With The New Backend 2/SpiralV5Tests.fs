@@ -94,7 +94,7 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let test8 = // 
+let test8 =
     "test8",[],"Does the basic union type work?",
     """
 type option_int = 
@@ -138,7 +138,7 @@ match x with
     """
 
 let test11 = // 
-    "test1",[],"Do the nested patterns work on dynamic data?",
+    "test11",[],"Do the nested patterns work on dynamic data?",
     """
 type a = (1,2)
 type b = (1,a,a)
@@ -245,7 +245,7 @@ let test16 = //
     """
 type t = 
     int64
-    float32
+    float64
 if dyn true then box t 0
 else box t 0.0
     """
@@ -272,8 +272,8 @@ inl a = ref () // Is not supposed to be printed due to being unit.
 a := ()
 a()
 
-inl a = ref <| (inl a, b -> a + b) `(int64,int64)
-a := (inl a, b -> a * b) `(int64,int64)
+inl a = ref <| term_cast (inl a, b -> a + b) (int64,int64)
+a := term_cast (inl a, b -> a * b) (int64,int64)
 a() |> ignore
 
 inl a = array_create 10 int64
@@ -298,11 +298,11 @@ let test20 = //
     """
 type t = 
     int64
-    float32
+    float64
 inl x = box t 3.5
 match x with
 | q : int64 -> x * x
-| q : float32 -> x + x
+| q : float64 -> x + x
     """
 
 let test21 = // 
@@ -319,9 +319,8 @@ let test22 = //
     "test22",[],"Do unary operators work?",
     """
 inl t1 x = -x
-inl t2 x = `x
 inl t3 x = .(x)
-t2 true, t3 "asd", t1 2.2
+t1 2.2, t3 "asd"
     """
 
 let test23 = // 
@@ -502,8 +501,7 @@ f (heap add) (dyn 3) (dyn 4)
 let test38 =
     "test38",[],"Is type constructor of an int64 an int64?",
     """
-inl t = box int64 (dyn 1)
-print_static t
+box int64 (dyn 1)
     """
 
 let test39 =
@@ -752,15 +750,6 @@ let test62 =
 inl a,b,c,d,e = dyn (true, false, true, false, true)
 met f x = x
 f a && f b || f c && f d || f e
-
-//let (var_21: bool) = method_14((var_16: bool))
-//let (var_23: bool) = (var_21 && method_14((var_17: bool)))
-//if var_23 then
-//    true
-//else
-//    let (var_24: bool) = method_14((var_18: bool))
-//    let (var_26: bool) = (var_24 && method_14((var_19: bool)))
-//    (var_26 || method_14((var_20: bool)))
     """
 
 let test63 =
@@ -788,7 +777,7 @@ let test65 =
     """
 open List
 
-foldl (+) 0.0 (dyn (empty float32)),
+foldl (+) 0.0 (dyn (empty float64)),
 foldr (+) (dyn (empty float64)) 0.0f64
     """
 
@@ -829,35 +818,6 @@ open List
 
 init 10 (inl x -> 2.2)
     """
-
-
-
-let tests =
-    [|
-    test1;test2;test3;test4;test5;test6;test7;test8;test9
-    test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
-    test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
-    test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53;test54;test55;test58
-    test61;test62;test63;test64;test65;test66;test67;test68;test69
-    hacker_rank_1
-    |] |> Array.map module_
-
-let run_test' (name,aux,desc,body as m) =
-    let main_module = module_ m
-    printfn "%s - %s" name desc
-    spiral_peval main_module 
-        (fun file_size -> 
-            let output_file = if file_size > 1024*1024 then "output.txt" else "output.fsx"
-            System.IO.Path.Combine(__SOURCE_DIRECTORY__,output_file))
-
-
-let run_test name =
-    let (Module(N x)) = Array.find (fun (Module(N(name',aux,desc,body))) -> name = name') tests
-    run_test' x
-
-    //System.Threading.Thread(System.Threading.ThreadStart f, 1024*1024*16).Start()
 
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
@@ -935,7 +895,62 @@ sprintf "%i + %i = %i" a b c |> ignore
 printfn "(%i,%i,%i)" a b c
     """
 
-run_test' parsing6
-|> printfn "%A"
+let tests =
+    [|
+    test1;test2;test3;test4;test5;test6;test7;test8;test9
+    test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
+    test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
+    test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
+    test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
+    test50;test51;test52;test53;test54;test55;test58
+    test61;test62;test63;test64;test65;test66;test67;test68;test69
+    hacker_rank_1
+    parsing1;parsing2;parsing3;parsing4;parsing5;parsing6
+    |]
 
+open System.IO
+open System.Text
+
+let run_test_and_store_it_to_stream stream (name,aux,desc,body as m) =
+    let main_module = module_ m
+    sprintf "%s - %s:\n%s\n\n" name desc (body.Trim()) |> stream
+    match spiral_peval main_module with
+    | Succ x | Fail x -> sprintf "%s" x |> stream
+
+let output_test_to_string test = 
+    match spiral_peval (module_ test) with
+    | Succ x | Fail x -> sprintf "%s" x
+
+let output_tests_to_file file =
+    let s = System.Text.StringBuilder()
+    Array.iter (run_test_and_store_it_to_stream (s.AppendLine >> ignore)) tests
+    File.WriteAllText(Path.Combine(__SOURCE_DIRECTORY__,file),s.ToString())
+
+let make_test_path_from_name name =
+    let dir = Path.Combine(__SOURCE_DIRECTORY__,"TestCache")
+    Directory.CreateDirectory dir |> ignore
+    Path.Combine(dir,name+".txt")
+
+let cache_test (name,aux,desc,body as m) = File.WriteAllText(make_test_path_from_name name, output_test_to_string m)
+let rewrite_test_cache () = Array.iter cache_test tests
+
+let get_diff_using_testcache (stream: StringBuilder) (name,aux,desc,body as m) =
+    let append x = stream.AppendLine x |> ignore
+    let path = make_test_path_from_name name
+    if File.Exists path then 
+        let original = File.ReadAllText path
+        let current = output_test_to_string m
+        if original <> current then 
+            append <| sprintf "Test %s differs from the one in the cache." name
+            append <| sprintf "Original:\n%s" original
+            append <| sprintf "Current:\n%s" current
+    else cache_test m
+    stream
+
+let get_all_diffs () = 
+    Array.fold get_diff_using_testcache (StringBuilder()) tests
+    |> fun x -> x.ToString()
+
+//printfn "%s" <| get_all_diffs()
+output_test_to_string speed1 |> printfn "%s"
 
