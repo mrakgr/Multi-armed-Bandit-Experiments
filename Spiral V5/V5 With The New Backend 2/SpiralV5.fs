@@ -1213,7 +1213,7 @@ let spiral_peval module_main output_path =
             | FunTypeModule when is_term_cast -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" fun_type
             | FunTypeModule ->
                 match args with
-                | TypeString n -> 
+                | TypeString n ->
                     let unpack () = v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a member named %s inside the module." n)
                     match r with
                     | RecordIndividual -> unpack()

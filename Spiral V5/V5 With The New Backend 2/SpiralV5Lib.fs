@@ -485,8 +485,8 @@ inl parse_n_array p n = m {
 
 inl sprintf_parser append =
     inl m = function
-        | {parser} -> m { parser typ = () }
-        | {parser_mon} -> m { parser_mon typ = () }
+        | {parser} -> m { parser = parser; typ = () }
+        | {parser_mon} -> m { parser_mon = parser_mon; typ = () }
     
     inl rec sprintf_parser sprintf_state =
         inl parse_variable = m {
@@ -511,13 +511,13 @@ inl sprintf_parser append =
                 | 'A' -> id
                 | _ -> error_type "Unexpected literal in sprintf."
                 |> inl guard_type -> 
-                    m { parser = inl d state -> d.on_succ (inl x -> append x; sprintf_parser .None d state) state }
+                    m { parser = inl d state -> d.on_succ (inl x -> append x; sprintf_parser .None .elem d state) state }
             }
 
         inl append_state = m {
             parser = inl {d with stream on_succ on_fail} state ->
                 match sprintf_state with
-                | .None -> on_succ state ()
+                | .None -> on_succ () state
                 | ab -> stream {
                     idx = ab
                     on_succ = inl r -> append r; on_succ () state 
@@ -548,7 +548,7 @@ inl sprintf format =
 
 
 module (run,run_with_unit_ret,succ,fail,fatal_fail,state,type_,tuple,(>>=),(|>>),(.>>.),(.>>),(>>.),(>>%),(<|>),choice,stream_char,
-        ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array)
+        ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array,sprintf,sprintf_template)
     """) |> module_
 
 

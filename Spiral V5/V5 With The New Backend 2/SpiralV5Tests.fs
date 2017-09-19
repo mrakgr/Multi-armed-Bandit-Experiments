@@ -911,7 +911,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-let parsing5 = 
+let parsing5 =
     "parsing5",[parsing;console],"Does the Parsing module work?",
     """
 open Parsing
@@ -924,7 +924,18 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-run_test' parsing5
+let parsing6 =
+    "parsing6",[parsing;console],"Do the printf's work?",
+    """
+open Parsing
+open Console
+
+inl a,b,c = dyn (1,2,3)
+sprintf "%i + %i = %i" a b c |> ignore
+printfn "(%i,%i,%i)" a b c
+    """
+
+run_test' parsing6
 |> printfn "%A"
 
 
