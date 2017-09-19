@@ -288,13 +288,23 @@ let parsing =
 inl m x = { 
     elem =
         match x with
-        || {parser_rec} {d with on_type} state -> parser_rec d .elem (stack d) state : on_type
+        || {parser_rec} {d with on_type} state -> parser_rec d .elem d state : on_type
         | {parser} -> parser
         | {parser_mon} -> parser_mon .elem
     elem_type =
         match x with
         | {typ} -> inl _ _ -> in typ
         | {typ_fun} -> typ_fun
+    }
+inl term_cast p = m {
+    parser = inl d state ->
+        inl typ = p .elem_type d state |> out
+        p .elem {d with 
+            on_succ = 
+                inl k = term_cast (inl x,state -> self x state) (typ,state)
+                inl x state -> k (x,state)
+            } state
+    typ_fun = p .elem_type
     }
 inl goto point x = m {
     parser = inl _ -> point x
@@ -330,7 +340,8 @@ inl set_state state = m {
     }
 inl (>>=) a b = m {
     parser = inl d -> a .elem {d with on_succ = inl x -> b x .elem d}
-    typ_fun = inl d state -> type (b (out <| a .elem_type d state) .elem_type d state)
+    typ = int64
+    //typ_fun = inl d state -> type (b (out <| a .elem_type d state) .elem_type d state)
     }
 inl try_with handle handler = m {
     parser = inl d -> handle .elem {d with on_fail = inl _ -> handler .elem d}
@@ -453,7 +464,7 @@ inl pint64 =
 inl spaces x =
     inl rec loop (!dyn i) = m {
         parser_rec = inl {on_succ} -> try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
-        typ = ()
+        typ = int64
         }
     loop 0 x
 
@@ -546,7 +557,7 @@ inl sprintf format =
 
 
 module (run,run_with_unit_ret,succ,fail,fatal_fail,state,type_,tuple,(>>=),(|>>),(.>>.),(.>>),(>>.),(>>%),(<|>),choice,stream_char,
-        ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array,sprintf,sprintf_template)
+        ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array,sprintf,sprintf_template,term_cast)
     """) |> module_
 
 

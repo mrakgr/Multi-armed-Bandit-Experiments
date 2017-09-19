@@ -1310,7 +1310,7 @@ let spiral_peval module_main =
             | closure & TyType(ClosureT (clo_arg_ty,clo_ret_ty)), args -> 
                 let arg_ty = get_type args
                 if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
-                else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr d
+                else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr_even_if_unit d
             | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
 
         let type_box d typec args =

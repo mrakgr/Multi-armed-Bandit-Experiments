@@ -716,6 +716,14 @@ match f with
 | .(a), .(b), .(c) -> a,b,c
     """
 
+let test56 =
+    "test56",[],"Does term casting with an unit return get printed properly?",
+    """
+inl add a, b = ()
+inl k = term_cast add (int64,int64)
+k (1, 2)
+    """
+
 let test58 =
     "test58",[array],"Does the fold function get duplicated?",
     """
@@ -902,7 +910,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53;test54;test55;test58
+    test50;test51;test52;test53;test54;test55;test56;test58
     test61;test62;test63;test64;test65;test66;test67;test68;test69
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6
@@ -967,13 +975,13 @@ open Parsing
 open Console
 
 inl p = 
-    tuple (Tuple.repeat 3 parse_int)
+    tuple (Tuple.repeat 10 <| (inl elem (!stack d) state -> (pint64 .>> spaces) elem d state))
     |>> (Tuple.foldl (+) 0 >> writeline)
 
 run_with_unit_ret (readall()) p
     """
 
-output_test_to_temp speed1 
-//|> ignore
-|> printfn "%s"
+output_test_to_temp speed1
+|> ignore
+//|> printfn "%s"
 
