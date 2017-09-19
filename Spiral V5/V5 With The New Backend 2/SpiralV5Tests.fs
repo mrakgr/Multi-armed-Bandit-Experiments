@@ -915,11 +915,18 @@ let run_test_and_store_it_to_stream stream (name,aux,desc,body as m) =
     let main_module = module_ m
     sprintf "%s - %s:\n%s\n\n" name desc (body.Trim()) |> stream
     match spiral_peval main_module with
-    | Succ x | Fail x -> sprintf "%s" x |> stream
+    | Succ x | Fail x -> stream x
 
 let output_test_to_string test = 
     match spiral_peval (module_ test) with
-    | Succ x | Fail x -> sprintf "%s" x
+    | Succ x | Fail x -> x
+
+let output_test_to_temp test = 
+    match spiral_peval (module_ test) with
+    | Succ x | Fail x -> 
+        let file = if x.Length > 1024*1024 then "output.txt" else "output.fsx"
+        File.WriteAllText(Path.Combine(__SOURCE_DIRECTORY__,file),x)
+        x
 
 let output_tests_to_file file =
     let s = System.Text.StringBuilder()
@@ -952,5 +959,19 @@ let get_all_diffs () =
     |> fun x -> x.ToString()
 
 //printfn "%s" <| get_all_diffs()
-output_test_to_string speed1 |> printfn "%s"
+
+let speed1 =
+    "speed1",[parsing;console],"Does the Parsing module work?",
+    """
+open Parsing
+open Console
+
+inl p = 
+    tuple (Tuple.repeat 20 parse_int)
+    |>> (Tuple.foldl (+) 0 >> writeline)
+
+run_with_unit_ret (readall()) p
+    """
+
+output_test_to_temp speed1 |> ignore
 
