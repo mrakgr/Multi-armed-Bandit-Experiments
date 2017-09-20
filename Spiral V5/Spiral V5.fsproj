@@ -232,6 +232,7 @@
     <None Include="V5 With The New Backend 2\nodify_type_v3.fsx" />
     <None Include="V5 With The New Backend 2\typed_expr_hashing_benchmark.fsx" />
     <None Include="V5 With The New Backend 2\add_interpreter.fsx" />
+    <None Include="V5 With The New Backend 2\weak_conditional_table.fsx" />
     <None Include="V5 With The New Backend 2\parsing3.fsx" />
     <None Include="V5 With The New Backend 2\parsing4.fsx" />
     <None Include="V5 With The New Backend 2\output.fsx" />
@@ -313,7 +314,6 @@
     <Content Include="V5 With The New Backend 2\TestCache\test8.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test9.txt" />
     <Content Include="V5 With The New Backend 2\tests.txt" />
-    <None Include="V5 With The New Backend 2\Script3.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
