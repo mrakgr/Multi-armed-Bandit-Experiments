@@ -4,6 +4,7 @@
 open System
 open System.Collections.Generic
 open Iesi.Collections.Generic
+open HashConsing
 
 // Parser open
 open FParsec
@@ -260,8 +261,8 @@ and Ty =
     | VVT of Ty list
     | LitT of Value
     | FunT of EnvTy * FunType
-    | FunStackT of Node<EnvTerm> * FunType
-    | FunHeapT of Node<EnvTerm> * FunType
+    | FunStackT of EnvTerm * FunType
+    | FunHeapT of EnvTerm * FunType
     | ClosureT of Ty * Ty
     | UnionT of Set<Ty>
     | RecT of int
@@ -290,6 +291,7 @@ and JoinPointType =
     | JoinPointClosure of Arguments
     | JoinPointMethod
     | JoinPointType
+
 and JoinPointKey = MemoKey * Tag
 and JoinPointValue = JoinPointType * Arguments * Renamer
 
@@ -301,8 +303,8 @@ and MemoCases =
 
 and Tag = int
 and TyTag = Tag * Ty
-and EnvTy = Map<string, Ty>
-and EnvTerm = Map<string, TypedExpr>
+and EnvTy = ConsedMap<ConsedNode<string>, Ty>
+and EnvTerm = ConsedMap<ConsedNode<string>, TypedExpr>
 and MemoKey = Node<Expr * EnvTerm>
 
 and Arguments = LinkedHashSet<TyTag>
@@ -532,7 +534,7 @@ let spiral_peval module_main =
         | LitString _ -> PrimT StringT
         | LitChar _ -> PrimT CharT
 
-    let rec env_to_ty env = Map.map (fun _ -> get_type) env
+    let rec env_to_ty env = Map.map get_type env
     and get_type = function
         | TyLit x -> get_type_of_value x
         | TyVV l -> List.map get_type l |> vvt
