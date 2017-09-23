@@ -975,7 +975,7 @@ open Parsing
 open Console
 
 inl p = 
-    tuple (Tuple.repeat 120 <| term_cast (pint64 .>> spaces))
+    tuple (Tuple.repeat 80 <| term_cast (pint64 .>> spaces))
     |>> (Tuple.foldl (+) 0 >> writeline)
 
 run_with_unit_ret (readall()) p
