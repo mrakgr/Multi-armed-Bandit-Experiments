@@ -510,3 +510,4 @@ inl printf = printf_template id
 inl printfn = printf_template writeline
 module (console,readall,readline,write,writeline,printf,printfn)
     """) |> module_
+
