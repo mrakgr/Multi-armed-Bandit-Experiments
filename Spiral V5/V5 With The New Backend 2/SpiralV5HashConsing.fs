@@ -28,11 +28,6 @@ type ConsedNode<'a>(node:'a, tag:int, hkey: int) =
             | :? ConsedNode<'a> as y -> compare tag y.Tag
             | _ -> failwith "Invalid comparison for HashConsed."
 
-type ConsedSet<'a> =
-    | Empty
-    | Leaf of ConsedNode<'a>
-    | Branch of int * int * ConsedSet<'a> * ConsedSet<'a>
-
 type ConsedMap<'a,'b> =
     | Empty
     | Leaf of ConsedNode<'a> * 'b
@@ -170,11 +165,11 @@ type ConsedTable<'a when 'a: equality>(table: WeakArray<ConsedNode<'a>> [], tots
         smallest_bucket_length = lens.[0]; median_bucket_length = lens.[len/2]; biggest_bucket_length = Array.last lens 
         }
 
-module Set =
-    (*  Sets of integers implemented as Patricia trees, following Chris
+module Map =
+    (*  Maps of integers implemented as Patricia trees, following Chris
         Okasaki and Andrew Gill's paper `Fast Mergeable Integer Maps`.
         Patricia trees provide faster operations than standard library's
-        module [Set], and especially very fast [union], [subset], [inter]
+        module [Map], and especially very fast [union], [subset], [inter]
         and [diff] operations. *)
 
     (*  The idea behind Patricia trees is to build a trie on the
@@ -196,7 +191,7 @@ module Set =
         The first branching bit is the bit 0 (and the corresponding prefix
         is [0b0], not of use here), with {4} on the left and {1,5} on the
         right. Then the right subtree branches on bit 2 (and so has a branching
-        value of 2^2 = 4), with prefix [0b1 = 1]. *)
+        value of 2^2 = 4), with prefix [0b01 = 1]. *)
 
     (*  Empty set and singletons. *)
 
@@ -209,10 +204,17 @@ module Set =
 
     let zero_bit k m = (k &&& m) = 0
 
-    let rec mem (k: ConsedNode<_>) = function
+    let rec mem (k: ConsedNode<'a>) (x: ConsedMap<'a,_>) = 
+        match x with
         | Empty -> false
-        | Leaf j -> k.Tag = j.Tag
+        | Leaf (j,_) -> k.Tag = j.Tag
         | Branch (_, m, l, r) -> mem k (if zero_bit k.Tag m then l else r)
+
+    let rec find (k: ConsedNode<_>) (x: ConsedMap<'a,_>) = 
+        match x with
+        | Empty -> raise_not_found()
+        | Leaf (j,v) -> if k.Tag = j.Tag then v else raise_not_found()
+        | Branch (_, m, l, r) -> find k (if zero_bit k.Tag m then l else r)
 
     (*  The following operation [join] will be used in both insertion and
         union. Given two non-empty trees [t0] and [t1] with longest common
@@ -246,17 +248,17 @@ module Set =
 
     let match_prefix k p m = (mask k m) = p
 
-    let add k t =
+    let add c k x t =
         let rec ins = function
-            | Empty -> Leaf k
-            | Leaf j as t -> 
+            | Empty -> Leaf (k, x)
+            | Leaf (j,y) as t -> 
                 if j.Tag = k.Tag then t 
-                else join (k.Tag, Leaf k, j.Tag, t)
+                else join (k.Tag, Leaf (k, c (x, y)), j.Tag, t)
             | Branch (p,m,t0,t1) as t ->
                 if match_prefix k.Tag p m then
                     if zero_bit k.Tag m then Branch (p, m, ins t0, t1)
                     else Branch (p, m, t0, ins t1)
-                else join (k.Tag, Leaf k, p, t)
+                else join (k.Tag, Leaf (k, x), p, t)
         ins t
 
     (*  The code to remove an element is basically similar to the code of
@@ -272,7 +274,7 @@ module Set =
     let remove (k: ConsedNode<_>) t =
         let rec rmv = function
             | Empty -> Empty
-            | Leaf j as t -> if k.Tag = j.Tag then Empty else t
+            | Leaf (j, _) as t -> if k.Tag = j.Tag then Empty else t
             | Branch (p,m,t0,t1) as t ->
                 if match_prefix k.Tag p m then
                     if zero_bit k.Tag m then branch (p, m, rmv t0, t1)
@@ -290,28 +292,32 @@ module Set =
         immediate; in case (4) the function [join] creates the appropriate
         branching. *)
 
-    let rec merge = function
+    let swap (a,b) = b, a 
+
+    let rec merge c x = 
+        let inline f x = merge c x
+        match x with
         | Empty, t  -> t
         | t, Empty  -> t
-        | Leaf k, t -> add k t
-        | t, Leaf k -> add k t
+        | Leaf (k, x), t -> add c k x t
+        | t, Leaf (k, x) -> add (c << swap) k x t
         | (Branch (p,m,s0,s1) as s), (Branch (q,n,t0,t1) as t) ->
             if m = n && match_prefix q p m then
                 (* The trees have the same prefix. Merge the subtrees. *)
-                Branch (p, m, merge (s0,t0), merge (s1,t1))
+                Branch (p, m, f (s0,t0), f (s1,t1))
             elif unsigned_lt m n && match_prefix q p m then
                 (* [q] contains [p]. Merge [t] with a subtree of [s]. *)
-                if zero_bit q m then Branch (p, m, merge (s0,t), s1)
-                else Branch (p, m, s0, merge (s1,t))
+                if zero_bit q m then Branch (p, m, f (s0,t), s1)
+                else Branch (p, m, s0, f (s1,t))
             elif unsigned_lt n m && match_prefix p q n then
                 (* [p] contains [q]. Merge [s] with a subtree of [t]. *)
-                if zero_bit p n then Branch (q, n, merge (s,t0), t1)
-                else Branch (q, n, t0, merge (s,t1))
-              else
+                if zero_bit p n then Branch (q, n, f (s,t0), t1)
+                else Branch (q, n, t0, f (s,t1))
+            else
                 (* The prefixes disagree. *)
                 join (p, s, q, t)
 
-    let union s t = merge (s,t)
+    let union c s t = merge c (s,t)
 
     (*  When checking if [s1] is a subset of [s2] only two of the above
         four cases are relevant: when the prefixes are the same and when the
@@ -322,7 +328,7 @@ module Set =
         match (s1,s2) with
         | Empty, _ -> true
         | _, Empty -> false
-        | Leaf k1, _ -> mem k1 s2
+        | Leaf (k1, _), _ -> mem k1 s2
         | Branch _, Leaf _ -> false
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
             if m1 = m2 && p1 = p2 then subset l1 l2 && subset r1 r2
@@ -336,33 +342,35 @@ module Set =
         still examine the same four cases as in [merge]. The recursion is
         then obvious. *)
 
-    let rec inter s1 s2 = 
+    let rec inter c s1 s2 = 
+        let inline f s1 s2 = inter c s1 s2
         match (s1,s2) with
         | Empty, _ -> Empty
         | _, Empty -> Empty
-        | Leaf k1, _ -> if mem k1 s2 then s1 else Empty
-        | _, Leaf k2 -> if mem k2 s1 then s2 else Empty
+        | Leaf (k1,_), _ -> if mem k1 s2 then s1 else Empty
+        | _, Leaf (k2,_) -> if mem k2 s1 then s2 else Empty
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
-            if m1 = m2 && p1 = p2 then merge (inter l1 l2, inter r1 r2)
+            if m1 = m2 && p1 = p2 then merge c (f l1 l2, f r1 r2)
             elif unsigned_lt m1 m2 && match_prefix p2 p1 m1 then
-                inter (if zero_bit p2 m1 then l1 else r1) s2
+                f (if zero_bit p2 m1 then l1 else r1) s2
             elif unsigned_lt m2 m1 && match_prefix p1 p2 m2 then
-                inter s1 (if zero_bit p1 m2 then l2 else r2)
+                f s1 (if zero_bit p1 m2 then l2 else r2)
             else Empty
 
-    let rec diff s1 s2 = 
+    let rec diff c s1 s2 = 
+        let inline f s1 s2 = diff c s1 s2
         match (s1,s2) with
         | Empty, _ -> Empty
         | _, Empty -> s1
-        | Leaf k1, _ -> if mem k1 s2 then Empty else s1
-        | _, Leaf k2 -> remove k2 s1
+        | Leaf (k1,_), _ -> if mem k1 s2 then Empty else s1
+        | _, Leaf (k2,_) -> remove k2 s1
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
-            if m1 = m2 && p1 = p2 then merge (diff l1 l2, diff r1 r2)
+            if m1 = m2 && p1 = p2 then merge c (f l1 l2, f r1 r2)
             elif unsigned_lt m1 m2 && match_prefix p2 p1 m1 then
-                if zero_bit p2 m1 then merge (diff l1 s2, r1)
-                else merge (l1, diff r1 s2)
+                if zero_bit p2 m1 then merge c (f l1 s2, r1)
+                else merge c (l1, f r1 s2)
             elif unsigned_lt m2 m1 && match_prefix p1 p2 m2 then
-                if zero_bit p1 m2 then diff s1 l2 else diff s1 r2
+                if zero_bit p1 m2 then f s1 l2 else f s1 r2
             else s1
 
     (*  All the following operations ([cardinal], [iter], [fold], [for_all],
@@ -376,46 +384,48 @@ module Set =
 
     let rec iter f = function
         | Empty -> ()
-        | Leaf k -> f k
+        | Leaf (k, v) -> f k v
         | Branch (_,_,t0,t1) -> iter f t0; iter f t1
 
     let rec fold f s accu = 
         match s with
         | Empty -> accu
-        | Leaf k -> f k accu
+        | Leaf (k,v) -> f k v accu
         | Branch (_,_,t0,t1) -> fold f t0 (fold f t1 accu)
 
     let rec for_all p = function
         | Empty -> true
-        | Leaf k -> p k
+        | Leaf (k,v) -> p k v
         | Branch (_,_,t0,t1) -> for_all p t0 && for_all p t1
 
     let rec exists p = function
         | Empty -> false
-        | Leaf k -> p k
+        | Leaf (k, v) -> p k v
         | Branch (_,_,t0,t1) -> exists p t0 || exists p t1
 
     let rec filter pr = function
         | Empty -> Empty
-        | Leaf k as t -> if pr k then t else Empty
+        | Leaf (k, v) as t -> if pr k v then t else Empty
         | Branch (p,m,t0,t1) -> branch (p, m, filter pr t0, filter pr t1)
+
+    let error_on_collision x = failwith "There should never be a collision in this function."
 
     let partition p s =
         let rec part (t,f as acc) = function
             | Empty -> acc
-            | Leaf k -> if p k then (add k t, f) else (t, add k f)
+            | Leaf (k, v) -> if p k then (add error_on_collision k v t, f) else (t, add error_on_collision k v f)
             | Branch (_,_,t0,t1) -> part (part acc t0) t1
         part (Empty, Empty) s
 
     let rec choose = function
         | Empty -> raise_not_found()
-        | Leaf k -> k
+        | Leaf (k,v) -> k,v
         | Branch (_, _,t0,_) -> choose t0   (* we know that [t0] is non-empty *)
 
     let elements s =
         let rec elements_aux acc = function
             | Empty -> acc
-            | Leaf k -> k :: acc
+            | Leaf (k,v) -> (k,v) :: acc
             | Branch (_,_,l,r) -> elements_aux (elements_aux acc l) r
         elements_aux [] s
 
@@ -429,12 +439,12 @@ module Set =
 
     let rec min_elt = function
         | Empty -> raise_not_found()
-        | Leaf k -> k
+        | Leaf (k,v) -> k,v
         | Branch (_,_,s,t) -> min (min_elt s) (min_elt t)
 
     let rec max_elt = function
         | Empty -> raise_not_found()
-        | Leaf k -> k
+        | Leaf (k,v) -> k,v
         | Branch (_,_,s,t) -> max (max_elt s) (max_elt t)
 
     (*  Another nice property of Patricia trees is to be independent of the
@@ -444,14 +454,14 @@ module Set =
     let equal = (=)
     let compare = compare
 
-    let make l = List.foldBack add l Empty
+    let make l = List.foldBack (fun (k,x) -> add error_on_collision k x) l Empty
 
     let rec intersect s1 s2 = 
         match (s1,s2) with
         | Empty, _ -> false
         | _, Empty -> false
-        | Leaf k1, _ -> mem k1 s2
-        | _, Leaf k2 -> mem k2 s1
+        | Leaf (k1,_), _ -> mem k1 s2
+        | _, Leaf (k2,_) -> mem k2 s1
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
             if m1 = m2 && p1 = p2 then intersect l1 l2 || intersect r1 r2
             elif unsigned_lt m1 m2 && match_prefix p2 p1 m1 then
@@ -461,88 +471,3 @@ module Set =
             else
                 false
 
-module Map = 
-    let zero_bit k m = (k &&& m) = 0
-
-    let rec mem (k: ConsedNode<_>) = function
-        | Empty -> false
-        | Leaf(j,_) -> k.Tag = j.Tag
-        | Branch(_, m, l, r) -> mem k (if zero_bit k.Tag m then l else r)
-
-    let rec find (k: ConsedNode<_>) = function
-        | Empty -> raise_not_found()
-        | Leaf(j,x) -> if k.Tag = j.Tag then x else raise_not_found()
-        | Branch(_, m, l, r) -> find k (if zero_bit k.Tag m then l else r)
-
-    let lowest_bit x = x &&& (-x)
-    let branching_bit p0 p1 = lowest_bit (p0 ^^^ p1)
-    let mask p m = p &&& (m-1)
-
-    let join (p0,t0,p1,t1) =
-        let m = branching_bit p0 p1
-        if zero_bit p0 m then Branch (mask p0 m, m, t0, t1)
-        else Branch (mask p0 m, m, t1, t0)
-
-    let match_prefix k p m = (mask k m) = p
-
-    let add (k: ConsedNode<_>) x t =
-        let rec ins = function
-            | Empty -> Leaf (k,x)
-            | Leaf(j,_) as t ->
-                if j.Tag = k.Tag then Leaf(k,x)
-                else join (k.Tag, Leaf(k,x), j.Tag, t)
-            | Branch (p,m,t0,t1) as t ->
-                if match_prefix k.Tag p m then
-                    if zero_bit k.Tag m then Branch (p, m, ins t0, t1)
-                    else Branch (p, m, t0, ins t1)
-                else join (k.Tag, Leaf (k,x), p, t)
-        ins t
-
-    let branch = function
-        | (_,_,Empty,t) -> t
-        | (_,_,t,Empty) -> t
-        | (p,m,t0,t1)   -> Branch (p,m,t0,t1)
-
-    let remove (k: ConsedNode<_>) t =
-        let rec rmv = function
-            | Empty -> Empty
-            | Leaf (j,_) as t -> if k.Tag = j.Tag then Empty else t
-            | Branch (p,m,t0,t1) as t ->
-                if match_prefix k.Tag p m then
-                    if zero_bit k.Tag m then branch (p, m, rmv t0, t1)
-                    else branch (p, m, t0, rmv t1)
-                else t
-        rmv t
-
-    let rec iter f = function
-        | Empty -> ()
-        | Leaf (k,x) -> f k x
-        | Branch (_,_,t0,t1) -> iter f t0; iter f t1
-
-    let rec map f = function
-        | Empty -> Empty
-        | Leaf (k,x) -> Leaf (k, f x)
-        | Branch (p,m,t0,t1) -> Branch (p, m, map f t0, map f t1)
-
-    let rec mapi f = function
-        | Empty -> Empty
-        | Leaf (k,x) -> Leaf (k, f k x)
-        | Branch (p,m,t0,t1) -> Branch (p, m, mapi f t0, mapi f t1)
-
-    let rec foldBack f s accu = 
-        match s with
-        | Empty -> accu
-        | Leaf (k,x) -> f k x accu
-        | Branch (_,_,t0,t1) -> foldBack f t0 (foldBack f t1 accu)
-
-    let rec exists f s = 
-        match s with
-        | Empty -> false
-        | Leaf (k,x) -> f k x
-        | Branch (_,_,t0,t1) -> exists f t0 || exists f t1
-
-    let rec forall f s = 
-        match s with
-        | Empty -> true
-        | Leaf (k,x) -> f k x
-        | Branch (_,_,t0,t1) -> forall f t0 && forall f t1
