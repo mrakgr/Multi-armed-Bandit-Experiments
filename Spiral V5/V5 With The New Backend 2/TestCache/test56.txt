@@ -1,23 +1,5 @@
-Invalid use of apply. TyVV [] and TyFun
-  (Empty,
-   FunTypeFunction
-     ("main_arg",
-      Op
-        (Case,
- [V "main_arg";
-  Op
-    (IfStatic,
- [Op (VVIs, [V "main_arg"]);
-  Op
-    (IfStatic,
- [Op (EQ, [Op (VVLength, [V "main_arg"]); Lit LitInt64 2L]);
-  Op
-    (Apply,
- [FunctionFilt
-    (Leaf (...
-Error trace on line: 2, column: 1 in file "test56".
-inl add a, b = ()
-^
-Error trace on line: 3, column: 9 in file "test56".
-inl k = term_cast add (int64,int64)
-        ^
+let rec method_14 ((var_0: int64), (var_1: int64)): unit =
+    ()
+let (var_2: (int64 * int64 -> unit)) = method_14
+var_2(1L, 2L)
+

@@ -253,7 +253,7 @@ and Expr =
     | Lit of Node<Value>
     | Pattern of Node<Pattern>
     | Function of Node<FunctionCore>
-    | FunctionFilt of Node<EnvTerm * Node<FunctionCore>>
+    | FunctionFilt of Node<Set<string> * Node<FunctionCore>>
     | VV of Node<Expr list>
     | Op of Node<Op * Expr list>
     | ExprPos of Pos<Expr>
@@ -305,8 +305,8 @@ and MemoCases =
 
 and Tag = int
 and TyTag = Tag * Ty
-and EnvTy = ConsedMap<string, Ty>
-and EnvTerm = ConsedMap<string, TypedExpr>
+and EnvTy = Map<string, Ty>
+and EnvTerm = Map<string, TypedExpr>
 and MemoKey = Node<Expr * EnvTerm>
 
 and Arguments = LinkedHashSet<TyTag>
@@ -545,7 +545,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | LitString _ -> PrimT StringT
         | LitChar _ -> PrimT CharT
 
-    let rec env_to_ty env = ConsedMap.map (fun _ -> get_type) env
+    let rec env_to_ty env = Map.map (fun _ -> get_type) env
     and get_type = function
         | TyLit x -> get_type_of_value x
         | TyVV l -> List.map get_type l |> vvt
@@ -555,7 +555,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | TyLet(_,_,_,t) | TyJoinPoint(_,t)
         | TyState (_,_,t) | TyOp(_,_,t) -> t
 
-    let rec typed_expr_env_free_var_exists x = ConsedMap.exists (fun k v -> typed_expr_free_var_exists v) x
+    let rec typed_expr_env_free_var_exists x = Map.exists (fun k v -> typed_expr_free_var_exists v) x
     and typed_expr_free_var_exists e =
         let inline f x = typed_expr_free_var_exists x
         match e with
@@ -568,7 +568,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     // #Unit type tests
     let rec is_unit_tuple t = List.forall is_unit t
-    and is_unit_env x = ConsedMap.forall (fun _ -> is_unit) x
+    and is_unit_env x = Map.forall (fun _ -> is_unit) x
     and is_unit = function
         | TypeInTypeT _ | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
@@ -778,23 +778,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     and expr_prepass e =
         let inline f e = expr_prepass e
-        let singleton x = Empty |> ConsedMap.add error_on_collision (consify_string x) TyB
-        let unionMany l = List.fold (ConsedMap.union fst) Empty l
-        let remove x l = ConsedMap.remove (consify_string x) l
         match e with
-        | V (N n) -> singleton n, e
+        | V (N n) -> Set.singleton n, e
         | Op(N(op',l)) ->
             let l,l' = List.map f l |> List.unzip
-            unionMany l, op(op',l')
+            Set.unionMany l, op(op',l')
         | VV (N l) -> 
             let l,l' = List.map f l |> List.unzip
-            unionMany l, vv l'
+            Set.unionMany l, vv l'
         | FunctionFilt(N (vars,N(name,body))) ->
-            remove name vars, e
+            Set.remove name vars, e
         | Function(N(name,body)) ->
             let vars,body = f body
-            remove name vars, func_filt(vars,nodify_func(name,body))
-        | Lit _ -> Empty, e
+            Set.remove name vars, func_filt(vars,nodify_func(name,body))
+        | Lit _ -> Set.empty, e
         | Pattern (N pat) -> pattern_compile_single pat
         | ExprPos p -> 
             let vars, body = f p.Expression
@@ -808,7 +805,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         s' 
 
     let inline renamables0() = {renamer=d0(); renamer_reversed=d0(); fv=lh0(); renamed_fv=lh0()}
-    let rec renamer_apply_env r = ConsedMap.map (fun k v -> renamer_apply_typedexpr r v)
+    let rec renamer_apply_env r = Map.map (fun k v -> renamer_apply_typedexpr r v)
     and renamer_apply_typedexpr ({renamer=renamer; renamer_reversed=renamer_reversed; fv=fv; renamed_fv=renamed_fv} as r) e =
         let inline f e = renamer_apply_typedexpr r e
         let inline rename (n,t as k) =
@@ -911,7 +908,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let inline inner_compile x = expr_prepass x |> snd |> tev d
 
         let inline v_find env x on_fail = 
-            match ConsedMap.tryFind x env with
+            match Map.tryFind x env with
             | Some v -> v
             | None -> on_fail()
 
@@ -961,8 +958,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     let unpack i typ = un_template typ <| fun () -> destructure <| TyOp(VVIndex,[r;TyLit <| LitInt64 (int64 i)],typ)
                     List.mapi unpack tuple_types
                 let env_unseal x =
-                    let unseal (C k) typ = un_template typ <| fun () -> destructure <| TyOp(RecordIndividualUnseal,[r; TyLit (LitString k)], typ)
-                    ConsedMap.map unseal x
+                    let unseal k typ = un_template typ <| fun () -> destructure <| TyOp(RecordIndividualUnseal,[r; TyLit (LitString k)], typ)
+                    Map.map unseal x
                 match get_type r with
                 | VVT tuple_types -> tyvv(index_tuple_args tuple_types)
                 | FunT (env,t) -> tyfun(env_unseal env, t)
@@ -1082,7 +1079,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let memoize_type d x = 
             let memo_type _ = JoinPointType
-            let env = d.env |> ConsedMap.map (fun _ -> get_type >> tyt)
+            let env = d.env |> Map.map (fun _ -> get_type >> tyt)
             let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
             tyt ret_ty
                 
@@ -1191,10 +1188,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyV _ as v -> TyOp(RecordBoxedUnseal,[recf;v],get_type v) |> destructure d
             | TyVV l -> tyvv (List.map f l)
             | TyBox (a,b) -> tybox (f a, b)
-            | TyFun (env, b) -> tyfun (ConsedMap.map (fun _ -> f) env, b)
+            | TyFun (env, b) -> tyfun (Map.map (fun _ -> f) env, b)
             | x -> x
                
-        let record_env_term_unseal d recf env = ConsedMap.map (fun _ -> record_boxed_unseal d recf) env
+        let record_env_term_unseal d recf env = Map.map (fun _ -> record_boxed_unseal d recf) env
 
         let (|Func|_|) = function
             | TyFun(env,t) -> Some (RecordIndividual,env,t)
@@ -1215,17 +1212,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match fun_type with
             | FunTypeRecFunction ((pat,body),name) ->
                 let env_term = unpack()
-                let env = if pat <> "" then ConsedMap.add fst (consify_string pat) args env_term else env_term
-                tev {d with env = ConsedMap.add fst (consify_string name) recf env} body
+                let env = if pat <> "" then Map.add pat args env_term else env_term
+                tev {d with env = Map.add name recf env} body
             | FunTypeFunction (pat,body) -> 
                 let env_term = unpack()
-                tev {d with env = if pat <> "" then ConsedMap.add fst (consify_string pat) args env_term else env_term} body
+                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
             // apply_module
             | FunTypeModule when is_term_cast -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" fun_type
             | FunTypeModule ->
                 match args with
                 | TypeString n ->
-                    let unpack () = v_find env_term (consify_string n) (fun () -> on_type_er d.trace <| sprintf "Cannot find a member named %s inside the module." n)
+                    let unpack () = v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a member named %s inside the module." n)
                     match r with
                     | RecordIndividual -> unpack()
                     | RecordStack | RecordHeap -> unpack() |> record_boxed_unseal d recf
@@ -1396,7 +1393,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match a with
             | Func(r,env_term, FunTypeModule) as recf -> 
                 let inline opt f env =
-                    let env = ConsedMap.fold (fun s k v -> ConsedMap.add fst k (f v) s) d.env env
+                    let env = Map.fold (fun s k v -> Map.add k (f v) s) d.env env
                     tev {d with env = env} b
                 match r with
                 | RecordIndividual -> opt id env_term
@@ -1558,7 +1555,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let inline f x = is_static' x
             match x with
             | TyBox (x,_) -> f x
-            | Func (_,x,_) -> ConsedMap.forall (fun _ -> f) x
+            | Func (_,x,_) -> Map.forall (fun _ -> f) x
             | TyVV x -> List.forall f x
             | TyLit _ -> true
             | _ -> false
@@ -1580,9 +1577,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | ExprPos p -> loop acc p.Expression
                 | x -> on_type_er d.trace <| sprintf "Only variable names are allowed in module create. Got: %A" x
             let er n _ = on_type_er d.trace <| sprintf "In module create, the variable %s was not found." n
-            let env = List.fold (fun s n -> 
-                let n' = consify_string n
-                ConsedMap.add fst n' (v_find d.env n' (er n)) s) Empty (loop [] l)
+            let env = List.fold (fun s n -> Map.add n (v_find d.env n (er n)) s) Map.empty (loop [] l)
             tyfun(env, FunTypeModule)
 
         let array_create d size typ =
@@ -1625,15 +1620,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match tev2 d a b with
             | Func(_,env,FunTypeModule), b -> 
                 match b with
-                | TypeString b -> TyLit (LitBool <| ConsedMap.containsKey (consify_string b) env)
+                | TypeString b -> TyLit (LitBool <| Map.containsKey b env)
                 | _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
             | x -> on_type_er d.trace <| sprintf "Expecting a module as the first argument to ModuleHasMember. Got: %A" x
 
         let module_create_alt d l =
             List.fold (fun env -> function
-                | VV(N [Lit(N(LitString n)); e]) -> ConsedMap.add fst (consify_string n) (tev d e |> destructure d) env
+                | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
-                ) Empty l
+                ) Map.empty l
             |> fun x -> tyfun(x, FunTypeModule)
 
         let module_with_alt (d: LangEnv) l =
@@ -1645,7 +1640,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let rec loop cur_env names = 
                 let inline unseal_record name =
-                    match ConsedMap.tryFind (consify_string name) cur_env with
+                    match Map.tryFind name cur_env with
                     | Some (Func(r,env,FunTypeModule) as recf) -> 
                         match r with
                         | RecordIndividual -> r, env
@@ -1662,14 +1657,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 match names with
                 | V(N name) :: names -> re_record name <| fun env -> loop env names
-                | Lit(N(LitString name)) :: names -> tyfun (ConsedMap.add fst (consify_string name) (re_record name <| fun env -> loop env names) cur_env, FunTypeModule)
+                | Lit(N(LitString name)) :: names -> tyfun (Map.add name (re_record name <| fun env -> loop env names) cur_env, FunTypeModule)
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString name)); e]) ->
-                            match ConsedMap.tryFind (consify_string name) env with
-                            | Some v -> {d with env = ConsedMap.add fst (consify_string "self") v d.env}
+                            match Map.tryFind name env with
+                            | Some v -> {d with env = Map.add "self" v d.env}
                             | None -> d
-                            |> fun d -> ConsedMap.add fst (consify_string name) (tev d e |> destructure d) env
+                            |> fun d -> Map.add name (tev d e |> destructure d) env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
                     |> fun env -> tyfun(env, FunTypeModule)
@@ -1685,14 +1680,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         match expr with
         | Lit (N value) -> TyLit value
-        | V (N x) -> v_find d.env (consify_string x) (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x) |> destructure d
+        | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x) |> destructure d
         | FunctionFilt(N (vars,N (pat, body))) -> 
-            ConsedMap.iter (fun (C k) v -> printfn "%s=%A" k v) d.env
-            printfn "***"
-            let env = ConsedMap.inter fst d.env vars
-            ConsedMap.iter (fun (C k) v -> printfn "%s=%A" k v) env
-            printfn "----"
-            let pat = if ConsedMap.containsKey (consify_string pat) vars then pat else ""
+            let env = Map.filter (fun k _ -> Set.contains k vars) d.env
+            let pat = if vars.Contains pat then pat else ""
             tyfun(env, FunTypeFunction (pat, body))
         | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
         | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
@@ -1719,7 +1710,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TermCast,[a;b] -> term_cast d a b
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
             | PrintEnv,[a] -> 
-                ConsedMap.iter (fun (C k) v -> printfn "%s=%A" k v) d.env
+                Map.iter (fun k v -> printfn "%s" k) d.env
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | ModuleOpen,[a;b] -> module_open d a b
@@ -2603,7 +2594,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 if is_unit (get_type x) then case_name else sprintf "%s(%s)" case_name (codegen x)
             | TyFun(env_term, _) ->
                 let t = get_type expr
-                ConsedMap.toArray env_term
+                Map.toArray env_term
                 |> Array.map snd
                 |> fun x -> make_struct x "" (fun args -> sprintf "%s(%s)" (print_tag_env t) args)
             | TyVV l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
@@ -2766,7 +2757,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let inline print_fun_x is_stack env x =
                 let {fv=fv} as r = renamables0()
                 renamer_apply_env r env |> ignore
-                if ConsedMap.forall (fun _ -> get_type >> is_unit) env = false then
+                if Map.forall (fun _ -> get_type >> is_unit) env = false then
                     let tuple_name = 
                         if is_stack then print_tag_env_stack x
                         else print_tag_env_heap x
@@ -2778,9 +2769,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | FunT(tys, _) as x ->
                 if is_unit_env tys = false then
                     let tuple_name = print_tag_env x
-                    let iter f = ConsedMap.iter (fun (C k) v -> f k v)
-                    let fold f = ConsedMap.fold (fun s (C k) v -> f s k v)
-                    print_x_definition true iter fold tuple_name tys
+                    print_x_definition true Map.iter Map.fold tuple_name tys
             | FunStackT(C env, _) as x -> print_fun_x true env x
             | FunHeapT(C env, _) as x -> print_fun_x false env x
             | RecT tag as x ->
@@ -2839,7 +2828,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     let data_empty () =
         {ltag = ref 0; seq=ref id; trace=[]; rbeh=AnnotationDive
-         env = Empty
+         env = Map.empty
          cse_env = ref Map.empty
          }
 

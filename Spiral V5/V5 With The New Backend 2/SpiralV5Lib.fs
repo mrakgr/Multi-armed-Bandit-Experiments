@@ -340,8 +340,8 @@ inl set_state state = m {
     }
 inl (>>=) a b = m {
     parser = inl d -> a .elem {d with on_succ = inl x -> b x .elem d}
-    typ = int64
-    //typ_fun = inl d state -> type (b (out <| a .elem_type d state) .elem_type d state)
+//    typ = int64
+    typ_fun = inl d state -> type (b (out <| a .elem_type d state) .elem_type d state)
     }
 inl try_with handle handler = m {
     parser = inl d -> handle .elem {d with on_fail = inl _ -> handler .elem d}
