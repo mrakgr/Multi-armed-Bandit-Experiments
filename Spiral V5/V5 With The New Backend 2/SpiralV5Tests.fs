@@ -963,7 +963,7 @@ let get_diff_using_testcache (stream: StringBuilder) (name,aux,desc,body as m) =
     stream
 
 let get_all_diffs () = 
-    Array.fold get_diff_using_testcache (StringBuilder()) tests
+    Array.fold get_diff_using_testcache (StringBuilder()) tests.[0..5]
     |> fun x -> x.ToString()
 
 //printfn "%s" <| get_all_diffs()
@@ -981,8 +981,11 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-output_test_to_temp speed1
-|> ignore
+//get_all_diffs()
 //|> printfn "%s"
+
+output_test_to_temp test1
+//|> ignore
+|> printfn "%s"
 
 

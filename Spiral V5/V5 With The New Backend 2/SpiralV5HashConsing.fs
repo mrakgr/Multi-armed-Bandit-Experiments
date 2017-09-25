@@ -9,6 +9,7 @@ open System
 open System.Runtime.InteropServices
 
 let raise_not_found _ = raise <| System.Collections.Generic.KeyNotFoundException()
+let error_on_collision x = failwith "There should never be a collision in this function."
 
 type ConsedNode<'a>(node:'a, tag:int, hkey: int) =
     member val Tag = tag
@@ -165,7 +166,7 @@ type ConsedTable<'a when 'a: equality>(table: WeakArray<ConsedNode<'a>> [], tots
         smallest_bucket_length = lens.[0]; median_bucket_length = lens.[len/2]; biggest_bucket_length = Array.last lens 
         }
 
-module Map =
+module ConsedMap =
     (*  Maps of integers implemented as Patricia trees, following Chris
         Okasaki and Andrew Gill's paper `Fast Mergeable Integer Maps`.
         Patricia trees provide faster operations than standard library's
@@ -204,17 +205,23 @@ module Map =
 
     let zero_bit k m = (k &&& m) = 0
 
-    let rec mem (k: ConsedNode<'a>) (x: ConsedMap<'a,_>) = 
+    let rec containsKey (k: ConsedNode<'a>) (x: ConsedMap<'a,_>) = 
         match x with
         | Empty -> false
         | Leaf (j,_) -> k.Tag = j.Tag
-        | Branch (_, m, l, r) -> mem k (if zero_bit k.Tag m then l else r)
+        | Branch (_, m, l, r) -> containsKey k (if zero_bit k.Tag m then l else r)
 
     let rec find (k: ConsedNode<_>) (x: ConsedMap<'a,_>) = 
         match x with
         | Empty -> raise_not_found()
         | Leaf (j,v) -> if k.Tag = j.Tag then v else raise_not_found()
         | Branch (_, m, l, r) -> find k (if zero_bit k.Tag m then l else r)
+
+    let rec tryFind (k: ConsedNode<_>) (x: ConsedMap<'a,_>) = 
+        match x with
+        | Empty -> None
+        | Leaf (j,v) -> if k.Tag = j.Tag then Some v else None
+        | Branch (_, m, l, r) -> tryFind k (if zero_bit k.Tag m then l else r)
 
     (*  The following operation [join] will be used in both insertion and
         union. Given two non-empty trees [t0] and [t1] with longest common
@@ -230,7 +237,13 @@ module Map =
     let branching_bit p0 p1 = lowest_bit (p0 ^^^ p1)
     let mask p m = p &&& (m-1)
 
-    (*  When comparing branching bits, one has to be careful with the sign bit *)
+    (* When comparing branching bits, one has to be careful with the sign bit *)
+    // Note: This is a bug fix for the Okasaki & Gill's paper.
+    // The bug is described in the paper: http://janmidtgaard.dk/papers/Midtgaard%3a17.pdf
+
+    // TODO: Instead of doing this, it might be worth switching to unsigned integers for 
+    // the table and the map instead. It is not like I have legacy code that needs this hack,
+    // to remain standing.
     let unsigned_lt n m = n >= 0 && (m < 0 || n < m)
 
     let join (p0,t0,p1,t1) =
@@ -328,7 +341,7 @@ module Map =
         match (s1,s2) with
         | Empty, _ -> true
         | _, Empty -> false
-        | Leaf (k1, _), _ -> mem k1 s2
+        | Leaf (k1, _), _ -> containsKey k1 s2
         | Branch _, Leaf _ -> false
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
             if m1 = m2 && p1 = p2 then subset l1 l2 && subset r1 r2
@@ -347,8 +360,8 @@ module Map =
         match (s1,s2) with
         | Empty, _ -> Empty
         | _, Empty -> Empty
-        | Leaf (k1,_), _ -> if mem k1 s2 then s1 else Empty
-        | _, Leaf (k2,_) -> if mem k2 s1 then s2 else Empty
+        | Leaf (k1,_), _ -> if containsKey k1 s2 then s1 else Empty
+        | _, Leaf (k2,_) -> if containsKey k2 s1 then s2 else Empty
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
             if m1 = m2 && p1 = p2 then merge c (f l1 l2, f r1 r2)
             elif unsigned_lt m1 m2 && match_prefix p2 p1 m1 then
@@ -362,7 +375,7 @@ module Map =
         match (s1,s2) with
         | Empty, _ -> Empty
         | _, Empty -> s1
-        | Leaf (k1,_), _ -> if mem k1 s2 then Empty else s1
+        | Leaf (k1,_), _ -> if containsKey k1 s2 then Empty else s1
         | _, Leaf (k2,_) -> remove k2 s1
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
             if m1 = m2 && p1 = p2 then merge c (f l1 l2, f r1 r2)
@@ -387,16 +400,27 @@ module Map =
         | Leaf (k, v) -> f k v
         | Branch (_,_,t0,t1) -> iter f t0; iter f t1
 
-    let rec fold f s accu = 
+    let rec map f = function
+        | Empty -> Empty
+        | Leaf (k,x) -> Leaf (k, f k x)
+        | Branch (p,m,t0,t1) -> Branch (p, m, map f t0, map f t1)
+
+    let rec fold f accu s = 
+        match s with
+        | Empty -> accu
+        | Leaf (k,v) -> f accu k v
+        | Branch (_,_,t0,t1) -> fold f (fold f accu t0) t1
+
+    let rec foldBack f s accu = 
         match s with
         | Empty -> accu
         | Leaf (k,v) -> f k v accu
-        | Branch (_,_,t0,t1) -> fold f t0 (fold f t1 accu)
+        | Branch (_,_,t0,t1) -> foldBack f t0 (foldBack f t1 accu)
 
-    let rec for_all p = function
+    let rec forall p = function
         | Empty -> true
         | Leaf (k,v) -> p k v
-        | Branch (_,_,t0,t1) -> for_all p t0 && for_all p t1
+        | Branch (_,_,t0,t1) -> forall p t0 && forall p t1
 
     let rec exists p = function
         | Empty -> false
@@ -407,8 +431,6 @@ module Map =
         | Empty -> Empty
         | Leaf (k, v) as t -> if pr k v then t else Empty
         | Branch (p,m,t0,t1) -> branch (p, m, filter pr t0, filter pr t1)
-
-    let error_on_collision x = failwith "There should never be a collision in this function."
 
     let partition p s =
         let rec part (t,f as acc) = function
@@ -451,17 +473,18 @@ module Map =
         order of insertion. As a consequence, two Patricia trees have the
         same elements if and only if they are structurally equal. *)
 
-    let equal = (=)
-    let compare = compare
-
-    let make l = List.foldBack (fun (k,x) -> add error_on_collision k x) l Empty
+    let fromList l = List.foldBack (fun (k,x) -> add error_on_collision k x) l Empty
+    let toArray l =
+        let x = ResizeArray()
+        iter (fun k v -> x.Add(k,v)) l
+        x.ToArray() 
 
     let rec intersect s1 s2 = 
         match (s1,s2) with
         | Empty, _ -> false
         | _, Empty -> false
-        | Leaf (k1,_), _ -> mem k1 s2
-        | _, Leaf (k2,_) -> mem k2 s1
+        | Leaf (k1,_), _ -> containsKey k1 s2
+        | _, Leaf (k2,_) -> containsKey k2 s1
         | Branch (p1,m1,l1,r1), Branch (p2,m2,l2,r2) ->
             if m1 = m2 && p1 = p2 then intersect l1 l2 || intersect r1 r2
             elif unsigned_lt m1 m2 && match_prefix p2 p1 m1 then
@@ -470,4 +493,3 @@ module Map =
                 intersect s1 (if zero_bit p1 m2 then l2 else r2)
             else
                 false
-
