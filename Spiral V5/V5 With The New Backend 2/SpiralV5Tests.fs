@@ -975,16 +975,17 @@ open Parsing
 open Console
 
 inl p = 
-    tuple (Tuple.repeat 80 <| term_cast (pint64 .>> spaces) int64)
+    tuple (Tuple.repeat 1 <| (pint64 .>> spaces))
     |>> (Tuple.foldl (+) 0 >> writeline)
 
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
+//get_all_diffs()
+//|> printfn "%s"
 
-//output_test_to_temp test1
+output_test_to_temp speed1
+|> ignore
 //|> printfn "%s"
 
 
