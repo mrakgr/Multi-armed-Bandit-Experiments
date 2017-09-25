@@ -43,29 +43,43 @@ let gentag =
     let mutable i = 0
     fun () -> i <- i+1; i
 
+//type WeakResizeArray<'a>(ar) = // Partly based on: https://www.codeproject.com/Articles/43042/WeakReferences-GCHandles-and-WeakArrays
+//    new i = new WeakResizeArray<_>(Array.init i (fun _ -> GCHandle.Alloc(null,GCHandleType.Weak)) |> ResizeArray)
+//    member val GCHandleArray = ar
+//    member __.Count = ar.Count
+//    member __.Item 
+//        with set i (v: 'a) = 
+//            let mutable x = ar.[i]
+//            x.Target <- v
+//        and get(i) = 
+//            match ar.[i].Target with
+//            | null -> None
+//            | v -> Some (v :?> 'a)
+//        
+//    member x.Check i = match x.[i] with None -> false | Some _ -> true
+//    member x.Add v = ar.Add(GCHandle.Alloc(v,GCHandleType.Weak))
+//
+//    interface IDisposable with
+//        member __.Dispose()= 
+//            let rec loop i =
+//                if i < ar.Count then
+//                    let x = ar.[i]
+//                    if x.IsAllocated then x.Free(); loop (i+1)
+//            loop 0
+
 type WeakResizeArray<'a>(ar) = // Partly based on: https://www.codeproject.com/Articles/43042/WeakReferences-GCHandles-and-WeakArrays
-    new i = new WeakResizeArray<_>(Array.init i (fun _ -> GCHandle.Alloc(null,GCHandleType.Weak)) |> ResizeArray)
+    new i = new WeakResizeArray<_>(Array.zeroCreate i |> ResizeArray)
     member val GCHandleArray = ar
     member __.Count = ar.Count
     member __.Item 
-        with set i (v: 'a) = 
-            let mutable x = ar.[i]
-            x.Target <- v
-        and get(i) = 
-            match ar.[i].Target with
-            | null -> None
-            | v -> Some (v :?> 'a)
+        with set i (v: 'a) = ar.[i] <- v
+        and get(i) = ar.[i]
         
-    member x.Check i = match x.[i] with None -> false | Some _ -> true
-    member x.Add v = ar.Add(GCHandle.Alloc(v,GCHandleType.Weak))
+    member x.Check i = true
+    member x.Add v = ar.Add(v)
 
     interface IDisposable with
-        member __.Dispose()= 
-            let rec loop i =
-                if i < ar.Count then
-                    let x = ar.[i]
-                    if x.IsAllocated then x.Free(); loop (i+1)
-            loop 0
+        member __.Dispose() = ()
 
 type ConsedTable<'a when 'a: equality>(table: WeakResizeArray<ConsedNode<'a>> [], totsize: int, limit: int) =
     static let max_array_length = Int32.MaxValue
@@ -77,27 +91,27 @@ type ConsedTable<'a when 'a: equality>(table: WeakResizeArray<ConsedNode<'a>> []
 
     member val Table = table with get,set
     member val TotalSize = totsize with get,set // sum of the bucket sizes
-    member val Limit = limit with get,set // max ratio totsize/table length
+    member val Limit = Some limit with get,set // max ratio totsize/table length
 
     member t.Clear =
         for i=0 to Array.length t.Table - 1 do t.Table.[i] <- new WeakResizeArray<_>(0)
         t.TotalSize <- 0
-        t.Limit <- 3
+        t.Limit <- Some 3
 
     member t.FoldBack f init =
         let rec fold_bucket i (b: WeakResizeArray<_>) accu =
             if i >= b.Count then accu else
                 match b.[i] with
-                | None -> fold_bucket (i+1) b accu
-                | Some v -> fold_bucket (i+1) b (f v accu)
+//                | None -> fold_bucket (i+1) b accu
+                | v -> fold_bucket (i+1) b (f v accu)
         Array.foldBack (fold_bucket 0) t.Table init
         
     member t.Iter f =
         let rec iter_bucket i (b: WeakResizeArray<_>) =
             if i >= b.Count then () else
                 match b.[i] with
-                | None -> iter_bucket (i+1) b
-                | Some v -> f v; iter_bucket (i+1) b
+//                | None -> iter_bucket (i+1) b
+                | v -> f v; iter_bucket (i+1) b
         Array.iter (iter_bucket 0) t.Table
 
     member t.Count =
@@ -108,24 +122,33 @@ type ConsedTable<'a when 'a: equality>(table: WeakResizeArray<ConsedNode<'a>> []
         Array.foldBack (count_bucket 0) t.Table 0
 
     member t.Resize =
+//        printfn "I am in resize."
         let oldlen = Array.length t.Table
         let newlen = next_sz oldlen
         if newlen > oldlen then
             let newt = new ConsedTable<_>(newlen)
-            newt.Limit <- t.Limit + 100 // prevent resizing of newt
+            newt.Limit <- None // prevent resizing of newt
             t.Iter newt.Add
             t.Table <- newt.Table
-            t.Limit <- t.Limit+2
+            let limit = match t.Limit with None -> failwith "impossible" | Some v -> v
+            t.Limit <- limit+2 |> Some
+//        printfn "Done with resize."
 
     member t.Add d =
+//        printfn "I am in t.Add."
         let index = d.HKey % (Array.length t.Table)
         let bucket = t.Table.[index]
         let sz = bucket.Count
         let rec loop i =
+//            printfn "I am in Add's loop. i=%i, sz=%i" i sz
             if i >= sz then
+//                printfn "i >= sz in Add's loop. t.Count=%i" t.Count
                 bucket.Add d
+//                printfn "Done with bucket.Add in loop."
                 t.TotalSize <- t.TotalSize + 1
-                if t.TotalSize > t.Limit * Array.length t.Table then t.Resize
+                match t.Limit with
+                | Some limit when t.TotalSize > limit * Array.length t.Table -> t.Resize
+                | _ -> ()
             else
                 if bucket.Check i then loop (i+1)
                 else bucket.[i] <- d
@@ -133,19 +156,23 @@ type ConsedTable<'a when 'a: equality>(table: WeakResizeArray<ConsedNode<'a>> []
 
     member t.HashCons d =
         let hkey = hash d &&& Int32.MaxValue // Zeroes out the sign bit. Is unnecessary in the Ocaml version.
+//        printfn "Hashconsing the key %i" hkey
         let index = hkey % (Array.length t.Table)
         let bucket = t.Table.[index]
         let sz = bucket.Count
         let rec loop i =
             if i >= sz then
+//                printfn "i >= sz in hashcons"
                 let hnode = ConsedNode(d,gentag(),hkey)
                 t.Add hnode
+//                printfn "Done with Add in hashcons."
                 hnode
             else
                 match bucket.[i] with
-                | Some v when v.Node = d -> v
+                | v when v.Node = d -> v
                 | _ -> loop (i+1)
         loop 0
+//        printfn "Done with hashconsing."
 
     member t.Stats =
         let len = Array.length t.Table

@@ -446,7 +446,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let nodify_memo_key = nodify <| d0()
     let consify_env_term = consify <| ConsedTable(128)
 //    let consify_string = consify <| ConsedTable(128)
-    let consify_tyfun = consify <| ConsedTable(128)
+    let tyfun_table = ConsedTable(128)
+    let consify_tyfun = consify <| tyfun_table
 
     let tyv x = TyV x
     let tyvv x = TyVV x
@@ -2947,6 +2948,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             watch.Restart()
             let x = Succ (spiral_codegen x)
             printfn "Time for codegen was: %A" watch.Elapsed
+            printfn "Stats for tyfun table.\n%A" tyfun_table.Stats
             x
         with 
         | :? TypeError as e -> 
