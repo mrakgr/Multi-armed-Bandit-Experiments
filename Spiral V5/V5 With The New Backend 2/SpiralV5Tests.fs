@@ -886,7 +886,7 @@ open Parsing
 open Console
 
 inl p = 
-    parse_n_array parse_int 16
+    parse_n_array {parser=parse_int; typ=int64} 16
     |>> writeline
 
 run_with_unit_ret (readall()) p
@@ -975,7 +975,7 @@ open Parsing
 open Console
 
 inl p = 
-    tuple (Tuple.repeat 80 <| term_cast (pint64 .>> spaces))
+    tuple (Tuple.repeat 80 <| term_cast (pint64 .>> spaces) int64)
     |>> (Tuple.foldl (+) 0 >> writeline)
 
 run_with_unit_ret (readall()) p

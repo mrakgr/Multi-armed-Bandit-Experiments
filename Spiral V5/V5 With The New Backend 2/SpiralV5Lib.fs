@@ -291,75 +291,52 @@ inl m x = {
         || {parser_rec} {d with on_type} state -> parser_rec d .elem d state : on_type
         | {parser} -> parser
         | {parser_mon} -> parser_mon .elem
-    elem_type =
-        match x with
-        | {typ} -> inl _ _ -> in typ
-        | {typ_fun} -> typ_fun
     }
-inl term_cast p = m {
+inl term_cast p typ = m {
     parser = inl d state ->
-        inl typ = p .elem_type d state |> out
         p .elem {d with 
             on_succ = 
                 inl k = term_cast (inl x,state -> self x state) (typ,state)
                 inl x state -> k (x,state)
             } state
-    typ_fun = p .elem_type
     }
 inl goto point x = m {
     parser = inl _ -> point x
-    typ = ()
     }
 inl succ x = m {
     parser = inl {on_succ} -> on_succ x
-    typ = x
     }
 inl fail x = m {
     parser = inl {on_fail} -> on_fail x
-    typ = ()
     }
 inl fatal_fail x = m {
     parser = inl {on_fatal_fail} -> on_fatal_fail x
-    typ = ()
     }
 inl type_ = m {
     parser = inl {on_type on_succ} -> on_succ on_type
-    typ_fun = inl {on_type} _ -> in on_type
-    }
-inl elem_type p = m {
-    parser = inl {d with on_succ} state -> on_succ (out <| p .elem_type d state) state
-    typ_fun = p .elem_type
     }
 inl state = m {
     parser = inl {on_succ} state -> on_succ state state
-    typ_fun = inl _ state -> in state
     }
 inl set_state state = m {
     parser = inl {on_succ} -> on_succ ()
-    typ = ()
     }
 inl (>>=) a b = m {
     parser = inl d -> a .elem {d with on_succ = inl x -> b x .elem d}
-//    typ = int64
-    typ_fun = inl d state -> type (b (out <| a .elem_type d state) .elem_type d state)
     }
 inl try_with handle handler = m {
     parser = inl d -> handle .elem {d with on_fail = inl _ -> handler .elem d}
-    typ_fun = handle .elem_type
     }
 inl guard cond handler = m {
     parser = inl {d with on_succ} state -> 
         if cond then on_succ () state 
         else handler .elem d state
-    typ = ()
     }
 inl ifm cond tr fl = m {
     parser = inl d state -> if cond then tr () .elem d state else fl () .elem d state
-    typ_fun = inl d state -> in <| union (out <| tr .elem_type d state) (out <| fl .elem_type d state)
     }
 inl attempt a = m {
     parser = inl d state -> a .elem { d with on_fail = inl x _ -> self x state } state
-    typ_fun = a .elem_type
     }
 
 inl rec tuple = function
@@ -407,7 +384,6 @@ inl stream_char = m {
             on_succ = inl c -> on_succ c {state with pos=pos+1}
             on_fail = inl msg -> on_fail msg state
             }
-    typ = char
     }
 
 inl run data parser ret = 
@@ -444,7 +420,6 @@ inl pstring (!dyn str) x =
             ifm (i < string_length str)
             <| inl _ -> pchar (str i) >>. loop (i+1)
             <| inl _ -> succ str
-        typ = string
         }
     loop 0 x
 
@@ -457,14 +432,13 @@ inl pint64 =
             inm _ = guard (i = max && x <= 7 || i < max) (fail "integer overflow")
             inl i = i * 10 + x
             loop (goto on_succ i) i
-        typ = int64
         }
     loop (fail "pint64") 0
 
+/// Note: Unlike the Fparsec version, this spaces returns the number of spaces skipped.
 inl spaces x =
     inl rec loop (!dyn i) = m {
         parser_rec = inl {on_succ} -> try_with (satisfyL (inl c -> is_whitespace c || is_newline c) "space") (goto on_succ i) >>. loop (i+1)
-        typ = int64
         }
     loop 0 x
 
@@ -472,31 +446,24 @@ inl parse_int =
     inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
     (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
-inl parse_n_array p n = m {
+inl parse_n_array {parser typ} n = m {
     parser_mon =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
-        inm typ = elem_type p
         inl ar = array_create n typ
         inl rec loop (!dyn i) = m {
             parser_rec = inl {on_type} ->
                 ifm (i < n)
                 <| inl _ ->
-                    inm x = p
+                    inm x = parser
                     ar i <- x
                     loop (i+1)
                 <| inl _ ->
                     succ ()
-            typ = ()
             }
         loop 0 >>. succ ar
-    typ_fun = inl d state -> array_create n (p .elem_type d state)
     }
 
 inl sprintf_parser append =
-    inl m = function
-        | {parser} -> m { parser = parser; typ = () }
-        | {parser_mon} -> m { parser_mon = parser_mon; typ = () }
-    
     inl rec sprintf_parser sprintf_state =
         inl parse_variable = m {
             parser_mon =
