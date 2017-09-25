@@ -34,9 +34,9 @@ type Node<'a>(expr:'a, symbol:int) =
             | :? Node<'a> as y -> compare symbol y.Symbol
             | _ -> failwith "Invalid comparison for Node."
 
-let inline n (x: Node<_>) = x.Expression 
+let inline n (x: Node<_>) = x.Expression
 let (|N|) x = n x
-let (|C|) (x: ConsedNode<_>) = x.Node
+let (|C|) (x: ConsedNode<_>) = x.node
 let (|S|) (x: Node<_>) = x.Symbol
 
 type ModuleName = string
@@ -56,7 +56,6 @@ let inline memoize (memo_dict: Dictionary<_,_>) k f =
     | false, _ -> let v = f() in memo_dict.[k] <- v; v
 
 let nodify (dict: Dictionary<_,_>) x = memoize dict x (fun () -> Node(x,dict.Count))
-let consify (tbl: ConsedTable<_>) = tbl.HashCons
 let nodify_module = nodify <| d0()
 let module_ x = nodify_module x |> Module
 
@@ -444,10 +443,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let typeintypet x = TypeInTypeT x
 
     let nodify_memo_key = nodify <| d0()
-    let consify_env_term = consify <| ConsedTable(128)
-//    let consify_string = consify <| ConsedTable(128)
-    let tyfun_table = ConsedTable(128)
-    let consify_tyfun = consify <| tyfun_table
+    let consify_env_term = hashcons_add <| hashcons_create 1024
+    let tyfun_table = hashcons_create <| 1024 * 64
+    let consify_tyfun = hashcons_add <| tyfun_table
 
     let tyv x = TyV x
     let tyvv x = TyVV x
@@ -2948,7 +2946,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             watch.Restart()
             let x = Succ (spiral_codegen x)
             printfn "Time for codegen was: %A" watch.Elapsed
-            printfn "Stats for tyfun table.\n%A" tyfun_table.Stats
             x
         with 
         | :? TypeError as e -> 
