@@ -176,8 +176,6 @@ type Op =
     | TypeUnion
     | TypeSplit
     | TypeBox
-    | TypeIn
-    | TypeOut
     | EqType
     | ModuleHasMember
 
@@ -268,7 +266,6 @@ and Ty =
     | UnionT of Set<Ty>
     | RecT of int
     | ArrayT of ArrayType * Ty
-    | TypeInTypeT of Ty
     | DotNetTypeRuntimeT of Node<Type> 
     | DotNetTypeInstanceT of Node<Type>
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
@@ -440,7 +437,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
     let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
     let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
-    let typeintypet x = TypeInTypeT x
 
     let nodify_memo_key = nodify <| d0()
     let consify_env_term = hashcons_add <| hashcons_create 0
@@ -523,8 +519,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let type_union a b = op(TypeUnion,[a;b])
     let type_split a = op(TypeSplit,[a])
     let type_box a b = op(TypeBox,[a;b])
-    let type_in a = op(TypeIn,[a])
-    let type_out a = op(TypeOut,[a])
 
     // Aux outer functions
     let flip f a b = f b a
@@ -569,7 +563,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let rec is_unit_tuple t = List.forall is_unit t
     and is_unit_env x = Map.forall (fun _ -> is_unit) x
     and is_unit = function
-        | TypeInTypeT _ | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
+        | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
         | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
         | ArrayT (_,t) -> is_unit t
         | FunT (env,_) -> is_unit_env env
@@ -1346,11 +1340,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
             | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
 
-        let type_in d a = tev d a |> get_type |> typeintypet |> tyt
-        let type_out d a = 
-            match tev d a |> get_type with
-            | TypeInTypeT x -> tyt x
-            | x -> on_type_er d.trace <| sprintf "Expected a TypeInTypeT in type_out. Got: %A" x
 
         let apply_tev d expr args = apply d (tev d expr) (tev d args)
 
@@ -1769,8 +1758,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeUnion,[a;b] -> type_union d a b
             | TypeBox,[a;b] -> type_box d a b
             | TypeCreate,[a] -> type_create d a
-            | TypeIn,[a] -> type_in d a
-            | TypeOut,[a] -> type_out d a
             | TypeSplit,[a] -> type_split d a
             | EqType,[a;b] -> eq_type d a b
             | ModuleHasMember,[a;b] -> module_has_member d a b
@@ -2390,7 +2377,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | BoolT -> "bool"
                 | StringT -> "string"
                 | CharT -> "char"
-            | TypeInTypeT _ | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
+            | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
                 failwith "Should be covered in Unit."
                 
 
@@ -2841,8 +2828,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "union" (p2 type_union)
             l "split" (p type_split)
             l "box" (p2 type_box)
-            l "in" (p type_in)
-            l "out" (p type_out)
             l "type_error" (type_lit_lift <| LitString "TypeConstructorError")
             l "stack" (p record_stackify)
             l "heap" (p record_heapify)
