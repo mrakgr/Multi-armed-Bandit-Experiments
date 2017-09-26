@@ -966,8 +966,6 @@ let get_all_diffs () =
     Array.fold get_diff_using_testcache (StringBuilder()) tests
     |> fun x -> x.ToString()
 
-//printfn "%s" <| get_all_diffs()
-
 let speed1 =
     "speed1",[parsing;console],"Does the Parsing module work?",
     """
@@ -980,7 +978,7 @@ inl p =
 
 run_with_unit_ret (readall()) p
     """
-
+//
 //get_all_diffs()
 //|> printfn "%s"
 

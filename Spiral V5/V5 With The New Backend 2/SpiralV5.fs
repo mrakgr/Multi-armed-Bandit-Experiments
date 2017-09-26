@@ -1109,7 +1109,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
             match tev d v with
-            | a & TyBox(b,_) -> cse_add d a b; tev d case
+            | a & TyBox(b,_) -> tev {d with cse_env = ref (cse_add' d a b)} case
             | TyType(t & (UnionT _ | RecT _)) as v ->
                 let rec map_cases l =
                     match l with

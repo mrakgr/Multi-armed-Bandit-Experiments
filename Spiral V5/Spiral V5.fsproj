@@ -248,7 +248,6 @@
     <Content Include="V5 With The New Backend 2\TestCache\parsing2.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\parsing3.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\parsing4.txt" />
-    <Content Include="V5 With The New Backend 2\TestCache\parsing5.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\parsing6.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test1.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test10.txt" />
