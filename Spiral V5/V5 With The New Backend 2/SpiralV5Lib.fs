@@ -106,7 +106,7 @@ inl init_template k n f =
 inl init = init_template rev
 inl repeat n x = init_template id n (inl _ -> x)
 
-module (foldl,foldr,rev,map,forall,exists,filter,is_empty,is_tuple,zip,unzip,index,upon,upon',init,repeat,append,singleton)
+{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index upon upon' init repeat append singleton}
     """) |> module_
 
 let array =
@@ -162,7 +162,7 @@ inl concat ar =
     (foldl << foldl) (inl i x -> ar' i <- x; i+1) 0 ar |> ignore
     ar'
 
-module (empty,singleton,foldl,foldr,init,map,filter,append,concat)
+{empty singleton foldl foldr init map filter append concat}
     """) |> module_
 
 let list =
@@ -244,7 +244,7 @@ inl rec foldr f l s =
 inl append a b = foldr cons a b
 inl concat l & !elem_type !elem_type t = foldr append l (empty t)
 
-module (list,lw,init,map,foldl,foldr,empty,cons,singleton,append,concat)
+{list lw init map foldl foldr empty cons singleton append concat}
     """) |> module_
 
 
@@ -524,8 +524,8 @@ inl sprintf format =
         } format
 
 
-module (run,run_with_unit_ret,succ,fail,fatal_fail,state,type_,tuple,(>>=),(|>>),(.>>.),(.>>),(>>.),(>>%),(<|>),choice,stream_char,
-        ifm,(<?>),pdigit,pchar,pstring,pint64,spaces,parse_int,parse_n_array,sprintf,sprintf_template,term_cast)
+{run run_with_unit_ret succ fail fatal_fail state type_ tuple (>>=) (|>>) (.>>.) (.>>) (>>.) (>>%) (<|>) choice stream_char 
+ ifm (<?>) pdigit pchar pstring pint64 spaces parse_int parse_n_array sprintf sprintf_template term_cast}
     """) |> module_
 
 
@@ -549,5 +549,5 @@ inl printf_template cont =
 inl printf = printf_template id
 inl printfn = printf_template writeline
 
-module (console,readall,readline,write,writeline,printf,printfn)
+{console readall readline write writeline printf printfn}
     """) |> module_

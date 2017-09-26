@@ -1844,7 +1844,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let met_rec = keywordString "met" >>. keywordString "rec"
         let match_ = keywordString "match"
         let function_ = keywordString "function"
-        let module_ = keywordString "module"
         let with_ = keywordString "with"
         let open_ = keywordString "open"
         let cons = operatorString "::"
@@ -2016,7 +2015,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let set_semicolon_level_to_line line p (s: CharStream<_>) =
             let u = s.UserState
-            s.UserState <- {u with semicolon_line=line}
+            s.UserState <- { u with semicolon_line=line }
             let r = p s
             s.UserState <- u
             r
@@ -2122,7 +2121,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let case_typeinl expr (s: CharStream<_>) = case_typex true expr s
         let case_typecase expr (s: CharStream<_>) = case_typex false expr s
 
-        let case_module expr = module_ >>. expr |>> module_create
         let case_lit_lift expr = 
             let var = var_name |>> (LitString >> type_lit_lift)
             let lit = expr |>> type_lit_lift'
@@ -2151,7 +2149,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let parse_binding s = 
                 let i = col s
                 let line = s.Line
-                var_name .>>. (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) |>> mp_binding <| s
+                name .>>. opt (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
+                |>> function a, None -> mp_binding (a, v a) | a, Some b -> mp_binding (a, b)
+                <| s
             let module_create s = many1 (parse_binding .>> optional semicolon') s
 
             let module_with = 
@@ -2170,7 +2170,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let rest = 
                 [case_print_env; case_print_expr; case_type
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
-                 case_rounds; case_typecase; case_typeinl; case_var; case_module; case_module_alt]
+                 case_rounds; case_typecase; case_typeinl; case_var; case_module_alt]
                 |> List.map (fun x -> x expr |> attempt)
                 |> choice
             unary_ops <|> rest <| s

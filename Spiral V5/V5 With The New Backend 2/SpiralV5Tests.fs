@@ -257,7 +257,7 @@ inl m =
     inl x = 2
     inl y = 3.4
     inl z = "123"
-    module (x,(y),z)
+    {x y z}
 m.x, m.y, m.z
     """
 
@@ -724,6 +724,15 @@ inl k = term_cast add (int64,int64)
 k (1, 2)
     """
 
+let test57 =
+    "test57",[],"Does the new module creation syntax work?",
+    """
+inl a = 1
+inl b = 2
+inl d = 4
+{a b c = 3; d; e = 5}
+    """
+
 let test58 =
     "test58",[array],"Does the fold function get duplicated?",
     """
@@ -979,11 +988,12 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//get_all_diffs()
-//|> printfn "%s"
+get_all_diffs()
+|> printfn "%s"
 
-output_test_to_temp speed1
-|> ignore
+//output_test_to_temp test57
 //|> printfn "%s"
+//|> ignore
+
 
 
