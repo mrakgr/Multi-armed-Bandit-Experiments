@@ -278,7 +278,7 @@ and TypedExpr =
     | TyT of TraceNode<Ty>
     | TyV of TyTag
     | TyVV of TypedExpr list
-    | TyFun of ConsedNode<EnvTerm * FunType>
+    | TyFun of ConsedNode<EnvTerm> * FunType
     | TyBox of TypedExpr * Ty
     | TyLit of Value
 
@@ -443,13 +443,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let typeintypet x = TypeInTypeT x
 
     let nodify_memo_key = nodify <| d0()
-    let consify_env_term = hashcons_add <| hashcons_create 1024
-    let tyfun_table = hashcons_create <| 1024 * 64
-    let consify_tyfun = hashcons_add <| tyfun_table
+    let consify_env_term = hashcons_add <| hashcons_create 0
 
     let tyv x = TyV x
     let tyvv x = TyVV x
-    let tyfun (a,t) = consify_tyfun (a,t) |> TyFun
+    let tyfun (a,t) = (consify_env_term a,t) |> TyFun
     let tybox x = TyBox x
 
     let lit_int i = LitInt64 i |> lit
@@ -550,7 +548,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     and get_type = function
         | TyLit x -> get_type_of_value x
         | TyVV l -> List.map get_type l |> vvt
-        | TyFun (C(l, t)) -> funt (env_to_ty l, t)
+        | TyFun(C l, t) -> funt (env_to_ty l, t)
 
         | TyT (T t) | TyV(_,t) | TyBox(_,t)
         | TyLet(_,_,_,t) | TyJoinPoint(_,t)
@@ -562,7 +560,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         match e with
         | TyBox (n,t) -> f n
         | TyVV l -> List.exists f l
-        | TyFun(C(l,t)) -> typed_expr_env_free_var_exists l
+        | TyFun(C l,t) -> typed_expr_env_free_var_exists l
         | TyV (n,t as k) -> true
         | TyT _ | TyLit _ -> false
         | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the TypedExpr can be tested for free variable existence. Got: %A" e
@@ -828,7 +826,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyT _ -> e
             | TyBox (n,t) -> tybox(f n,t)
             | TyVV l -> tyvv(List.map f l)
-            | TyFun(C(l,t)) -> tyfun(renamer_apply_env r l, t)
+            | TyFun(C l,t) -> tyfun(renamer_apply_env r l, t)
             | TyV (n,t as k) ->
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
@@ -844,7 +842,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | TyT _ -> e
         | TyBox (n,t) -> tybox(f n,t)
         | TyVV l -> tyvv(List.map f l)
-        | TyFun(C(l,t)) as x -> g x
+        | TyFun(C l,t) as x -> g x
         | TyV _ | TyLit _ -> e
         | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the env can be mapped over. Got: %A" e
 
@@ -1028,7 +1026,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
         let inline recordify is_stack d = function
-            | TyFun(C(env,t)) as a ->
+            | TyFun(C env,t) as a ->
                 let {fv = fv} as r = renamables0()
                 let env' = renamer_apply_env r env |> consify_env_term
                 if fv.Count > 1 then
@@ -1193,13 +1191,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyV _ as v -> TyOp(RecordBoxedUnseal,[recf;v],get_type v) |> destructure d
             | TyVV l -> tyvv (List.map f l)
             | TyBox(a,b) -> tybox (f a, b)
-            | TyFun(C(env, b)) -> tyfun (Map.map (fun _ -> f) env, b)
+            | TyFun(C env, b) -> tyfun (Map.map (fun _ -> f) env, b)
             | x -> x
                
         let record_env_term_unseal d recf env = Map.map (fun _ -> record_boxed_unseal d recf) env
 
         let (|Func|_|) = function
-            | TyFun(C(env,t)) -> Some (RecordIndividual,env,t)
+            | TyFun(C env,t) -> Some (RecordIndividual,env,t)
             | TyType(FunStackT(C env,t)) -> Some (RecordStack,env,t)
             | TyType(FunHeapT(C env,t)) -> Some (RecordHeap,env,t)
             | _ -> None
@@ -1701,7 +1699,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
-                | TyFun(C(env_term,FunTypeFunction core)) -> tyfun(env_term,FunTypeRecFunction(core,name))
+                | TyFun(C env_term,FunTypeFunction core) -> tyfun(env_term,FunTypeRecFunction(core,name))
                 | TyV(tag,FunStackT(env_term,FunTypeFunction core)) -> tyv(tag,FunStackT(env_term,FunTypeRecFunction(core,name)))
                 | TyT(T (FunStackT(env_term,FunTypeFunction core)) & tr) -> TyT(TraceNode(FunStackT(env_term,FunTypeRecFunction(core,name)),tr.Trace))
                 | TyV(tag,FunHeapT(env_term,FunTypeFunction core)) -> tyv(tag,FunHeapT(env_term,FunTypeRecFunction(core,name)))
@@ -2597,7 +2595,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | _ -> failwith "Only VVT and UnionT can be recursive types."
                     | _ -> failwith "Only VVT and UnionT can be boxed types."
                 if is_unit (get_type x) then case_name else sprintf "%s(%s)" case_name (codegen x)
-            | TyFun(C(env_term, _)) ->
+            | TyFun(C env_term, _) ->
                 let t = get_type expr
                 Map.toArray env_term
                 |> Array.map snd
