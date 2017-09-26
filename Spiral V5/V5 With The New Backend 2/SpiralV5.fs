@@ -1641,7 +1641,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | V _ as x :: bindings -> [x], bindings
                 | x -> failwithf "Malformed ModuleWithAlt. %A" x
 
-            let rec loop cur_env names = 
+            let rec module_with_alt_loop cur_env names = 
                 let inline unseal_record name =
                     match Map.tryFind name cur_env with
                     | Some (Func(r,env,FunTypeModule) as recf) -> 
@@ -1659,8 +1659,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | RecordHeap -> recordify false d (f env)
 
                 match names with
-                | V(N name) :: names -> re_record name <| fun env -> loop env names
-                | Lit(N(LitString name)) :: names -> tyfun (Map.add name (re_record name <| fun env -> loop env names) cur_env, FunTypeModule)
+                | V(N name) :: names -> re_record name <| fun env -> module_with_alt_loop env names
+                | Lit(N(LitString name)) :: names -> tyfun (Map.add name (re_record name <| fun env -> module_with_alt_loop env names) cur_env, FunTypeModule)
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString name)); e]) ->
@@ -1672,7 +1672,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         ) cur_env bindings
                     |> fun env -> tyfun(env, FunTypeModule)
                 | x -> failwithf "Malformed ModuleWithAlt. %A" x
-            loop d.env names
+            module_with_alt_loop d.env names
 
         let failwith_ d a =
             match tev d a with

@@ -979,10 +979,11 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
+//get_all_diffs()
+//|> printfn "%s"
 
-//output_test_to_temp test43
+output_test_to_temp speed1
+|> ignore
 //|> printfn "%s"
 
 
