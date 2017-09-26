@@ -490,7 +490,7 @@ f (heap add) (dyn 3) (dyn 4)
 let test37 =
     "test37",[],"Does a simple heapified module work?",
     """
-inl m = heap {a=dyn 1; b=dyn 2}
+inl m = heap { a=dyn 1; b=dyn 2 }
 inl add c d = 
     inl {a b} = m
     a + b + c + d
@@ -978,12 +978,11 @@ inl p =
 
 run_with_unit_ret (readall()) p
     """
-//
-//get_all_diffs()
-//|> printfn "%s"
 
-output_test_to_temp speed1
-|> ignore
+get_all_diffs()
+|> printfn "%s"
+
+//output_test_to_temp test43
 //|> printfn "%s"
 
 

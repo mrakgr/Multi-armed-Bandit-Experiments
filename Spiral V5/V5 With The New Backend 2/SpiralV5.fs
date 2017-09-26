@@ -359,7 +359,7 @@ type Result<'a,'b> = Succ of 'a | Fail of 'b
 type Userstate = 
     {
     ops : Dictionary<string, int * Associativity>
-    ignore_semicolon : bool
+    semicolon_line : int64
     }
 
 type ParserExpr =
@@ -1826,7 +1826,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let comma = skipChar ',' >>. spaces
         let dot = operatorChar '.'
         let pp = operatorChar ':'
-        let semicolon = operatorChar ';' 
+        let semicolon' = operatorChar ';'
+        let semicolon = semicolon' >>=? fun _ s -> 
+            if s.Line <> s.UserState.semicolon_line then Reply(())
+            else Reply(ReplyStatus.Error, messageError "cannot parse ; on this line") 
         let eq = operatorChar '=' 
         let bar = operatorChar '|' 
         let amphersand = operatorChar '&'
@@ -2011,6 +2014,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     
         let col (s: CharStream<_>) = s.Column
 
+        let set_semicolon_level_to_line line p (s: CharStream<_>) =
+            let u = s.UserState
+            s.UserState <- {u with semicolon_line=line}
+            let r = p s
+            s.UserState <- u
+            r
+
+        let reset_semicolon_level expr = attempt (set_semicolon_level_to_line -1L expr)
+
         let expr_indent i op expr (s: CharStream<_>) = if op i (col s) then expr s else pzero s
         let if_then_else expr (s: CharStream<_>) =
             let i = (col s)
@@ -2028,7 +2040,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             <| s
 
         let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator_char .>> spaces <| s
-
         let name = var_name <|> rounds poperator
 
         let filter_env x = ap (inl "" x) B
@@ -2039,14 +2050,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             |> inl_pat' args
         let meth_pat' args body = x_pat' meth_memo args body
         let type_pat' args body = x_pat' type_memo args body
-    
-        let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (eq >>. expr) lp
-        let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
-        let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
+
+
+        let inline statement_expr expr = eq >>. expr
+        let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (statement_expr expr) lp
+        let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
+        let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
         
-        let case_met_pat_statement expr = pipe2 (met_ >>. patterns expr) (eq >>. expr) <| fun pattern body -> lp pattern (filter_env (meth_memo body))
-        let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (eq >>. expr) (fun name pattern body -> l name (meth_pat' pattern body))
-        let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (eq >>. expr) <| fun name pattern body -> l_rec name (meth_pat' pattern body)
+        let case_met_pat_statement expr = pipe2 (met_ >>. patterns expr) (statement_expr expr) <| fun pattern body -> lp pattern (filter_env (meth_memo body))
+        let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (meth_pat' pattern body))
+        let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (statement_expr expr) <| fun name pattern body -> l_rec name (meth_pat' pattern body)
 
         let case_type_name_pat_list_statement expressions expr = 
             let type_parse (s: CharStream<_>) = 
@@ -2057,7 +2070,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 l_rec name (type_pat' pattern body)
 
         let case_open expr = open_ >>. expr |>> module_open
-
         let case_inm_pat_statement expr = pipe2 (inm_ >>. patterns expr) (eq >>. expr) inmp
 
         let statements expressions expr = 
@@ -2067,21 +2079,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             |> List.map (fun x -> x expr |> attempt)
             |> choice
 
-        let change_semicolon_ignore_to_true expr (s: CharStream<Userstate>) =
-            let u = s.UserState
-            if u.ignore_semicolon = false then
-                s.UserState <- {u with ignore_semicolon = true}
-                let x = expr s
-                s.UserState <- u
-                x
-            else expr s
-
-        let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (lam >>. change_semicolon_ignore_to_true expr) inl_pat'
-        let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (lam >>. change_semicolon_ignore_to_true expr) meth_pat'
+        let inline expression_expr expr = lam >>. reset_semicolon_level expr
+        let case_inl_pat_list_expr expr = pipe2 (inl_ >>. pattern_list expr) (expression_expr expr) inl_pat'
+        let case_met_pat_list_expr expr = pipe2 (met_ >>. pattern_list expr) (expression_expr expr) meth_pat'
 
         let case_lit expr = lit_ |>> lit
-        let case_if_then_else expr = change_semicolon_ignore_to_true (if_then_else expr)
-        let case_rounds expr s = change_semicolon_ignore_to_true (rounds (expr <|>% B)) s
+        let case_if_then_else expr = if_then_else expr
+        let case_rounds expr s = (rounds (reset_semicolon_level expr <|>% B)) s
         let case_var expr = name |>> v
 
         let case_typex match_type expr (s: CharStream<_>) =
@@ -2134,23 +2138,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             keywordString "print_expr" >>. expr_indent i (<=) expr |>> print_expr
             <| s
 
-        let inline expr_indent_semicolon is_module i expr' (s: CharStream<_>) =
-            let inline if_ op tr s = expr_indent i op tr s
-            let mutable op = (=)
-            let inline set_op op' x = op <- op'; x
-            let inline semicolon s = if_ (<) (semicolon |>> set_op (<=)) s
-            let inline expr s = if_ op (expr' |>> set_op (=)) s
-            let inline f s = many1 (expr .>> optional semicolon) s
-            let u = s.UserState
-            match is_module, u.ignore_semicolon with
-            | true, false | false, true -> f s
-            | true, true -> 
-                s.UserState <- {u with ignore_semicolon=false}
-                let x = f s
-                s.UserState <- u
-                x
-            | false, false -> many1 (if_ (=) expr') s
-            
+          
         let case_module_alt expr s =
             let mp_binding (n,e) = vv [lit_string n; e]
             let mp_create l = op(ModuleCreateAlt,l)
@@ -2162,10 +2150,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 
             let parse_binding s = 
                 let i = col s
-                var_name .>>. (eq >>. expr_indent i (<) expr) |>> mp_binding <| s
-            let module_create s = 
-                let i = col s
-                expr_indent_semicolon true i parse_binding s
+                let line = s.Line
+                var_name .>>. (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) |>> mp_binding <| s
+            let module_create s = many1 (parse_binding .>> optional semicolon') s
 
             let module_with = 
                 attempt (sepBy1 var_name dot .>> with_) >>= fun names ->
@@ -2200,9 +2187,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             process_parser_exprs preturn exprs
 
         let indentations statements expressions (s: CharStream<Userstate>) =
-            let i = (col s)
+            let i = col s
             let pos' s = Reply(pos' s)
-            expr_indent_semicolon false i ((tuple2 pos' statements |>> ParserStatement) <|> (tuple2 pos' expressions |>> ParserExpr)) >>= process_parser_exprs <| s
+            let inline if_ op tr s = expr_indent i op tr s
+            let inline many_indents expr = many1 (if_ (<=) (expr .>> optional semicolon))
+            many_indents ((tuple2 pos' statements |>> ParserStatement) <|> (tuple2 pos' expressions |>> ParserExpr)) >>= process_parser_exprs <| s
 
         let application expr (s: CharStream<_>) =
             let i = (col s)
@@ -2218,7 +2207,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             <| s
 
         let mset statements expressions (s: CharStream<_>) = 
-            let i = (col s)
+            let i = col s
+            let line = s.Line
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
             let op =
                 (set_ref >>% fun l r -> op(ArraySet,[l;B;r]) |> preturn)
@@ -2229,7 +2219,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             | _ -> fail "Expected two arguments on the left of <-."
                         loop l)
 
-            (tuple2 expressions (opt (expr_indent op .>>. expr_indent statements))
+            (tuple2 expressions (opt (expr_indent op .>>. expr_indent (set_semicolon_level_to_line line statements)))
             >>= function 
                 | a,Some(f,b) -> f a b
                 | a,None -> preturn a) s
@@ -2310,9 +2300,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let rec expr s = 
             let expressions s = mset expr ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr <| s
-            let statements s = statements expressions ^<| change_semicolon_ignore_to_true expr <| s
+            let statements s = statements expressions expr <| s
             annotations ^<| indentations statements expressions <| s
-        runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; ignore_semicolon=true} module_name module_code
+        runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code
 
     // #Codegen
     let spiral_codegen main =

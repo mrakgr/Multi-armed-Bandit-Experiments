@@ -138,7 +138,8 @@ inl init n f =
     inl typ = type (f 0)
     inl ar = array_create n typ
     met rec loop (!dyn i) =
-        if i < n then (ar i <- f i); loop (i+1)
+        if i < n then 
+            ar i <- f i; loop (i+1)
         : ()
     loop 0 |> ignore
     ar
@@ -146,19 +147,19 @@ inl init n f =
 inl map f ar = init (array_length ar) (ar >> f)
 inl filter f ar =
     inl ar' = array_create (array_length ar) (ar.elem_type)
-    inl count = foldl (inl s x -> if f x then (ar' s <- x); s+1 else s) 0 ar
+    inl count = foldl (inl s x -> if f x then ar' s <- x; s+1 else s) 0 ar
     init count ar'
 
 inl append l =
     inl ar' = array_create (Tuple.foldl (inl s l -> s + array_length l) 0 l) ((fst l).elem_type)
-    inl ap s ar = foldl (inl i x -> (ar' i <- x); i+1) s ar
+    inl ap s ar = foldl (inl i x -> ar' i <- x; i+1) s ar
     Tuple.foldl ap 0 l |> ignore
     ar'
 
 inl concat ar =
     inl count = foldl (inl s ar -> s + array_length ar) 0 ar
     inl ar' = array_create count (ar.elem_type.elem_type)
-    (foldl << foldl) (inl i x -> (ar' i <- x); i+1) 0 ar |> ignore
+    (foldl << foldl) (inl i x -> ar' i <- x; i+1) 0 ar |> ignore
     ar'
 
 module (empty,singleton,foldl,foldr,init,map,filter,append,concat)
