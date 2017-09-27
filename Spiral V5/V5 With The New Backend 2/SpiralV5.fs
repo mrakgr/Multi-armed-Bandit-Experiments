@@ -115,6 +115,10 @@ type Value =
     | LitChar of char
 
 type Op =
+    // Pattern matching errors
+    | ErrorPatMiss
+    | ErrorPatClause
+
     // StringOps
     | StringLength
     | StringIndex
@@ -648,9 +652,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         fun () -> i <- i+1; i
 
     let rec pattern_compile arg pat =
-        let rec pattern_compile arg pat (on_succ: Lazy<_>) (on_fail: Lazy<_>) =
-            let inline cp' arg pat on_succ on_fail = pattern_compile arg pat on_succ on_fail
-            let inline cp arg pat on_succ on_fail = lazy cp' arg pat on_succ on_fail
+        let rec pattern_compile arg pat on_succ on_fail =
+            let inline cp arg pat on_succ on_fail = pattern_compile arg pat on_succ on_fail
 
             let inline pat_foldbacki f s l =
                 let mutable len = 0L
@@ -668,8 +671,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     on_succ
                     l'
                 |> fun (on_succ,len) -> 
-                    if_static (eq (tuple_length arg) (lit_int len)) on_succ.Value on_fail.Value
-                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                    if_static (eq (tuple_length arg) (lit_int len)) on_succ on_fail
+                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail
                     |> case arg
 
             let pat_cons l = 
@@ -680,37 +683,36 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     (on_succ, tuple_slice_from)
                     l
                 |> fun ((on_succ,_),len) -> 
-                    if_static (gte (tuple_length arg) (lit_int (len-1L))) on_succ.Value on_fail.Value
-                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail.Value
+                    if_static (gte (tuple_length arg) (lit_int (len-1L))) on_succ on_fail
+                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail
                     |> case arg
 
             let pat_part_active a pat on_fail arg =
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
-                let on_succ = inl pat_var (cp (v pat_var) pat on_succ on_fail |> force)
-                let on_fail = inl "" on_fail.Value
+                let on_succ = inl pat_var (cp (v pat_var) pat on_succ on_fail)
+                let on_fail = inl "" on_fail
                 ap' (v a) [arg; on_fail; on_succ]
 
-            let pat_module_bindings pat_var bindings on_succ = 
-                List.foldBack (fun x on_succ -> cp pat_var x on_succ on_fail) bindings on_succ |> force 
-            let pat_module_is_module on_succ = if_static (module_is arg) on_succ (force on_fail)
+            let pat_module_bindings pat_var = List.foldBack (fun x on_succ -> cp pat_var x on_succ on_fail)
+            let pat_module_is_module on_succ = if_static (module_is arg) on_succ on_fail
 
             match pat with
-            | E -> on_succ.Value
-            | PatVar x -> l x arg on_succ.Value
+            | E -> on_succ
+            | PatVar x -> l x arg on_succ
             | PatType (exp,typ) ->
-                let on_succ = cp' arg exp on_succ on_fail
-                if_static (eq_type arg typ) on_succ on_fail.Value
+                let on_succ = cp arg exp on_succ on_fail
+                if_static (eq_type arg typ) on_succ on_fail
                 |> case arg
             | PatTuple l -> pat_tuple l
             | PatCons l -> pat_cons l
             | PatActive (a,b) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
-                l pat_var (ap (v a) arg) (cp' (v pat_var) b on_succ on_fail)
+                l pat_var (ap (v a) arg) (cp (v pat_var) b on_succ on_fail)
             | PatPartActive (a,pat) -> pat_part_active a pat on_fail arg
             | PatExtActive (a,pat) ->
                 let rec f pat' on_fail = function
                     | PatAnd _ as pat -> op(ErrorType,[lit_string "And patterns are not allowed in extension patterns."]) |> pat_part_active a (pat' pat) on_fail
-                    | PatOr l -> List.foldBack (fun pat on_fail -> lazy f pat' on_fail pat) l on_fail |> force
+                    | PatOr l -> List.foldBack (fun pat on_fail -> f pat' on_fail pat) l on_fail
                     | PatCons l -> vv [type_lit_lift (LitString "cons"); l.Length-1 |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' <| PatTuple l) on_fail
                     | PatTuple l as pat -> vv [type_lit_lift (LitString "tup"); l.Length |> int64 |> LitInt64 |> lit; arg] |> pat_part_active a (pat' pat) on_fail
                     | PatType (a,typ) -> f (fun a -> PatType(a,typ) |> pat') on_fail a
@@ -718,20 +720,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PatClauses _ -> failwith "Clauses should not appear inside other clauses."
                     | pat -> vv [type_lit_lift (LitString "var"); arg] |> pat_part_active a (pat' pat) on_fail
                 f id on_fail pat
-            | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail |> force
-            | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ |> force
-            | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (lazy (expr_prepass exp |> snd)) on_fail) l on_fail |> force
+            | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail
+            | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ
+            | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (expr_prepass exp |> snd) on_fail) l on_fail
             | PatTypeLit x -> 
-                if_static (eq_type arg (type_lit_lift x)) on_succ.Value on_fail.Value 
+                if_static (eq_type arg (type_lit_lift x)) on_succ on_fail 
                 |> case arg
             | PatTypeLitBind x -> 
-                if_static (type_lit_is arg) (l x (type_lit_cast arg) on_succ.Value) on_fail.Value 
+                if_static (type_lit_is arg) (l x (type_lit_cast arg) on_succ) on_fail 
                 |> case arg
             | PatLit x -> 
                 let x = lit x
-                let on_succ = if_static (eq arg x) on_succ.Value on_fail.Value
-                if_static (eq_type arg x) on_succ on_fail.Value |> case arg
-            | PatWhen (p, e) -> cp' arg p (lazy if_static e on_succ.Value on_fail.Value) on_fail
+                let on_succ = if_static (eq arg x) on_succ on_fail
+                if_static (eq_type arg x) on_succ on_fail |> case arg
+            | PatWhen (p, e) -> cp arg p (if_static e on_succ on_fail) on_fail
             | PatModuleInner(name,bindings) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 let pat_var' = v pat_var
@@ -740,7 +742,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 pat_module_bindings pat_var' bindings on_succ
                 |> l name pat_var'
                 |> l pat_var (ap arg memb)
-                |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
+                |> fun on_succ -> if_static (module_has_member arg memb) on_succ on_fail
                 |> pat_module_is_module
             | PatModuleOuter(name,bindings) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
@@ -756,13 +758,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 let memb = type_lit_lift (LitString name)
                 match pat with
-                | Some pat -> l pat_var (ap arg memb) (cp' (v pat_var) pat on_succ on_fail)
-                | None -> l name (ap arg memb) on_succ.Value
-                |> fun on_succ -> if_static (module_has_member arg memb) on_succ (force on_fail)
-            | PatPos p -> expr_pos p.Pos (cp' arg p.Expression on_succ on_fail)
+                | Some pat -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
+                | None -> l name (ap arg memb) on_succ
+                |> fun on_succ -> if_static (module_has_member arg memb) on_succ on_fail
+            | PatPos p -> expr_pos p.Pos (cp arg p.Expression on_succ on_fail)
 
-        let pattern_compile_def_on_succ = lazy failwith "Missing a clause."
-        let pattern_compile_def_on_fail = lazy error_type (lit (LitString <| "Pattern matching cases are inexhaustive."))
+        let pattern_compile_def_on_succ = op(ErrorPatClause,[])
+        let pattern_compile_def_on_fail = op(ErrorPatMiss,[arg])
         pattern_compile arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
     and pattern_compile_single pat =
@@ -1766,6 +1768,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Neg,[a] -> prim_un_numeric d a Neg
             | ErrorType,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "%A" a
             | ErrorNonUnit,[a] -> error_non_unit d a
+            | ErrorPatClause,[] -> on_type_er d.trace "Compiler error: The pattern matching clauses are malformed. PatClause is missing."
+            | ErrorPatMiss,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "Pattern miss error. The argument is %A" a
 
             | Log,[a] -> prim_un_floating d a Log
             | Exp,[a] -> prim_un_floating d a Exp

@@ -852,6 +852,14 @@ open List
 init 10 (inl x -> 2.2)
     """
 
+let test70 =
+    "test70",[],"Does the argument get printed on a type error?",
+    """
+inl a: float64 = 5
+()
+    """
+
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1004,9 +1012,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
-
-//output_test_to_temp test60
+//get_all_diffs()
 //|> printfn "%s"
-//|> ignore
+
+output_test_to_temp test70
+|> printfn "%s"
+|> ignore
