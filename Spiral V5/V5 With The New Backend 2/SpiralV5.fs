@@ -272,7 +272,7 @@ and Ty =
 
 and TypedExpr =
     // Data structures
-    | TyT of TraceNode<Ty>
+    | TyT of Ty
     | TyV of TyTag
     | TyVV of TypedExpr list
     | TyFun of ConsedNode<EnvTerm> * FunType
@@ -280,8 +280,8 @@ and TypedExpr =
     | TyLit of Value
 
     // Operations
-    | TyLet of TyTag * TypedExpr * TypedExpr * Ty
-    | TyState of TypedExpr * TypedExpr * Ty
+    | TyLet of TyTag * TypedExpr * TypedExpr * Ty * Trace
+    | TyState of TypedExpr * TypedExpr * Ty * Trace
     | TyOp of Op * TypedExpr list * Ty
     | TyJoinPoint of JoinPointKey * Ty
 
@@ -544,9 +544,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | TyVV l -> List.map get_type l |> vvt
         | TyFun(C l, t) -> funt (env_to_ty l, t)
 
-        | TyT (T t) | TyV(_,t) | TyBox(_,t)
-        | TyLet(_,_,_,t) | TyJoinPoint(_,t)
-        | TyState (_,_,t) | TyOp(_,_,t) -> t
+        | TyT t | TyV(_,t) | TyBox(_,t)
+        | TyLet(_,_,_,t,_) | TyJoinPoint(_,t)
+        | TyState(_,_,t,_) | TyOp(_,_,t) -> t
 
     let rec typed_expr_env_free_var_exists x = Map.exists (fun k v -> typed_expr_free_var_exists v) x
     and typed_expr_free_var_exists e =
@@ -918,19 +918,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let make_up_vars_for_ty d ty = TyV <| make_tyv_ty d ty
 
-        let tyt x = TyT (TraceNode(x,d.trace))
+        let tyt x = TyT x
 
         let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
             let ty = get_type ty_exp
             if is_unit ty then
                 if even_if_unit then 
                     let seq = !d.seq
-                    d.seq := fun rest -> TyState(ty_exp,rest,get_type rest) |> seq
+                    let trace = d.trace
+                    d.seq := fun rest -> TyState(ty_exp,rest,get_type rest,trace) |> seq
                 tyt ty
             else
                 let v = make_tyv_ty d ty
                 let seq = !d.seq
-                d.seq := fun rest -> TyLet(v,ty_exp,rest,get_type rest) |> seq
+                let trace = d.trace
+                d.seq := fun rest -> TyLet(v,ty_exp,rest,get_type rest,trace) |> seq
                 tyv v
             
         let make_tyv_and_push_typed_expr_even_if_unit d ty_exp = make_tyv_and_push_typed_expr_template true d ty_exp
@@ -1535,12 +1537,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let type_lit_cast d a =
             match tev d a with
-            | TyT (T (LitT x)) -> TyLit x
+            | TyT (LitT x) -> TyLit x
             | _ -> on_type_er d.trace "Expected a literal in type literal cast."
 
         let type_lit_is d a =
             match tev d a with
-            | TyT (T (LitT _)) -> TyLit <| LitBool true
+            | TyT (LitT _) -> TyLit <| LitBool true
             | _ -> TyLit <| LitBool false
 
         let rec is_static' x =
@@ -1690,9 +1692,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match tev d body with
                 | TyFun(C env_term,FunTypeFunction core) -> tyfun(env_term,FunTypeRecFunction(core,name))
                 | TyV(tag,FunStackT(env_term,FunTypeFunction core)) -> tyv(tag,FunStackT(env_term,FunTypeRecFunction(core,name)))
-                | TyT(T (FunStackT(env_term,FunTypeFunction core)) & tr) -> TyT(TraceNode(FunStackT(env_term,FunTypeRecFunction(core,name)),tr.Trace))
+                | TyT(FunStackT(env_term,FunTypeFunction core)) -> TyT(FunStackT(env_term,FunTypeRecFunction(core,name)))
                 | TyV(tag,FunHeapT(env_term,FunTypeFunction core)) -> tyv(tag,FunHeapT(env_term,FunTypeRecFunction(core,name)))
-                | TyT(T (FunHeapT(env_term,FunTypeFunction core)) & tr) -> TyT(TraceNode(FunHeapT(env_term,FunTypeRecFunction(core,name)),tr.Trace))
+                | TyT(FunHeapT(env_term,FunTypeFunction core)) -> TyT(FunHeapT(env_term,FunTypeRecFunction(core,name)))
                 | x -> x
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -2440,7 +2442,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> ""
             | x -> x
 
-        let rec codegen expr =
+        let rec codegen' trace expr =
+            let inline codegen expr = codegen' trace expr
             let print_value = function
                 | LitInt8 x -> sprintf "%iy" x
                 | LitInt16 x -> sprintf "%is" x
@@ -2550,11 +2553,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     loop 0 cases
 
             match expr with
-            | TyT (T Unit) | TyV (_, Unit) -> ""
-            | TyT t -> on_type_er t.Trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t.Expression
+            | TyT Unit | TyV (_, Unit) -> ""
+            | TyT t -> on_type_er trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
             | TyV v -> print_tyv v
-            | TyLet(tyv,b,TyV tyv',_) when tyv = tyv' -> codegen b
-            | TyState(b,rest,_) ->
+            | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' trace b
+            | TyState(b,rest,_,trace) ->
                 match b with
                 | TyOp(ArraySet,[ar;idx;b],_) ->
                     match get_type ar with
@@ -2562,19 +2565,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | ArrayT(DotNetHeap,_) -> array_set ar idx b
                     | _ -> failwith "impossible"
                 | _ ->
-                    let b = codegen b
+                    let b = codegen' trace b
                     if b <> "" then sprintf "%s" b |> state
-                codegen rest
-            | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_) -> if_ (Some tyv) cond tr fl; codegen rest
-            | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_) -> match_with (print_if tyv) v cases; codegen rest
-            | TyLet(tyv,b,rest,_) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen b) |> state; codegen rest
+                codegen' trace rest
+            | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' trace rest
+            | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
+            | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
             | TyLit x -> print_value x
             | TyJoinPoint((S method_tag,_ as key),_) ->
                 let method_name = print_method method_tag
                 match join_point_dict.[key] with
                 | JoinPointType, _, _ -> ""
-                | JoinPointMethod, fv, _ ->
-                    sprintf "%s(%s)" method_name (print_args fv)
+                | JoinPointMethod, fv, _ -> sprintf "%s(%s)" method_name (print_args fv)
                 | JoinPointClosure args, fv, rev_renamer ->
                     let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
                     if Seq.isEmpty fv then method_name
@@ -2729,7 +2731,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let print_body() =
                 is_first_method <- false
-                enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
+                enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen' [] body)
 
             match join_point_type with
             | JoinPointClosure args ->
@@ -2747,7 +2749,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match x.Value with
             | MemoMethod (join_point_type, fv, body) -> print_method_definition x.Key.Symbol (join_point_type, fv, body)
             | _ -> ()) |> ignore
-        codegen main |> state // Can't forget the non-method
+        codegen' [] main |> state // Can't forget the non-method
 
         buffer_code.AddRange(buffer)
         buffer.Clear()

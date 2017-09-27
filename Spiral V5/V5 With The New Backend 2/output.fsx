@@ -1,8 +1,9 @@
-type Tuple0 =
-    struct
-    val mem_0: int64
-    val mem_1: int64
-    val mem_2: int64
-    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
-    end
-Tuple0(1L, 2L, 3L)
+Error in test60: Ln: 5 Col: 5
+    
+    ^
+Note: The error occurred at the end of the input stream.
+Expecting: identifier, number, '"', '\'', '(', '-', '.', '//', ';', '[',
+'false', 'function', 'if', 'if_dynamic', 'inl', 'inm', 'match', 'met', 'open',
+'print_env', 'print_expr', 'true', 'type' or '{'
+Other error messages:
+  Statements not allowed in the last position of a block.
