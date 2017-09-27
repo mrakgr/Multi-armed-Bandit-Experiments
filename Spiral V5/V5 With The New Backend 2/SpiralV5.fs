@@ -1968,6 +1968,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let pat_when expr pattern = pattern .>>. (opt (when_ >>. expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
         let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
 
+        let pat_named_tuple pattern =
+            let pat = pipe2 var_name (opt (pp >>. pattern)) (fun name -> function
+                | Some pat -> PatTuple [PatTypeLit <| LitString name; pat]
+                | None -> PatTypeLit <| LitString name)
+            squares (many pat) |>> function [x] -> x | x -> PatTuple x
+
         let (^<|) a b = a b // High precedence, right associative <| operator
 
         let rec pat_module_helper (names,bindings) = 
@@ -1992,13 +1998,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         and patterns_template expr pat_module s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr pat_module s
             pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr 
-            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_module expr|] <| s
+            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_module expr; pat_named_tuple recurse|] <| s
 
         let inline patterns expr s = patterns_template expr pat_module_outer s
     
         let pattern_list expr = many (patterns expr)
     
         let col (s: CharStream<_>) = s.Column
+        let line (s: CharStream<_>) = s.Line
 
         let set_semicolon_level_to_line line p (s: CharStream<_>) =
             let u = s.UserState
@@ -2026,7 +2033,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             <| s
 
         let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator_char .>> spaces <| s
-        let name = var_name <|> rounds poperator
+        let var_op_name = var_name <|> rounds poperator
 
         let filter_env x = ap (inl "" x) B
         let inl_pat' (args: Pattern list) body = List.foldBack inl_pat args body
@@ -2040,19 +2047,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let inline statement_expr expr = eq >>. expr
         let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (statement_expr expr) lp
-        let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
-        let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
+        let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. var_op_name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
+        let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. var_op_name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
         
         let case_met_pat_statement expr = pipe2 (met_ >>. patterns expr) (statement_expr expr) <| fun pattern body -> lp pattern (filter_env (meth_memo body))
-        let case_met_name_pat_list_statement expr = pipe3 (met_ >>. name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (meth_pat' pattern body))
-        let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. name) (pattern_list expr) (statement_expr expr) <| fun name pattern body -> l_rec name (meth_pat' pattern body)
+        let case_met_name_pat_list_statement expr = pipe3 (met_ >>. var_op_name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (meth_pat' pattern body))
+        let case_met_rec_name_pat_list_statement expr = pipe3 (met_rec >>. var_op_name) (pattern_list expr) (statement_expr expr) <| fun name pattern body -> l_rec name (meth_pat' pattern body)
 
         let case_type_name_pat_list_statement expressions expr = 
             let type_parse (s: CharStream<_>) = 
                 let i = col s
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
                 many1 (expr_indent expressions) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
-            pipe3 (type_' >>. name) (pattern_list expr) (eq >>. type_parse) <| fun name pattern body -> 
+            pipe3 (type_' >>. var_op_name) (pattern_list expr) (eq >>. type_parse) <| fun name pattern body -> 
                 l_rec name (type_pat' pattern body)
 
         let case_open expr = open_ >>. expr |>> module_open
@@ -2072,7 +2079,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let case_lit expr = lit_ |>> lit
         let case_if_then_else expr = if_then_else expr
         let case_rounds expr s = (rounds (reset_semicolon_level expr <|>% B)) s
-        let case_var expr = name |>> v
+        let case_var expr = var_op_name |>> v
 
         let case_typex match_type expr (s: CharStream<_>) =
             let mutable i = None
@@ -2136,7 +2143,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let parse_binding s = 
                 let i = col s
                 let line = s.Line
-                name .>>. opt (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
+                var_op_name .>>. opt (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
                 |>> function a, None -> mp_binding (a, v a) | a, Some b -> mp_binding (a, b)
                 <| s
             let module_create s = many1 (parse_binding .>> optional semicolon') s
@@ -2149,6 +2156,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let case_type expr = type_' >>. expr |>> type_create
 
+        let case_named_tuple expr =
+            let pat s = 
+                let i = col s
+                let line = line s
+                pipe2 var_name (opt (pp >>. expr_indent i (<) (set_semicolon_level_to_line line expr))) (fun name expr ->
+                    let tup = type_lit_lift' <| lit_string name
+                    match expr with
+                    | Some expr -> vv [tup; expr]
+                    | None -> tup
+                    ) s
+            squares (many (pat .>> optional semicolon')) |>> function [x] -> x | x -> vv x
+
         let rec expressions expr s =
             let unary_ops = 
                 [case_lit_lift]
@@ -2157,7 +2176,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let rest = 
                 [case_print_env; case_print_expr; case_type
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
-                 case_rounds; case_typecase; case_typeinl; case_var; case_module_alt]
+                 case_rounds; case_typecase; case_typeinl; case_var; case_module_alt; case_named_tuple]
                 |> List.map (fun x -> x expr |> attempt)
                 |> choice
             unary_ops <|> rest <| s

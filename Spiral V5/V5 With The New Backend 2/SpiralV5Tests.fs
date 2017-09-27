@@ -741,6 +741,13 @@ Array.foldl (inl a,b c,d -> a+c,b+d) (dyn (1,2)) ar
 |> inl a,b -> a*b
     """
 
+let test59 =
+    "test59",[],"Does the new named tuple syntax work?",
+    """
+inl f [a:q b:w c:e] = q,w,e
+f [ a : 1; b : 2; c : 3 ]
+    """
+
 let test61 =
     "test61",[],"Does dyn act like id on already dyned variables? It should not.",
     """
@@ -919,7 +926,7 @@ let tests =
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
-    test50;test51;test52;test53;test54;test55;test56;test58
+    test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test61;test62;test63;test64;test65;test66;test67;test68;test69
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6
@@ -991,7 +998,7 @@ run_with_unit_ret (readall()) p
 get_all_diffs()
 |> printfn "%s"
 
-//output_test_to_temp test57
+//output_test_to_temp test59
 //|> printfn "%s"
 //|> ignore
 
