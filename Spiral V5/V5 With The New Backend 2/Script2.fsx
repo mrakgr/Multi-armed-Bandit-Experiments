@@ -511,3 +511,11 @@ inl printfn = printf_template writeline
 module (console,readall,readline,write,writeline,printf,printfn)
     """) |> module_
 
+[<StructuredFormatDisplay("<tag {x}>")>]
+type Q =
+    {
+    x : int
+    }
+
+let x = {x = 5}
+printfn "%A" x

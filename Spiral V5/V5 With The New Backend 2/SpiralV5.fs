@@ -21,7 +21,7 @@ type RecordType =
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
     member x.Symbol = symbol
-    override x.ToString() = sprintf "%A" expr
+    override x.ToString() = sprintf "<tag %i>" symbol
     override x.GetHashCode() = symbol
     override x.Equals(y) = 
         match y with 
@@ -387,7 +387,6 @@ type Renamables =
 let spiral_peval (Module(N(module_name,_,_,_)) as module_main) = 
     let mutable renaming_time = TimeSpan()
     // #Smart constructors
-    let inline force (x: Lazy<_>) = x.Value
     let memoized_methods: MemoDict = d0()
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
 

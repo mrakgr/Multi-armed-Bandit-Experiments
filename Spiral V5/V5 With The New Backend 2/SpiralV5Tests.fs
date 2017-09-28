@@ -859,6 +859,12 @@ inl a: float64 = 5
 ()
     """
 
+let test71 =
+    "test71",[],"Does the recent change to error printing work?",
+    """
+55 + id
+    """
+
 
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
@@ -945,6 +951,7 @@ let tests =
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
+    test70;test71
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6
     |]
@@ -1015,6 +1022,6 @@ run_with_unit_ret (readall()) p
 //get_all_diffs()
 //|> printfn "%s"
 
-output_test_to_temp test70
+output_test_to_temp test71
 |> printfn "%s"
 |> ignore
