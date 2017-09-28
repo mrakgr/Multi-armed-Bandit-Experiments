@@ -1965,8 +1965,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)
         let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
         let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
+        let lit_var = lit_ <|> (var_name |>> LitString)
         let pat_type_lit = 
-            let literal = lit_ <|> (var_name |>> LitString) |>> PatTypeLit
+            let literal = lit_var |>> PatTypeLit
             let bind = var_name |>> PatTypeLitBind
             dot >>. (literal <|> rounds bind)
         let pat_lit = lit_ |>> PatLit
@@ -1974,9 +1975,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
 
         let pat_named_tuple pattern =
-            let pat = pipe2 var_name (opt (pp >>. pattern)) (fun name -> function
-                | Some pat -> PatTuple [PatTypeLit <| LitString name; pat]
-                | None -> PatTypeLit <| LitString name)
+            let pat = pipe2 lit_var (opt (pp >>. pattern)) (fun lit pat ->
+                let lit = PatTypeLit lit
+                match pat with
+                | Some pat -> PatTuple [lit; pat]
+                | None -> lit)
             squares (many pat) |>> function [x] -> x | x -> PatTuple x
 
         let (^<|) a b = a b // High precedence, right associative <| operator
@@ -2165,8 +2168,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let pat s = 
                 let i = col s
                 let line = line s
-                pipe2 var_name (opt (pp >>. expr_indent i (<) (set_semicolon_level_to_line line expr))) (fun name expr ->
-                    let tup = type_lit_lift' <| lit_string name
+                pipe2 lit_var (opt (pp >>. expr_indent i (<) (set_semicolon_level_to_line line expr))) (fun lit expr ->
+                    let tup = type_lit_lift lit
                     match expr with
                     | Some expr -> vv [tup; expr]
                     | None -> tup

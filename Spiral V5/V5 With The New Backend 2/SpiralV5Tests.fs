@@ -865,6 +865,18 @@ let test71 =
 55 + id
     """
 
+let test72 =
+    "test72",[],"Does any kind of literal work in the named tuple syntax?",
+    """
+inl f = function
+    | [1 : x] -> x
+    | [true: x] -> x
+    | [add: a,b] -> a+b
+    | [3.3] -> 6.6
+
+f [1: 1], f [true: 2], f [add: 1,2], f [3.3]
+    """
+
 
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
@@ -951,7 +963,7 @@ let tests =
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
-    test70;test71
+    test70;test71;test72
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6
     |]
@@ -1022,6 +1034,6 @@ run_with_unit_ret (readall()) p
 get_all_diffs()
 |> printfn "%s"
 
-//output_test_to_temp test71
+//output_test_to_temp test72
 //|> printfn "%s"
 //|> ignore
