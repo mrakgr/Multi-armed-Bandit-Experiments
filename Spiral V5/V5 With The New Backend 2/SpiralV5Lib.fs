@@ -320,7 +320,7 @@ inl state = m {
     parser = inl {on_succ} state -> on_succ state state
     }
 inl set_state state = m {
-    parser = inl {on_succ} -> on_succ ()
+    parser = inl {on_succ} _ -> on_succ () state
     }
 inl (>>=) a b = m {
     parser = inl d -> a .elem {d with on_succ = inl x -> b x .elem d}
