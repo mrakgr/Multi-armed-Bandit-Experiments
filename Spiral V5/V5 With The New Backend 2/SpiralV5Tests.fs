@@ -1019,9 +1019,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//get_all_diffs()
-//|> printfn "%s"
-
-output_test_to_temp test71
+get_all_diffs()
 |> printfn "%s"
-|> ignore
+
+//output_test_to_temp test71
+//|> printfn "%s"
+//|> ignore
