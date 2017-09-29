@@ -1003,6 +1003,47 @@ inl f =
 run_with_unit_ret (readall()) f
         """
 
+let euler1 =
+    "euler1",[console],"https://projecteuler.net/problem=1",
+    """
+//If we list all the natural numbers below 10 that are multiples of 3 or 5, we get 3, 5, 6 and 9. The sum of these multiples is 23.
+//Find the sum of all the multiples of 3 or 5 below 1000.
+inl for d =
+    inl rec loop {check from to by state body} as d =
+        inl loop_body from, to, by as conds = 
+            if check from to then loop {check to by body from=from+by; state=body {state i=from}} 
+            else state
+            : state
+        inl conds = from,to,by
+        if is_static conds then loop_body conds
+        else
+            inl conds = dyn conds
+            (met _ -> loop_body conds) () // This places a join point so the function does not diverge if it has dynamic arguments.
+
+    inl er_msg = "The by field should not be zero in loop as the program would diverge."
+    match d with
+    | {from to} as d -> d | _ -> error_type "The input to loop is missing from and to module fields."
+    |> function | {body} as d -> d | d -> error_type "The loop body is missing."
+    |> function | {state} as d -> d | d -> {d with state=()}
+    |> function 
+        | {by} when is_static by && by = 0 -> error_type er_msg
+        | {by} when b = 0 -> failwith er_msg
+        // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
+        // That way it will get specialized even by is dynamic.
+        | {by} when b < 0 -> loop {d with check=(>=)}
+        | {by} -> loop {d with check=(<=)}
+        | {from to} when from > to -> loop {d with by= -1; check=(>=)}
+        | d -> loop {d with by=1; check=(<=)}
+
+inl n = dyn 999
+inl sum_of_multiples_of_3_or_5 =
+    for {from=3; to=n; state=dyn 0; body = inl {state i} ->
+        if i % 3 = 0 || i % 5 = 0 then state+i
+        else state
+        }
+Console.writeline sum_of_multiples_of_3_or_5
+    """
+
 
 let tests =
     [|
@@ -1084,6 +1125,6 @@ run_with_unit_ret (readall()) p
 //get_all_diffs()
 //|> printfn "%s"
 
-output_test_to_temp parsing8
+output_test_to_temp euler1
 |> printfn "%s"
 |> ignore

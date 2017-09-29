@@ -2252,7 +2252,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let left_assoc_ops = 
                 let f = add_infix_operator Associativity.Left
-                f "+" 60; f "-" 60; f "*" 70; f "/" 70
+                f "+" 60; f "-" 60; f "*" 70; f "/" 70; f "%" 70
                 f "<|" 10; f "|>" 10; f "<<" 10; f ">>" 10
 
             let no_assoc_ops =
@@ -2888,7 +2888,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "array_create" (p2 <| fun size typ -> op(ArrayCreate,[size;typ]))
             l "array_length" (p <| fun ar -> op(ArrayLength,[ar]))
 
-            b "+" Add; b "-" Sub; b "*" Mult; b "/" Div
+            b "+" Add; b "-" Sub; b "*" Mult; b "/" Div; b "%" Mod
             b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
 
             b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
