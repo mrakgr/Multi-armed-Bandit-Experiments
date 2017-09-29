@@ -975,6 +975,35 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
+let parsing8 =
+    "parsing8",[array;console;parsing],"Does the parsing library work? Diagonal Sum Difference problem.",
+    """
+//https://www.hackerrank.com/challenges/diagonal-difference
+open Console
+open Parsing
+
+inl abs x = if x >= 0 then x else -x
+
+inl f =
+    inm n = parse_int
+    inm ar = parse_n_array {parser=parse_int; typ=int64} (n*n)
+    inl load row col = 
+        inl f x = x >= 0 || x < n
+        assert (f row && f col) "Out of bounds."
+        ar (n * row + col)
+    met rec loop (!dyn i) (d1,d2 as s) =
+        if i < n then loop (i+1) (d1 + load i i, d2 + load i (n-i-1))
+        else s
+        : s
+    inl a,b = loop 0 (0,0)
+    abs (a-b) 
+    |> writeline
+    |> succ
+
+run_with_unit_ret (readall()) f
+        """
+
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -986,7 +1015,7 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72
     hacker_rank_1
-    parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7
+    parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     |]
 
 open System.IO
@@ -1052,9 +1081,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
-
-//output_test_to_temp parsing7
+//get_all_diffs()
 //|> printfn "%s"
-//|> ignore
+
+output_test_to_temp parsing8
+|> printfn "%s"
+|> ignore
