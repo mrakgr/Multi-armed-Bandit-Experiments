@@ -36,7 +36,7 @@ and method_15((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): i
         var_3
 let (var_0: int64) = 999L
 let (var_1: int64) = 3L
-let (var_2: int64) = 1L
+let (var_2: int64) = 0L
 let (var_3: int64) = 0L
 let (var_7: int64) =
     if (var_2 = 0L) then

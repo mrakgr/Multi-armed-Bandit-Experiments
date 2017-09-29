@@ -1818,11 +1818,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let comma = skipChar ',' >>. spaces
         let dot = operatorChar '.'
         let pp = operatorChar ':'
+        let pp' = skipChar ':' >>. spaces
         let semicolon' = operatorChar ';'
         let semicolon = semicolon' >>=? fun _ s -> 
             if s.Line <> s.UserState.semicolon_line then Reply(())
             else Reply(ReplyStatus.Error, messageError "cannot parse ; on this line") 
         let eq = operatorChar '=' 
+        let eq' = skipChar '=' >>. spaces
         let bar = operatorChar '|' 
         let amphersand = operatorChar '&'
         let barbar = operatorString "||" 
@@ -1975,7 +1977,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
 
         let pat_named_tuple pattern =
-            let pat = pipe2 lit_var (opt (pp >>. pattern)) (fun lit pat ->
+            let pat = pipe2 lit_var (opt (pp' >>. pattern)) (fun lit pat ->
                 let lit = PatTypeLit lit
                 match pat with
                 | Some pat -> PatTuple [lit; pat]
@@ -1989,9 +1991,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | [x] -> PatModuleInner(x,bindings)
             | x :: xs -> PatModuleInner(x,[pat_module_helper (xs,bindings)])
             | _ -> failwith "Invalid state"
-        let rec pat_module_outer expr s = 
-            let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-            curlies (opt (attempt (sepBy1 var_name dot .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding))
+
+        let rec parse_binding expr = var_name .>>. opt (eq' >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
+        and pat_module_outer expr s = 
+            curlies (opt (attempt (sepBy1 var_name dot .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding expr))
             |>> function
                 | Some (n :: (_ :: _ as ns)), bindings -> PatModuleOuter(Some n, [pat_module_helper (ns,bindings)])
                 | Some [n], bindings -> PatModuleOuter(Some n,bindings)
@@ -1999,8 +2002,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | None, bindings -> PatModuleOuter(None,bindings)
             <| s
         and pat_module_inner expr s = 
-            let parse_binding = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-            curlies ((sepBy1 var_name dot .>> with_) .>>. many (pat_module_inner expr <|> parse_binding)) 
+            curlies ((sepBy1 var_name dot .>> with_) .>>. many (pat_module_inner expr <|> parse_binding expr)) 
             |>> pat_module_helper <| s
 
         and patterns_template expr pat_module s = // The order in which the pattern parsers are chained in determines their precedence.
@@ -2053,7 +2055,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let type_pat' args body = x_pat' type_memo args body
 
 
-        let inline statement_expr expr = eq >>. expr
+        let inline statement_expr expr = eq' >>. expr
         let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (statement_expr expr) lp
         let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. var_op_name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
         let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. var_op_name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
@@ -2151,7 +2153,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let parse_binding s = 
                 let i = col s
                 let line = s.Line
-                var_op_name .>>. opt (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
+                var_op_name .>>. opt (eq' >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
                 |>> function a, None -> mp_binding (a, v a) | a, Some b -> mp_binding (a, b)
                 <| s
             let module_create s = many1 (parse_binding .>> optional semicolon') s
@@ -2168,7 +2170,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let pat s = 
                 let i = col s
                 let line = line s
-                pipe2 lit_var (opt (pp >>. expr_indent i (<) (set_semicolon_level_to_line line expr))) (fun lit expr ->
+                pipe2 lit_var (opt (pp' >>. expr_indent i (<) (set_semicolon_level_to_line line expr))) (fun lit expr ->
                     let tup = type_lit_lift lit
                     match expr with
                     | Some expr -> vv [tup; expr]

@@ -1,6 +1,45 @@
 ﻿module Spiral.Lib
 open Main
 
+let loops =
+    (
+    "Loops",[],"Various imperative loop constructors module.",
+    """
+inl for' d =
+    inl rec loop {check from to by state body} as d =
+        inl loop_body from, to, by as conds = 
+            if check from to then loop {check to by body from=from+by; state=body {state i=from}} 
+            else state
+            : state
+        inl conds = from,to,by
+        if is_static conds then loop_body conds
+        else
+            inl conds = dyn conds
+            (met _ -> loop_body conds) () // This places a join point so the function does not diverge if it has dynamic arguments.
+
+    inl er_msg = "The by field should not be zero in loop as the program would diverge."
+    match d with
+    | {from to} as d -> d | _ -> error_type "The input to loop is missing from and to module fields."
+    |> function | {body} as d -> d | d -> error_type "The loop body is missing."
+    |> function | {state} as d -> d | d -> {d with state=()}
+    |> function 
+        | {by} when is_static by && by = 0 -> error_type er_msg
+        | {by state} when by = 0 -> failwith er_msg; state
+        // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
+        // That way it will get specialized even by is dynamic.
+        | {by} when by < 0 -> loop {d with check=(>=)}
+        | {by} -> loop {d with check=(<=)}
+        | {from to} when from > to -> loop {d with by=-1; check=(>=)}
+        | d -> loop {d with by=1; check=(<=)}
+
+/// Since most for loops are straightforward counting up, there is no need to specialize for both ways each time.
+/// By passing by as 1 explicitly that possibility is cut off.
+inl for = function
+    | {by} as d -> for' d
+    | d -> for' {d with by=1}
+{for for'}
+    """) |> module_
+
 let tuple =
     (
     "Tuple",[],"Operations on tuples.",
