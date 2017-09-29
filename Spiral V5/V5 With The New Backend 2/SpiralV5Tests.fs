@@ -975,22 +975,6 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-let parsing7_min =
-    "parsing7_min",[array;console;parsing],"Isolating the HackerRank segmentation fault for the Birthday Cake Candles problem.",
-    """
-//https://www.hackerrank.com/challenges/birthday-cake-candles
-open Console
-open Parsing
-
-inl n = dyn 100000
-inl p = 
-    inm ar = parse_n_array {parser=pint64 .>> spaces; typ=int64} n 
-    writeline 2
-    |> succ
-
-run_with_unit_ret (readall()) p
-    """
-
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1002,7 +986,7 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72
     hacker_rank_1
-    parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing7_min
+    parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7
     |]
 
 open System.IO
@@ -1068,9 +1052,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//get_all_diffs()
-//|> printfn "%s"
-
-output_test_to_temp parsing7_min
+get_all_diffs()
 |> printfn "%s"
-|> ignore
+
+//output_test_to_temp parsing7
+//|> printfn "%s"
+//|> ignore
