@@ -5,6 +5,14 @@ let loops =
     (
     "Loops",[],"Various imperative loop constructors module.",
     """
+inl rec while {state} as d =
+    inl loop_body {state cond body} as d =
+        if cond state then while {d with state = body state}
+        else state
+        : state
+    if is_static state then loop_body d
+    else (met _ -> loop_body d) ()
+
 inl for' d =
     inl rec loop {check from to by state body} as d =
         inl loop_body from, to, by as conds = 
@@ -33,11 +41,11 @@ inl for' d =
         | d -> loop {d with by=1; check=(<=)}
 
 /// Since most for loops are straightforward counting up, there is no need to specialize for both ways each time.
-/// By passing by as 1 explicitly that possibility is cut off.
+/// If by is not given, it makes the most sense to assume it is 1.
 inl for = function
     | {by} as d -> for' d
     | d -> for' {d with by=1}
-{for for'}
+{for while}
     """) |> module_
 
 let tuple =

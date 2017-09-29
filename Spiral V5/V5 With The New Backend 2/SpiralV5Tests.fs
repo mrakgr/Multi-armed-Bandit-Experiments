@@ -1003,21 +1003,73 @@ inl f =
 run_with_unit_ret (readall()) f
         """
 
-let euler1 =
-    "euler1",[loops;console],"https://projecteuler.net/problem=1",
+let loop1 =
+    "loop1",[loops;console],"Does the Loop module work?",
     """
 open Console
 open Loops
 //If we list all the natural numbers below 10 that are multiples of 3 or 5, we get 3, 5, 6 and 9. The sum of these multiples is 23.
 //Find the sum of all the multiples of 3 or 5 below 1000.
 
-for' {from=dyn 999; to=dyn 3; by=dyn -1; state=dyn 0; body = inl {state i} ->
+for {from=dyn 999; to=dyn 3; by=dyn (-1); state=dyn 0; body = inl {state i} ->
     if i % 3 = 0 || i % 5 = 0 then state+i
     else state
     }
 |> writeline
     """
 
+let loop2 =
+    "loop2",[loops;console],"Does the Loop module work?",
+    """
+open Console
+open Loops
+
+for {from=dyn 3; to=dyn 999; state=dyn 0; body = inl {state i} ->
+    if i % 3 = 0 || i % 5 = 0 then state+i
+    else state
+    }
+|> writeline
+    """
+
+let loop3 =
+    "loop3",[loops;console],"Does the Loop module work?",
+    """
+open Console
+open Loops
+
+for {from=6; to=3; by=-1; state=0; body = inl {state i} ->
+    if i % 3 = 0 || i % 5 = 0 then state+i
+    else state
+    }
+|> writeline
+    """
+
+let loop4 =
+    "loop4",[loops;console],"Does the Loop module work?",
+    """
+open Console
+open Loops
+
+for {from=6; to=3; by=0; state=0; body = inl {state i} ->
+    if i % 3 = 0 || i % 5 = 0 then state+i
+    else state
+    }
+|> writeline
+    """
+
+let euler2 = 
+    "euler2",[loops;console],"Even Fibonacci Numbers.",
+    """
+open Loops
+open Console
+
+while {
+    state={sum=dyn 0; a=dyn 1; b=dyn 2}
+    cond=inl {b} -> if b <= 4*1000*1000 then true else false
+    body=inl {sum a b} -> {sum=if b % 2 = 0 then sum+b else sum; a=b; b=a+b}
+    }
+|> inl {sum} -> writeline sum
+    """
 
 let tests =
     [|
@@ -1031,7 +1083,8 @@ let tests =
     test70;test71;test72
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
-    euler1
+    loop1;loop2;loop3;loop4
+    euler2
     |]
 
 open System.IO
@@ -1097,11 +1150,11 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//get_all_diffs()
-//|> printfn "%s"
-
-output_test_to_temp euler1
+get_all_diffs()
 |> printfn "%s"
-|> ignore
+
+//output_test_to_temp loop4
+//|> printfn "%s"
+//|> ignore
 
 
