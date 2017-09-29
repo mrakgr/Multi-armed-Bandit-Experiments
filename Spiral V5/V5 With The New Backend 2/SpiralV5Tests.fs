@@ -1006,9 +1006,11 @@ run_with_unit_ret (readall()) f
 let euler1 =
     "euler1",[console],"https://projecteuler.net/problem=1",
     """
+open Console
+
 //If we list all the natural numbers below 10 that are multiples of 3 or 5, we get 3, 5, 6 and 9. The sum of these multiples is 23.
 //Find the sum of all the multiples of 3 or 5 below 1000.
-inl for d =
+inl for' d =
     inl rec loop {check from to by state body} as d =
         inl loop_body from, to, by as conds = 
             if check from to then loop {check to by body from=from+by; state=body {state i=from}} 
@@ -1027,21 +1029,24 @@ inl for d =
     |> function | {state} as d -> d | d -> {d with state=()}
     |> function 
         | {by} when is_static by && by = 0 -> error_type er_msg
-        | {by} when b = 0 -> failwith er_msg
+        | {by state} when by = 0 -> failwith er_msg; state
         // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
         // That way it will get specialized even by is dynamic.
-        | {by} when b < 0 -> loop {d with check=(>=)}
+        | {by} when by < 0 -> loop {d with check=(>=)}
         | {by} -> loop {d with check=(<=)}
         | {from to} when from > to -> loop {d with by= -1; check=(>=)}
         | d -> loop {d with by=1; check=(<=)}
 
-inl n = dyn 999
+inl for = function
+    | {by} as d -> for' d
+    | d -> for' {d with by=1}
+
 inl sum_of_multiples_of_3_or_5 =
-    for {from=3; to=n; state=dyn 0; body = inl {state i} ->
+    for' {from=dyn 999; to=dyn 3; by=dyn 0; state=dyn 0; body = inl {state i} ->
         if i % 3 = 0 || i % 5 = 0 then state+i
         else state
         }
-Console.writeline sum_of_multiples_of_3_or_5
+writeline sum_of_multiples_of_3_or_5
     """
 
 

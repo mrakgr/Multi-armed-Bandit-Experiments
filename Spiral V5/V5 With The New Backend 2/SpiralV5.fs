@@ -1668,7 +1668,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let failwith_ d a =
             match tev d a with
-            | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BVVT)
+            | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BVVT) |> make_tyv_and_push_typed_expr_even_if_unit d
             | _ -> on_type_er d.trace "Expected a string as input to failwith."
             
         let inline add_trace d x = {d with trace = x :: d.trace}
