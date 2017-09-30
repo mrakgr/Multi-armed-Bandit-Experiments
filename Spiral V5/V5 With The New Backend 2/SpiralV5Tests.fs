@@ -1071,6 +1071,14 @@ while {
 |> inl {sum} -> writeline sum
     """
 
+let euler3 = 
+    "euler3",[loops;console],"",
+    """
+open Loops
+open Console
+
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1150,11 +1158,11 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
-
-//output_test_to_temp loop4
+//get_all_diffs()
 //|> printfn "%s"
-//|> ignore
+
+output_test_to_temp euler2
+|> printfn "%s"
+|> ignore
 
 
