@@ -163,6 +163,7 @@ type Op =
     | Fix
     | Apply
     | TermCast
+    | UnsafeConvert
     | FuncJoinPoint
     | TypeJoinPoint
     | StructCreate
@@ -1670,6 +1671,50 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match tev d a with
             | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BVVT) |> make_tyv_and_push_typed_expr_even_if_unit d
             | _ -> on_type_er d.trace "Expected a string as input to failwith."
+
+        let unsafe_convert d a b =
+            let a,b = tev2 d a b
+            let at,bt = get_type a, get_type b
+            if at = bt then a
+            else
+                let inline conv_lit x =
+                    match bt with
+                    | PrimT Int8T -> int8 x |> LitInt8
+                    | PrimT Int16T -> int16 x |> LitInt16
+                    | PrimT Int32T -> int32 x |> LitInt32
+                    | PrimT Int64T -> int64 x |> LitInt64
+                    | PrimT UInt8T -> uint8 x |> LitUInt8
+                    | PrimT UInt16T -> uint16 x |> LitUInt16
+                    | PrimT UInt32T -> uint32 x |> LitUInt32
+                    | PrimT UInt64T -> uint64 x |> LitUInt64
+                    | PrimT CharT -> char x |> LitChar
+                    | PrimT Float32T -> float32 x |> LitFloat32
+                    | PrimT Float64T -> float x |> LitFloat64
+                    | _ -> on_type_er d.trace "Cannot convert the literal to the following type: %A" bt
+                    |> TyLit
+                match a with
+                | TyLit (LitInt8 a) -> conv_lit a
+                | TyLit (LitInt16 a) -> conv_lit a
+                | TyLit (LitInt32 a) -> conv_lit a
+                | TyLit (LitInt64 a) -> conv_lit a
+                | TyLit (LitUInt8 a) -> conv_lit a
+                | TyLit (LitUInt16 a) -> conv_lit a
+                | TyLit (LitUInt32 a) -> conv_lit a
+                | TyLit (LitUInt64 a) -> conv_lit a
+                | TyLit (LitChar a) -> conv_lit a
+                | TyLit (LitFloat32 a) -> conv_lit a
+                | TyLit (LitFloat64 a) -> conv_lit a
+                | TyLit (LitBool _) -> on_type_er d.trace "Cannot convert the a boolean literal to the following type: %A" bt
+                // The string is not supported because it can't throw an exception if the conversion fails on the Cuda side.
+                | TyLit (LitString _) -> on_type_er d.trace "Cannot convert the a string literal to the following type: %A" bt
+                | _ ->
+                    let is_convertible_primt x =
+                        match x with
+                        | PrimT BoolT | PrimT StringT -> false
+                        | PrimT _ -> true
+                        | _ -> false
+                    if is_convertible_primt at && is_convertible_primt bt then TyOp(UnsafeConvert,[a;b],bt)
+                    else on_type_er d.trace "Cannot convert %A to the following type: %A" a bt
             
         let inline add_trace d x = {d with trace = x :: d.trace}
 
@@ -1703,6 +1748,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | FuncJoinPoint,[a] -> memoize_method d a
             | TypeJoinPoint,[a] -> memoize_type d a
             | TermCast,[a;b] -> term_cast d a b
+            | UnsafeConvert,[a;b] -> unsafe_convert d a b
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
             | PrintEnv,[a] -> 
                 Map.iter (fun k v -> printfn "%s" k) d.env
@@ -2560,6 +2606,23 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | _ -> failwith "The cases should always be in pairs."
                     loop 0 cases
 
+            let unsafe_convert a t =
+                let conv_func = 
+                    match t with
+                    | PrimT Int8T -> "int8"
+                    | PrimT Int16T -> "int16"
+                    | PrimT Int32T -> "int32"
+                    | PrimT Int64T -> "int64"
+                    | PrimT UInt8T -> "uint8"
+                    | PrimT UInt16T -> "uint16"
+                    | PrimT UInt32T -> "uint32"
+                    | PrimT UInt64T -> "uint64"
+                    | PrimT CharT -> "char"
+                    | PrimT Float32T -> "float32"
+                    | PrimT Float64T -> "float"
+                    | _ -> failwith "impossible"
+                sprintf "%s %s" conv_func (codegen a)
+
             match expr with
             | TyT Unit | TyV (_, Unit) -> ""
             | TyT t -> on_type_er trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
@@ -2625,6 +2688,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | StringIndex,[str;idx] -> string_index str idx
                 | StringSlice,[str;a;b] -> string_slice str a b
                 | StringLength,[str] -> string_length str
+                | UnsafeConvert,[a;b] -> unsafe_convert a t
 
                 // Primitive operations on expressions.
                 | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -2880,6 +2944,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "type_lit_cast" (p <| fun x -> op(TypeLitCast,[x]))
             l "type_lit_is" (p <| fun x -> op(TypeLitIs,[x]))
             l "term_cast" (p2 term_cast)
+            l "unsafe_convert" (p2 <| fun a b -> op(UnsafeConvert,[a;b]))
             l "negate" (p <| fun x -> op(Neg,[x]))
         
             l "load_assembly" (p <| fun x -> op(DotNetLoadAssembly,[x]))
