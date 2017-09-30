@@ -1057,6 +1057,14 @@ for {from=6; to=3; by=0; state=0; body = inl {state i} ->
 |> writeline
     """
 
+let loop5 = 
+    "loop5",[loops],"Does the Loop module work?",
+    """
+open Loops
+
+for {from=2; to=2; body = inl {i} -> ()}
+    """
+
 let euler2 = 
     "euler2",[loops;console],"Even Fibonacci Numbers.",
     """
@@ -1072,11 +1080,46 @@ while {
     """
 
 let euler3 = 
-    "euler3",[loops;console],"",
+    "euler3",[array;loops;console],"Largest prime factor",
     """
 open Loops
 open Console
+open Array
 
+// The prime factors of 13195 are 5, 7, 13 and 29.
+// What is the largest prime factor of the number 600851475143 ?
+
+inl math = mscorlib ."System.Math"
+inl conv a b = unsafe_convert b a
+
+inl target = dyn 600851475143
+
+inl sieve_length = 
+    math.Sqrt(conv float64 target)
+    |> conv int64
+
+inl sieve = Array.init (sieve_length+1) (inl _ -> true)
+for {from=2; to=sieve_length; body = inl {i} ->
+    if sieve i = true then
+        for {from=i+i; to=sieve_length; by=i; body = inl {i} -> 
+            sieve i <- false
+            }
+    }
+
+type Option x =
+    [Some: x]
+    [None]
+
+inl some x = box (Option x) [Some: x]
+inl none x = box (Option x) [None]
+
+for' {from=sieve_length; to=2; by=-1; state=none int64; body = inl {navigator state i} ->
+    if sieve i = true && target % i = 0 then navigator [break: some i]
+    else navigator [continue: state]
+    }
+|>  function
+    | [Some: result] -> writeline result
+    | [None] -> failwith "No prime factor found!"
     """
 
 let tests =
@@ -1091,8 +1134,8 @@ let tests =
     test70;test71;test72
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
-    loop1;loop2;loop3;loop4
-    euler2
+    loop1;loop2;loop3;loop4;loop5
+    euler2;euler3
     |]
 
 open System.IO
@@ -1158,11 +1201,11 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//get_all_diffs()
-//|> printfn "%s"
-
-output_test_to_temp euler3
+get_all_diffs()
 |> printfn "%s"
-|> ignore
+
+//output_test_to_temp euler2
+//|> printfn "%s"
+//|> ignore
 
 

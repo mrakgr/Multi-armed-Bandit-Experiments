@@ -5,47 +5,53 @@ let loops =
     (
     "Loops",[],"Various imperative loop constructors module.",
     """
-inl rec while {state} as d =
+inl rec while {cond body state} as d =
     inl loop_body {state cond body} as d =
-        if cond state then while {d with state = body state}
+        if cond state then while {d with state=body state}
         else state
         : state
     if is_static state then loop_body d
     else (met _ -> loop_body d) ()
 
-inl for' d =
-    inl rec loop {check from to by state body} as d =
-        inl loop_body from, to, by as conds = 
-            if check from to then loop {check to by body from=from+by; state=body {state i=from}} 
+inl for_template kind =
+    inl rec loop {from to by} as d =
+        inl loop_body {check from to by state body} as d =
+            if check from to then 
+                match kind with
+                | .Navigable ->
+                    inl navigator = function
+                        | [break: state] -> state
+                        | [continue: state] -> loop {d with state from=from+by}
+                    body {navigator state i=from}
+                | .Standard ->
+                    loop {d with state=body {state i=from}; from=from+by}
             else state
             : state
-        inl conds = from,to,by
-        if is_static conds then loop_body conds
+
+        inl conds = from, to, by
+        if is_static conds then loop_body d
         else
-            inl conds = dyn conds
-            (met _ -> loop_body conds) () // This places a join point so the function does not diverge if it has dynamic arguments.
+            inl from,to,by = dyn conds
+            (met d -> loop_body d) {d with to from by}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
-    match d with
-    | {from to} as d -> d | _ -> error_type "The input to loop is missing from and to module fields."
-    |> function | {body} as d -> d | d -> error_type "The loop body is missing."
-    |> function | {state} as d -> d | d -> {d with state=()}
-    |> function 
+
+    function | {from to} as d -> d | d -> error_type "The input to loop is missing from and to module fields."
+    >> function | {body} as d -> d | d -> error_type "The loop body is missing."
+    >> function | {state} as d -> d | d -> {d with state=()}
+    >> function | {by} as d -> d | d -> {d with by=1}
+    >> function 
         | {by} when is_static by && by = 0 -> error_type er_msg
         | {by state} when by = 0 -> failwith er_msg; state
         // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
         // That way it will get specialized even by is dynamic.
-        | {by} when by < 0 -> loop {d with check=(>=)}
-        | {by} -> loop {d with check=(<=)}
-        | {from to} when from > to -> loop {d with by=-1; check=(>=)}
-        | d -> loop {d with by=1; check=(<=)}
+        | {by} as d when by < 0 -> loop {d with check=(>=)}
+        | d -> loop {d with check=(<=)}
 
-/// Since most for loops are straightforward counting up, there is no need to specialize for both ways each time.
-/// If by is not given, it makes the most sense to assume it is 1.
-inl for = function
-    | {by} as d -> for' d
-    | d -> for' {d with by=1}
-{for while}
+inl for = for_template .Standard
+inl for' = for_template .Navigable
+
+{for for' while}
     """) |> module_
 
 let tuple =
