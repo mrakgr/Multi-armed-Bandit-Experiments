@@ -1213,6 +1213,6 @@ run_with_unit_ret (readall()) p
 get_all_diffs()
 |> printfn "%s"
 
-//output_test_to_temp test22
+//output_test_to_temp euler3
 //|> printfn "%s"
 //|> ignore
