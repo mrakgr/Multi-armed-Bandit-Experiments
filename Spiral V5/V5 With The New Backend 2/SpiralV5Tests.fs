@@ -1122,6 +1122,15 @@ for' {from=sieve_length; to=2; by=-1; state=none int64; body = inl {navigator st
     | [None] -> failwith "No prime factor found!"
     """
 
+let euler4 = 
+    "euler4",[array;loops;console],"Largest palindrome product",
+    """
+//A palindromic number reads the same both ways. The largest palindrome made from the product of two 2-digit numbers is 9009 = 91 × 99.
+//Find the largest palindrome made from the product of two 3-digit numbers.
+
+
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
