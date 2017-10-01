@@ -1839,7 +1839,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     
         let is_identifier_starting_char c = isAsciiLetter c || c = '_'
         let is_identifier_char c = is_identifier_starting_char c || c = ''' || isDigit c 
-        let is_operator_char c = (is_identifier_char c || isAnyOf [|' ';',';'\t';'\n';'\"';'(';')';'{';'}';'[';']'|] c) = false
+        let is_separator_char c = 
+            let inline f x = c = x
+            f ' ' || f ',' || f ';' || f '\t' || f '\n' || f '\"'
+        let is_parenth_char c = 
+            let inline f x = c = x
+            f '(' || f ')' || f '{' || f '}' || f '[' || f ']'
+        let is_operator_char c = (is_identifier_char c || is_separator_char c || is_parenth_char c) = false
 
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
@@ -1856,13 +1862,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         
         let keywordString x = attempt (skipString x >>. nextCharSatisfiesNot is_identifier_char >>. spaces)
         let operatorChar x = attempt (skipChar x >>. nextCharSatisfiesNot is_operator_char >>. spaces)
+        let prefixOperatorChar x = attempt (skipChar x >>. nextCharSatisfiesNot is_operator_char)
         let operatorString x = attempt (skipString x >>. nextCharSatisfiesNot is_operator_char >>. spaces)
 
         let when_ = keywordString "when"
         let as_ = keywordString "as"
-        let negate_ = operatorChar '-'
+        let prefix_negate = prefixOperatorChar '-'
         let comma = skipChar ',' >>. spaces
         let dot = operatorChar '.'
+        let prefix_dot = prefixOperatorChar '.'
         let pp = operatorChar ':'
         let pp' = skipChar ':' >>. spaces
         let semicolon' = operatorChar ';'
@@ -1887,9 +1895,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let with_ = keywordString "with"
         let open_ = keywordString "open"
         let cons = operatorString "::"
-        let active_pat = operatorChar '!'
-        let part_active_pat = operatorChar '@'
-        let ext_active_pat = operatorChar '#'
+        let active_pat = prefixOperatorChar '!'
+        let part_active_pat = prefixOperatorChar '@'
+        let ext_active_pat = prefixOperatorChar '#'
         let type_' = keywordString "type"
         let wildcard = operatorChar '_'
 
@@ -2017,7 +2025,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let pat_type_lit = 
             let literal = lit_var |>> PatTypeLit
             let bind = var_name |>> PatTypeLitBind
-            dot >>. (literal <|> rounds bind)
+            prefix_dot >>. (literal <|> rounds bind)
         let pat_lit = lit_ |>> PatLit
         let pat_when expr pattern = pattern .>>. (opt (when_ >>. expr)) |>> function a, Some b -> PatWhen(a,b) | a, None -> a
         let pat_as pattern = pattern .>>. (opt (as_ >>. pattern )) |>> function a, Some b -> PatAnd [a;b] | a, None -> a
@@ -2174,7 +2182,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let case_lit_lift expr = 
             let var = var_name |>> (LitString >> type_lit_lift)
             let lit = expr |>> type_lit_lift'
-            dot >>. (var <|> lit)
+            prefix_dot >>. (var <|> lit)
 
         let case_print_env expr s = 
             let i = col s
@@ -2224,7 +2232,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     ) s
             squares (many (pat .>> optional semicolon')) |>> function [x] -> x | x -> vv x
 
-        let case_negate expr = negate_ >>. expr |>> (ap (v "negate"))
+        let case_negate expr = previousCharSatisfiesNot (fun x -> is_separator_char x = false) >>. prefix_negate >>. expr |>> (ap (v "negate"))
 
         let rec expressions expr s =
             let unary_ops = 

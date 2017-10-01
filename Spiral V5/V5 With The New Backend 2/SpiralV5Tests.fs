@@ -1037,7 +1037,7 @@ let loop3 =
 open Console
 open Loops
 
-for {from=6; to=3; by=-1; state=0; body = inl {state i} ->
+for {from=6; to=3; by= -1; state=0; body = inl {state i} ->
     if i % 3 = 0 || i % 5 = 0 then state+i
     else state
     }
@@ -1113,7 +1113,7 @@ type Option x =
 inl some x = box (Option x) [Some: x]
 inl none x = box (Option x) [None]
 
-for' {from=sieve_length; to=2; by=-1; state=none int64; body = inl {navigator state i} ->
+for' {from=sieve_length; to=2; by= -1; state=none int64; body = inl {navigator state i} ->
     if sieve i = true && target % i = 0 then navigator [break: some i]
     else navigator [continue: state]
     }
@@ -1194,7 +1194,7 @@ let get_diff_using_testcache (stream: StringBuilder) (name,aux,desc,body as m) =
     stream
 
 let get_all_diffs () = 
-    Array.fold get_diff_using_testcache (StringBuilder()) tests.[0..10]
+    Array.fold get_diff_using_testcache (StringBuilder()) tests
     |> fun x -> x.ToString()
 
 let speed1 =
@@ -1210,9 +1210,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//get_all_diffs()
-//|> printfn "%s"
-
-output_test_to_temp test5
+get_all_diffs()
 |> printfn "%s"
-|> ignore
+
+//output_test_to_temp test22
+//|> printfn "%s"
+//|> ignore
