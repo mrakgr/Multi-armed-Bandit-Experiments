@@ -1128,7 +1128,24 @@ let euler4 =
 //A palindromic number reads the same both ways. The largest palindrome made from the product of two 2-digit numbers is 9009 = 91 × 99.
 //Find the largest palindrome made from the product of two 3-digit numbers.
 
+open Loops
+open Console
 
+inl reverse_number x =
+    while {
+        cond=inl {x} -> x > 0 
+        state={x x' = dyn 0}
+        body=inl {x x'} -> {x=x/10; x'= x'*10+x%10}
+        }
+    |> inl {x'} -> x'
+inl is_palindrome x = x = reverse_number x
+for {from=dyn 100; to=dyn 999; state={highest_palindrome=dyn 0}; body=inl {state i} ->
+    for {from=i; to=dyn 999; state; body=inl {{state with highest_palindrome} i=j} ->
+        inl x = i*j
+        if is_palindrome x && highest_palindrome < x then {highest_palindrome=x} else state
+        }
+    } 
+|> inl {highest_palindrome} -> writeline highest_palindrome
     """
 
 let tests =
@@ -1144,7 +1161,7 @@ let tests =
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
-    euler2;euler3
+    euler2;euler3;euler4
     |]
 
 open System.IO
@@ -1213,6 +1230,6 @@ run_with_unit_ret (readall()) p
 get_all_diffs()
 |> printfn "%s"
 
-//output_test_to_temp euler3
+//output_test_to_temp euler4
 //|> printfn "%s"
 //|> ignore

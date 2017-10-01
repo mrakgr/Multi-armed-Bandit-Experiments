@@ -14,7 +14,7 @@ inl rec while {cond body state} as d =
     else (met _ -> loop_body d) ()
 
 inl for_template kind =
-    inl rec loop {from to by} as d =
+    inl rec loop {from to} as d =
         inl loop_body {check from to by state body} as d =
             if check from to then 
                 match kind with
@@ -28,11 +28,11 @@ inl for_template kind =
             else state
             : state
 
-        inl conds = from, to, by
+        inl conds = from, to
         if is_static conds then loop_body d
         else
-            inl from,to,by = dyn conds
-            (met d -> loop_body d) {d with to from by}
+            inl from,to = dyn conds
+            (met d -> loop_body d) {d with to from}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 

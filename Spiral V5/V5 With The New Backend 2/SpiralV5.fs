@@ -2160,7 +2160,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | _ -> fail "not a pattern matching clause"
                 |> expr_indent (<=) 
             
-            let set_col (s: CharStream<_>) = i <- Some ((col s)); Reply(())
+            let set_col (s: CharStream<_>) = i <- Some (col s); Reply(())
 
             let pat_function l = pattern (PatClauses l)
             let pat_match x l = ap (pat_function l) x
