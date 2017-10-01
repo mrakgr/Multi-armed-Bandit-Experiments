@@ -1115,7 +1115,7 @@ inl none x = box (Option x) [None]
 
 for' {from=sieve_length; to=2; by= -1; state=none int64; body = inl {navigator state i} ->
     if sieve i = true && target % i = 0 then navigator [break: some i]
-    else navigator [continue: state]
+    else navigator [next: state]
     }
 |>  function
     | [Some: result] -> writeline result
@@ -1148,6 +1148,25 @@ for {from=dyn 100; to=dyn 999; state={highest_palindrome=dyn 0}; body=inl {state
 |> inl {highest_palindrome} -> writeline highest_palindrome
     """
 
+let euler5 =
+    "euler5",[tuple;loops;console],"Smallest multiple",
+    """
+//2520 is the smallest number that can be divided by each of the numbers from 1 to 10 without any remainder.
+//What is the smallest positive number that is evenly divisible by all of the numbers from 1 to 20?
+
+open Loops
+open Console
+
+inl primes = 2,3,5,11,13,17,19
+inl non_primes = Tuple.range (2,20) |> Tuple.filter (Tuple.contains primes >> not)
+inl step = Tuple.foldl (*) 1 primes
+for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=inl {navigator state i} ->
+    if Tuple.forall (inl x -> i % x = 0) non_primes then navigator [break: i]
+    else navigator [next: state]
+    }
+|> writeline
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1161,7 +1180,7 @@ let tests =
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
-    euler2;euler3;euler4
+    euler2;euler3;euler4;euler5
     |]
 
 open System.IO
@@ -1227,9 +1246,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
-
-//output_test_to_temp euler4
+//get_all_diffs()
 //|> printfn "%s"
-//|> ignore
+
+output_test_to_temp euler5
+|> printfn "%s"
+|> ignore

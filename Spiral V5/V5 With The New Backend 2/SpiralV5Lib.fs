@@ -21,7 +21,7 @@ inl for_template kind =
                 | .Navigable ->
                     inl navigator = function
                         | [break: state] -> state
-                        | [continue: state] -> loop {d with state from=from+by}
+                        | [next: state] -> loop {d with state from=from+by}
                     body {navigator state i=from}
                 | .Standard ->
                     loop {d with state=body {state i=from}; from=from+by}
@@ -70,9 +70,6 @@ inl rec foldr f l s =
 inl singleton x = x :: ()
 inl append = foldr (::)
 
-inl upon = foldl (inl module_ (k,v) -> upon module_ k v)
-inl upon' = foldl (inl module_ (k,v) -> upon' module_ k v)
-
 inl rev, map =
     inl map' f l = foldl (inl s x -> f x :: s) () l
     inl rev l = map' id l
@@ -87,12 +84,9 @@ inl rec exists f = function
     | x :: xs -> f x || exists f xs
     | () -> false
 
-inl filter f l ret =
-    inl rec loop acc = function
-        | x :: xs when f x -> loop (x :: acc) xs
-        | x :: xs -> loop acc xs
-        | () -> ret <| rev acc
-    loop ()
+inl rec filter f = function
+    | x :: xs -> if f x then x :: filter f xs else filter f xs
+    | () -> ()
 
 inl is_empty = function
     | _ :: _ -> false
@@ -158,8 +152,21 @@ inl init_template k n f =
 
 inl init = init_template rev
 inl repeat n x = init_template id n (inl _ -> x)
+inl range (min,max) = 
+    inl l = max-min+1
+    if l > 0 then init l ((+) min)
+    else error_type "The inputs to range must be both static and the length of the resulting tuple must be greater than 0."
 
-{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index upon upon' init repeat append singleton}
+inl rec tryFind f = function
+    | x :: xs -> if f x then [Some: x] else tryFind f xs
+    | () -> [None]
+
+inl rec contains t x = 
+    match tryFind ((=) x) t with
+    | [Some: x] -> true
+    | [None] -> false
+
+{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index init repeat append singleton range tryFind contains}
     """) |> module_
 
 let array =
