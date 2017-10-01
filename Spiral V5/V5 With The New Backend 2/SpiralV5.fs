@@ -2224,9 +2224,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     ) s
             squares (many (pat .>> optional semicolon')) |>> function [x] -> x | x -> vv x
 
+        let case_negate expr = negate_ >>. expr |>> (ap (v "negate"))
+
         let rec expressions expr s =
             let unary_ops = 
-                [case_lit_lift]
+                [case_lit_lift; case_negate]
                 |> List.map (fun x -> x (expressions expr) |> attempt)
                 |> choice
             let rest = 
@@ -2313,8 +2315,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
          
             dict_operator
 
-        let negate expr = attempt (negate_ >>. expr |>> (ap (v "negate"))) <|> expr
-
         let operators expr (s: CharStream<_>) =
             let poperator (s: CharStream<Userstate>) =
                 let dict_operator = s.UserState.ops
@@ -2361,7 +2361,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             tdop op term 0 s
 
         let rec expr s = 
-            let expressions s = mset expr ^<| tuple ^<| negate ^<| operators ^<| application ^<| expressions expr <| s
+            let expressions s = mset expr ^<| tuple ^<| operators ^<| application ^<| expressions expr <| s
             let statements s = statements expressions expr <| s
             annotations ^<| indentations statements expressions <| s
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code

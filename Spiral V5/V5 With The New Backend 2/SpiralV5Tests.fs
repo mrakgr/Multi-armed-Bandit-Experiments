@@ -315,10 +315,10 @@ inl f op a b = op a b
 f (*) 2 x
     """
 
-let test22 = // 
+let test22 = 
     "test22",[],"Do unary operators work?",
     """
-inl t1 x = -x
+inl t1 x = dyn <| -x
 inl t3 x = .(x)
 t1 2.2, t3 "asd"
     """
@@ -1011,7 +1011,7 @@ open Loops
 //If we list all the natural numbers below 10 that are multiples of 3 or 5, we get 3, 5, 6 and 9. The sum of these multiples is 23.
 //Find the sum of all the multiples of 3 or 5 below 1000.
 
-for {from=dyn 999; to=dyn 3; by=dyn (-1); state=dyn 0; body = inl {state i} ->
+for {from=dyn 999; to=dyn 3; by=dyn <| -1; state=dyn 0; body = inl {state i} ->
     if i % 3 = 0 || i % 5 = 0 then state+i
     else state
     }
@@ -1194,7 +1194,7 @@ let get_diff_using_testcache (stream: StringBuilder) (name,aux,desc,body as m) =
     stream
 
 let get_all_diffs () = 
-    Array.fold get_diff_using_testcache (StringBuilder()) tests
+    Array.fold get_diff_using_testcache (StringBuilder()) tests.[0..10]
     |> fun x -> x.ToString()
 
 let speed1 =
@@ -1210,11 +1210,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
-
-//output_test_to_temp euler2
+//get_all_diffs()
 //|> printfn "%s"
-//|> ignore
 
-
+output_test_to_temp test5
+|> printfn "%s"
+|> ignore
