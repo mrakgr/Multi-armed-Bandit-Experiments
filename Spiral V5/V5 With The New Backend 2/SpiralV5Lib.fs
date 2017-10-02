@@ -26,19 +26,18 @@ inl rec while {cond body state} as d =
     else (met _ -> loop_body d) ()
 
 inl for_template kind =
-    inl rec loop {from to} as d =
-        inl loop_body {check from to by state body} as d =
-            if check from to then 
+    inl rec loop {from (near_to | to)=to} as d =
+        inl loop_body {check from by state body finally} as d =
+            if check from then 
                 match kind with
                 | .Navigable ->
-                    inl navigator = function
-                        | [break: state] -> state
-                        | [next: state] -> loop {d with state from=from+by}
-                    body {navigator state i=from}
+                    inl next state = loop {d with state from=from+by}
+                    body {next state i=from}
                 | .Standard ->
                     loop {d with state=body {state i=from}; from=from+by}
-            else state
+            else finally state
             : state
+
         if is_static (from,to) then loop_body d
         else (met d -> loop_body d) {d with from=dyn from}
 
@@ -47,23 +46,20 @@ inl for_template kind =
     function | {from} as d -> d | d -> error_type "The from field to loop is missing."
     >> function 
         | {to near_to} as d -> error_type "Cannot have both near and near_to fields in loop." 
-        | ({to} | {near_to}) as d -> d
+        | {to | near_to} as d -> d
         | d -> error_type "The loops needs to or near_to as target."
     >> function | {body} as d -> d | d -> error_type "The loop body is missing."
     >> function | {state} as d -> d | d -> {d with state=()}
     >> function | {by} as d -> d | d -> {d with by=1}
+    >> function | {finally} as d -> d | d -> {d with finally=id}
     >> function 
         | {by} when is_static by && by = 0 -> error_type er_msg
         | {by state} when by = 0 -> failwith er_msg; state
         // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
         // That way it will get specialized even by is dynamic.
-        | {from by state body} as d -> 
-            if by < 0 then
-                inl check,to=match d with | {to} -> (>=),to | {near_to} -> (>),near_to
-                loop {check from to by state body}
-            else
-                inl check,to=match d with | {to} -> (<=),to | {near_to} -> (<),near_to
-                loop {check from to by state body}
+        | {by} as d -> 
+            if by < 0 then loop {d with check=match d with | {to} -> inl from -> from >= to | {near_to} -> inl from -> from > near_to}
+            else loop {d with check=match d with | {to} -> inl from -> from <= to | {near_to} -> inl from -> from < near_to}
 
 inl for = for_template .Standard
 inl for' = for_template .Navigable
