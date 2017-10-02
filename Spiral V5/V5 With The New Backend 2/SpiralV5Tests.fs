@@ -657,7 +657,7 @@ let test50 =
 open Array
 
 inl ar = init 6 (inl x -> x+1)
-foldl (+) 0 ar, foldr (*) ar 1
+foldl (+) (dyn 0) ar, foldr (*) ar (dyn 1)
     """
 
 let test51 =
@@ -1246,8 +1246,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
+//rewrite_test_cache()
 
 //output_test_to_temp euler3
 //|> printfn "%s"

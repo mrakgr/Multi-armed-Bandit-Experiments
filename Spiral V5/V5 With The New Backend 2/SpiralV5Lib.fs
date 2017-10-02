@@ -32,7 +32,11 @@ inl for_template kind =
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
-    function | {from to} as d -> d | d -> error_type "The input to loop is missing from and to module fields."
+    function | {from} as d -> d | d -> error_type "The from field to loop is missing."
+    >> function 
+        | {to near_to} as d -> error_type "Cannot have both near and near_to fields in loop." 
+        | ({to} | {near_to}) as d -> d
+        | d -> error_type "The loops needs to or near_to as target."
     >> function | {body} as d -> d | d -> error_type "The loop body is missing."
     >> function | {state} as d -> d | d -> {d with state=()}
     >> function | {by} as d -> d | d -> {d with by=1}
@@ -41,8 +45,13 @@ inl for_template kind =
         | {by state} when by = 0 -> failwith er_msg; state
         // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
         // That way it will get specialized even by is dynamic.
-        | {by} as d when by < 0 -> loop {d with check=(>=)}
-        | d -> loop {d with check=(<=)}
+        | {from by state body} as d -> 
+            if by < 0 then
+                inl check,to=match d with | {to} -> (>=),to | {near_to} -> (>),near_to
+                loop {check from to by state body}
+            else
+                inl check,to=match d with | {to} -> (<=),to | {near_to} -> (<),near_to
+                loop {check from to by state body}
 
 inl for = for_template .Standard
 inl for' = for_template .Navigable
@@ -177,42 +186,32 @@ inl singleton x =
     ar 0 <- x
     ar
 
-inl foldl f state ar = for {from=0; to=array_length ar-1; state=dyn state; body=inl {state i} -> f state (ar i)}
-
-inl foldr f ar s =
-    met rec loop (!dyn i) (!dyn s) =
-        if i >= 0 then loop (i-1) (f (ar i) s)
-        else s
-        : s
-    loop (array_length ar - 1) s
+inl foldl f state ar = for {from=0; near_to=array_length ar; state; body=inl {state i} -> f state (ar i)}
+inl foldr f ar state = for {to=0; from=array_length ar-1; by= -1; state; body=inl {state i} -> f (ar i) state}
 
 inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
     inl typ = type (f 0)
     inl ar = array_create n typ
-    met rec loop (!dyn i) =
-        if i < n then 
-            ar i <- f i; loop (i+1)
-        : ()
-    loop 0 |> ignore
+    for {from=dyn 0; near_to=n; body=inl {i} -> ar i <- f i}
     ar
 
 inl map f ar = init (array_length ar) (ar >> f)
 inl filter f ar =
     inl ar' = array_create (array_length ar) (ar.elem_type)
-    inl count = foldl (inl s x -> if f x then ar' s <- x; s+1 else s) 0 ar
+    inl count = foldl (inl s x -> if f x then ar' s <- x; s+1 else s) (dyn 0) ar
     init count ar'
 
 inl append l =
     inl ar' = array_create (Tuple.foldl (inl s l -> s + array_length l) 0 l) ((fst l).elem_type)
     inl ap s ar = foldl (inl i x -> ar' i <- x; i+1) s ar
-    Tuple.foldl ap 0 l |> ignore
+    Tuple.foldl ap (dyn 0) l |> ignore
     ar'
 
 inl concat ar =
-    inl count = foldl (inl s ar -> s + array_length ar) 0 ar
+    inl count = foldl (inl s ar -> s + array_length ar) (dyn 0) ar
     inl ar' = array_create count (ar.elem_type.elem_type)
-    (foldl << foldl) (inl i x -> ar' i <- x; i+1) 0 ar |> ignore
+    (foldl << foldl) (inl i x -> ar' i <- x; i+1) (dyn 0) ar |> ignore
     ar'
 
 {empty singleton foldl foldr init map filter append concat}
