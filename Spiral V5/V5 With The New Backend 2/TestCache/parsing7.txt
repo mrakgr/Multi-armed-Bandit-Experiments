@@ -142,11 +142,13 @@ and method_17((var_0: (int64 [])), (var_1: string), (var_2: int64), (var_3: int6
     else
         let (var_14: int64) = System.Int64.MinValue
         let (var_15: int64) = 0L
-        let (var_16: int64) = 0L
-        let (var_17: Tuple0) = method_21((var_0: (int64 [])), (var_16: int64), (var_15: int64), (var_14: int64))
-        let (var_18: int64) = var_17.mem_0
-        let (var_19: int64) = var_17.mem_1
-        System.Console.WriteLine(var_18)
+        let (var_16: int64) = var_0.LongLength
+        let (var_17: int64) = (var_16 - 1L)
+        let (var_18: int64) = 0L
+        let (var_19: Tuple0) = method_21((var_0: (int64 [])), (var_18: int64), (var_15: int64), (var_14: int64), (var_17: int64))
+        let (var_20: int64) = var_19.mem_0
+        let (var_21: int64) = var_19.mem_1
+        System.Console.WriteLine(var_20)
 and method_18((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64)): unit =
     let (var_7: bool) =
         if (var_5 >= 0L) then
@@ -252,23 +254,22 @@ and method_20((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64
         var_1.[int32 var_2] <- var_0
         let (var_15: int64) = (var_2 + 1L)
         method_17((var_1: (int64 [])), (var_4: string), (var_15: int64), (var_3: int64), (var_6: int64))
-and method_21((var_0: (int64 [])), (var_1: int64), (var_2: int64), (var_3: int64)): Tuple0 =
-    let (var_4: int64) = var_0.LongLength
-    if (var_1 < var_4) then
-        let (var_5: int64) = (var_1 + 1L)
-        let (var_6: int64) = var_0.[int32 var_1]
-        let (var_9: Tuple0) =
-            if (var_6 > var_3) then
-                Tuple0(1L, var_6)
+and method_21((var_0: (int64 [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): Tuple0 =
+    if (var_1 <= var_4) then
+        let (var_5: int64) = var_0.[int32 var_1]
+        let (var_8: Tuple0) =
+            if (var_5 > var_3) then
+                Tuple0(1L, var_5)
             else
-                if (var_6 = var_3) then
-                    let (var_7: int64) = (var_2 + 1L)
-                    Tuple0(var_7, var_3)
+                if (var_5 = var_3) then
+                    let (var_6: int64) = (var_2 + 1L)
+                    Tuple0(var_6, var_3)
                 else
                     Tuple0(var_2, var_3)
-        let (var_10: int64) = var_9.mem_0
-        let (var_11: int64) = var_9.mem_1
-        method_21((var_0: (int64 [])), (var_5: int64), (var_10: int64), (var_11: int64))
+        let (var_9: int64) = var_8.mem_0
+        let (var_10: int64) = var_8.mem_1
+        let (var_11: int64) = (var_1 + 1L)
+        method_21((var_0: (int64 [])), (var_11: int64), (var_9: int64), (var_10: int64), (var_4: int64))
     else
         Tuple0(var_2, var_3)
 let (var_0: System.IO.Stream) = System.Console.OpenStandardInput()

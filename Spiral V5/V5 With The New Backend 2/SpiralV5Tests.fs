@@ -1045,7 +1045,7 @@ for {from=6; to=3; by= -1; state=0; body = inl {state i} ->
     """
 
 let loop4 =
-    "loop4",[loops;console],"Does the Loop module work?",
+    "loop4",[loops;console],"Does the Loop module work? This particular test should give an error.",
     """
 open Console
 open Loops
@@ -1249,6 +1249,6 @@ run_with_unit_ret (readall()) p
 get_all_diffs()
 |> printfn "%s"
 
-//output_test_to_temp euler5
+//output_test_to_temp euler3
 //|> printfn "%s"
 //|> ignore

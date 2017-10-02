@@ -27,12 +27,8 @@ inl for_template kind =
                     loop {d with state=body {state i=from}; from=from+by}
             else state
             : state
-
-        inl conds = from, to
-        if is_static conds then loop_body d
-        else
-            inl from,to = dyn conds
-            (met d -> loop_body d) {d with to from}
+        if is_static (from,to) then loop_body d
+        else (met d -> loop_body d) {d with from=dyn from}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
@@ -171,20 +167,17 @@ inl rec contains t x =
 
 let array =
     (
-    "Array",[tuple],"The array module",
+    "Array",[tuple;loops],"The array module",
     """
+open Loops
+
 inl empty t = array_create 0 t
 inl singleton x =
     inl ar = array_create 1 x
     ar 0 <- x
     ar
 
-inl foldl f s ar =
-    met rec loop (!dyn i) (!dyn s) =
-        if i < array_length ar then loop (i+1) (f s (ar i))
-        else s
-        : s
-    loop 0 s
+inl foldl f state ar = for {from=0; to=array_length ar-1; state=dyn state; body=inl {state i} -> f state (ar i)}
 
 inl foldr f ar s =
     met rec loop (!dyn i) (!dyn s) =
