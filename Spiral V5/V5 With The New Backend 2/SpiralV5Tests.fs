@@ -657,8 +657,7 @@ let test50 =
 open Array
 
 inl ar = init 6 (inl x -> x+1)
-//foldl (+) 0 ar, 
-foldr (*) ar 1
+foldl (+) 0 ar, foldr (*) ar 1
     """
 
 let test51 =
@@ -1116,7 +1115,7 @@ inl none x = box (Option x) [None]
 
 for' {from=sieve_length; to=2; by= -1; state=none int64; body = inl {navigator state i} ->
     if sieve i = true && target % i = 0 then navigator [break: some i]
-    else navigator [next: state]
+    else navigator [continue: state]
     }
 |>  function
     | [Some: result] -> writeline result
@@ -1149,85 +1148,6 @@ for {from=dyn 100; to=dyn 999; state={highest_palindrome=dyn 0}; body=inl {state
 |> inl {highest_palindrome} -> writeline highest_palindrome
     """
 
-let euler5 =
-    "euler5",[tuple;loops;console],"Smallest multiple",
-    """
-//2520 is the smallest number that can be divided by each of the numbers from 1 to 10 without any remainder.
-//What is the smallest positive number that is evenly divisible by all of the numbers from 1 to 20?
-
-open Loops
-open Console
-
-inl primes = 2,3,5,11,13,17,19
-inl non_primes = Tuple.range (2,20) |> Tuple.filter (Tuple.contains primes >> not)
-inl step = Tuple.foldl (*) 1 primes
-for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=inl {navigator state i} ->
-    if Tuple.forall (inl x -> i % x = 0) non_primes then navigator [break: i]
-    else navigator [next: state]
-    }
-|> writeline
-    """
-
-let test73 =
-    "test73",[array;loops;parsing;console],"https://www.hackerrank.com/challenges/saveprincess",
-    """
-// A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
-// gives some novel challenges regarding it.
-open Parsing
-
-type Cell =
-    .Empty
-    .Princess
-    .Mario
-
-inl empty = pchar 'e' >>% Cell .Empty
-inl princess = pchar 'p' >>% Cell .Princess
-inl mario = pchar '-' >>% Cell .Mario
-
-inl cell = empty <|> princess <|> mario
-
-inl parse_cols n = parse_n_array n {parser=cell .>> spaces; typ=Cell}
-inl parse_rows n = parse_n_array n {parser=parse_cols n; typ=type (array_create 0 Cell)}
-
-inl solve n field =
-    inl cur_pos on_succ =
-        met rec loop1 (!dyn row) =
-            met rec loop2 (!dyn col) =
-                if col < n then
-                    match field row col with
-                    | .Mario -> on_succ row col
-                    | _ -> loop2 (col+1)
-                else loop1 (row+1)
-            if row < n then loop2 0
-            else failwith "Mario not found."
-        loop1 0
-    cur_pos <| inl row col ->
-    // init the arrays
-    inl cells_visited = Array.init n (inl _ -> Array.init n false)
-    cells_visited row col <- true
-
-    inl ar = Array.singleton ((row,col), List.empty string)
-
-    met rec loop on_fail on_succ =
-        inl row,col = Queue.dequeue p
-        match ar row col with
-        | .Princess -> on_succ()
-        | _ ->
-            inl up = (row-1,col),"UP"
-            inl down = (row+1,col),"DOWN"
-            inl left = (row,col-1),"LEFT"
-            inl right = (row,col+1),"RIGHT"
-            inl is_valid x = x >= 0 && x < n
-            inl is_in_range (row,col) = is_valid row && is_valid col
-            inl select (p,move) rest =
-                if is_in_range p then 
-
-inl f =
-    inm n = parse_int
-    inm ar = parse_rows n
-
-    """
-
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1241,7 +1161,7 @@ let tests =
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
-    euler2;euler3;euler4;euler5
+    euler2;euler3;euler4
     |]
 
 open System.IO
@@ -1310,6 +1230,6 @@ run_with_unit_ret (readall()) p
 get_all_diffs()
 |> printfn "%s"
 
-//output_test_to_temp euler5
+//output_test_to_temp euler4
 //|> printfn "%s"
 //|> ignore
