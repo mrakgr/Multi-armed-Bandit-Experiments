@@ -161,7 +161,7 @@ inl repeat n x = init_template id n (inl _ -> x)
 
 let array =
     (
-    "Array",[loops],"The array module",
+    "Array",[tuple;loops],"The array module",
     """
 open Loops
 inl empty t = array_create 0 t
@@ -170,8 +170,8 @@ inl singleton x =
     ar 0 <- x
     ar
 
-inl foldl f state ar = for {from=0; to=array_length ar-1; state=state; body=inl {state i} -> f state (ar i)}
-inl foldr f ar state = for {to=0; from=array_length ar-1; by= -1; state=state; body=inl {state i} -> f (ar i) state}
+inl foldl f state ar = for {from=dyn 0; to=array_length ar-1; state=dyn state; body=inl {state i} -> f state (ar i)}
+inl foldr f ar state = for {to=dyn 0; from=array_length ar-1; by= -1; state=dyn state; body=inl {state i} -> f (ar i) state}
 
 inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
