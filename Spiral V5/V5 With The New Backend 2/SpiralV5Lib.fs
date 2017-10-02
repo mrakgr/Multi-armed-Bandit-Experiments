@@ -28,11 +28,8 @@ inl for_template kind =
             else state
             : state
 
-        inl conds = from, to
-        if is_static conds then loop_body d
-        else
-            inl from,to = dyn conds
-            (met d -> loop_body d) {d with to from}
+        if is_static to then loop_body d
+        else (met d -> loop_body d) {d with from=dyn from}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
@@ -171,37 +168,23 @@ inl rec contains t x =
 
 let array =
     (
-    "Array",[tuple],"The array module",
+    "Array",[loops],"The array module",
     """
+open Loops
 inl empty t = array_create 0 t
 inl singleton x =
     inl ar = array_create 1 x
     ar 0 <- x
     ar
 
-inl foldl f s ar =
-    met rec loop (!dyn i) (!dyn s) =
-        if i < array_length ar then loop (i+1) (f s (ar i))
-        else s
-        : s
-    loop 0 s
-
-inl foldr f ar s =
-    met rec loop (!dyn i) (!dyn s) =
-        if i >= 0 then loop (i-1) (f (ar i) s)
-        else s
-        : s
-    loop (array_length ar - 1) s
+inl foldl f state ar = for {from=0; to=array_length ar-1; state=state; body=inl {state i} -> f state (ar i)}
+inl foldr f ar state = for {to=0; from=array_length ar-1; by= -1; state=state; body=inl {state i} -> f (ar i) state}
 
 inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
     inl typ = type (f 0)
     inl ar = array_create n typ
-    met rec loop (!dyn i) =
-        if i < n then 
-            ar i <- f i; loop (i+1)
-        : ()
-    loop 0 |> ignore
+    for {from=0; to=array_length ar-1; body=inl {i} -> ar i <- f i}
     ar
 
 inl map f ar = init (array_length ar) (ar >> f)

@@ -657,7 +657,8 @@ let test50 =
 open Array
 
 inl ar = init 6 (inl x -> x+1)
-foldl (+) 0 ar, foldr (*) ar 1
+//foldl (+) 0 ar, 
+foldr (*) ar 1
     """
 
 let test51 =
@@ -1167,6 +1168,66 @@ for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=i
 |> writeline
     """
 
+let test73 =
+    "test73",[array;loops;parsing;console],"https://www.hackerrank.com/challenges/saveprincess",
+    """
+// A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
+// gives some novel challenges regarding it.
+open Parsing
+
+type Cell =
+    .Empty
+    .Princess
+    .Mario
+
+inl empty = pchar 'e' >>% Cell .Empty
+inl princess = pchar 'p' >>% Cell .Princess
+inl mario = pchar '-' >>% Cell .Mario
+
+inl cell = empty <|> princess <|> mario
+
+inl parse_cols n = parse_n_array n {parser=cell .>> spaces; typ=Cell}
+inl parse_rows n = parse_n_array n {parser=parse_cols n; typ=type (array_create 0 Cell)}
+
+inl solve n field =
+    inl cur_pos on_succ =
+        met rec loop1 (!dyn row) =
+            met rec loop2 (!dyn col) =
+                if col < n then
+                    match field row col with
+                    | .Mario -> on_succ row col
+                    | _ -> loop2 (col+1)
+                else loop1 (row+1)
+            if row < n then loop2 0
+            else failwith "Mario not found."
+        loop1 0
+    cur_pos <| inl row col ->
+    // init the arrays
+    inl cells_visited = Array.init n (inl _ -> Array.init n false)
+    cells_visited row col <- true
+
+    inl ar = Array.singleton ((row,col), List.empty string)
+
+    met rec loop on_fail on_succ =
+        inl row,col = Queue.dequeue p
+        match ar row col with
+        | .Princess -> on_succ()
+        | _ ->
+            inl up = (row-1,col),"UP"
+            inl down = (row+1,col),"DOWN"
+            inl left = (row,col-1),"LEFT"
+            inl right = (row,col+1),"RIGHT"
+            inl is_valid x = x >= 0 && x < n
+            inl is_in_range (row,col) = is_valid row && is_valid col
+            inl select (p,move) rest =
+                if is_in_range p then 
+
+inl f =
+    inm n = parse_int
+    inm ar = parse_rows n
+
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1246,9 +1307,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//get_all_diffs()
-//|> printfn "%s"
-
-output_test_to_temp euler5
+get_all_diffs()
 |> printfn "%s"
-|> ignore
+
+//output_test_to_temp euler5
+//|> printfn "%s"
+//|> ignore
