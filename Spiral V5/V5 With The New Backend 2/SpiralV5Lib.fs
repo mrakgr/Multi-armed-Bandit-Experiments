@@ -1,6 +1,18 @@
 ﻿module Spiral.Lib
 open Main
 
+let option =
+    (
+    "Option",[],"The Option module.",
+    """
+type Option x =
+    [Some: x]
+    [None]
+
+inl some x = box (Option x) [Some: x]
+inl none x = box (Option x) [None]
+    """) |> module_
+
 let loops =
     (
     "Loops",[],"Various imperative loop constructors module.",
@@ -499,7 +511,7 @@ inl parse_int =
     inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
     (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
-inl parse_n_array {parser typ} n = m {
+inl parse_array {parser typ n} = m {
     parser_mon =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
         inl ar = array_create n typ
@@ -577,7 +589,7 @@ inl sprintf format =
 
 
 {run run_with_unit_ret succ fail fatal_fail state type_ tuple (>>=) (|>>) (.>>.) (.>>) (>>.) (>>%) (<|>) choice stream_char 
- ifm (<?>) pdigit pchar pstring pint64 spaces parse_int parse_n_array sprintf sprintf_template term_cast}
+ ifm (<?>) pdigit pchar pstring pint64 spaces parse_int parse_array sprintf sprintf_template term_cast}
     """) |> module_
 
 
