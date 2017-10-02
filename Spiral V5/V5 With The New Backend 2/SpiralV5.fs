@@ -1841,11 +1841,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let is_identifier_char c = is_identifier_starting_char c || c = ''' || isDigit c 
         let is_separator_char c = 
             let inline f x = c = x
-            f ' ' || f ',' || f ';' || f '\t' || f '\n' || f '\"'
-        let is_parenth_char c = 
+            f ' ' || f ',' || f ';' || f '\t' || f '\n' || f '\"' || f '(' || f '{' || f '['
+        let is_closing_parenth_char c = 
             let inline f x = c = x
-            f '(' || f ')' || f '{' || f '}' || f '[' || f ']'
-        let is_operator_char c = (is_identifier_char c || is_separator_char c || is_parenth_char c) = false
+            f ')' || f '}' || f ']'
+        let is_operator_char c = (is_identifier_char c || is_separator_char c || is_closing_parenth_char c) = false
 
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
@@ -2230,20 +2230,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     ) s
             squares (many (pat .>> optional semicolon')) |>> function [x] -> x | x -> vv x
 
-        let case_negate expr = previousCharSatisfiesNot (fun x -> is_separator_char x = false) >>. prefix_negate >>. expr |>> (ap (v "negate"))
+        let case_negate expr = previousCharSatisfiesNot (is_separator_char >> not) >>. prefix_negate >>. expr |>> (ap (v "negate"))
 
         let rec expressions expr s =
             let unary_ops = 
                 [case_lit_lift; case_negate]
                 |> List.map (fun x -> x (expressions expr) |> attempt)
                 |> choice
-            let rest = 
+            let expressions = 
                 [case_print_env; case_print_expr; case_type
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
                  case_rounds; case_typecase; case_typeinl; case_var; case_module_alt; case_named_tuple]
                 |> List.map (fun x -> x expr |> attempt)
                 |> choice
-            unary_ops <|> rest <| s
+            expressions <|> unary_ops <| s
  
         let process_parser_exprs exprs = 
             let error_statement_in_last_pos _ = Reply(Error,messageError "Statements not allowed in the last position of a block.")

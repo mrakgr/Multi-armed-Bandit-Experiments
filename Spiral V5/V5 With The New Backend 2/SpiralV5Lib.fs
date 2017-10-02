@@ -21,18 +21,15 @@ inl for_template kind =
                 | .Navigable ->
                     inl navigator = function
                         | [break: state] -> state
-                        | [next: state] -> loop {d with state from=from+by}
+                        | [continue: state] -> loop {d with state from=from+by}
                     body {navigator state i=from}
                 | .Standard ->
                     loop {d with state=body {state i=from}; from=from+by}
             else state
             : state
 
-        inl conds = from, to
-        if is_static conds then loop_body d
-        else
-            inl from,to = dyn conds
-            (met d -> loop_body d) {d with to from}
+        if is_static to then loop_body d
+        else (met d -> loop_body d) {d with from=dyn from}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
@@ -70,6 +67,9 @@ inl rec foldr f l s =
 inl singleton x = x :: ()
 inl append = foldr (::)
 
+inl upon = foldl (inl module_ (k,v) -> upon module_ k v)
+inl upon' = foldl (inl module_ (k,v) -> upon' module_ k v)
+
 inl rev, map =
     inl map' f l = foldl (inl s x -> f x :: s) () l
     inl rev l = map' id l
@@ -84,9 +84,12 @@ inl rec exists f = function
     | x :: xs -> f x || exists f xs
     | () -> false
 
-inl rec filter f = function
-    | x :: xs -> if f x then x :: filter f xs else filter f xs
-    | () -> ()
+inl filter f l ret =
+    inl rec loop acc = function
+        | x :: xs when f x -> loop (x :: acc) xs
+        | x :: xs -> loop acc xs
+        | () -> ret <| rev acc
+    loop ()
 
 inl is_empty = function
     | _ :: _ -> false
@@ -152,56 +155,29 @@ inl init_template k n f =
 
 inl init = init_template rev
 inl repeat n x = init_template id n (inl _ -> x)
-inl range (min,max) = 
-    inl l = max-min+1
-    if l > 0 then init l ((+) min)
-    else error_type "The inputs to range must be both static and the length of the resulting tuple must be greater than 0."
 
-inl rec tryFind f = function
-    | x :: xs -> if f x then [Some: x] else tryFind f xs
-    | () -> [None]
-
-inl rec contains t x = 
-    match tryFind ((=) x) t with
-    | [Some: x] -> true
-    | [None] -> false
-
-{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index init repeat append singleton range tryFind contains}
+{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index upon upon' init repeat append singleton}
     """) |> module_
 
 let array =
     (
-    "Array",[tuple],"The array module",
+    "Array",[loops],"The array module",
     """
+open Loops
 inl empty t = array_create 0 t
 inl singleton x =
     inl ar = array_create 1 x
     ar 0 <- x
     ar
 
-inl foldl f s ar =
-    met rec loop (!dyn i) (!dyn s) =
-        if i < array_length ar then loop (i+1) (f s (ar i))
-        else s
-        : s
-    loop 0 s
-
-inl foldr f ar s =
-    met rec loop (!dyn i) (!dyn s) =
-        if i >= 0 then loop (i-1) (f (ar i) s)
-        else s
-        : s
-    loop (array_length ar - 1) s
+inl foldl f state ar = for {from=0; to=array_length ar-1; state=state; body=inl {state i} -> f state (ar i)}
+inl foldr f ar state = for {to=0; from=array_length ar-1; by= -1; state=state; body=inl {state i} -> f (ar i) state}
 
 inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
     inl typ = type (f 0)
     inl ar = array_create n typ
-    met rec loop (!dyn i) =
-        if i < n then 
-            ar i <- f i; loop (i+1)
-        : ()
-    loop 0 |> ignore
+    for {from=0; to=array_length ar-1; body=inl {i} -> ar i <- f i}
     ar
 
 inl map f ar = init (array_length ar) (ar >> f)
