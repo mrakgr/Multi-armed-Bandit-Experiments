@@ -717,7 +717,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                     pat_bind name <| fun memb -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
                 | PatMAnd l -> pat_and pattern_module_compile arg l on_succ on_fail
-                | PatMOr l -> pat_and pattern_module_compile arg l on_succ on_fail
+                | PatMOr l -> pat_or pattern_module_compile arg l on_succ on_fail
                 | PatMInnerModule(name,pat) ->
                     let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                     let pat_var' = v pat_var
@@ -2073,23 +2073,23 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             curlies ((sepBy1 var_name dot .>> with_) .>>. pat_module_body expr) 
             |>> pat_module_helper <| s
 
-        and pat_module_body expr =
-            let bind = opt (eq >>. patterns_template expr)
+        and pat_module_body expr s =
+            let bind = eq >>. patterns_template expr
             let pat_bind_fun = function
                 | name, Some pat -> PatMRebind(name,pat)
                 | name, None -> PatMName name
             let pat_or_alt =
                 rounds (sepBy var_name bar) .>>. bind
                 >>= function
-                    | [name], pat -> preturn (pat_bind_fun (name,pat))
-                    | [], pat -> failFatally "Empty pattern not allowed."
-                    | names, Some pat -> List.map (fun name -> PatMRebind(name,pat)) names |> PatMOr |> preturn
-                    | names, None -> List.map PatMName names |> PatMOr |> preturn
+                    | [name], pat -> preturn (PatMRebind(name,pat))
+                    | [], pat -> fail "Empty pattern not allowed."
+                    | names, pat -> List.map (fun name -> PatMRebind(name,pat)) names |> PatMOr |> preturn
             
             // The module parser in the order of their precedence
-            let pat_bind_or_module = (var_name .>>. bind |>> pat_bind_fun) <|> pat_module_inner expr
-            let pat_or = (sepBy1 pat_bind_or_module bar |>> function [x] -> x | x -> PatMOr x) <|> pat_or_alt
-            many pat_or |>> PatMAnd
+            let pat_bind_or_module = (var_name .>>. opt bind |>> pat_bind_fun) <|> pat_module_inner expr
+            let pat_or pat = sepBy1 pat bar |>> function [x] -> x | x -> PatMOr x
+            let pat_and pat = many pat |>> PatMAnd
+            pat_and ^<| pat_or ^<| choice [pat_bind_or_module; attempt pat_or_alt; rounds (pat_module_body expr)] <| s
 
         and patterns_template expr s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr s

@@ -11,6 +11,8 @@ type Option x =
 
 inl some x = box (Option x) [Some: x]
 inl none x = box (Option x) [None]
+
+{Option some none}
     """) |> module_
 
 let loops =
@@ -47,7 +49,7 @@ inl for_template kind =
     >> function 
         | {to near_to} as d -> error_type "Cannot have both near and near_to fields in loop." 
         | {to | near_to} as d -> d
-        | d -> error_type "The loops needs to or near_to as target."
+        | d -> error_type "The loop needs `to` or `near_to` as a target."
     >> function | {body} as d -> d | d -> error_type "The loop body is missing."
     >> function | {state} as d -> d | d -> {d with state=()}
     >> function | {by} as d -> d | d -> {d with by=1}

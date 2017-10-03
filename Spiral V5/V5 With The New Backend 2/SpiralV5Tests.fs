@@ -877,6 +877,16 @@ inl f = function
 f [1: 1], f [true: 2], f [add: 1,2], f [3.3]
     """
 
+let test73 =
+    "test73",[],"Do the new or module patterns work?",
+    """
+inl x = {a=1; c=3}
+inl f = function
+    | {(a | b)=t} -> t
+inl g = function
+    | {(a=t) | (b=t)} -> t
+f x, g x
+    """
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1107,12 +1117,12 @@ for {from=2; to=sieve_length; body = inl {i} ->
             }
     }
 
-for' {from=sieve_length; to=2; by= -1; state=none int64; body = inl {navigator state i} ->
-    if sieve i = true && target % i = 0 then navigator [break: some i]
-    else navigator [next: state]
+for' {from=sieve_length; to=2; by= -1; state=none int64; body = inl {next state i} ->
+    if sieve i = true && target % i = 0 then some i
+    else next state
     }
 |>  function
-    | [Some: result] -> writeline result
+    | [Some: result] -> writeline result // 6857
     | [None] -> failwith "No prime factor found!"
     """
 
@@ -1154,9 +1164,9 @@ open Console
 inl primes = 2,3,5,11,13,17,19
 inl non_primes = Tuple.range (2,20) |> Tuple.filter (Tuple.contains primes >> not)
 inl step = Tuple.foldl (*) 1 primes
-for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=inl {navigator state i} ->
-    if Tuple.forall (inl x -> i % x = 0) non_primes then navigator [break: i]
-    else navigator [next: state]
+for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=inl {next state i} ->
+    if Tuple.forall (inl x -> i % x = 0) non_primes then i
+    else next state
     }
 |> writeline
     """
@@ -1189,14 +1199,13 @@ inl parse_field n = parse_array {parser=parse_cols n; typ=type (create_array 0 C
 inl parser = parse_int .>>. parse_field
 
 run_with_unit_ret (readall()) parser |>> inl (m,field) ->
-    for' {from = 0; near_to=n; state=none (int64,int64); body = inl {navigator=row state i=r} ->
+    for' {from = 0; near_to=n; state=none (int64,int64); body = inl {next=row state i=r} ->
         for' {from = 0; near_to=n; state; 
-            body = inl {navigator=col state i=c} ->
+            body = inl {next=col state i=c} ->
                 match field r c with
-                | .Mario -> row [break: some (r,c)]
-                | _ -> col [next: state]
-            finally = inl {state} ->
-                row [next: state]
+                | .Mario -> some (r,c)
+                | _ -> col state
+            finally = row
             }
         }
     |> function
@@ -1252,7 +1261,7 @@ let tests =
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
-    test70;test71;test72
+    test70;test71;test72;test73
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
@@ -1322,8 +1331,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache()
 
-output_test_to_temp euler3
-|> printfn "%s"
-|> ignore
+//output_test_to_temp euler3
+//|> printfn "%s"
+//|> ignore
