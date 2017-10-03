@@ -1,6 +1,18 @@
 ﻿module Spiral.Lib
 open Main
 
+let option =
+    (
+    "Option",[],"The Option module.",
+    """
+type Option x =
+    [Some: x]
+    [None]
+
+inl some x = box (Option x) [Some: x]
+inl none x = box (Option x) [None]
+    """) |> module_
+
 let loops =
     (
     "Loops",[],"Various imperative loop constructors module.",
@@ -14,36 +26,40 @@ inl rec while {cond body state} as d =
     else (met _ -> loop_body d) ()
 
 inl for_template kind =
-    inl rec loop {from to} as d =
-        inl loop_body {check from to by state body} as d =
-            if check from to then 
+    inl rec loop {from (near_to | to)=to} as d =
+        inl loop_body {check from by state body finally} as d =
+            if check from then 
                 match kind with
                 | .Navigable ->
-                    inl navigator = function
-                        | [break: state] -> state
-                        | [continue: state] -> loop {d with state from=from+by}
-                    body {navigator state i=from}
+                    inl next state = loop {d with state from=from+by}
+                    body {next state i=from}
                 | .Standard ->
                     loop {d with state=body {state i=from}; from=from+by}
-            else state
+            else finally state
             : state
 
-        if is_static to then loop_body d
+        if is_static (from,to) then loop_body d
         else (met d -> loop_body d) {d with from=dyn from}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
-    function | {from to} as d -> d | d -> error_type "The input to loop is missing from and to module fields."
+    function | {from} as d -> d | d -> error_type "The from field to loop is missing."
+    >> function 
+        | {to near_to} as d -> error_type "Cannot have both near and near_to fields in loop." 
+        | {to | near_to} as d -> d
+        | d -> error_type "The loops needs to or near_to as target."
     >> function | {body} as d -> d | d -> error_type "The loop body is missing."
     >> function | {state} as d -> d | d -> {d with state=()}
     >> function | {by} as d -> d | d -> {d with by=1}
+    >> function | {finally} as d -> d | d -> {d with finally=id}
     >> function 
         | {by} when is_static by && by = 0 -> error_type er_msg
         | {by state} when by = 0 -> failwith er_msg; state
         // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
         // That way it will get specialized even by is dynamic.
-        | {by} as d when by < 0 -> loop {d with check=(>=)}
-        | d -> loop {d with check=(<=)}
+        | {by} as d -> 
+            if by < 0 then loop {d with check=match d with | {to} -> inl from -> from >= to | {near_to} -> inl from -> from > near_to}
+            else loop {d with check=match d with | {to} -> inl from -> from <= to | {near_to} -> inl from -> from < near_to}
 
 inl for = for_template .Standard
 inl for' = for_template .Navigable
@@ -67,9 +83,6 @@ inl rec foldr f l s =
 inl singleton x = x :: ()
 inl append = foldr (::)
 
-inl upon = foldl (inl module_ (k,v) -> upon module_ k v)
-inl upon' = foldl (inl module_ (k,v) -> upon' module_ k v)
-
 inl rev, map =
     inl map' f l = foldl (inl s x -> f x :: s) () l
     inl rev l = map' id l
@@ -84,12 +97,9 @@ inl rec exists f = function
     | x :: xs -> f x || exists f xs
     | () -> false
 
-inl filter f l ret =
-    inl rec loop acc = function
-        | x :: xs when f x -> loop (x :: acc) xs
-        | x :: xs -> loop acc xs
-        | () -> ret <| rev acc
-    loop ()
+inl rec filter f = function
+    | x :: xs -> if f x then x :: filter f xs else filter f xs
+    | () -> ()
 
 inl is_empty = function
     | _ :: _ -> false
@@ -155,8 +165,21 @@ inl init_template k n f =
 
 inl init = init_template rev
 inl repeat n x = init_template id n (inl _ -> x)
+inl range (min,max) = 
+    inl l = max-min+1
+    if l > 0 then init l ((+) min)
+    else error_type "The inputs to range must be both static and the length of the resulting tuple must be greater than 0."
 
-{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index upon upon' init repeat append singleton}
+inl rec tryFind f = function
+    | x :: xs -> if f x then [Some: x] else tryFind f xs
+    | () -> [None]
+
+inl rec contains t x = 
+    match tryFind ((=) x) t with
+    | [Some: x] -> true
+    | [None] -> false
+
+{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index init repeat append singleton range tryFind contains}
     """) |> module_
 
 let array =
@@ -164,38 +187,39 @@ let array =
     "Array",[tuple;loops],"The array module",
     """
 open Loops
+
 inl empty t = array_create 0 t
 inl singleton x =
     inl ar = array_create 1 x
     ar 0 <- x
     ar
 
-inl foldl f state ar = for {from=dyn 0; to=array_length ar-1; state=dyn state; body=inl {state i} -> f state (ar i)}
-inl foldr f ar state = for {to=dyn 0; from=array_length ar-1; by= -1; state=dyn state; body=inl {state i} -> f (ar i) state}
+inl foldl f state ar = for {from=0; near_to=array_length ar; state; body=inl {state i} -> f state (ar i)}
+inl foldr f ar state = for {to=0; from=array_length ar-1; by= -1; state; body=inl {state i} -> f (ar i) state}
 
 inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
     inl typ = type (f 0)
     inl ar = array_create n typ
-    for {from=0; to=array_length ar-1; body=inl {i} -> ar i <- f i}
+    for {from=dyn 0; near_to=n; body=inl {i} -> ar i <- f i}
     ar
 
 inl map f ar = init (array_length ar) (ar >> f)
 inl filter f ar =
     inl ar' = array_create (array_length ar) (ar.elem_type)
-    inl count = foldl (inl s x -> if f x then ar' s <- x; s+1 else s) 0 ar
+    inl count = foldl (inl s x -> if f x then ar' s <- x; s+1 else s) (dyn 0) ar
     init count ar'
 
 inl append l =
     inl ar' = array_create (Tuple.foldl (inl s l -> s + array_length l) 0 l) ((fst l).elem_type)
     inl ap s ar = foldl (inl i x -> ar' i <- x; i+1) s ar
-    Tuple.foldl ap 0 l |> ignore
+    Tuple.foldl ap (dyn 0) l |> ignore
     ar'
 
 inl concat ar =
-    inl count = foldl (inl s ar -> s + array_length ar) 0 ar
+    inl count = foldl (inl s ar -> s + array_length ar) (dyn 0) ar
     inl ar' = array_create count (ar.elem_type.elem_type)
-    (foldl << foldl) (inl i x -> ar' i <- x; i+1) 0 ar |> ignore
+    (foldl << foldl) (inl i x -> ar' i <- x; i+1) (dyn 0) ar |> ignore
     ar'
 
 {empty singleton foldl foldr init map filter append concat}
@@ -483,7 +507,7 @@ inl parse_int =
     inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
     (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
-inl parse_n_array {parser typ} n = m {
+inl parse_array {parser typ n} = m {
     parser_mon =
         inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
         inl ar = array_create n typ
@@ -561,7 +585,7 @@ inl sprintf format =
 
 
 {run run_with_unit_ret succ fail fatal_fail state type_ tuple (>>=) (|>>) (.>>.) (.>>) (>>.) (>>%) (<|>) choice stream_char 
- ifm (<?>) pdigit pchar pstring pint64 spaces parse_int parse_n_array sprintf sprintf_template term_cast}
+ ifm (<?>) pdigit pchar pstring pint64 spaces parse_int parse_array sprintf sprintf_template term_cast}
     """) |> module_
 
 

@@ -657,7 +657,7 @@ let test50 =
 open Array
 
 inl ar = init 6 (inl x -> x+1)
-foldl (+) 0 ar, foldr (*) ar 1
+foldl (+) (dyn 0) ar, foldr (*) ar (dyn 1)
     """
 
 let test51 =
@@ -936,7 +936,7 @@ open Parsing
 open Console
 
 inl p = 
-    parse_n_array {parser=parse_int; typ=int64} 16
+    parse_array {parser=parse_int; typ=int64; n=16}
     |>> writeline
 
 run_with_unit_ret (readall()) p
@@ -962,7 +962,7 @@ open Parsing
 
 inl p = 
     inm n = parse_int
-    inm ar = parse_n_array {parser=parse_int; typ=int64} n 
+    inm ar = parse_array {parser=parse_int; typ=int64; n} 
     Array.foldl (inl (min,score as s) x ->
         if x > score then (1,x)
         elif x = score then (min+1,score)
@@ -986,7 +986,7 @@ inl abs x = if x >= 0 then x else -x
 
 inl f =
     inm n = parse_int
-    inm ar = parse_n_array {parser=parse_int; typ=int64} (n*n)
+    inm ar = parse_array {parser=parse_int; typ=int64; n=n*n}
     inl load row col = 
         inl f x = x >= 0 || x < n
         assert (f row && f col) "Out of bounds."
@@ -1045,7 +1045,7 @@ for {from=6; to=3; by= -1; state=0; body = inl {state i} ->
     """
 
 let loop4 =
-    "loop4",[loops;console],"Does the Loop module work?",
+    "loop4",[loops;console],"Does the Loop module work? This particular test should give an error.",
     """
 open Console
 open Loops
@@ -1080,11 +1080,12 @@ while {
     """
 
 let euler3 = 
-    "euler3",[array;loops;console],"Largest prime factor",
+    "euler3",[array;loops;console;option],"Largest prime factor",
     """
 open Loops
 open Console
 open Array
+open Option
 
 // The prime factors of 13195 are 5, 7, 13 and 29.
 // What is the largest prime factor of the number 600851475143 ?
@@ -1105,13 +1106,6 @@ for {from=2; to=sieve_length; body = inl {i} ->
             sieve i <- false
             }
     }
-
-type Option x =
-    [Some: x]
-    [None]
-
-inl some x = box (Option x) [Some: x]
-inl none x = box (Option x) [None]
 
 for' {from=sieve_length; to=2; by= -1; state=none int64; body = inl {navigator state i} ->
     if sieve i = true && target % i = 0 then navigator [break: some i]
@@ -1166,6 +1160,88 @@ for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=i
     }
 |> writeline
     """
+
+let hacker_rank_2 =
+    "hacker_rank_2",[array;loops;option;parsing;console],"Save The Princess",
+    """
+ https://www.hackerrank.com/challenges/saveprincess
+// A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
+// gives some novel challenges regarding it.
+open Parsing
+open Console
+open Option
+open Array
+open Loops
+
+type Cell =
+    .Empty
+    .Princess
+    .Mario
+
+inl empty = pchar 'e' >>% Cell .Empty
+inl princess = pchar 'p' >>% Cell .Princess
+inl mario = pchar '-' >>% Cell .Mario
+
+inl cell = empty <|> princess <|> mario
+
+inl parse_cols n = parse_array {parser=cell; typ=Cell; n} .>> spaces
+inl parse_field n = parse_array {parser=parse_cols n; typ=type (create_array 0 Cell); n}
+inl parser = parse_int .>>. parse_field
+
+run_with_unit_ret (readall()) parser |>> inl (m,field) ->
+    for' {from = 0; near_to=n; state=none (int64,int64); body = inl {navigator=row state i=r} ->
+        for' {from = 0; near_to=n; state; 
+            body = inl {navigator=col state i=c} ->
+                match field r c with
+                | .Mario -> row [break: some (r,c)]
+                | _ -> col [next: state]
+            finally = inl {state} ->
+                row [next: state]
+            }
+        }
+    |> function
+        | [None] -> failwith "Current position not found."
+        | [Some: (r,c)] ->
+
+inl solve n field =
+    inl cur_pos on_succ =
+        met rec loop1 (!dyn row) =
+            met rec loop2 (!dyn col) =
+                if col < n then
+                    match field row col with
+                    | .Mario -> on_succ row col
+                    | _ -> loop2 (col+1)
+                else loop1 (row+1)
+            if row < n then loop2 0
+            else failwith "Mario not found."
+        loop1 0
+    cur_pos <| inl row col ->
+    // init the arrays
+    inl cells_visited = Array.init n (inl _ -> Array.init n false)
+    cells_visited row col <- true
+
+    inl ar = Array.singleton ((row,col), List.empty string)
+
+    met rec loop on_fail on_succ =
+        inl row,col = Queue.dequeue p
+        match ar row col with
+        | .Princess -> on_succ()
+        | _ ->
+            inl up = (row-1,col),"UP"
+            inl down = (row+1,col),"DOWN"
+            inl left = (row,col-1),"LEFT"
+            inl right = (row,col+1),"RIGHT"
+            inl is_valid x = x >= 0 && x < n
+            inl is_in_range (row,col) = is_valid row && is_valid col
+            inl select (p,move) rest =
+                if is_in_range p then 
+
+inl f =
+    inm n = parse_int
+    inm ar = parse_rows n
+
+    """
+
 
 let tests =
     [|
@@ -1246,9 +1322,10 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-get_all_diffs()
-|> printfn "%s"
+//rewrite_test_cache()
 
-//output_test_to_temp euler5
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp euler3
+|> printfn "%s"
+|> ignore
+
+//
