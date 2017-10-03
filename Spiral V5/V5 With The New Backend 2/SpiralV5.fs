@@ -245,10 +245,15 @@ and Pattern =
     | PatTypeLitBind of string
     | PatLit of Value
     | PatWhen of Pattern * Expr
-    | PatModuleBinding of string * Pattern option
-    | PatModuleInner of string * Pattern list
-    | PatModuleOuter of string option * Pattern list
+    | PatModule of string option * PatternModule
     | PatPos of Pos<Pattern>
+
+and PatternModule =
+    | PatMAnd of PatternModule list
+    | PatMOr of PatternModule list
+    | PatMInnerModule of string * PatternModule
+    | PatMName of string
+    | PatMRebind of string * Pattern
 
 and Expr = 
     | V of Node<string>
@@ -693,8 +698,36 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let on_fail = inl "" on_fail
                 ap' (v a) [arg; on_fail; on_succ]
 
-            let pat_module_bindings pat_var = List.foldBack (fun x on_succ -> cp pat_var x on_succ on_fail)
+            
             let pat_module_is_module on_succ = if_static (module_is arg) on_succ on_fail
+
+            let inline pat_or cp arg l on_succ on_fail = List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail
+            let inline pat_and cp arg l on_succ on_fail = List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ
+
+            let rec pattern_module_compile arg pat on_succ on_fail =
+                let inline pat_bind name f =
+                    let memb = type_lit_lift (LitString name)
+                    let on_succ = f memb
+                    if_static (module_has_member arg memb) on_succ on_fail
+
+                match pat with
+                | PatMName name ->
+                    pat_bind name <| fun memb -> l name (ap arg memb) on_succ
+                | PatMRebind(name,pat) ->
+                    let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                    pat_bind name <| fun memb -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
+                | PatMAnd l -> pat_and pattern_module_compile arg l on_succ on_fail
+                | PatMOr l -> pat_and pattern_module_compile arg l on_succ on_fail
+                | PatMInnerModule(name,pat) ->
+                    let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                    let pat_var' = v pat_var
+                    let memb = type_lit_lift (LitString name)
+                
+                    pattern_module_compile pat_var' pat on_succ on_fail
+                    |> l name pat_var'
+                    |> l pat_var (ap arg memb)
+                    |> fun on_succ -> if_static (module_has_member arg memb) on_succ on_fail
+                    |> pat_module_is_module
 
             match pat with
             | E -> on_succ
@@ -720,8 +753,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PatClauses _ -> failwith "Clauses should not appear inside other clauses."
                     | pat -> vv [type_lit_lift (LitString "var"); arg] |> pat_part_active a (pat' pat) on_fail
                 f id on_fail pat
-            | PatOr l -> List.foldBack (fun pat on_fail -> cp arg pat on_succ on_fail) l on_fail
-            | PatAnd l -> List.foldBack (fun pat on_succ -> cp arg pat on_succ on_fail) l on_succ
+            | PatOr l -> pat_or cp arg l on_succ on_fail
+            | PatAnd l -> pat_and cp arg l on_succ on_fail
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (expr_prepass exp |> snd) on_fail) l on_fail
             | PatTypeLit x -> 
                 if_static (eq_type arg (type_lit_lift x)) on_succ on_fail 
@@ -734,33 +767,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let on_succ = if_static (eq arg x) on_succ on_fail
                 if_static (eq_type arg x) on_succ on_fail |> case arg
             | PatWhen (p, e) -> cp arg p (if_static e on_succ on_fail) on_fail
-            | PatModuleInner(name,bindings) ->
+            | PatModule(name,pat) ->
                 let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                 let pat_var' = v pat_var
-                let memb = type_lit_lift (LitString name)
-                
-                pat_module_bindings pat_var' bindings on_succ
-                |> l name pat_var'
-                |> l pat_var (ap arg memb)
-                |> fun on_succ -> if_static (module_has_member arg memb) on_succ on_fail
-                |> pat_module_is_module
-            | PatModuleOuter(name,bindings) ->
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
-                let pat_var' = v pat_var
-                pat_module_bindings pat_var' bindings on_succ
+                pattern_module_compile pat_var' pat on_succ on_fail
                 |> fun x -> 
                     match name with
                     | Some name -> l name pat_var' x
                     | None -> x
                 |> l pat_var arg
                 |> pat_module_is_module
-            | PatModuleBinding (name,pat) ->
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
-                let memb = type_lit_lift (LitString name)
-                match pat with
-                | Some pat -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
-                | None -> l name (ap arg memb) on_succ
-                |> fun on_succ -> if_static (module_has_member arg memb) on_succ on_fail
             | PatPos p -> expr_pos p.Pos (cp arg p.Expression on_succ on_fail)
 
         let pattern_compile_def_on_succ = op(ErrorPatClause,[])
@@ -2040,29 +2056,47 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let rec pat_module_helper (names,bindings) = 
             match names with
-            | [x] -> PatModuleInner(x,bindings)
-            | x :: xs -> PatModuleInner(x,[pat_module_helper (xs,bindings)])
+            | [x] -> PatMInnerModule(x,bindings)
+            | x :: xs -> PatMInnerModule(x,pat_module_helper (xs,bindings))
             | _ -> failwith "Invalid state"
-
-        let rec parse_binding expr = var_name .>>. opt (eq >>. patterns_template expr pat_module_outer) |>> PatModuleBinding
-        and pat_module_outer expr s = 
-            curlies (opt (attempt (sepBy1 var_name dot .>> with_)) .>>. many (pat_module_inner expr <|> parse_binding expr))
+        
+        let rec pat_module_outer expr s = 
+            curlies (opt (attempt (sepBy1 var_name dot .>> with_)) .>>. pat_module_body expr)
             |>> function
-                | Some (n :: (_ :: _ as ns)), bindings -> PatModuleOuter(Some n, [pat_module_helper (ns,bindings)])
-                | Some [n], bindings -> PatModuleOuter(Some n,bindings)
+                | Some (n :: (_ :: _ as ns)), bindings -> PatModule(Some n, pat_module_helper (ns,bindings))
+                | Some [n], bindings -> PatModule(Some n,bindings)
                 | Some [], _ -> failwith "impossible"
-                | None, bindings -> PatModuleOuter(None,bindings)
+                | None, bindings -> PatModule(None,bindings)
             <| s
+
         and pat_module_inner expr s = 
-            curlies ((sepBy1 var_name dot .>> with_) .>>. many (pat_module_inner expr <|> parse_binding expr)) 
+            curlies ((sepBy1 var_name dot .>> with_) .>>. pat_module_body expr) 
             |>> pat_module_helper <| s
 
-        and patterns_template expr pat_module s = // The order in which the pattern parsers are chained in determines their precedence.
-            let inline recurse s = patterns_template expr pat_module s
-            pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr 
-            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_module expr; pat_named_tuple recurse|] <| s
+        and pat_module_body expr =
+            let bind = opt (eq >>. patterns_template expr)
+            let pat_bind_fun = function
+                | name, Some pat -> PatMRebind(name,pat)
+                | name, None -> PatMName name
+            let pat_or_alt =
+                rounds (sepBy var_name bar) .>>. bind
+                >>= function
+                    | [name], pat -> preturn (pat_bind_fun (name,pat))
+                    | [], pat -> failFatally "Empty pattern not allowed."
+                    | names, Some pat -> List.map (fun name -> PatMRebind(name,pat)) names |> PatMOr |> preturn
+                    | names, None -> List.map PatMName names |> PatMOr |> preturn
+            
+            // The module parser in the order of their precedence
+            let pat_bind_or_module = (var_name .>>. bind |>> pat_bind_fun) <|> pat_module_inner expr
+            let pat_or = (sepBy1 pat_bind_or_module bar |>> function [x] -> x | x -> PatMOr x) <|> pat_or_alt
+            many pat_or |>> PatMAnd
 
-        let inline patterns expr s = patterns_template expr pat_module_outer s
+        and patterns_template expr s = // The order in which the pattern parsers are chained in determines their precedence.
+            let inline recurse s = patterns_template expr s
+            pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr 
+            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_named_tuple recurse; pat_module_outer expr|] <| s
+
+        let inline patterns expr s = patterns_template expr s
     
         let pattern_list expr = many (patterns expr)
     
