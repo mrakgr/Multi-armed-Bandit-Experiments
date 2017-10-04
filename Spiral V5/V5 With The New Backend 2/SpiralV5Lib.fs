@@ -46,7 +46,7 @@ inl for_template kind =
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
     function | {from} as d -> d | d -> error_type "The from field to loop is missing."
-    >> function 
+    >> function // {to ^ near_to} -> d | d -> "For loop needs exlusively to or near_to fields."
         | {to near_to} as d -> error_type "Cannot have both near and near_to fields in loop." 
         | {to | near_to} as d -> d
         | d -> error_type "The loop needs `to` or `near_to` as a target."
