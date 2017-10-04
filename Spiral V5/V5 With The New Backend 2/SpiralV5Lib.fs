@@ -28,7 +28,7 @@ inl rec while {cond body state} as d =
     else (met _ -> loop_body d) ()
 
 inl for_template kind =
-    inl rec loop {from (near_to | to)=to} as d =
+    inl rec loop {from (near_to ^ to)=to} as d =
         inl loop_body {check from by state body finally} as d =
             if check from then 
                 match kind with
@@ -46,10 +46,7 @@ inl for_template kind =
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
     function | {from} as d -> d | d -> error_type "The from field to loop is missing."
-    >> function // {to ^ near_to} -> d | d -> "For loop needs exlusively to or near_to fields."
-        | {to near_to} as d -> error_type "Cannot have both near and near_to fields in loop." 
-        | {to | near_to} as d -> d
-        | d -> error_type "The loop needs `to` or `near_to` as a target."
+    >> function | {to ^ near_to} as d -> d | d -> "For loop needs exlusively to or near_to fields."
     >> function | {body} as d -> d | d -> error_type "The loop body is missing."
     >> function | {state} as d -> d | d -> {d with state=()}
     >> function | {by} as d -> d | d -> {d with by=1}
