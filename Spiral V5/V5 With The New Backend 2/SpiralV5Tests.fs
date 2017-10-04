@@ -899,6 +899,33 @@ inl g = function
 f x, g x
     """
 
+let test75 =
+    "test75",[],"Does the not module pattern work?",
+    """
+inl x = {b=2; c=3}
+inl f = function
+    | {!a b} -> b
+f x
+    """
+
+let test76 =
+    "test76",[],"Do the xor module patterns work?",
+    """
+inl x = {b=2; c=3}
+inl f = function
+    | {b ^ c} -> c
+f x
+    """
+
+let test77 =
+    "test77",[],"Do the xor module patterns work?",
+    """
+inl x = {b=2; c=3}
+inl f = function
+    | {(!a) ^ c} -> c
+f x
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1273,7 +1300,7 @@ let tests =
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
-    test70;test71;test72;test73
+    test70;test71;test72;test73;test74;test75;test76;test77
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
@@ -1343,8 +1370,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache()
 
-output_test_to_temp test74
-|> printfn "%s"
-|> ignore
+//output_test_to_temp test77
+//|> printfn "%s"
+//|> ignore

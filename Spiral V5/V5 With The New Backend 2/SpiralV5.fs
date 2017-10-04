@@ -252,10 +252,12 @@ and PatternModule =
     | PatMAnd of PatternModule list
     | PatMOr of PatternModule list
     | PatMXor of PatternModule list
+    | PatMNot of PatternModule
     | PatMInnerModule of string * PatternModule
     | PatMName of string
     | PatMRebind of string * Pattern
     | PatMPattern of Pattern
+
 
 and Expr = 
     | V of Node<string>
@@ -731,6 +733,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             inl state_var (pattern_module_compile arg x (if_static state_var' on_fail (ap xs (bool true))) (ap xs state_var'))
                         | [] -> inl state_var on_succ
                     ap (just_one l) (bool false)
+                | PatMNot x -> pattern_module_compile arg x on_fail on_succ
                 | PatMInnerModule(name,pat) ->
                     let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                     let pat_var' = v pat_var
@@ -1924,6 +1927,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let open_ = keywordString "open"
         let cons = operatorString "::"
         let active_pat = prefixOperatorChar '!'
+        let not_ = active_pat
         let part_active_pat = prefixOperatorChar '@'
         let ext_active_pat = prefixOperatorChar '#'
         let type_' = keywordString "type"
@@ -2099,16 +2103,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | PatMAnd l -> PatMAnd <| List.map loop l
                         | PatMOr l -> PatMOr <| List.map loop l
                         | PatMXor l -> PatMXor <| List.map loop l
+                        | PatMNot x -> PatMNot (loop x)
                     loop v
                 | None -> v
                 
             let pat_name = var_name |>> PatMName
             let pat_bind pat = (pat .>>. opt bind |>> pat_bind_fun) 
             let inline pat_template sep con pat = sepBy1 pat sep |>> function [x] -> x | x -> con x
+            let pat_not pat = (not_ >>. pat |>> PatMNot) <|> pat
             let pat_xor pat = pat_template caret PatMXor pat
             let pat_or pat = pat_template bar PatMOr pat
             let pat_and pat = many pat |>> PatMAnd
-            pat_and ^<| pat_or ^<| pat_xor ^<| pat_bind ^<| choice [pat_name; pat_module_inner expr; rounds (pat_module_body expr)] <| s
+            pat_and ^<| pat_or ^<| pat_xor ^<| pat_not ^<| pat_bind ^<| choice [pat_name; pat_module_inner expr; rounds (pat_module_body expr)] <| s
 
         and patterns_template expr s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr s
