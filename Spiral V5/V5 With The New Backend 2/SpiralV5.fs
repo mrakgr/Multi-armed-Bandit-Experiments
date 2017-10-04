@@ -1906,6 +1906,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let eq = operatorChar '=' 
         let bar = operatorChar '|' 
         let amphersand = operatorChar '&'
+        let caret = operatorChar '^'
         let barbar = operatorString "||" 
         let lam = operatorString "->"
         let set_ref = operatorString ":="
@@ -2089,18 +2090,25 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let pat_bind_fun = function
                 | name, Some pat -> PatMRebind(name,pat)
                 | name, None -> PatMName name
-            let pat_or_alt =
-                rounds (sepBy var_name bar) .>>. bind
+
+            let inline pat_alt_template sep con body =
+                sepBy1 body sep 
                 >>= function
-                    | [name], pat -> preturn (PatMRebind(name,pat))
-                    | [], pat -> fail "Empty pattern not allowed."
-                    | names, pat -> List.map (fun name -> PatMRebind(name,pat)) names |> PatMOr |> preturn
+                    | [name] -> preturn (fun pat -> name pat)
+                    | names -> preturn (fun pat -> List.map (fun name -> name pat) names |> con)
             
-            // The module parser in the order of their precedence
+            let pat_alt_varname = var_name |>> fun name pat -> PatMRebind(name,pat)
+            let pat_alt_or = pat_alt_template bar PatMOr
+            let pat_alt_xor = pat_alt_template caret PatMXor
+            let pat_alt = 
+                let rec pat_alt s = pat_alt_or ^<| pat_alt_xor ^<| (pat_alt_varname <|> rounds pat_alt) <| s
+                attempt (rounds pat_alt .>>. bind)
+                |>> fun (names, bind) -> names bind
+            
             let pat_bind_or_module = (var_name .>>. opt bind |>> pat_bind_fun) <|> pat_module_inner expr
             let pat_or pat = sepBy1 pat bar |>> function [x] -> x | x -> PatMOr x
             let pat_and pat = many pat |>> PatMAnd
-            pat_and ^<| pat_or ^<| choice [pat_bind_or_module; attempt pat_or_alt; rounds (pat_module_body expr)] <| s
+            pat_and ^<| pat_or ^<| choice [pat_bind_or_module; pat_alt; rounds (pat_module_body expr)] <| s
 
         and patterns_template expr s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr s
