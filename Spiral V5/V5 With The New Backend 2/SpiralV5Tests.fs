@@ -569,10 +569,10 @@ let test44 =
     """
 inl f x on_fail on_succ =
     match x with
-    | .tup, 4, x -> on_succ x // This one does not get triggered due to not being in m
-    | .tup, 3, x -> on_succ x
-    | .tup, 2, x -> on_succ x
-    | .var, x -> on_succ ("is_var",x)
+    | [tup: 4, x] -> on_succ x // This one does not get triggered due to not being in m
+    | [tup: 3, x] -> on_succ x
+    | [tup: 2, x] -> on_succ x
+    | [var: x] -> on_succ ("is_var",x)
     | _ -> on_fail()
 
 inl m m1 = function
@@ -588,7 +588,7 @@ let test45 =
     """
 inl f x on_fail on_succ =
     match x with
-    | _, _, x -> on_succ x
+    | _, (_, x) -> on_succ x
     | _, x -> on_succ x
 
 inl m m1 = function

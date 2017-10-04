@@ -251,8 +251,8 @@ inl lw x =
 
     // Testing for whether the type is a list is not possible since the types are stripped away so ruthlesly in case.
     match x with
-    | .var, x _ on_succ -> on_succ x
-    | (.tup | .cons) & typ, n, x -> loop typ n x
+    | [var: x] _ on_succ -> on_succ x
+    | (.tup | .cons) & typ, (n, x) -> loop typ n x
 
 inl empty x = box (list x) ()
 inl singleton x = box (list x) (x, empty x)
