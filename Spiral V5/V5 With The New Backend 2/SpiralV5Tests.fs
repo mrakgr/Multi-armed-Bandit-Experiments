@@ -878,7 +878,7 @@ f [1: 1], f [true: 2], f [add: 1,2], f [3.3]
     """
 
 let test73 =
-    "test73",[],"Do the new or module patterns work?",
+    "test73",[],"Do the or module patterns work?",
     """
 inl x = {a=1; c=3}
 inl f = function
@@ -887,6 +887,18 @@ inl g = function
     | {(a=t) | (b=t)} -> t
 f x, g x
     """
+
+let test74 =
+    "test74",[],"Do the xor module patterns work?",
+    """
+inl x = {b=2; c=3}
+inl f = function
+    | {(((a | a) ^ (b | b)))=t} -> t
+inl g = function
+    | {(a=t) ^ (b=t)} -> t
+f x, g x
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1331,8 +1343,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
-//output_test_to_temp euler3
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp test74
+|> printfn "%s"
+|> ignore

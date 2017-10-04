@@ -2106,9 +2106,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 |>> fun (names, bind) -> names bind
             
             let pat_bind_or_module = (var_name .>>. opt bind |>> pat_bind_fun) <|> pat_module_inner expr
-            let pat_or pat = sepBy1 pat bar |>> function [x] -> x | x -> PatMOr x
+            let inline pat_template sep con pat = sepBy1 pat sep |>> function [x] -> x | x -> con x
+            let pat_xor pat = pat_template caret PatMXor pat
+            let pat_or pat = pat_template bar PatMOr pat
             let pat_and pat = many pat |>> PatMAnd
-            pat_and ^<| pat_or ^<| choice [pat_bind_or_module; pat_alt; rounds (pat_module_body expr)] <| s
+            pat_and ^<| pat_or ^<| pat_xor ^<| choice [pat_bind_or_module; pat_alt; rounds (pat_module_body expr)] <| s
 
         and patterns_template expr s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr s
