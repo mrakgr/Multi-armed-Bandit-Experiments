@@ -238,7 +238,7 @@
     <None Include="V5 With The New Backend 2\output.fsx" />
     <Content Include="V5 With The New Backend 2\output.txt" />
     <None Include="V5 With The New Backend 2\Script1.fsx" />
-    <None Include="V5 With The New Backend 2\Script2.fsx" />
+    <None Include="V5 With The New Backend 2\exclusive_or.fsx" />
     <Compile Include="V5 With The New Backend 2\SpiralV5HashConsing.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5Lib.fs" />

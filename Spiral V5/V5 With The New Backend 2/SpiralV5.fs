@@ -251,6 +251,7 @@ and Pattern =
 and PatternModule =
     | PatMAnd of PatternModule list
     | PatMOr of PatternModule list
+    | PatMXor of PatternModule list
     | PatMInnerModule of string * PatternModule
     | PatMName of string
     | PatMRebind of string * Pattern
@@ -718,6 +719,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     pat_bind name <| fun memb -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
                 | PatMAnd l -> pat_and pattern_module_compile arg l on_succ on_fail
                 | PatMOr l -> pat_or pattern_module_compile arg l on_succ on_fail
+                | PatMXor l ->
+                    let state_var = sprintf " state_var_%i" (get_pattern_tag())
+                    let state_var' = v state_var
+                    let bool x = lit <| LitBool x
+                    let rec just_one = function
+                        | x :: xs -> 
+                            let xs = just_one xs
+                            inl state_var (pattern_module_compile arg x (if_static state_var' on_fail (ap xs (bool true))) (ap xs state_var'))
+                        | [] -> inl state_var on_succ
+                    ap (just_one l) (bool false)
                 | PatMInnerModule(name,pat) ->
                     let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
                     let pat_var' = v pat_var
