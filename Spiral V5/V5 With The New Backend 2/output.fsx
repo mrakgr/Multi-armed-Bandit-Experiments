@@ -1,10 +1,16 @@
-Pattern miss error. The argument is TyFun (<tag 2>,FunTypeModule)
-Error trace on line: 2, column: 1 in file "test77".
-inl x = {b=2; c=3}
-^
-Error trace on line: 3, column: 1 in file "test77".
-inl f = function
-^
-Error trace on line: 5, column: 1 in file "test77".
-f x
-^
+type Tuple0 =
+    struct
+    val mem_0: int64
+    val mem_1: int64
+    val mem_2: int64
+    val mem_3: int64
+    val mem_4: int64
+    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
+    end
+and Tuple1 =
+    struct
+    val mem_0: Tuple0
+    val mem_1: Tuple0
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
+    end
+Tuple1(Tuple0(0L, 1L, 3L, 6L, 10L), Tuple0(10L, 9L, 7L, 4L, 0L))

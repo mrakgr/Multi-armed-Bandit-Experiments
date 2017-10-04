@@ -926,6 +926,13 @@ inl f = function
 f x
     """
 
+let test78 =
+    "test78",[tuple],"Do the tuple scan functions work?",
+    """
+inl x = 1,2,3,4
+Tuple.scanl (+) 0 x, Tuple.scanr (+) x 0
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1211,7 +1218,7 @@ for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=i
     """
 
 let hacker_rank_2 =
-    "hacker_rank_2",[array;loops;option;parsing;console],"Save The Princess",
+    "hacker_rank_2",[tuple;array;arrayn;loops;option;parsing;console],"Save The Princess",
     """
  https://www.hackerrank.com/challenges/saveprincess
 // A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
@@ -1235,9 +1242,9 @@ inl cell = empty <|> princess <|> mario
 
 inl parse_cols n = parse_array {parser=cell; typ=Cell; n} .>> spaces
 inl parse_field n = parse_array {parser=parse_cols n; typ=type (create_array 0 Cell); n}
-inl parser = parse_int .>>. parse_field
-
-run_with_unit_ret (readall()) parser |>> inl (m,field) ->
+inl parser = 
+    inm n = parse_int 
+    inm field = parse_field n
     for' {from = 0; near_to=n; state=none (int64,int64); body = inl {next=row state i=r} ->
         for' {from = 0; near_to=n; state; 
             body = inl {next=col state i=c} ->
@@ -1249,45 +1256,29 @@ run_with_unit_ret (readall()) parser |>> inl (m,field) ->
         }
     |> function
         | [None] -> failwith "Current position not found."
-        | [Some: (r,c)] ->
+        | [Some: mario_row, mario_col as mario_pos] ->
+            inl cells_visited = ArrayN.init (n,n) (const false)
+            cells_visited.set mario_pos true
 
-inl solve n field =
-    inl cur_pos on_succ =
-        met rec loop1 (!dyn row) =
-            met rec loop2 (!dyn col) =
-                if col < n then
-                    match field row col with
-                    | .Mario -> on_succ row col
-                    | _ -> loop2 (col+1)
-                else loop1 (row+1)
-            if row < n then loop2 0
-            else failwith "Mario not found."
-        loop1 0
-    cur_pos <| inl row col ->
-    // init the arrays
-    inl cells_visited = Array.init n (inl _ -> Array.init n false)
-    cells_visited row col <- true
-
-    inl ar = Array.singleton ((row,col), List.empty string)
-
-    met rec loop on_fail on_succ =
-        inl row,col = Queue.dequeue p
-        match ar row col with
-        | .Princess -> on_succ()
-        | _ ->
             inl up = (row-1,col),"UP"
             inl down = (row+1,col),"DOWN"
             inl left = (row,col-1),"LEFT"
             inl right = (row,col+1),"RIGHT"
-            inl is_valid x = x >= 0 && x < n
-            inl is_in_range (row,col) = is_valid row && is_valid col
-            inl select (p,move) rest =
-                if is_in_range p then 
 
-inl f =
-    inm n = parse_int
-    inm ar = parse_rows n
+            inl queue = Array.singleton ((row,col), List.empty string)
 
+    |> succ()
+
+//run_with_unit_ret (readall()) parser
+//    met rec loop on_fail on_succ =
+//        inl row,col = Queue.dequeue p
+//        match ar row col with
+//        | .Princess -> on_succ()
+//        | _ ->
+//            inl is_valid x = x >= 0 && x < n
+//            inl is_in_range (row,col) = is_valid row && is_valid col
+//            inl select (p,move) rest =
+//                if is_in_range p then 
     """
 
 
@@ -1300,7 +1291,7 @@ let tests =
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
-    test70;test71;test72;test73;test74;test75;test76;test77
+    test70;test71;test72;test73;test74;test75;test76;test77;test78
     hacker_rank_1
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
@@ -1370,8 +1361,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
-//output_test_to_temp test77
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp test78
+|> printfn "%s"
+|> ignore

@@ -3016,6 +3016,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "mscorlib" (ap (v "load_assembly") (ap (v "type_lit_lift") (lit_string "mscorlib")))
             l "ignore" (inl "" B)
             l "id" (p <| id)
+            l "const" (p <| fun x -> inl "" x)
             l "ref" (p <| fun x -> op(ReferenceCreate,[x]))
             l "array_create" (p2 <| fun size typ -> op(ArrayCreate,[size;typ]))
             l "array_length" (p <| fun ar -> op(ArrayLength,[ar]))

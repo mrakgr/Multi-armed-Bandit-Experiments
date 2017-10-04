@@ -55,7 +55,7 @@ inl for_template kind =
         | {by} when is_static by && by = 0 -> error_type er_msg
         | {by state} when by = 0 -> failwith er_msg; state
         // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
-        // That way it will get specialized even by is dynamic.
+        // That way it will get specialized even if `by` is dynamic.
         | {by} as d -> 
             if by < 0 then loop {d with check=match d with | {to} -> inl from -> from >= to | {near_to} -> inl from -> from > near_to}
             else loop {d with check=match d with | {to} -> inl from -> from <= to | {near_to} -> inl from -> from < near_to}
@@ -70,6 +70,12 @@ let tuple =
     (
     "Tuple",[],"Operations on tuples.",
     """
+inl singleton x = x :: ()
+inl head = function
+    | x :: xs -> x
+inl tail = function
+    | x :: xs -> xs
+
 inl rec foldl f s = function
     | x :: xs -> foldl f (f s x) xs
     | () -> s
@@ -79,7 +85,17 @@ inl rec foldr f l s =
     | x :: xs -> f x (foldr f xs s)
     | () -> s
 
-inl singleton x = x :: ()
+inl rec scanl f s = function
+    | x :: xs -> s :: scanl f (f s x) xs
+    | () -> s :: ()
+
+inl rec scanr f l s = 
+    match l with
+    | x :: xs -> 
+        inl r = scanr f xs s
+        f x (head r) :: r
+    | () -> s :: ()
+
 inl append = foldr (::)
 
 inl rev, map =
@@ -105,7 +121,7 @@ inl is_empty = function
     | () -> true
     | _ -> error_type "Not a tuple."
 
-inl is_tuple = function
+inl is_non_empty_tuple = function
     | _ :: _ -> true
     | _ -> false
 
@@ -128,7 +144,7 @@ inl transpose l on_fail on_succ =
     loop () () () l
 
 inl zip_template on_ireg l = 
-    inl rec zip = function // when forall is_tuple l 
+    inl rec zip = function // when forall is_non_empty_tuple l 
         | _ :: _ as l -> transpose l (inl _ -> on_ireg l) (map (function | x :: () -> zip x | x -> x))
         | () -> error_type "Zip called on an empty tuple."
         | _ -> error_type "Zip called on a non-tuple."
@@ -142,7 +158,7 @@ inl zip' = zip_template id
 
 inl rec unzip_template on_irreg l = 
     inl rec unzip = function
-        | _ :: _ as l when forall is_tuple l -> transpose (map unzip l) (inl _ -> on_irreg l) id 
+        | _ :: _ as l when forall is_non_empty_tuple l -> transpose (map unzip l) (inl _ -> on_irreg l) id 
         | _ :: _ -> l
         | () -> error_type "Unzip called on an empty tuple."
         | _ -> error_type "Unzip called on a non-tuple."
@@ -178,7 +194,7 @@ inl rec contains t x =
     | [Some: x] -> true
     | [None] -> false
 
-{foldl foldr rev map forall exists filter is_empty is_tuple zip unzip index init repeat append singleton range tryFind contains}
+{head tail foldl foldr scanl scanr rev map forall exists filter zip unzip index init repeat append singleton range tryFind contains}
     """) |> module_
 
 let array =
@@ -222,6 +238,42 @@ inl concat ar =
     ar'
 
 {empty singleton foldl foldr init map filter append concat}
+    """) |> module_
+
+let arrayn =
+    (
+    "Array",[tuple;loops],"The array module",
+    """
+    open Loops
+    inl offset_at_index array i =
+        inl rec loop offset = function
+            | {dim_sizes=dim_size::dim_sizes dim_offsets=dim_offset::dim_offsets}, i :: is ->
+                assert (i >= 0 && i < dim_size) "Argument out of bounds."
+                loop (offset+dim_offset*i) ({dim_sizes dim_offsets ar}, is)
+            | {dim_sizes=() dim_offsets=() ar}, () ->
+                offset
+        loop 0 (array,i)
+
+    inl index ({ar} as x) i = ar (offset_at_index x i)
+    inl set ({ar} as x) i v = ar (offset_at_index x i) <- v
+        
+    inl init dim_sizes f =
+        match Tuple.foldl (inl s _ -> s + 1) 0 dim_sizes with
+        | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
+        | num_dims ->
+            inl len :: dim_offsets = Tuple.scanr (*) dim_sizes 1
+            inl ar = array_create len (type (f (Tuple.repeat num_dims 0)))
+            inl rec loop offset index = function
+                | dim_size :: dim_sizes, dim_offset :: dim_offsets ->
+                    for {from=dyn 0; near_to=dim_size; state=offset; body=inl {state=offset i} ->
+                        loop offset (i :: index) (dim_sizes,dim_offsets)
+                        offset+dim_offset
+                        } |> ignore
+                | (),() -> ar offset <- f index
+            loop 0 () (dim_sizes,dim_offsets)
+            {dim_sizes dim_offsets ar index=index ar; set=set ar}
+                
+    {init}
     """) |> module_
 
 let list =
