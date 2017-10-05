@@ -365,18 +365,38 @@ inl concat l & !elem_type !elem_type t = foldr append l (empty t)
 
 let queue =
     (
-    "Queue",[tuple],"The queue module.",
+    "Queue",[tuple;loops],"The queue module.",
     """
-inl enqueue {state} as queue v =
-    inl {from} = state()
-    inl to = incr state
-    if from = to then resize queue
+// The design of this is not ideal, it should be a single object with 3 mutable fields instead of just one tuple field,
+// but it should do nicely in a pinch for those dynamic programming kind of problems.
+inl add_one len x =
+    inl x = x + 1
+    if x = len then 0 else x
+
+inl resize {len from to ar} =
+    inl ar' = array_create (len*3/2+3) (ar.elem_type)
+    for {from near_to=len; body=inl {i} -> ar' (i - from) <- ar i}
+    for {from=0; near_to=from; body=inl {i} -> ar' (i + from) <- ar i}
+    {from=0; to=len; ar=ar'}
+
+inl enqueue {state} v =
+    inl {from to ar} = state()
+    ar to <- v
+    inl len = array_length ar
+    inl to = add_one len to
+    state := if from = to then resize {len from to ar} else {from to ar}
+
+inl dequeue {state} =
+    inl {from to ar} = state()
+    assert (from <> to) "Cannot dequeue past the end of the queue."
+    state := {from=add_one (array_length ar) from; to ar}
+    ar from
 
 inl create n typ =
     inl n = match n with | n -> n | () -> 16
-    inl ar = array_create n typ
-    inl state = ref {from=0; to=1}
+    {state=ref {from=0; to=0; ar=array_create n typ}}
 
+{create dequeue enqueue}
     """) |> module_
 
 let parsing =
