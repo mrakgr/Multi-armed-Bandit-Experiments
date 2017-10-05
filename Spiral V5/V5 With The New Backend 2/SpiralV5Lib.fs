@@ -104,6 +104,9 @@ inl rev, map =
     inl map f = map' f >> rev
     rev, map
 
+inl iter f = foldl (const f) ()
+inl iteri f = foldl f 0
+
 inl rec forall f = function
     | x :: xs -> f x && forall f xs
     | () -> true
@@ -194,7 +197,7 @@ inl rec contains t x =
     | [Some: x] -> true
     | [None] -> false
 
-{head tail foldl foldr scanl scanr rev map forall exists filter zip unzip index init repeat append singleton range tryFind contains}
+{head tail foldl foldr scanl scanr rev map iter iteri forall exists filter zip unzip index init repeat append singleton range tryFind contains}
     """) |> module_
 
 let array =
@@ -242,38 +245,39 @@ inl concat ar =
 
 let arrayn =
     (
-    "Array",[tuple;loops],"The array module",
+    "ArrayN",[tuple;loops],"The array module",
     """
-    open Loops
-    inl offset_at_index array i =
-        inl rec loop offset = function
-            | {dim_sizes=dim_size::dim_sizes dim_offsets=dim_offset::dim_offsets}, i :: is ->
-                assert (i >= 0 && i < dim_size) "Argument out of bounds."
-                loop (offset+dim_offset*i) ({dim_sizes dim_offsets ar}, is)
-            | {dim_sizes=() dim_offsets=() ar}, () ->
-                offset
-        loop 0 (array,i)
+open Loops
+inl offset_at_index array i =
+    inl rec loop offset = function
+        | {dim_sizes=dim_size::dim_sizes dim_offsets=dim_offset::dim_offsets ar}, i :: is ->
+            assert (i >= 0 && i < dim_size) "Argument out of bounds."
+            loop (offset+dim_offset*i) ({dim_sizes dim_offsets ar}, is)
+        | {dim_sizes=() dim_offsets=() ar}, () ->
+            offset
+    loop 0 (array,i)
 
-    inl index ({ar} as x) i = ar (offset_at_index x i)
-    inl set ({ar} as x) i v = ar (offset_at_index x i) <- v
+inl index ({ar} as x) i = ar (offset_at_index x i)
+inl set ({ar} as x) i v = ar (offset_at_index x i) <- v
         
-    inl init dim_sizes f =
-        match Tuple.foldl (inl s _ -> s + 1) 0 dim_sizes with
-        | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
-        | num_dims ->
-            inl len :: dim_offsets = Tuple.scanr (*) dim_sizes 1
-            inl ar = array_create len (type (f (Tuple.repeat num_dims 0)))
-            inl rec loop offset index = function
-                | dim_size :: dim_sizes, dim_offset :: dim_offsets ->
-                    for {from=dyn 0; near_to=dim_size; state=offset; body=inl {state=offset i} ->
-                        loop offset (i :: index) (dim_sizes,dim_offsets)
-                        offset+dim_offset
-                        } |> ignore
-                | (),() -> ar offset <- f index
-            loop 0 () (dim_sizes,dim_offsets)
-            {dim_sizes dim_offsets ar index=index ar; set=set ar}
+inl init dim_sizes f =
+    match Tuple.foldl (inl s _ -> s + 1) 0 dim_sizes with
+    | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
+    | num_dims ->
+        inl len :: dim_offsets = Tuple.scanr (*) dim_sizes 1
+        inl ar = array_create len (type (f (Tuple.repeat num_dims 0)))
+        inl rec loop offset index = function
+            | dim_size :: dim_sizes, dim_offset :: dim_offsets ->
+                for {from=dyn 0; near_to=dim_size; state=offset; body=inl {state=offset i} ->
+                    loop offset (i :: index) (dim_sizes,dim_offsets)
+                    offset+dim_offset
+                    } |> ignore
+            | (),() -> ar offset <- f index
+        loop (dyn 0) () (dim_sizes,dim_offsets)
+        inl array_data = {dim_sizes dim_offsets ar}
+        {array_data index=index array_data; set=set array_data}
                 
-    {init}
+{init}
     """) |> module_
 
 let list =

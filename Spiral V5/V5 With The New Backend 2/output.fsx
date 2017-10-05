@@ -1,16 +1,25 @@
-type Tuple0 =
-    struct
-    val mem_0: int64
-    val mem_1: int64
-    val mem_2: int64
-    val mem_3: int64
-    val mem_4: int64
-    new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3, arg_mem_4) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3; mem_4 = arg_mem_4}
-    end
-and Tuple1 =
-    struct
-    val mem_0: Tuple0
-    val mem_1: Tuple0
-    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
-    end
-Tuple1(Tuple0(0L, 1L, 3L, 6L, 10L), Tuple0(10L, 9L, 7L, 4L, 0L))
+let rec method_15((var_0: (int64 [])), (var_1: int64), (var_2: int64)): int64 =
+    if (var_1 < 10L) then
+        let (var_3: int64) = 0L
+        let (var_4: int64) = method_16((var_1: int64), (var_0: (int64 [])), (var_3: int64), (var_2: int64))
+        let (var_5: int64) = (var_2 + 10L)
+        let (var_6: int64) = (var_1 + 1L)
+        method_15((var_0: (int64 [])), (var_6: int64), (var_5: int64))
+    else
+        var_2
+and method_16((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64)): int64 =
+    if (var_2 < 10L) then
+        var_1.[int32 var_3] <- (var_2 * var_0)
+        let (var_4: int64) = (var_3 + 1L)
+        let (var_5: int64) = (var_2 + 1L)
+        method_16((var_0: int64), (var_1: (int64 [])), (var_5: int64), (var_4: int64))
+    else
+        var_3
+let (var_0: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(100L))
+let (var_1: int64) = 0L
+let (var_2: int64) = 0L
+let (var_3: int64) = method_15((var_0: (int64 [])), (var_2: int64), (var_1: int64))
+let (var_4: int64) = var_0.[int32 22L]
+let (var_5: int64) = (var_4 + 100L)
+var_0.[int32 22L] <- var_5
+var_0.[int32 22L]

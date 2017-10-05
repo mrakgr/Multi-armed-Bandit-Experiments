@@ -933,6 +933,15 @@ inl x = 1,2,3,4
 Tuple.scanl (+) 0 x, Tuple.scanr (+) x 0
     """
 
+let test79 =
+    "test79",[arrayn],"Does the ArrayN init work? Do set and index for the new array module work?",
+    """
+inl ar = ArrayN.init (10,10) (inl (a,b) -> a*b)
+inl x = ar.index (2,2)
+ar.set (2,2) (x+100)
+ar.index (2,2)
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1220,7 +1229,7 @@ for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=i
 let hacker_rank_2 =
     "hacker_rank_2",[tuple;array;arrayn;loops;option;parsing;console],"Save The Princess",
     """
- https://www.hackerrank.com/challenges/saveprincess
+// https://www.hackerrank.com/challenges/saveprincess
 // A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
 // gives some novel challenges regarding it.
 open Parsing
@@ -1245,40 +1254,89 @@ inl parse_field n = parse_array {parser=parse_cols n; typ=type (create_array 0 C
 inl parser = 
     inm n = parse_int 
     inm field = parse_field n
-    for' {from = 0; near_to=n; state=none (int64,int64); body = inl {next=row state i=r} ->
+    inl no_pos = none (int64,int64)
+    for' {from = 0; near_to=n; state={princess=no_pos; mario=no_pos}; body = inl {next=row state i=r} ->
         for' {from = 0; near_to=n; state; 
             body = inl {next=col state i=c} ->
                 match field r c with
-                | .Mario -> some (r,c)
+                | .Mario -> 
+                    inl state = {state with mario=some (r,c)}
+                    match state with
+                    | {princess=[Some: _]} -> state
+                    | _ -> col state
+                | .Princess -> 
+                    inl state = {state with princess=some (r,c)}
+                    match state with
+                    | {mario=[Some: _]} -> state
+                    | _ -> col state
                 | _ -> col state
             finally = row
             }
         }
     |> function
-        | [None] -> failwith "Current position not found."
-        | [Some: mario_row, mario_col as mario_pos] ->
-            inl cells_visited = ArrayN.init (n,n) (const false)
-            cells_visited.set mario_pos true
-
-            inl up = (row-1,col),"UP"
-            inl down = (row+1,col),"DOWN"
-            inl left = (row,col-1),"LEFT"
-            inl right = (row,col+1),"RIGHT"
-
-            inl queue = Array.singleton ((row,col), List.empty string)
-
+        | {mario=[Some: mario_row, mario_col as mario_pos]; princess=[Some: princess_row, princess_col as princess_pos]} ->
+            printfn "mario_pos=(%i,%i), princess_pos=(%i,%i)" mario_row mario_col princess_pos princess_col
+//            inl cells_visited = ArrayN.init (n,n) (const false)
+//            cells_visited.set mario_pos true
+//
+//            inl up_string = dyn "UP"
+//            inl down_string = dyn "DOWN"
+//            inl left_string = dyn "LEFT"
+//            inl right_string = dyn "RIGHT"
+//
+//            inl up (row,col), prev_moves = (row-1,col), List.cons up_string prev_moves
+//            inl down (row,col), prev_moves = (row+1,col), List.cons down_string prev_moves
+//            inl left (row,col), prev_moves = (row,col-1), List.cons left_string prev_moves
+//            inl right (row,col), prev_moves = (row,col+1), List.cons right_string prev_moves
+//
+//            inl next_moves = up,down,left,right
+//
+//            inl is_valid x = x >= 0 && x < n
+//            inl is_in_range (row,col), _ = is_valid row && is_valid col
+//            inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
+//
+//            inl start_queue = Array.singleton ((row,col), List.empty string)
+//            inl state_type = start_queue.elem_type
+//
+//            inl solution = ref (none state_type)
+//            met rec loop queue =
+//                inl queue =
+//                    Array.map (inl mario_pos, prev_moves as state ->
+//                        inl potential_new_states = 
+//                            Tuple.map (inl move -> 
+//                                inl new_pos,_ as new_state = move state
+//                                inl is_valid =
+//                                    if is_in_range new_state && cells_visited.index new_pos = false then 
+//                                        if is_princess_in_state new_state then solution := some new_state
+//                                        cells_visited.set new_pos true
+//                                        true
+//                                    else false
+//                                new_state, is_valid
+//                                ) next_moves
+//                        inl bool_to_int x = if x then 1 else 0
+//                        inl number_of_valid_states = Tuple.foldl (fun s (_,!bool_to_int x) -> s + x)
+//                        inl new_states = array_create number_of_valid_states state_type
+//                        Tuple.foldl (inl i (state,is_valid) -> 
+//                            if is_valid then new_state i <- state; i+1
+//                            else i
+//                            ) 0 potential_new_states |> ignore
+//                        new_states
+//                        ) queue
+//                    |> Array.concat
+//                match solution() with
+//                | [None] -> loop queue
+//                | [Some: _,path] -> List.foldr (inl x _ -> Console.writeline x) path ()
+//                : ()
+//            loop start_queue
+        | _ -> failwith "Current position not found."
     |> succ()
 
-//run_with_unit_ret (readall()) parser
-//    met rec loop on_fail on_succ =
-//        inl row,col = Queue.dequeue p
-//        match ar row col with
-//        | .Princess -> on_succ()
-//        | _ ->
-//            inl is_valid x = x >= 0 && x < n
-//            inl is_in_range (row,col) = is_valid row && is_valid col
-//            inl select (p,move) rest =
-//                if is_in_range p then 
+inl str = dyn "3
+---
+-m-
+p--
+    "
+run_with_unit_ret (str) parser
     """
 
 
@@ -1363,8 +1421,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp test78
+output_test_to_temp test79
 |> printfn "%s"
 |> ignore
 
-//
