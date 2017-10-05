@@ -28,7 +28,7 @@ inl rec while {cond body state} as d =
     else (met _ -> loop_body d) ()
 
 inl for_template kind =
-    inl rec loop {from (near_to ^ to)=to} as d =
+    inl rec loop {from (near_to ^ to)=to by} as d =
         inl loop_body {check from by state body finally} as d =
             if check from then 
                 match kind with
@@ -40,7 +40,7 @@ inl for_template kind =
             else finally state
             : state
 
-        if is_static (from,to) then loop_body d
+        if is_static (from,to,by) then loop_body d
         else (met d -> loop_body d) {d with from=dyn from}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
