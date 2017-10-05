@@ -1227,7 +1227,7 @@ for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=i
     """
 
 let hacker_rank_2 =
-    "hacker_rank_2",[tuple;array;arrayn;loops;option;parsing;console],"Save The Princess",
+    "hacker_rank_2",[tuple;array;arrayn;loops;list;option;parsing;console],"Save The Princess",
     """
 // https://www.hackerrank.com/challenges/saveprincess
 // A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
@@ -1243,14 +1243,14 @@ type Cell =
     .Princess
     .Mario
 
-inl empty = pchar 'e' >>% Cell .Empty
-inl princess = pchar 'p' >>% Cell .Princess
-inl mario = pchar '-' >>% Cell .Mario
+inl empty = pchar '-' >>% box Cell .Empty
+inl princess = pchar 'p' >>% box Cell .Princess
+inl mario = pchar 'm' >>% box Cell .Mario
 
 inl cell = empty <|> princess <|> mario
 
 inl parse_cols n = parse_array {parser=cell; typ=Cell; n} .>> spaces
-inl parse_field n = parse_array {parser=parse_cols n; typ=type (create_array 0 Cell); n}
+inl parse_field n = parse_array {parser=parse_cols n; typ=type (array_create 0 Cell); n}
 inl parser = 
     inm n = parse_int 
     inm field = parse_field n
@@ -1274,69 +1274,68 @@ inl parser =
             }
         }
     |> function
-        | {mario=[Some: mario_row, mario_col as mario_pos]; princess=[Some: princess_row, princess_col as princess_pos]} ->
-            printfn "mario_pos=(%i,%i), princess_pos=(%i,%i)" mario_row mario_col princess_pos princess_col
-//            inl cells_visited = ArrayN.init (n,n) (const false)
-//            cells_visited.set mario_pos true
-//
-//            inl up_string = dyn "UP"
-//            inl down_string = dyn "DOWN"
-//            inl left_string = dyn "LEFT"
-//            inl right_string = dyn "RIGHT"
-//
-//            inl up (row,col), prev_moves = (row-1,col), List.cons up_string prev_moves
-//            inl down (row,col), prev_moves = (row+1,col), List.cons down_string prev_moves
-//            inl left (row,col), prev_moves = (row,col-1), List.cons left_string prev_moves
-//            inl right (row,col), prev_moves = (row,col+1), List.cons right_string prev_moves
-//
-//            inl next_moves = up,down,left,right
-//
-//            inl is_valid x = x >= 0 && x < n
-//            inl is_in_range (row,col), _ = is_valid row && is_valid col
-//            inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
-//
-//            inl start_queue = Array.singleton ((row,col), List.empty string)
-//            inl state_type = start_queue.elem_type
-//
-//            inl solution = ref (none state_type)
-//            met rec loop queue =
-//                inl queue =
-//                    Array.map (inl mario_pos, prev_moves as state ->
-//                        inl potential_new_states = 
-//                            Tuple.map (inl move -> 
-//                                inl new_pos,_ as new_state = move state
-//                                inl is_valid =
-//                                    if is_in_range new_state && cells_visited.index new_pos = false then 
-//                                        if is_princess_in_state new_state then solution := some new_state
-//                                        cells_visited.set new_pos true
-//                                        true
-//                                    else false
-//                                new_state, is_valid
-//                                ) next_moves
-//                        inl bool_to_int x = if x then 1 else 0
-//                        inl number_of_valid_states = Tuple.foldl (fun s (_,!bool_to_int x) -> s + x)
-//                        inl new_states = array_create number_of_valid_states state_type
-//                        Tuple.foldl (inl i (state,is_valid) -> 
-//                            if is_valid then new_state i <- state; i+1
-//                            else i
-//                            ) 0 potential_new_states |> ignore
-//                        new_states
-//                        ) queue
-//                    |> Array.concat
-//                match solution() with
-//                | [None] -> loop queue
-//                | [Some: _,path] -> List.foldr (inl x _ -> Console.writeline x) path ()
-//                : ()
-//            loop start_queue
-        | _ -> failwith "Current position not found."
-    |> succ()
+        | {mario=[Some: mario_row, mario_col as mario_pos] princess=[Some: princess_row, princess_col as princess_pos]} ->
+            inl cells_visited = ArrayN.init (n,n) (const false)
+            cells_visited.set mario_pos true
 
-inl str = dyn "3
----
--m-
-p--
-    "
-run_with_unit_ret (str) parser
+            inl up_string = dyn "UP"
+            inl down_string = dyn "DOWN"
+            inl left_string = dyn "LEFT"
+            inl right_string = dyn "RIGHT"
+
+            inl up (row,col), prev_moves = (row-1,col), List.cons up_string prev_moves
+            inl down (row,col), prev_moves = (row+1,col), List.cons down_string prev_moves
+            inl left (row,col), prev_moves = (row,col-1), List.cons left_string prev_moves
+            inl right (row,col), prev_moves = (row,col+1), List.cons right_string prev_moves
+
+            inl next_moves = up,down,left,right
+
+            inl is_valid x = x >= 0 && x < n
+            inl is_in_range (row,col), _ = is_valid row && is_valid col
+            inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
+
+            inl start_queue = Array.singleton (mario_pos, List.empty string)
+            inl state_type = start_queue.elem_type
+
+            inl solution = ref (none state_type)
+            met rec loop queue =
+                inl queue =
+                    Array.map (inl mario_pos, prev_moves as state ->
+                        inl potential_new_states = 
+                            Tuple.map (inl move -> 
+                                inl new_pos,_ as new_state = move state
+                                inl is_valid =
+                                    if is_in_range new_state && cells_visited.index new_pos = false then 
+                                        if is_princess_in_state new_state then solution := some new_state
+                                        cells_visited.set new_pos true
+                                        true
+                                    else false
+                                new_state, is_valid
+                                ) next_moves
+                        inl bool_to_int x = if x then 1 else 0
+                        inl number_of_valid_states = Tuple.foldl (inl s (_,!bool_to_int x) -> s + x) 0 potential_new_states
+                        inl new_states = array_create number_of_valid_states state_type
+                        Tuple.foldl (inl i (state,is_valid) -> 
+                            if is_valid then new_states i <- state; i+1
+                            else i
+                            ) 0 potential_new_states |> ignore
+                        new_states
+                        ) queue
+                    |> Array.concat
+                match solution() with
+                | [None] -> loop queue
+                | [Some: _,path] -> List.foldr (inl x _ -> Console.writeline x) path ()
+                : ()
+            loop start_queue
+        | _ -> failwith "Current position not found."
+    |> succ
+
+//inl str = dyn "3
+//---
+//-m-
+//p--
+//    "
+run_with_unit_ret (readall()) parser
     """
 
 
@@ -1421,7 +1420,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp test79
+output_test_to_temp hacker_rank_2
 |> printfn "%s"
 |> ignore
 

@@ -564,7 +564,7 @@ inl parse_int =
 
 inl parse_array {parser typ n} = m {
     parser_mon =
-        inm _ = guard (n > 0) (fatal_fail "n in parse array must be > 0")
+        inm _ = guard (n >= 0) (fatal_fail "n in parse array must be >= 0")
         inl ar = array_create n typ
         inl rec loop (!dyn i) = m {
             parser_rec = inl {on_type} ->
