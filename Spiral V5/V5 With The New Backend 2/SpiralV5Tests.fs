@@ -1349,7 +1349,7 @@ let tests =
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78
-    hacker_rank_1
+    hacker_rank_1;hacker_rank_2
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
     euler2;euler3;euler4;euler5
