@@ -1403,8 +1403,8 @@ inl parser ret =
         }
     |> succ
 
-met main = {
-    some = inl {n field mario=(mario_row, mario_col as mario_pos) princess=(princess_row, princess_col as princess_pos)} ->
+inl main = {
+    some = met {n field mario=(mario_row, mario_col as mario_pos) princess=(princess_row, princess_col as princess_pos)} ->
         inl cells_visited = ArrayN.init (n,n) (const false)
         cells_visited.set mario_pos true
 
@@ -1423,13 +1423,12 @@ met main = {
         inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
 
         inl init_state = (mario_pos, List.empty string)
-//        inl state_type = type init_state
+        inl state_type = type init_state
 
         ()
 
 //        inl queue = Queue.create () state_type
 //        queue.enqueue init_state
-
 //
 //        inl print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
 //            List.last path {
