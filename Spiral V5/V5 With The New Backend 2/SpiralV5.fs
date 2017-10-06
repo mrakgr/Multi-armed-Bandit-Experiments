@@ -2268,12 +2268,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 var_op_name .>>. opt (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
                 |>> function a, None -> mp_binding (a, v a) | a, Some b -> mp_binding (a, b)
                 <| s
-            let module_create s = many1 (parse_binding .>> optional semicolon') s
+            let module_create s = (parse_binding .>> optional semicolon') s
 
             let module_with = 
                 attempt (sepBy1 var_name dot .>> with_) >>= fun names ->
-                    (module_create |>> fun l -> mp_with (names,l))
-            curlies (module_with <|> (module_create |>> mp_create))
+                    (many1 module_create |>> fun l -> mp_with (names,l))
+            curlies (module_with <|> (many module_create |>> mp_create))
             <| s
 
         let case_type expr = type_' >>. expr |>> type_create

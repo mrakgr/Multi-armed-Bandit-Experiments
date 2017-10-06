@@ -29,7 +29,7 @@ inl rec while {cond body state} as d =
 
 inl for_template kind =
     inl rec loop {from (near_to ^ to)=to by} as d =
-        inl loop_body {check from by state body finally} as d =
+        inl loop_body {check from by state body finally return_type} as d =
             if check from then 
                 match kind with
                 | .Navigable ->
@@ -38,7 +38,7 @@ inl for_template kind =
                 | .Standard ->
                     loop {d with state=body {state i=from}; from=from+by}
             else finally state
-            : state
+            : return_type
 
         if is_static (from,to,by) then loop_body d
         else (met d -> loop_body d) {d with from=dyn from}
@@ -51,6 +51,7 @@ inl for_template kind =
     >> function | {state} as d -> d | d -> {d with state=()}
     >> function | {by} as d -> d | d -> {d with by=1}
     >> function | {finally} as d -> d | d -> {d with finally=id}
+    >> function | {return_type} as d -> d | {finally state} as d -> {d with return_type=type (finally state)}
     >> function 
         | {by} when is_static by && by = 0 -> error_type er_msg
         | {by state} when by = 0 -> failwith er_msg; state
@@ -356,10 +357,25 @@ inl rec foldr f l s =
         | #lw () -> s
         : s) f s l
 
+inl head_tail_template f l ret = 
+    match l with
+    | #lw (x :: xs) -> f (x, xs) |> ret .some
+    | #lw () -> ret .none ()
+
+inl head = head_tail_template fst
+inl tail = head_tail_template snd
+
+met rec last l ret = 
+    match l with
+    | #lw (x :: ()) -> ret .some x
+    | #lw (x :: xs) -> last xs ret
+    | #lw () -> ret .none ()
+    : ret .none ()
+
 inl append a b = foldr cons a b
 inl concat l & !elem_type !elem_type t = foldr append l (empty t)
 
-{list lw init map foldl foldr empty cons singleton append concat}
+{list lw init map foldl foldr empty cons singleton append concat head tail last}
     """) |> module_
 
 let parsing =
