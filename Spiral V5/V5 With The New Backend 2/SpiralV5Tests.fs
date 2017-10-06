@@ -1355,6 +1355,102 @@ inl parser =
 run_with_unit_ret (readall()) parser
     """
 
+let hacker_rank_3 =
+    "hacker_rank_3",[tuple;array;arrayn;loops;list;option;parsing;console;queue],"Save The Princess 2",
+    """
+// https://www.hackerrank.com/challenges/saveprincess2
+// A version of this similar to the previous one made in order to test the new queue.
+open Parsing
+open Console
+open Option
+open Array
+open Loops
+
+type Cell =
+    .Empty
+    .Princess
+    .Mario
+
+inl empty = pchar '-' >>% box Cell .Empty
+inl princess = pchar 'p' >>% box Cell .Princess
+inl mario = pchar 'm' >>% box Cell .Mario
+
+inl cell = empty <|> princess <|> mario
+
+inl parse_cols n = parse_array {parser=cell; typ=Cell; n} .>> spaces
+inl parse_field n = parse_array {parser=parse_cols n; typ=type (array_create 0 Cell); n}
+inl parser = 
+    inm n = parse_int 
+    inm field = parse_field n
+    inl no_pos = none (int64,int64)
+    for' {from = 0; near_to=n; state={princess=no_pos; mario=no_pos}; body = inl {next=row state i=r} ->
+        for' {from = 0; near_to=n; state; 
+            body = inl {next=col state i=c} ->
+                match field r c with
+                | .Mario -> 
+                    inl state = {state with mario=some (r,c)}
+                    match state with
+                    | {princess=[Some: _]} -> state
+                    | _ -> col state
+                | .Princess -> 
+                    inl state = {state with princess=some (r,c)}
+                    match state with
+                    | {mario=[Some: _]} -> state
+                    | _ -> col state
+                | _ -> col state
+            finally = row
+            }
+        }
+    |> function
+        | {mario=[Some: mario_row, mario_col as mario_pos] princess=[Some: princess_row, princess_col as princess_pos]} ->
+            inl cells_visited = ArrayN.init (n,n) (const false)
+            cells_visited.set mario_pos true
+
+            inl up_string = dyn "UP"
+            inl down_string = dyn "DOWN"
+            inl left_string = dyn "LEFT"
+            inl right_string = dyn "RIGHT"
+
+            inl up (row,col), prev_moves = (row-1,col), List.cons up_string prev_moves
+            inl down (row,col), prev_moves = (row+1,col), List.cons down_string prev_moves
+            inl left (row,col), prev_moves = (row,col-1), List.cons left_string prev_moves
+            inl right (row,col), prev_moves = (row,col+1), List.cons right_string prev_moves
+
+            inl is_valid x = x >= 0 && x < n
+            inl is_in_range (row,col), _ = is_valid row && is_valid col
+            inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
+
+            inl init_state = (mario_pos, List.empty string)
+            inl state_type = type init_state
+
+            inl queue = Queue.create () state_type
+            queue.enqueue init_state
+
+            inl print_solution _,path = List.foldr (inl x _ -> Console.writeline x) path ()
+
+            met evaluate_move state move on_fail =
+                inl new_pos,_ as new_state = move state
+                if is_in_range new_state && cells_visited.index new_pos = false then 
+                    if is_princess_in_state new_state then print_solution new_state
+                    else
+                        cells_visited.set new_pos true
+                        queue.enqueue new_state
+                        on_fail ()
+                else on_fail ()
+            
+            met rec loop () =
+                inl next_moves = up, down, left, right
+                inl state = queue.dequeue()
+                Tuple.foldr (inl move next () -> evaluate_move state move next) next_moves loop ()
+                : ()
+
+            loop ()
+        | _ -> failwith "Current position not found."
+    |> succ
+
+run_with_unit_ret (readall()) parser
+    """
+
 
 let tests =
     [|
@@ -1438,7 +1534,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp test80
+output_test_to_temp hacker_rank_3
 |> printfn "%s"
 |> ignore
 
