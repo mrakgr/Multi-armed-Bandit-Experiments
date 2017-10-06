@@ -946,14 +946,14 @@ let test80 =
     "test80",[queue;console],"Does the Queue module work?",
     """
 open Console
-inl queue = Queue.create 0 int64
+inl queue = Queue.create 1 int64
 inl rec dequeue n =
-    if n > 0 then Queue.dequeue queue |> writeline; dequeue (n-1)
+    if n > 0 then queue .dequeue () |> writeline; dequeue (n-1)
     else ()
-Tuple.iter (Queue.enqueue queue) (Tuple.range (1,4))
+Tuple.iter (queue .enqueue) (Tuple.range (1,4))
 dequeue 2
-Tuple.iter (Queue.enqueue queue) (Tuple.range (1,4))
-Tuple.iter (Queue.enqueue queue) (Tuple.range (1,4))
+Tuple.iter (queue .enqueue) (Tuple.range (1,4))
+Tuple.iter (queue .enqueue) (Tuple.range (1,4))
 dequeue 2
 dequeue 4
 dequeue 4
@@ -1365,7 +1365,8 @@ let tests =
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
-    test70;test71;test72;test73;test74;test75;test76;test77;test78
+    test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
+    test80
     hacker_rank_1;hacker_rank_2
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5

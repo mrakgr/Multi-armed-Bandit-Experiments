@@ -362,44 +362,6 @@ inl concat l & !elem_type !elem_type t = foldr append l (empty t)
 {list lw init map foldl foldr empty cons singleton append concat}
     """) |> module_
 
-
-let queue =
-    (
-    "Queue",[tuple;loops],"The queue module.",
-    """
-open Loops
-// The design of this is not ideal, it should be a single object with 3 mutable fields instead of just one tuple field,
-// but it should do nicely in a pinch for those dynamic programming kind of problems.
-inl add_one len x =
-    inl x = x + 1
-    if x = len then 0 else x
-
-inl resize {len from to ar} =
-    inl ar' = array_create (len*3/2+3) (ar.elem_type)
-    for {from near_to=len; body=inl {i} -> ar' (i - from) <- ar i}
-    for {from=0; near_to=from; body=inl {i} -> ar' (i + from) <- ar i}
-    {from=0; to=len; ar=ar'}
-
-met enqueue {state} (!dyn v) =
-    inl {from to ar} = state()
-    ar to <- v
-    inl len = array_length ar
-    inl to = add_one len to
-    state := if from = to then resize {len from to ar} else {from to ar}
-
-met dequeue {state} =
-    inl {from to ar} = state()
-    assert (from <> to) "Cannot dequeue past the end of the queue."
-    state := {from=add_one (array_length ar) from; to ar}
-    ar from
-
-inl create n typ =
-    inl n = match n with | () -> 16 | n -> max 1 n
-    {state=ref {from=0; to=0; ar=array_create n typ}}
-
-{create dequeue enqueue}
-    """) |> module_
-
 let parsing =
     (
     "Parsing",[tuple],"Parser combinators.",
@@ -670,3 +632,43 @@ inl printfn = printf_template writeline
 
 {console readall readline write writeline printf printfn}
     """) |> module_
+
+let queue =
+    (
+    "Queue",[tuple;loops;console],"The queue module.",
+    """
+open Loops
+open Console
+// The design of this is not ideal, it should be a single object with 3 mutable fields instead of just one tuple field,
+// but it should do nicely in a pinch for those dynamic programming kind of problems.
+inl add_one len x =
+    inl x = x + 1
+    if x = len then 0 else x
+
+inl resize {len from to ar} =
+    inl ar' = array_create (len*3/2+3) (ar.elem_type)
+    for {from near_to=len; body=inl {i} -> ar' (i - from) <- ar i}
+    for {from=0; near_to=from; body=inl {i} -> ar' (len - from + i) <- ar i}
+    {from=0; to=len; ar=ar'}
+
+met enqueue {state} (!dyn v) =
+    inl {from to ar} = state()
+    ar to <- v
+    inl len = array_length ar
+    inl to = add_one len to
+    state := if from = to then resize {len from to ar} else {from to ar}
+
+met dequeue {state} () =
+    inl {from to ar} = state()
+    assert (from <> to) "Cannot dequeue past the end of the queue."
+    state := {from=add_one (array_length ar) from; to ar}
+    ar from
+
+inl create n typ =
+    inl n = match n with | () -> 16 | n -> max 1 n
+    inl queue = {state=ref {from=0; to=0; ar=array_create n typ}}
+    {internal = queue; enqueue = enqueue queue; dequeue = dequeue queue}
+
+{create}
+    """) |> module_
+
