@@ -17,7 +17,7 @@ let rec method_14((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
         let (var_6: int64) = (var_1 + 1L)
         method_14((var_0: int64), (var_6: int64), (var_5: int64))
     else
-        Env0(var_2)
+        (Env0(var_2))
 and method_15((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
     if (var_0 <= var_1) then
         let (var_3: int64) = (var_0 * var_0)
@@ -32,14 +32,14 @@ and method_15((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
                 false
         let (var_9: Env0) =
             if var_8 then
-                Env0(var_3)
+                (Env0(var_3))
             else
-                Env0(var_2)
+                (Env0(var_2))
         let (var_10: int64) = var_9.mem_highest_palindrome
         let (var_11: int64) = (var_0 + 1L)
         method_17((var_0: int64), (var_1: int64), (var_11: int64), (var_10: int64))
     else
-        Env0(var_2)
+        (Env0(var_2))
 and method_16((var_0: int64), (var_1: int64)): Env1 =
     if (var_0 > 0L) then
         let (var_2: int64) = (var_0 / 10L)
@@ -48,7 +48,7 @@ and method_16((var_0: int64), (var_1: int64)): Env1 =
         let (var_5: int64) = (var_3 + var_4)
         method_16((var_2: int64), (var_5: int64))
     else
-        Env1(var_0, var_1)
+        (Env1(var_0, var_1))
 and method_17((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): Env0 =
     if (var_2 <= var_1) then
         let (var_4: int64) = (var_0 * var_2)
@@ -63,14 +63,14 @@ and method_17((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): E
                 false
         let (var_10: Env0) =
             if var_9 then
-                Env0(var_4)
+                (Env0(var_4))
             else
-                Env0(var_3)
+                (Env0(var_3))
         let (var_11: int64) = var_10.mem_highest_palindrome
         let (var_12: int64) = (var_2 + 1L)
         method_17((var_0: int64), (var_1: int64), (var_12: int64), (var_11: int64))
     else
-        Env0(var_3)
+        (Env0(var_3))
 let (var_0: int64) = 100L
 let (var_1: int64) = 999L
 let (var_2: int64) = 0L

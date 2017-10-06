@@ -21,12 +21,12 @@ and Tuple4 =
     val mem_1: string
     new(arg_mem_1) = {mem_1 = arg_mem_1}
     end
-let (var_0: Union0) = Union0Case0(Tuple2(Tuple1(2L, 3L)))
+let (var_0: Union0) = (Union0Case0(Tuple2(Tuple1(2L, 3L))))
 match var_0 with
 | Union0Case0(var_1) ->
     let (var_3: Tuple1) = var_1.mem_1
-    Union3Case0(Tuple2(var_3))
+    (Union3Case0(Tuple2(var_3)))
 | Union0Case1(var_2) ->
     let (var_4: string) = var_2.mem_1
-    Union3Case1(Tuple4(var_4))
+    (Union3Case1(Tuple4(var_4)))
 

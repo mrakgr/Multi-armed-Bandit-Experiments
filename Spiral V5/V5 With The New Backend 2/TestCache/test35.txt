@@ -22,7 +22,7 @@ and Tuple4 =
     val mem_1: Tuple2
     new(arg_mem_1) = {mem_1 = arg_mem_1}
     end
-let (var_0: Union0) = Union0Case0(1L)
+let (var_0: Union0) = (Union0Case0(1L))
 match var_0 with
 | Union0Case0(var_1) ->
     1L

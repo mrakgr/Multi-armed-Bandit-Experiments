@@ -375,7 +375,7 @@ and method_30((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64)): Env1 =
         let (var_3: int64) = 0L
         method_31((var_0: ((Union0 []) [])), (var_2: int64), (var_1: int64), (var_3: int64))
     else
-        Env1(Union2Case1, Union2Case1)
+        (Env1(Union2Case1, Union2Case1))
 and method_31((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64)): Env1 =
     if (var_3 < var_2) then
         let (var_4: (Union0 [])) = var_0.[int32 var_1]
@@ -405,7 +405,7 @@ and method_32((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_12: int64) = (var_3 + 1L)
             method_32((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_12: int64), (var_3: int64))
         | Union0Case2 ->
-            Env1(Union2Case0(Tuple7(Tuple3(var_1, var_4))), Union2Case0(Tuple7(Tuple3(var_1, var_3))))
+            (Env1((Union2Case0(Tuple7(Tuple3(var_1, var_4)))), (Union2Case0(Tuple7(Tuple3(var_1, var_3))))))
     else
         let (var_15: int64) = (var_1 + 1L)
         method_33((var_0: ((Union0 []) [])), (var_2: int64), (var_15: int64), (var_1: int64), (var_4: int64))
@@ -414,7 +414,7 @@ and method_33((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
         let (var_5: int64) = 0L
         method_34((var_0: ((Union0 []) [])), (var_2: int64), (var_1: int64), (var_3: int64), (var_4: int64), (var_5: int64))
     else
-        Env1(Union2Case0(Tuple7(Tuple3(var_3, var_4))), Union2Case1)
+        (Env1((Union2Case0(Tuple7(Tuple3(var_3, var_4)))), Union2Case1))
 and method_34((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64)): Env1 =
     if (var_5 < var_2) then
         let (var_6: (Union0 [])) = var_0.[int32 var_1]
@@ -427,7 +427,7 @@ and method_34((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_13: int64) = (var_5 + 1L)
             method_35((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_13: int64), (var_5: int64))
         | Union0Case2 ->
-            Env1(Union2Case0(Tuple7(Tuple3(var_3, var_4))), Union2Case0(Tuple7(Tuple3(var_1, var_5))))
+            (Env1((Union2Case0(Tuple7(Tuple3(var_3, var_4)))), (Union2Case0(Tuple7(Tuple3(var_1, var_5))))))
     else
         let (var_16: int64) = (var_1 + 1L)
         method_33((var_0: ((Union0 []) [])), (var_2: int64), (var_16: int64), (var_3: int64), (var_4: int64))
@@ -443,7 +443,7 @@ and method_35((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_14: int64) = (var_5 + 1L)
             method_35((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_14: int64), (var_5: int64))
         | Union0Case2 ->
-            Env1(Union2Case0(Tuple7(Tuple3(var_1, var_6))), Union2Case0(Tuple7(Tuple3(var_1, var_5))))
+            (Env1((Union2Case0(Tuple7(Tuple3(var_1, var_6)))), (Union2Case0(Tuple7(Tuple3(var_1, var_5))))))
     else
         let (var_17: int64) = (var_1 + 1L)
         method_33((var_0: ((Union0 []) [])), (var_2: int64), (var_17: int64), (var_1: int64), (var_6: int64))
@@ -456,7 +456,7 @@ and method_36((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_10: int64) = (var_3 + 1L)
             method_36((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_10: int64), (var_4: int64))
         | Union0Case1 ->
-            Env1(Union2Case0(Tuple7(Tuple3(var_1, var_3))), Union2Case0(Tuple7(Tuple3(var_1, var_4))))
+            (Env1((Union2Case0(Tuple7(Tuple3(var_1, var_3)))), (Union2Case0(Tuple7(Tuple3(var_1, var_4))))))
         | Union0Case2 ->
             let (var_12: int64) = (var_3 + 1L)
             method_36((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_12: int64), (var_3: int64))
@@ -468,7 +468,7 @@ and method_37((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
         let (var_5: int64) = 0L
         method_38((var_0: ((Union0 []) [])), (var_2: int64), (var_1: int64), (var_3: int64), (var_4: int64), (var_5: int64))
     else
-        Env1(Union2Case1, Union2Case0(Tuple7(Tuple3(var_3, var_4))))
+        (Env1(Union2Case1, (Union2Case0(Tuple7(Tuple3(var_3, var_4))))))
 and method_38((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64)): Env1 =
     if (var_5 < var_2) then
         let (var_6: (Union0 [])) = var_0.[int32 var_1]
@@ -478,7 +478,7 @@ and method_38((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_11: int64) = (var_5 + 1L)
             method_38((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_11: int64))
         | Union0Case1 ->
-            Env1(Union2Case0(Tuple7(Tuple3(var_1, var_5))), Union2Case0(Tuple7(Tuple3(var_3, var_4))))
+            (Env1((Union2Case0(Tuple7(Tuple3(var_1, var_5)))), (Union2Case0(Tuple7(Tuple3(var_3, var_4))))))
         | Union0Case2 ->
             let (var_13: int64) = (var_5 + 1L)
             method_39((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_13: int64), (var_5: int64))
@@ -494,7 +494,7 @@ and method_39((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_12: int64) = (var_5 + 1L)
             method_39((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_12: int64), (var_6: int64))
         | Union0Case1 ->
-            Env1(Union2Case0(Tuple7(Tuple3(var_1, var_5))), Union2Case0(Tuple7(Tuple3(var_1, var_6))))
+            (Env1((Union2Case0(Tuple7(Tuple3(var_1, var_5)))), (Union2Case0(Tuple7(Tuple3(var_1, var_6))))))
         | Union0Case2 ->
             let (var_14: int64) = (var_5 + 1L)
             method_39((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_14: int64), (var_5: int64))
@@ -603,7 +603,7 @@ and method_53((var_0: ((Tuple4 []) [])), (var_1: (Tuple4 [])), (var_2: (bool [])
                     else
                         false
                 if var_31 then
-                    var_11 := Union6Case0(Tuple9(Tuple4(Tuple3(var_19, var_18), Rec5Case1(Tuple8(var_7, var_16)))))
+                    var_11 := (Union6Case0(Tuple9(Tuple4(Tuple3(var_19, var_18), (Rec5Case1(Tuple8(var_7, var_16)))))))
                 else
                     ()
                 let (var_32: bool) =
@@ -682,7 +682,7 @@ and method_53((var_0: ((Tuple4 []) [])), (var_1: (Tuple4 [])), (var_2: (bool [])
                     else
                         false
                 if var_51 then
-                    var_11 := Union6Case0(Tuple9(Tuple4(Tuple3(var_39, var_18), Rec5Case1(Tuple8(var_8, var_16)))))
+                    var_11 := (Union6Case0(Tuple9(Tuple4(Tuple3(var_39, var_18), (Rec5Case1(Tuple8(var_8, var_16)))))))
                 else
                     ()
                 let (var_52: bool) =
@@ -761,7 +761,7 @@ and method_53((var_0: ((Tuple4 []) [])), (var_1: (Tuple4 [])), (var_2: (bool [])
                     else
                         false
                 if var_71 then
-                    var_11 := Union6Case0(Tuple9(Tuple4(Tuple3(var_17, var_59), Rec5Case1(Tuple8(var_9, var_16)))))
+                    var_11 := (Union6Case0(Tuple9(Tuple4(Tuple3(var_17, var_59), (Rec5Case1(Tuple8(var_9, var_16)))))))
                 else
                     ()
                 let (var_72: bool) =
@@ -840,7 +840,7 @@ and method_53((var_0: ((Tuple4 []) [])), (var_1: (Tuple4 [])), (var_2: (bool [])
                     else
                         false
                 if var_91 then
-                    var_11 := Union6Case0(Tuple9(Tuple4(Tuple3(var_17, var_79), Rec5Case1(Tuple8(var_10, var_16)))))
+                    var_11 := (Union6Case0(Tuple9(Tuple4(Tuple3(var_17, var_79), (Rec5Case1(Tuple8(var_10, var_16)))))))
                 else
                     ()
                 let (var_92: bool) =
@@ -896,25 +896,25 @@ and method_53((var_0: ((Tuple4 []) [])), (var_1: (Tuple4 [])), (var_2: (bool [])
         let (var_107: (Tuple4 [])) = Array.zeroCreate<Tuple4> (System.Convert.ToInt32(var_106))
         let (var_108: int64) =
             if var_38 then
-                var_107.[int32 0L] <- Tuple4(Tuple3(var_19, var_18), Rec5Case1(Tuple8(var_7, var_16)))
+                var_107.[int32 0L] <- Tuple4(Tuple3(var_19, var_18), (Rec5Case1(Tuple8(var_7, var_16))))
                 1L
             else
                 0L
         let (var_109: int64) =
             if var_58 then
-                var_107.[int32 var_108] <- Tuple4(Tuple3(var_39, var_18), Rec5Case1(Tuple8(var_8, var_16)))
+                var_107.[int32 var_108] <- Tuple4(Tuple3(var_39, var_18), (Rec5Case1(Tuple8(var_8, var_16))))
                 (var_108 + 1L)
             else
                 var_108
         let (var_110: int64) =
             if var_78 then
-                var_107.[int32 var_109] <- Tuple4(Tuple3(var_17, var_59), Rec5Case1(Tuple8(var_9, var_16)))
+                var_107.[int32 var_109] <- Tuple4(Tuple3(var_17, var_59), (Rec5Case1(Tuple8(var_9, var_16))))
                 (var_109 + 1L)
             else
                 var_109
         let (var_111: int64) =
             if var_98 then
-                var_107.[int32 var_110] <- Tuple4(Tuple3(var_17, var_79), Rec5Case1(Tuple8(var_10, var_16)))
+                var_107.[int32 var_110] <- Tuple4(Tuple3(var_17, var_79), (Rec5Case1(Tuple8(var_10, var_16))))
                 (var_110 + 1L)
             else
                 var_110

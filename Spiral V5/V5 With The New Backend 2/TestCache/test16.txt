@@ -3,7 +3,7 @@ type Union0 =
     | Union0Case1 of float
 let (var_0: bool) = true
 if var_0 then
-    Union0Case0(0L)
+    (Union0Case0(0L))
 else
-    Union0Case1(0.000000)
+    (Union0Case1(0.000000))
 

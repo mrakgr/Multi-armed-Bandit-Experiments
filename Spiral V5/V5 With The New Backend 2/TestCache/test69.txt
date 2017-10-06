@@ -11,7 +11,7 @@ let rec method_15((var_0: int64)): Rec0 =
     if (var_0 < 10L) then
         let (var_1: int64) = (var_0 + 1L)
         let (var_2: Rec0) = method_15((var_1: int64))
-        Rec0Case1(Tuple1(2.200000, var_2))
+        (Rec0Case1(Tuple1(2.200000, var_2)))
     else
         Rec0Case0
 let (var_0: int64) = 0L
