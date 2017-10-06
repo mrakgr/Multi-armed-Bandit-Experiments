@@ -133,9 +133,6 @@ type Op =
     // Module
     | ModuleCreate
     | ModuleWith
-    | ModuleWithExtend
-    | ModuleCreateAlt
-    | ModuleWithAlt
     | ModuleIs
 
     // Case
@@ -1479,16 +1476,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let check a b = (is_char a || is_string a || is_numeric a || is_bool a) && get_type a = get_type b
             prim_bin_op_template d er check (fun t a b ->
                 let inline eq_op a b = LitBool (a = b) |> TyLit
+                let inline neq_op a b = LitBool (a <> b) |> TyLit
                 match t, a, b with
                 | EQ, TyV(a,_), TyV(b,_) when a = b -> LitBool true |> TyLit
                 | EQ, TyLit (LitBool a), TyLit (LitBool b) -> eq_op a b
                 | EQ, TyLit (LitString a), TyLit (LitString b) -> eq_op a b
+                | NEQ, TyV(a,_), TyV(b,_) when a = b -> LitBool false |> TyLit
+                | NEQ, TyLit (LitBool a), TyLit (LitBool b) -> neq_op a b
+                | NEQ, TyLit (LitString a), TyLit (LitString b) -> neq_op a b
                 | _ ->
                     let inline op a b =
                         match t with
                         | LT -> a < b
                         | LTE -> a <= b
                         | EQ -> a = b
+                        | NEQ -> a <> b
                         | GT -> a > b
                         | GTE -> a >= b 
                         | _ -> failwith "Expected a comparison operation."
@@ -1652,19 +1654,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
             | x -> on_type_er d.trace <| sprintf "Expecting a module as the first argument to ModuleHasMember. Got: %A" x
 
-        let module_create_alt d l =
+        let module_create d l =
             List.fold (fun env -> function
                 | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
                 ) Map.empty l
             |> fun x -> tyfun(x, FunTypeModule)
 
-        let module_with_alt (d: LangEnv) l =
+        let module_with (d: LangEnv) l =
             let names, bindings =
                 match l with
                 | VV (N l) :: bindings -> l, bindings
                 | V _ as x :: bindings -> [x], bindings
-                | x -> failwithf "Malformed ModuleWithAlt. %A" x
+                | x -> failwithf "Malformed ModuleWith. %A" x
 
             let rec module_with_alt_loop cur_env names = 
                 let inline unseal_record name =
@@ -1787,9 +1789,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | ModuleOpen,[a;b] -> module_open d a b
-            | ModuleCreate,[l] -> module_create d l
-            | ModuleCreateAlt,l -> module_create_alt d l
-            | ModuleWithAlt, l -> module_with_alt d l
+            | ModuleCreate,l -> module_create d l
+            | ModuleWith, l -> module_with d l
             | RecordStackify,[a] -> record_stack d a
             | RecordHeapify,[a] -> record_heap d a
             | TypeLitCreate,[a] -> type_lit_create d a
@@ -2254,11 +2255,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
           
         let case_module_alt expr s =
             let mp_binding (n,e) = vv [lit_string n; e]
-            let mp_create l = op(ModuleCreateAlt,l)
+            let mp_create l = op(ModuleCreate,l)
             let mp_with (n,l) = 
                 match n with
-                | [x] -> op(ModuleWithAlt,v x :: l)
-                | x :: xs -> op(ModuleWithAlt,vv (v x :: List.map lit_string xs) :: l)
+                | [x] -> op(ModuleWith,v x :: l)
+                | x :: xs -> op(ModuleWith,vv (v x :: List.map lit_string xs) :: l)
                 | _ -> failwith "impossible"
                 
             let parse_binding s = 
@@ -2372,7 +2373,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let no_assoc_ops =
                 let f str = add_infix_operator Associativity.None str 40
-                f "<="; f "<"; f "="; f ">"; f ">="
+                f "<="; f "<"; f "="; f ">"; f ">="; f "<>"
 
             let right_associative_ops =
                 let f str prec = add_infix_operator Associativity.Right str prec
@@ -2728,12 +2729,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | UnionT s -> print_case_rec t (union_idx s)
                         | _ -> failwith "Only VVT and UnionT can be recursive types."
                     | _ -> failwith "Only VVT and UnionT can be boxed types."
-                if is_unit (get_type x) then case_name else sprintf "%s(%s)" case_name (codegen x)
+                if is_unit (get_type x) then case_name else sprintf "(%s(%s))" case_name (codegen x)
             | TyFun(C env_term, _) ->
                 let t = get_type expr
                 Map.toArray env_term
                 |> Array.map snd
-                |> fun x -> make_struct x "" (fun args -> sprintf "%s(%s)" (print_tag_env t) args)
+                |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env t) args)
             | TyVV l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
             | TyOp(op,args,t) ->
                 match op, args with
@@ -2764,7 +2765,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
                 | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
                 | EQ,[a;b] -> sprintf "(%s = %s)" (codegen a) (codegen b)
-                | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
+                | NEQ,[a;b] -> sprintf "(%s <> %s)" (codegen a) (codegen b)
                 | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
                 | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
                 | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
@@ -3024,7 +3025,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             b "+" Add; b "-" Sub; b "*" Mult; b "/" Div; b "%" Mod
             b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
 
-            b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE
+            b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE; b "<>" NEQ
             b "::" VVCons; b "&&" And; b "||" Or
 
             l "fst" (p <| fun x -> tuple_index x 0L)
@@ -3034,11 +3035,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "tuple_index" (p2 tuple_index')
             l "not" (p <| fun x -> eq x (lit <| LitBool false))
             l "string_length" (p <| fun x -> op(StringLength,[x]))
-            l "upon" (p3 <| fun a b c -> op(ModuleWith,[a;b;c]))
-            l "upon'" (p3 <| fun a b c -> op(ModuleWithExtend,[a;b;c]))
             l "is_static" (p <| fun x -> op(IsStatic,[x]))
             l "failwith" (p <| fun x -> op(FailWith,[x]))
             l "assert" (p2 <| fun c x -> if_static (eq c (lit (LitBool false))) (op(FailWith,[x])) B)
+            l "max" (p2 <| fun a b -> if_static (lt a b) b a)
+            l "min" (p2 <| fun a b -> if_static (lt a b) a b)
             b "eq_type" EqType
             ]
 

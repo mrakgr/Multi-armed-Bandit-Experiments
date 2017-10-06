@@ -367,6 +367,7 @@ let queue =
     (
     "Queue",[tuple;loops],"The queue module.",
     """
+open Loops
 // The design of this is not ideal, it should be a single object with 3 mutable fields instead of just one tuple field,
 // but it should do nicely in a pinch for those dynamic programming kind of problems.
 inl add_one len x =
@@ -379,21 +380,21 @@ inl resize {len from to ar} =
     for {from=0; near_to=from; body=inl {i} -> ar' (i + from) <- ar i}
     {from=0; to=len; ar=ar'}
 
-inl enqueue {state} v =
+met enqueue {state} (!dyn v) =
     inl {from to ar} = state()
     ar to <- v
     inl len = array_length ar
     inl to = add_one len to
     state := if from = to then resize {len from to ar} else {from to ar}
 
-inl dequeue {state} =
+met dequeue {state} =
     inl {from to ar} = state()
     assert (from <> to) "Cannot dequeue past the end of the queue."
     state := {from=add_one (array_length ar) from; to ar}
     ar from
 
 inl create n typ =
-    inl n = match n with | n -> n | () -> 16
+    inl n = match n with | () -> 16 | n -> max 1 n
     {state=ref {from=0; to=0; ar=array_create n typ}}
 
 {create dequeue enqueue}

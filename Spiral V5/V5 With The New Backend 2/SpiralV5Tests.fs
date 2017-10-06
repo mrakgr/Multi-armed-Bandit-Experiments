@@ -942,6 +942,23 @@ ar.set (2,2) (x+100)
 ar.index (2,2)
     """
 
+let test80 =
+    "test80",[queue;console],"Does the Queue module work?",
+    """
+open Console
+inl queue = Queue.create 0 int64
+inl rec dequeue n =
+    if n > 0 then Queue.dequeue queue |> writeline; dequeue (n-1)
+    else ()
+Tuple.iter (Queue.enqueue queue) (Tuple.range (1,4))
+dequeue 2
+Tuple.iter (Queue.enqueue queue) (Tuple.range (1,4))
+Tuple.iter (Queue.enqueue queue) (Tuple.range (1,4))
+dequeue 2
+dequeue 4
+dequeue 4
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1420,7 +1437,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_2
+output_test_to_temp test80
 |> printfn "%s"
 |> ignore
 
