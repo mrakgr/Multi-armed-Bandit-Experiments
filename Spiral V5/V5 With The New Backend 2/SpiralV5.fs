@@ -133,6 +133,7 @@ type Op =
     // Module
     | ModuleCreate
     | ModuleWith
+    | ModuleWithout
     | ModuleIs
 
     // Case
@@ -1695,10 +1696,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             | Some v -> {d with env = Map.add "self" v d.env}
                             | None -> d
                             |> fun d -> Map.add name (tev d e |> destructure d) env
+                        | Op(N(ModuleWithout,[Lit(N(LitString name))])) ->
+                            Map.remove name env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
                     |> fun env -> tyfun(env, FunTypeModule)
-                | x -> failwithf "Malformed ModuleWithAlt. %A" x
+                | x -> failwithf "Malformed ModuleWith. %A" x
             module_with_alt_loop d.env names
 
         let failwith_ d a =

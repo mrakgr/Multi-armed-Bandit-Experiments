@@ -33,6 +33,7 @@ inl for_template kind =
             if check from then 
                 match kind with
                 | .Navigable ->
+                    //inl d = {d without state from}
                     inl next state = loop {d with state from=from+by}
                     body {next state i=from}
                 | .Standard ->
@@ -45,7 +46,8 @@ inl for_template kind =
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
-    function | {from} as d -> d | d -> error_type "The from field to loop is missing."
+    function | 
+    >> function | {from} as d -> d | d -> error_type "The from field to loop is missing."
     >> function | {to ^ near_to} as d -> d | d -> "For loop needs exlusively to or near_to fields."
     >> function | {body} as d -> d | d -> error_type "The loop body is missing."
     >> function | {state} as d -> d | d -> {d with state=()}
