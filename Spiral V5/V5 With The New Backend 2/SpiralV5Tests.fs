@@ -1492,105 +1492,71 @@ inl parser ret =
         body = inl {next=row state i=r} ->
             for' {from = 0; near_to=n; state; 
                 body = inl {next=col state i=c} ->
-                    printfn "Currently at (%i,%i)" r c
+                    inl ret = function
+                        | {mario princess} as state -> ret .some state
+                        | state -> col state
                     match field r c with
-                    | .Mario -> 
-                        printfn "Found Mario at (%i,%i)" r c
-                        inl state = {state with mario=r,c}
-                        match state with
-                        | {princess} -> ret .some state
-                        | _ -> col state
-                    | .Princess -> 
-                        printfn "Found Princess at (%i,%i)" r c
-                        inl state = {state with princess=r,c}
-                        match state with
-                        | {mario} -> ret .some state
-                        | _ -> col state
+                    | .Mario -> ret {state with mario=r,c}
+                    | .Princess -> ret {state with princess=r,c}
                     | _ -> col state
-                finally = inl state ->
-                    printfn "Done with the inner loop."
-                    match state with
-                    | {mario} -> printfn "Mario is in state."
-                    | _ -> ()
-                    match state with
-                    | {princess} -> printfn "Princess is in state."
-                    | _ -> ()
-                    row state
+                finally = row
                 }
-        finally = inl state ->
-            printfn "Done with the outer loop."
-            match state with
-            | {mario} -> printfn "Mario is in state."
-            | _ -> ()
-            match state with
-            | {princess} -> printfn "Princess is in state."
-            | _ -> ()
-            ret .none ()
+        finally = ret .none
         }
     |> succ
 
 inl main = {
     some = met {n field mario=(mario_row, mario_col as mario_pos) princess=(princess_row, princess_col as princess_pos)} ->
-        ()
-//        inl cells_visited = ArrayN.init (n,n) (const false)
-//        cells_visited.set mario_pos true
-//
-//        inl up_string = dyn "UP"
-//        inl down_string = dyn "DOWN"
-//        inl left_string = dyn "LEFT"
-//        inl right_string = dyn "RIGHT"
-//
-//        inl up (row,col), prev_moves = (row-1,col), List.cons up_string prev_moves
-//        inl down (row,col), prev_moves = (row+1,col), List.cons down_string prev_moves
-//        inl left (row,col), prev_moves = (row,col-1), List.cons left_string prev_moves
-//        inl right (row,col), prev_moves = (row,col+1), List.cons right_string prev_moves
-//
-//        inl is_valid x = x >= 0 && x < n
-//        inl is_in_range (row,col), _ = is_valid row && is_valid col
-//        inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
-//
-//        inl init_state = (mario_pos, List.empty string)
-//        inl state_type = type (init_state)
-//
-//        inl queue = Queue.create () state_type
-//        queue.enqueue init_state
-//
-//        inl print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
-//            List.last path {
-//                some = Console.writeline
-//                none = inl _ -> failwith "Error: No moves taken."
-//                }
-//
-//        met evaluate_move state move on_fail =
-//            inl new_pos,_ as new_state = move state
-//            if is_in_range new_state && cells_visited.index new_pos = false then 
-//                if is_princess_in_state new_state then print_solution new_state
-//                else
-//                    cells_visited.set new_pos true
-//                    queue.enqueue new_state
-//                    on_fail ()
-//            else on_fail ()
-//            
-//        met rec loop () =
-//            inl next_moves = up, down, left, right
-//            inl state = queue.dequeue()
-//            Tuple.foldr (inl move next () -> evaluate_move state move next) next_moves loop ()
-//            : ()
-//
-//        loop ()
+        inl cells_visited = ArrayN.init (n,n) (const false)
+        cells_visited.set mario_pos true
+
+        inl up_string = dyn "UP"
+        inl down_string = dyn "DOWN"
+        inl left_string = dyn "LEFT"
+        inl right_string = dyn "RIGHT"
+
+        inl up (row,col), prev_moves = (row-1,col), List.cons up_string prev_moves
+        inl down (row,col), prev_moves = (row+1,col), List.cons down_string prev_moves
+        inl left (row,col), prev_moves = (row,col-1), List.cons left_string prev_moves
+        inl right (row,col), prev_moves = (row,col+1), List.cons right_string prev_moves
+
+        inl is_valid x = x >= 0 && x < n
+        inl is_in_range (row,col), _ = is_valid row && is_valid col
+        inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
+
+        inl init_state = (mario_pos, List.empty string)
+        inl state_type = type (init_state)
+
+        inl queue = Queue.create () state_type
+        queue.enqueue init_state
+
+        inl print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
+            List.last path {
+                some = Console.writeline
+                none = inl _ -> failwith "Error: No moves taken."
+                }
+
+        met evaluate_move state move on_fail =
+            inl new_pos,_ as new_state = move state
+            if is_in_range new_state && cells_visited.index new_pos = false then 
+                if is_princess_in_state new_state then print_solution new_state
+                else
+                    cells_visited.set new_pos true
+                    queue.enqueue new_state
+                    on_fail ()
+            else on_fail ()
+            
+        met rec loop () =
+            inl next_moves = up, down, left, right
+            inl state = queue.dequeue()
+            Tuple.foldr (inl move next () -> evaluate_move state move next) next_moves loop ()
+            : ()
+
+        loop ()
     none = inl _ -> failwith "Current position not found."
     }
 
-inl str = dyn "5
-3 0
---m--
------
------
-p----
------
-    "
-
-run_with_unit_ret (str) (parser main)
+run_with_unit_ret (readall()) (parser main)
     """
 
 
@@ -1674,10 +1640,10 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
-//output_test_to_temp loop6
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp hacker_rank_3
+|> printfn "%s"
+|> ignore
 
 
