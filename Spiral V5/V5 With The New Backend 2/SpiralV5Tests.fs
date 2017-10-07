@@ -1147,6 +1147,72 @@ open Loops
 for {from=2; to=2; body = inl {i} -> ()}
     """
 
+let loop6 =
+    "loop6",[loops;console],"Do state changing nested loops work?",
+    """
+open Loops
+open Console
+inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
+inl ret = {
+    some = inl state -> printfn "Success."
+    none = inl state -> failwith "Failure."
+    }
+inl princess_pos = dyn (0,0)
+inl mario_pos = dyn (1,1)
+inl n = 5
+for' {from=dyn 0; near_to=n; state={}; 
+    body=inl {next=row i=r state} ->
+        for' {from=dyn 0; near_to=n; state=state;
+            body=inl {next=col i=c state} ->
+                inl ret state = 
+                    match state with
+                    | {mario princess} -> ret .some state
+                    | _ -> col state
+                if compare_pos (r,c) mario_pos then ret {state with mario=mario_pos}
+                elif compare_pos (r,c) princess_pos then ret {state with princess=princess_pos}
+                else ret state
+            finally=row
+            }
+    finally=ret .none
+    }
+    """
+
+let loop7 =
+    "loop7",[loops;console],"Do state changing nested loops work?",
+    """
+open Loops
+open Console
+inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
+inl ret = {
+    some = inl state -> printfn "Success."
+    none = inl state -> failwith "Failure."
+    }
+inl princess_pos = dyn (0,0)
+inl mario_pos = dyn (1,1)
+inl n = dyn 5
+met rec row {from=r near_to state} as d =
+    met rec col {from=c near_to state} as d =
+        if c < near_to then
+            printfn "I am at (%i,%i)" r c
+            inl ret = function
+                | {mario princess} as state -> ret .some state
+                | state -> col {d with state from=c+1}
+            if compare_pos (r,c) mario_pos then 
+                printfn "I've found Mario."
+                ret {state with mario=mario_pos}
+            elif compare_pos (r,c) princess_pos then 
+                printfn "I've found Princess."
+                ret {state with princess=princess_pos}
+            else ret state
+        else 
+            row {d with from=r+1}
+        : ()
+    if r < near_to then col {from=dyn 0; near_to state}
+    else ret .none () 
+    : ()
+row {from=dyn 0; near_to=dyn n; state={}}
+    """
+
 let euler2 = 
     "euler2",[loops;console],"Even Fibonacci Numbers.",
     """
@@ -1569,7 +1635,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_3
+output_test_to_temp loop7
 |> printfn "%s"
 |> ignore
 
