@@ -1178,9 +1178,8 @@ for' {from=dyn 0; near_to=n; state={};
     """
 
 let loop7 =
-    "loop7",[loops;console],"Do state changing nested loops work?",
+    "loop7",[console],"Do state changing nested loops work?",
     """
-open Loops
 open Console
 inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
 inl ret = {
@@ -1212,6 +1211,48 @@ met rec row {from=r near_to state} as d =
     : ()
 row {from=dyn 0; near_to=dyn n; state={}}
     """
+
+let loop8 =
+    "loop8",[loops;console],"Do state changing nested loops work?",
+    """
+open Console
+
+met rec for {from=(!dyn from) near_to state body finally} =
+    if from < near_to then 
+        inl next state = for {from=from+1; near_to state body finally} 
+        body {next state i=from}
+    else finally state
+    : finally state
+
+inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
+inl ret = {
+    some = inl state -> printfn "Success."
+    none = inl state -> failwith "Failure."
+    }
+inl princess_pos = dyn (0,0)
+inl mario_pos = dyn (1,1)
+inl n = dyn 5
+for {from=0; near_to=n; state={};
+    body = inl {next=row i=r state} ->
+        for {from=0; near_to=n; state;
+            body = inl {next=col i=c state} ->
+                printfn "I am at (%i,%i)" r c
+                inl ret = function
+                    | {mario princess} as state -> ret .some state
+                    | state -> col state
+                if compare_pos (r,c) mario_pos then 
+                    printfn "I've found Mario."
+                    ret {state with mario=mario_pos}
+                elif compare_pos (r,c) princess_pos then 
+                    printfn "I've found Princess."
+                    ret {state with princess=princess_pos}
+                else ret state
+            finally = row
+                }
+    finally = ret .none
+    }
+    """
+
 
 let euler2 = 
     "euler2",[loops;console],"Even Fibonacci Numbers.",
@@ -1635,7 +1676,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp loop7
+output_test_to_temp loop8
 |> printfn "%s"
 |> ignore
 
