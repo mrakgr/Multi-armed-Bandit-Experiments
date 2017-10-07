@@ -1427,11 +1427,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let type_annot d a b =
             match d.rbeh with
-            | AnnotationReturn -> tev d b
+            | AnnotationReturn -> tev d b |> fun x -> printfn "AnnotationReturn=%A" x; x
             | AnnotationDive ->
                 let a, b = tev d a, tev_seq d b
                 let ta, tb = get_type a, get_type b
                 if ta = tb then a else on_type_er d.trace <| sprintf "Type annotation mismatch.\n%A <> %A" ta tb
+                |> fun x -> printfn "AnnotationDive=%A" x; x
+            
 
         let inline prim_bin_op_template d check_error is_check k a b t =
             let a, b = tev2 d a b

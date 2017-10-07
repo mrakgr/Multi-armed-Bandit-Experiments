@@ -1218,16 +1218,19 @@ let loop8 =
 open Console
 
 met rec for {from=(!dyn from) near_to state body finally} =
+    inl fin = finally state
+    (
     if from < near_to then 
         inl next state = for {from=from+1; near_to state body finally} 
         body {next state i=from}
-    else finally state
-    : finally state
+    else fin
+    : fin
+    )
 
 inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
 inl ret = {
     some = inl state -> printfn "Success."
-    none = inl state -> failwith "Failure."
+    none = inl state -> printfn "Failure."
     }
 inl princess_pos = dyn (0,0)
 inl mario_pos = dyn (1,1)
