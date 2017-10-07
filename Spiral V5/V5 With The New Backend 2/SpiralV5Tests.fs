@@ -1218,19 +1218,16 @@ let loop8 =
 open Console
 
 met rec for {from=(!dyn from) near_to state body finally} =
-    inl fin = finally state
-    (
     if from < near_to then 
         inl next state = for {from=from+1; near_to state body finally} 
         body {next state i=from}
-    else fin
-    : fin
-    )
+    else finally state
+    : finally state
 
 inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
 inl ret = {
     some = inl state -> printfn "Success."
-    none = inl state -> printfn "Failure."
+    none = inl state -> failwith "Failure."
     }
 inl princess_pos = dyn (0,0)
 inl mario_pos = dyn (1,1)
@@ -1608,9 +1605,9 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
     test80
-    hacker_rank_1;hacker_rank_2;hacker_rank_3
+    hacker_rank_1;hacker_rank_2
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
-    loop1;loop2;loop3;loop4;loop5
+    loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
     |]
 
@@ -1677,10 +1674,10 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache()
 
-output_test_to_temp loop8
-|> printfn "%s"
-|> ignore
+//output_test_to_temp loop6
+//|> printfn "%s"
+//|> ignore
 
 
