@@ -580,12 +580,6 @@ and method_32((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64)): unit =
         (failwith "Current position not found.")
 and method_33((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64)): unit =
     if (var_3 < var_2) then
-        System.Console.Write("Currently at (")
-        System.Console.Write(var_1)
-        System.Console.Write(",")
-        System.Console.Write(var_3)
-        System.Console.Write(")")
-        System.Console.WriteLine()
         let (var_4: (Union0 [])) = var_0.[int32 var_1]
         let (var_5: Union0) = var_4.[int32 var_3]
         match var_5 with
@@ -593,21 +587,9 @@ and method_33((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_9: int64) = (var_3 + 1L)
             method_33((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_9: int64))
         | Union0Case1 ->
-            System.Console.Write("Found Mario at (")
-            System.Console.Write(var_1)
-            System.Console.Write(",")
-            System.Console.Write(var_3)
-            System.Console.Write(")")
-            System.Console.WriteLine()
             let (var_10: int64) = (var_3 + 1L)
             method_34((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_10: int64), (var_3: int64))
         | Union0Case2 ->
-            System.Console.Write("Found Princess at (")
-            System.Console.Write(var_1)
-            System.Console.Write(",")
-            System.Console.Write(var_3)
-            System.Console.Write(")")
-            System.Console.WriteLine()
             let (var_11: int64) = (var_3 + 1L)
             method_57((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_11: int64), (var_3: int64))
     else
@@ -615,12 +597,6 @@ and method_33((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
         method_32((var_0: ((Union0 []) [])), (var_2: int64), (var_12: int64))
 and method_34((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
     if (var_3 < var_2) then
-        System.Console.Write("Currently at (")
-        System.Console.Write(var_1)
-        System.Console.Write(",")
-        System.Console.Write(var_3)
-        System.Console.Write(")")
-        System.Console.WriteLine()
         let (var_5: (Union0 [])) = var_0.[int32 var_1]
         let (var_6: Union0) = var_5.[int32 var_3]
         match var_6 with
@@ -628,21 +604,9 @@ and method_34((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_10: int64) = (var_3 + 1L)
             method_34((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_10: int64), (var_4: int64))
         | Union0Case1 ->
-            System.Console.Write("Found Mario at (")
-            System.Console.Write(var_1)
-            System.Console.Write(",")
-            System.Console.Write(var_3)
-            System.Console.Write(")")
-            System.Console.WriteLine()
             let (var_11: int64) = (var_3 + 1L)
             method_34((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_11: int64), (var_3: int64))
         | Union0Case2 ->
-            System.Console.Write("Found Princess at (")
-            System.Console.Write(var_1)
-            System.Console.Write(",")
-            System.Console.Write(var_3)
-            System.Console.Write(")")
-            System.Console.WriteLine()
             method_36((var_1: int64), (var_4: int64), (var_2: int64), (var_3: int64))
     else
         let (var_12: int64) = (var_1 + 1L)
@@ -1126,12 +1090,6 @@ and method_56((var_0: (bool [])), (var_1: int64), (var_2: int64), (var_3: int64)
         method_49((var_6: string), (var_0: (bool [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_7: (Env2 ref)), (var_8: string), (var_5: string), (var_9: string))
 and method_57((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
     if (var_3 < var_2) then
-        System.Console.Write("Currently at (")
-        System.Console.Write(var_1)
-        System.Console.Write(",")
-        System.Console.Write(var_3)
-        System.Console.Write(")")
-        System.Console.WriteLine()
         let (var_5: (Union0 [])) = var_0.[int32 var_1]
         let (var_6: Union0) = var_5.[int32 var_3]
         match var_6 with
@@ -1139,20 +1097,8 @@ and method_57((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
             let (var_10: int64) = (var_3 + 1L)
             method_57((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_10: int64), (var_4: int64))
         | Union0Case1 ->
-            System.Console.Write("Found Mario at (")
-            System.Console.Write(var_1)
-            System.Console.Write(",")
-            System.Console.Write(var_3)
-            System.Console.Write(")")
-            System.Console.WriteLine()
             method_36((var_1: int64), (var_3: int64), (var_2: int64), (var_4: int64))
         | Union0Case2 ->
-            System.Console.Write("Found Princess at (")
-            System.Console.Write(var_1)
-            System.Console.Write(",")
-            System.Console.Write(var_3)
-            System.Console.Write(")")
-            System.Console.WriteLine()
             let (var_11: int64) = (var_3 + 1L)
             method_57((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_11: int64), (var_3: int64))
     else
@@ -1160,13 +1106,11 @@ and method_57((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
         method_58((var_0: ((Union0 []) [])), (var_2: int64), (var_12: int64), (var_1: int64), (var_4: int64))
 and method_58((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
     (failwith "Current position not found.")
-let (var_0: string) = "5
-3 0
------
---p--
------
-m----
------
+let (var_0: string) = "3
+1 1
+---
+-m-
+p--
     "
 let (var_1: int64) = 0L
 let (var_3: bool) =

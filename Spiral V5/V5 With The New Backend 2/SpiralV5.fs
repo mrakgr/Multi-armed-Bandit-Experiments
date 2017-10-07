@@ -2253,7 +2253,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             <| s
 
           
-        let case_module_alt expr s =
+        let case_module expr s =
             let mp_binding (n,e) = vv [lit_string n; e]
             let mp_create l = op(ModuleCreate,l)
             let mp_with (n,l) = 
@@ -2276,7 +2276,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             curlies (module_with <|> (many module_create |>> mp_create))
             <| s
 
-        let case_type expr = type_' >>. expr |>> type_create
+        let case_type expr = type_' >>. rounds expr |>> type_create // rounds are needed to avoid collisions with the statement parser
 
         let case_named_tuple expr =
             let pat s = 
@@ -2300,7 +2300,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let expressions = 
                 [case_print_env; case_print_expr; case_type
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
-                 case_rounds; case_typecase; case_typeinl; case_var; case_module_alt; case_named_tuple]
+                 case_rounds; case_typecase; case_typeinl; case_var; case_module; case_named_tuple]
                 |> List.map (fun x -> x expr |> attempt)
                 |> choice
             expressions <|> unary_ops <| s

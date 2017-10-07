@@ -29,7 +29,7 @@ inl rec while {cond body state} as d =
 
 inl for_template kind =
     inl rec loop {from (near_to ^ to)=to by} as d =
-        inl loop_body {check from by state body finally return_type} as d =
+        inl loop_body {check from by state body finally} as d =
             if check from then 
                 match kind with
                 | .Navigable ->
@@ -38,7 +38,7 @@ inl for_template kind =
                 | .Standard ->
                     loop {d with state=body {state i=from}; from=from+by}
             else finally state
-            : return_type
+            : finally state
 
         if is_static (from,to,by) then loop_body d
         else (met d -> loop_body d) {d with from=dyn from}
@@ -51,7 +51,6 @@ inl for_template kind =
     >> function | {state} as d -> d | d -> {d with state=()}
     >> function | {by} as d -> d | d -> {d with by=1}
     >> function | {finally} as d -> d | d -> {d with finally=id}
-    >> function | {return_type} as d -> d | {finally state} as d -> {d with return_type=type (finally state)}
     >> function 
         | {by} when is_static by && by = 0 -> error_type er_msg
         | {by state} when by = 0 -> failwith er_msg; state
@@ -328,7 +327,7 @@ inl elem_type l =
     | _ -> error_type "Expected a list in elem_type."
 
 inl rec map f l = 
-    inl t' = type f (elem_type l)
+    inl t' = type (f (elem_type l))
     inl loop map =
         match l with
         | #lw (x :: xs) -> cons (f x) (map f xs)

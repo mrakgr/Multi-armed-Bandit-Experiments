@@ -1385,13 +1385,16 @@ inl parser ret =
         body = inl {next=row state i=r} ->
             for' {from = 0; near_to=n; state; 
                 body = inl {next=col state i=c} ->
+                    printfn "Currently at (%i,%i)" r c
                     match field r c with
                     | .Mario -> 
+                        printfn "Found Mario at (%i,%i)" r c
                         inl state = {state with mario=r,c}
                         match state with
                         | {princess} -> ret .some state
                         | _ -> col state
                     | .Princess -> 
+                        printfn "Found Princess at (%i,%i)" r c
                         inl state = {state with princess=r,c}
                         match state with
                         | {mario} -> ret .some state
@@ -1399,7 +1402,7 @@ inl parser ret =
                     | _ -> col state
                 finally = row
                 }
-        finally = inl _ -> ret .none ()
+        finally = ret .none
         }
     |> succ
 
@@ -1423,45 +1426,44 @@ inl main = {
         inl is_princess_in_state (row,col), _ = row = princess_row && col = princess_col
 
         inl init_state = (mario_pos, List.empty string)
-        inl state_type = type init_state
+        inl state_type = type (init_state)
 
-        ()
+        inl queue = Queue.create () state_type
+        queue.enqueue init_state
 
-//        inl queue = Queue.create () state_type
-//        queue.enqueue init_state
-//
-//        inl print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
-//            List.last path {
-//                some = Console.writeline
-//                none = inl _ -> failwith "Error: No moves taken."
-//                }
-//
-//        met evaluate_move state move on_fail =
-//            inl new_pos,_ as new_state = move state
-//            if is_in_range new_state && cells_visited.index new_pos = false then 
-//                if is_princess_in_state new_state then print_solution new_state
-//                else
-//                    cells_visited.set new_pos true
-//                    queue.enqueue new_state
-//                    on_fail ()
-//            else on_fail ()
-//            
-//        met rec loop () =
-//            inl next_moves = up, down, left, right
-//            inl state = queue.dequeue()
-//            Tuple.foldr (inl move next () -> evaluate_move state move next) next_moves loop ()
-//            : ()
-//
-//        loop ()
+        inl print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
+            List.last path {
+                some = Console.writeline
+                none = inl _ -> failwith "Error: No moves taken."
+                }
+
+        met evaluate_move state move on_fail =
+            inl new_pos,_ as new_state = move state
+            if is_in_range new_state && cells_visited.index new_pos = false then 
+                if is_princess_in_state new_state then print_solution new_state
+                else
+                    cells_visited.set new_pos true
+                    queue.enqueue new_state
+                    on_fail ()
+            else on_fail ()
+            
+        met rec loop () =
+            inl next_moves = up, down, left, right
+            inl state = queue.dequeue()
+            Tuple.foldr (inl move next () -> evaluate_move state move next) next_moves loop ()
+            : ()
+
+        loop ()
     none = inl _ -> failwith "Current position not found."
     }
-    
 
-inl str = dyn "3
-1 1
----
--m-
-p--
+inl str = dyn "5
+3 0
+-----
+--p--
+-----
+m----
+-----
     "
 
 run_with_unit_ret (str) (parser main)
@@ -1479,7 +1481,7 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
     test80
-    hacker_rank_1;hacker_rank_2
+    hacker_rank_1;hacker_rank_2;hacker_rank_3
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5
     euler2;euler3;euler4;euler5
