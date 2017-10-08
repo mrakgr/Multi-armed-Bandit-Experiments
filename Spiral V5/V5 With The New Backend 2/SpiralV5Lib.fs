@@ -544,21 +544,20 @@ inl parse_int =
     inm !dyn m = try_with (pchar '-' >>. succ false) (succ true)
     (pint64 |>> inl x -> if m then x else -x) .>> spaces
 
+inl repeat n parser =
+    inl rec loop (!dyn i) = m {
+        parser_rec = inl _ ->
+            ifm (i < n)
+            <| inl _ -> parser i >>. loop (i+1)
+            <| inl _ -> succ ()
+        }
+    loop 0
+
 inl parse_array {parser typ n} = m {
     parser_mon =
         inm _ = guard (n >= 0) (fatal_fail "n in parse array must be >= 0")
         inl ar = array_create n typ
-        inl rec loop (!dyn i) = m {
-            parser_rec = inl {on_type} ->
-                ifm (i < n)
-                <| inl _ ->
-                    inm x = parser
-                    ar i <- x
-                    loop (i+1)
-                <| inl _ ->
-                    succ ()
-            }
-        loop 0 >>. succ ar
+        repeat n (inl i -> parser |>> inl x -> ar i <- x) >>. succ ar
     }
 
 inl sprintf_parser append =
@@ -622,7 +621,7 @@ inl sprintf format =
 
 
 {run run_with_unit_ret succ fail fatal_fail state type_ tuple (>>=) (|>>) (.>>.) (.>>) (>>.) (>>%) (<|>) choice stream_char 
- ifm (<?>) pdigit pchar pstring pint64 spaces parse_int parse_array sprintf sprintf_template term_cast}
+ ifm (<?>) pdigit pchar pstring pint64 spaces parse_int repeat parse_array sprintf sprintf_template term_cast}
     """) |> module_
 
 

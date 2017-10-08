@@ -1566,23 +1566,54 @@ run_with_unit_ret (readall()) (parser main)
     """
 
 let hacker_rank_4 =
-    "hacker_rank_4",[tuple;array;arrayn;loops;list;parsing;console;queue],"Botclean",
+    "hacker_rank_4",[tuple;array;parsing;console],"Game of Stones",
     """
-// https://www.hackerrank.com/challenges/botclean
+// https://www.hackerrank.com/challenges/game-of-stones-1
 open Parsing
 open Console
-open Array
 open Loops
 
+type Player =
+    .First
+    .Second
+    .NotVisited
 
-inl parse_field n = 
-    inl parse_cols = parse_array {parser=stream_char; typ=char; n} .>> spaces
-    parse_array {parser=parse_cols; typ=type (array_create 0 Cell); n}
+inl first = box Player .First
+inl second = box Player .Second
+inl not_visited = box Player .NotVisited
 
-inl parser =
-    inm r,c = parse_int .>>. parse_int
-    inm field = parse_field 5
-    succ ((r,c),field)
+// Structural polymorphic equality for every type in the language (apart from functions).
+inl rec (=) a b =
+    match a,b with
+    | .(a), .(b) -> a = b
+    | a :: as, b :: bs = a = b && as = bs
+    | a, b -> a = b
+
+inl max_n = 100
+inl solutions = Array.init (max_n+1) (const not_visited)
+met rec solve !dyn n !dyn (player, opposing_player) =
+    inl less_than_two n on_fail =
+        if n < 2 then opposing_player
+        elif solve n (opposing_player,player) = player then player
+        else on_fail ()
+    inl take ammount on_fail = less_than_two (n-ammount) on_fail
+    match solutions n with
+    | .NotVisited -> 
+        inl x = Tuple.foldr (inl take on_fail _ -> take on_fail) (take 2, take 3, take 5) (const opposing_player)
+        solutions n <- x
+        x
+    | x -> x
+
+for {from=dyn 0; to=max_n; body=inl {i} -> solve i (first,second)}
+
+inl show = function
+    | .(x) -> writeline x
+
+inl parser = 
+    inm t = parse_int
+    repeat t (inl i -> parse_int |>> (solutions >> show))
+
+run_with_unit_ret (readall()) parser
     """
 
 let tests =
