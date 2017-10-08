@@ -1886,7 +1886,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let var_name =
             many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
             >>=? function
-                | "match" | "function" | "with" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm" 
+                | "match" | "function" | "with" | "without" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm" 
                 | "type" | "print_expr" | "rec" | "if" | "if_dynamic" | "then" | "elif" | "else" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
@@ -1928,6 +1928,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let match_ = keywordString "match"
         let function_ = keywordString "function"
         let with_ = keywordString "with"
+        let without = keywordString "without"
         let open_ = keywordString "open"
         let cons = operatorString "::"
         let active_pat = prefixOperatorChar '!'
@@ -2258,26 +2259,36 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
           
         let case_module expr s =
             let mp_binding (n,e) = vv [lit_string n; e]
+            let mp_without n = op(ModuleWithout,[lit_string n])
             let mp_create l = op(ModuleCreate,l)
             let mp_with (n,l) = 
                 match n with
                 | [x] -> op(ModuleWith,v x :: l)
                 | x :: xs -> op(ModuleWith,vv (v x :: List.map lit_string xs) :: l)
                 | _ -> failwith "impossible"
-                
-            let parse_binding s = 
+
+            let inline parse_binding_with s =
                 let i = col s
                 let line = s.Line
                 var_op_name .>>. opt (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
                 |>> function a, None -> mp_binding (a, v a) | a, Some b -> mp_binding (a, b)
                 <| s
-            let module_create s = (parse_binding .>> optional semicolon') s
+
+            let parse_binding_without s = var_op_name |>> mp_without <| s
+
+            let module_create_with s = (parse_binding_with .>> optional semicolon') s
+            let module_create_without s = (parse_binding_without .>> optional semicolon') s
 
             let module_with = 
-                attempt (sepBy1 var_name dot .>> with_) >>= fun names ->
-                    (many1 module_create |>> fun l -> mp_with (names,l))
-            curlies (module_with <|> (many module_create |>> mp_create))
-            <| s
+                let withs s = (with_ >>. many1 module_create_with) s
+                let withouts s = (without >>. many1 module_create_without) s 
+                pipe2 (attempt (sepBy1 var_name dot)) (many1 (withs <|> withouts))
+                <| fun names l -> mp_with (names,List.concat l)
+
+            let module_create = 
+                many module_create_with |>> mp_create
+                
+            curlies (module_with <|> module_create) <| s
 
         let case_type expr = type_' >>. rounds expr |>> type_create // rounds are needed to avoid collisions with the statement parser
 
