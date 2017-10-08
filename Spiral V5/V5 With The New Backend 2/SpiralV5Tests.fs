@@ -1651,5 +1651,3 @@ run_with_unit_ret (readall()) p
 output_test_to_temp hacker_rank_2
 |> printfn "%s"
 |> ignore
-
-
