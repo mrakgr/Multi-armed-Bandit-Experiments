@@ -2282,13 +2282,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let module_with = 
                 let withs s = (with_ >>. many1 module_create_with) s
                 let withouts s = (without >>. many1 module_create_without) s 
-                pipe2 (attempt (sepBy1 var_name dot)) (many1 (withs <|> withouts))
+                pipe2 (sepBy1 var_name dot) (many1 (withs <|> withouts))
                 <| fun names l -> mp_with (names,List.concat l)
 
             let module_create = 
                 many module_create_with |>> mp_create
                 
-            curlies (module_with <|> module_create) <| s
+            curlies (attempt module_with <|> module_create) <| s
 
         let case_type expr = type_' >>. rounds expr |>> type_create // rounds are needed to avoid collisions with the statement parser
 

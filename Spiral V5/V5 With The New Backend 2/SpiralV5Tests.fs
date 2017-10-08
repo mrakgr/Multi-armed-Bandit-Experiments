@@ -959,6 +959,11 @@ dequeue 4
 dequeue 4
     """
 
+let test81 =
+    "test81",[],"",
+    """
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1162,8 +1167,9 @@ inl mario_pos = dyn (1,1)
 inl n = 5
 for' {from=dyn 0; near_to=n; state={}; 
     body=inl {next=row i=r state} ->
-        for' {from=dyn 0; near_to=n; state=state;
+        for' {from=dyn 0; near_to=n; state;
             body=inl {next=col i=c state} ->
+                printfn "I am at (%i,%i)" r c
                 inl ret state = 
                     match state with
                     | {mario princess} -> ret .some state
@@ -1642,7 +1648,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_3
+output_test_to_temp hacker_rank_2
 |> printfn "%s"
 |> ignore
 
