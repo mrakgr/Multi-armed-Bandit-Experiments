@@ -1565,6 +1565,25 @@ inl main = {
 run_with_unit_ret (readall()) (parser main)
     """
 
+let hacker_rank_4 =
+    "hacker_rank_4",[tuple;array;arrayn;loops;list;parsing;console;queue],"Botclean",
+    """
+// https://www.hackerrank.com/challenges/botclean
+open Parsing
+open Console
+open Array
+open Loops
+
+
+inl parse_field n = 
+    inl parse_cols = parse_array {parser=stream_char; typ=char; n} .>> spaces
+    parse_array {parser=parse_cols; typ=type (array_create 0 Cell); n}
+
+inl parser =
+    inm r,c = parse_int .>>. parse_int
+    inm field = parse_field 5
+    succ ((r,c),field)
+    """
 
 let tests =
     [|
