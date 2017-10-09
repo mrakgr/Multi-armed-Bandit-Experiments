@@ -1585,33 +1585,37 @@ inl first = box Player .First
 inl second = box Player .Second
 inl not_visited = none Player
 
-inl max_n = 0
+inl max_n = 100
 inl solutions = Array.init (max_n+1) (const not_visited)
-met rec solve (!dyn n) (!dyn player, !dyn opposing_player) =
-    inl take amount on_fail = 
-        if n < amount then opposing_player
-//        elif solve (n-amount) (opposing_player,player) = player then player
-        else on_fail ()
-
-    match solutions n with
-    | [None] -> take 2 (const opposing_player)
-//        inl x = Tuple.foldr (inl take on_fail _ -> take on_fail) (take 2, take 3, take 5) (const opposing_player) ()
-//        solutions n <- some x
-//        x
-    | [Some: x] -> x
 
 inl show = function
     | [Some: .(x)] -> writeline x
     | [None] -> failwith "Solution not found."
-    | x -> print_static x
 
-for {from=dyn 0; to=max_n; body=inl {i} -> solve i (first,second) |> ignore; solutions i |> show}
+met rec solve (!dyn n) (!dyn player, !dyn opposing_player) =
+    inl take amount on_fail = 
+        if n >= amount && solve (n-amount) (opposing_player,player) = player then player
+        else on_fail ()
 
-//inl parser = 
-//    inm t = parse_int
-//    repeat t (inl i -> parse_int |>> (solutions >> show))
+    met run () = Tuple.foldr (inl take on_fail _ -> take on_fail) (take 2, take 3, take 5) (const opposing_player) () 
 
-//run_with_unit_ret (readall()) parser
+    if player = first then
+        match solutions n with
+        | [None] -> 
+            inl x = run()
+            solutions n <- some x
+            x
+        | [Some: x] -> x
+    else run()
+    : player
+
+for {from=dyn 0; to=max_n; body=inl {i} -> solve i (first,second) |> ignore}
+
+inl parser = 
+    inm t = parse_int
+    repeat t (inl i -> parse_int |>> (solutions >> show))
+
+run_with_unit_ret (readall()) parser
     """
 
 let tests =
@@ -1625,7 +1629,7 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
     test80;test81
-    hacker_rank_1;hacker_rank_2
+    hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
@@ -1696,7 +1700,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp parsing7
+output_test_to_temp hacker_rank_4
 |> printfn "%s"
 |> ignore
 

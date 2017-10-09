@@ -11,11 +11,11 @@ let rec method_19((var_0: Rec0)): Rec0 =
     match var_0 with
     | Rec0Case0 ->
         Rec0Case0
-    | Rec0Case1(var_2) ->
-        let (var_3: int64) = var_2.mem_0
-        let (var_4: Rec0) = var_2.mem_1
-        let (var_5: int64) = (2L * var_3)
-        let (var_6: Rec0) = method_19((var_4: Rec0))
-        (Rec0Case1(Tuple1(var_5, var_6)))
+    | Rec0Case1(var_1) ->
+        let (var_2: int64) = var_1.mem_0
+        let (var_3: Rec0) = var_1.mem_1
+        let (var_4: int64) = (2L * var_2)
+        let (var_5: Rec0) = method_19((var_3: Rec0))
+        (Rec0Case1(Tuple1(var_4, var_5)))
 let (var_0: Rec0) = (Rec0Case1(Tuple1(1L, (Rec0Case1(Tuple1(2L, (Rec0Case1(Tuple1(3L, Rec0Case0)))))))))
 method_19((var_0: Rec0))

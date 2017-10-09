@@ -10,9 +10,10 @@ inl (=) a b =
     inl prim_eq = (=)
     inl rec (=) a b =
         match a,b with
+        | .(a), .(b) -> a = b
         | a :: as', b :: bs -> a = b && as' = bs
         | {} & a, {} & b -> module_values a = module_values b
-        | .(_), .(_) | (), () -> true
+        | (), () -> true
         | a, b when eq_type a b -> prim_eq a b // This eq_type check is because unboxed union types might lead to variables of different types to be compared.
         | _ -> false
     if eq_type a b then a = b

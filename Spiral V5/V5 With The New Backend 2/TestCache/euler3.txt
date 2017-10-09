@@ -79,8 +79,8 @@ method_16((var_6: (bool [])), (var_3: int64), (var_8: int64))
 let (var_9: Union0) = method_23((var_6: (bool [])), (var_0: int64), (var_3: int64))
 match var_9 with
 | Union0Case0(var_10) ->
-    let (var_12: int64) = var_10.mem_1
-    System.Console.WriteLine(var_12)
+    let (var_11: int64) = var_10.mem_1
+    System.Console.WriteLine(var_11)
 | Union0Case1 ->
     (failwith "No prime factor found!")
 

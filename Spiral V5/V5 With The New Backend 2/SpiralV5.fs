@@ -949,9 +949,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let make_tyv_ty d ty = get_tag d, ty
 
-        let make_up_vars_for_ty d ty = TyV <| make_tyv_ty d ty
-
-        let tyt x = TyT x
+        let inline tyt x = TyT x
+        let make_up_vars_for_ty d ty = 
+            if is_unit ty then tyt ty
+            else TyV <| make_tyv_ty d ty
 
         let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
             let ty = get_type ty_exp
