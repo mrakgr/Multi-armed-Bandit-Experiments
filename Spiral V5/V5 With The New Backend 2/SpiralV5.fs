@@ -137,6 +137,9 @@ type Op =
     | ModuleIs
     | ModuleValues
 
+    // BoxedVariableIs
+    | BoxedVariableIs
+
     // Case
     | Case
 
@@ -1034,8 +1037,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let type_tr, type_fl = get_type tr, get_type fl
             if type_tr = type_fl then
                 if_is_returnable type_tr <| fun () ->
-                    if tr = fl then tr
-                    else 
+                    match tr, fl with
+//                    | TyLit (LitBool true), TyLit (LitBool false) -> cond
+                    | _ when tr = fl -> tr
+                    | _ ->
                         match cond with
                         | TyLit(LitBool true) -> tr
                         | TyLit(LitBool false) -> fl
@@ -1649,6 +1654,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Func(_,_,FunTypeModule) -> TyLit (LitBool true)
             | _ -> TyLit (LitBool false)
 
+        let boxed_variable_is d a =
+            match tev d a with
+            | TyType (UnionT _ | RecT _) -> TyLit (LitBool true)
+            | _ -> TyLit (LitBool false)
+
         let module_values d a =
             match tev d a with
             | Func(r,env,FunTypeModule) as recf ->
@@ -1817,6 +1827,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ModuleValues, [a] -> module_values d a
             | ModuleIs,[a] -> module_is d a
             | ModuleHasMember,[a;b] -> module_has_member d a b
+            | BoxedVariableIs,[a] -> boxed_variable_is d a
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
@@ -3071,6 +3082,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "min" (p2 <| fun a b -> if_static (lt a b) a b)
             b "eq_type" EqType
             l "module_values" (p <| fun x -> op(ModuleValues,[x]))
+            l "boxed_variable_is" (p <| fun x -> op(BoxedVariableIs,[x]))
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =
