@@ -1038,7 +1038,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             if type_tr = type_fl then
                 if_is_returnable type_tr <| fun () ->
                     match tr, fl with
-//                    | TyLit (LitBool true), TyLit (LitBool false) -> cond
+                    | TyLit (LitBool true), TyLit (LitBool false) -> cond
                     | _ when tr = fl -> tr
                     | _ ->
                         match cond with

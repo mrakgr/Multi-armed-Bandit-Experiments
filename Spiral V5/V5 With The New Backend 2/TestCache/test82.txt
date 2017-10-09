@@ -27,11 +27,7 @@ let rec method_18((var_0: Rec0), (var_1: Rec0)): bool =
             let (var_10: int64) = var_9.mem_0
             let (var_11: Rec0) = var_9.mem_1
             if (var_7 = var_10) then
-                let (var_12: bool) = method_18((var_8: Rec0), (var_11: Rec0))
-                if var_12 then
-                    true
-                else
-                    false
+                method_18((var_8: Rec0), (var_11: Rec0))
             else
                 false
 let (var_0: Rec0) = Rec0Case0

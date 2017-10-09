@@ -1,7 +1,7 @@
 let rec method_14((var_0: int64), (var_1: int64)): int64 =
     if (var_1 <= var_0) then
         let (var_2: int64) = (var_1 % 4L)
-        let (var_25: bool) =
+        let (var_24: bool) =
             if (var_2 = 0L) then
                 let (var_3: int64) = (var_1 % 6L)
                 if (var_3 = 0L) then
@@ -24,10 +24,7 @@ let rec method_14((var_0: int64), (var_1: int64)): int64 =
                                                     let (var_12: int64) = (var_1 % 18L)
                                                     if (var_12 = 0L) then
                                                         let (var_13: int64) = (var_1 % 20L)
-                                                        if (var_13 = 0L) then
-                                                            true
-                                                        else
-                                                            false
+                                                        (var_13 = 0L)
                                                     else
                                                         false
                                                 else
@@ -50,11 +47,11 @@ let rec method_14((var_0: int64), (var_1: int64)): int64 =
                     false
             else
                 false
-        if var_25 then
+        if var_24 then
             var_1
         else
-            let (var_26: int64) = (var_1 + 1385670L)
-            method_14((var_0: int64), (var_26: int64))
+            let (var_25: int64) = (var_1 + 1385670L)
+            method_14((var_0: int64), (var_25: int64))
     else
         -1L
 let (var_0: int64) = System.Int64.MaxValue
