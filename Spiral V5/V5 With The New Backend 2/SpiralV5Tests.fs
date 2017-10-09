@@ -960,8 +960,10 @@ dequeue 4
     """
 
 let test81 =
-    "test81",[],"",
+    "test81",[core],"Does structural polymorphic equality work?",
     """
+open Core
+{a=1;b=dyn 2;c=dyn 3;d=.qwe} = {a=1;b=2;c=3;d=.qwe}
     """
 
 let parsing1 = 
@@ -1566,54 +1568,50 @@ run_with_unit_ret (readall()) (parser main)
     """
 
 let hacker_rank_4 =
-    "hacker_rank_4",[tuple;array;parsing;console],"Game of Stones",
+    "hacker_rank_4",[core;tuple;array;parsing;console;option],"Game of Stones",
     """
 // https://www.hackerrank.com/challenges/game-of-stones-1
+open Core
 open Parsing
 open Console
 open Loops
+open Option
 
 type Player =
     .First
     .Second
-    .NotVisited
 
 inl first = box Player .First
 inl second = box Player .Second
-inl not_visited = box Player .NotVisited
+inl not_visited = none Player
 
-// Structural polymorphic equality for every type in the language (apart from functions).
-inl rec (=) a b =
-    match a,b with
-    | .(a), .(b) -> a = b
-    | a :: as, b :: bs = a = b && as = bs
-    | a, b -> a = b
-
-inl max_n = 100
+inl max_n = 0
 inl solutions = Array.init (max_n+1) (const not_visited)
-met rec solve !dyn n !dyn (player, opposing_player) =
-    inl less_than_two n on_fail =
-        if n < 2 then opposing_player
-        elif solve n (opposing_player,player) = player then player
+met rec solve (!dyn n) (!dyn player, !dyn opposing_player) =
+    inl take amount on_fail = 
+        if n < amount then opposing_player
+//        elif solve (n-amount) (opposing_player,player) = player then player
         else on_fail ()
-    inl take ammount on_fail = less_than_two (n-ammount) on_fail
-    match solutions n with
-    | .NotVisited -> 
-        inl x = Tuple.foldr (inl take on_fail _ -> take on_fail) (take 2, take 3, take 5) (const opposing_player)
-        solutions n <- x
-        x
-    | x -> x
 
-for {from=dyn 0; to=max_n; body=inl {i} -> solve i (first,second)}
+    match solutions n with
+    | [None] -> take 2 (const opposing_player)
+//        inl x = Tuple.foldr (inl take on_fail _ -> take on_fail) (take 2, take 3, take 5) (const opposing_player) ()
+//        solutions n <- some x
+//        x
+    | [Some: x] -> x
 
 inl show = function
-    | .(x) -> writeline x
+    | [Some: .(x)] -> writeline x
+    | [None] -> failwith "Solution not found."
+    | x -> print_static x
 
-inl parser = 
-    inm t = parse_int
-    repeat t (inl i -> parse_int |>> (solutions >> show))
+for {from=dyn 0; to=max_n; body=inl {i} -> solve i (first,second) |> ignore; solutions i |> show}
 
-run_with_unit_ret (readall()) parser
+//inl parser = 
+//    inm t = parse_int
+//    repeat t (inl i -> parse_int |>> (solutions >> show))
+
+//run_with_unit_ret (readall()) parser
     """
 
 let tests =
@@ -1626,7 +1624,7 @@ let tests =
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
-    test80
+    test80;test81
     hacker_rank_1;hacker_rank_2
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
@@ -1698,7 +1696,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_2
+output_test_to_temp parsing7
 |> printfn "%s"
 |> ignore
 

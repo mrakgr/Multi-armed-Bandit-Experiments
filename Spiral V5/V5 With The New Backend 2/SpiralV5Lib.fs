@@ -1,6 +1,25 @@
 ﻿module Spiral.Lib
 open Main
 
+let core =
+    (
+    "Core",[],"The Core module.",
+    """
+// Structural polymorphic equality for every type in the language (apart from functions).
+inl (=) a b =
+    inl prim_eq = (=)
+    inl rec (=) a b =
+        match a,b with
+        | a :: as', b :: bs -> a = b && as' = bs
+        | {} & a, {} & b -> module_values a = module_values b
+        | .(_), .(_) | (), () -> true
+        | a, b when eq_type a b -> prim_eq a b // This eq_type check is because unboxed union types might lead to variables of different types to be compared.
+        | _ -> false
+    if eq_type a b then a = b
+    else error_type ("Trying to compare variables of two different types. Got:",a,b)
+{(=)}
+    """) |> module_
+
 let option =
     (
     "Option",[],"The Option module.",

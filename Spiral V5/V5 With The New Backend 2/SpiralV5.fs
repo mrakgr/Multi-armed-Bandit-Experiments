@@ -135,6 +135,7 @@ type Op =
     | ModuleWith
     | ModuleWithout
     | ModuleIs
+    | ModuleValues
 
     // Case
     | Case
@@ -1647,6 +1648,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Func(_,_,FunTypeModule) -> TyLit (LitBool true)
             | _ -> TyLit (LitBool false)
 
+        let module_values d a =
+            match tev d a with
+            | Func(r,env,FunTypeModule) as recf ->
+                let inline toList f = Map.foldBack (fun _ x s -> f x :: s) env []
+                match r with
+                | RecordIndividual -> toList id
+                | _ -> toList (record_boxed_unseal d recf)
+                |> tyvv
+            | x ->
+                on_type_er d.trace <| sprintf "Expected a module. Got: %A" x
+
         let module_has_member d a b =
             match tev2 d a b with
             | Func(_,env,FunTypeModule), b -> 
@@ -1791,9 +1803,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 Map.iter (fun k v -> printfn "%s" k) d.env
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
-            | ModuleOpen,[a;b] -> module_open d a b
-            | ModuleCreate,l -> module_create d l
-            | ModuleWith, l -> module_with d l
             | RecordStackify,[a] -> record_stack d a
             | RecordHeapify,[a] -> record_heap d a
             | TypeLitCreate,[a] -> type_lit_create d a
@@ -1801,7 +1810,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeLitIs,[a] -> type_lit_is d a
             | Dynamize,[a] -> dynamize d a
             | IsStatic,[a] -> is_static d a
+            | ModuleOpen,[a;b] -> module_open d a b
+            | ModuleCreate,l -> module_create d l
+            | ModuleWith, l -> module_with d l
+            | ModuleValues, [a] -> module_values d a
             | ModuleIs,[a] -> module_is d a
+            | ModuleHasMember,[a;b] -> module_has_member d a b
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
@@ -1845,7 +1859,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeCreate,[a] -> type_create d a
             | TypeSplit,[a] -> type_split d a
             | EqType,[a;b] -> eq_type d a b
-            | ModuleHasMember,[a;b] -> module_has_member d a b
             | Neg,[a] -> prim_un_numeric d a Neg
             | ErrorType,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "%A" a
             | ErrorNonUnit,[a] -> error_non_unit d a
@@ -1913,6 +1926,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             if s.Line <> s.UserState.semicolon_line then Reply(())
             else Reply(ReplyStatus.Error, messageError "cannot parse ; on this line") 
         let eq = operatorChar '=' 
+        let eq' = skipChar '=' >>. spaces
         let bar = operatorChar '|' 
         let amphersand = operatorChar '&'
         let caret = operatorChar '^'
@@ -2097,7 +2111,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             |>> pat_module_helper <| s
 
         and pat_module_body expr s =
-            let bind = eq >>. patterns_template expr
+            let bind = eq' >>. patterns_template expr
             let pat_bind_fun (v,pat) =
                 match pat with
                 | Some pat -> 
@@ -2171,7 +2185,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let type_pat' args body = x_pat' type_memo args body
 
 
-        let inline statement_expr expr = eq >>. expr
+        let inline statement_expr expr = eq' >>. expr
         let case_inl_pat_statement expr = pipe2 (inl_ >>. patterns expr) (statement_expr expr) lp
         let case_inl_name_pat_list_statement expr = pipe3 (inl_ >>. var_op_name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l name (inl_pat' pattern body)) 
         let case_inl_rec_name_pat_list_statement expr = pipe3 (inl_rec >>. var_op_name) (pattern_list expr) (statement_expr expr) (fun name pattern body -> l_rec name (inl_pat' pattern body))
@@ -2185,11 +2199,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let i = col s
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
                 many1 (expr_indent expressions) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
-            pipe3 (type_' >>. var_op_name) (pattern_list expr) (eq >>. type_parse) <| fun name pattern body -> 
+            pipe3 (type_' >>. var_op_name) (pattern_list expr) (eq' >>. type_parse) <| fun name pattern body -> 
                 l_rec name (type_pat' pattern body)
 
         let case_open expr = open_ >>. expr |>> module_open
-        let case_inm_pat_statement expr = pipe2 (inm_ >>. patterns expr) (eq >>. expr) inmp
+        let case_inm_pat_statement expr = pipe2 (inm_ >>. patterns expr) (eq' >>. expr) inmp
 
         let statements expressions expr = 
             [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
@@ -2270,7 +2284,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let inline parse_binding_with s =
                 let i = col s
                 let line = s.Line
-                var_op_name .>>. opt (eq >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
+                var_op_name .>>. opt (eq' >>. expr_indent i (<) (set_semicolon_level_to_line line expr)) 
                 |>> function a, None -> mp_binding (a, v a) | a, Some b -> mp_binding (a, b)
                 <| s
 
@@ -3055,6 +3069,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "max" (p2 <| fun a b -> if_static (lt a b) b a)
             l "min" (p2 <| fun a b -> if_static (lt a b) a b)
             b "eq_type" EqType
+            l "module_values" (p <| fun x -> op(ModuleValues,[x]))
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =
