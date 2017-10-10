@@ -1597,13 +1597,9 @@ inl not_visited = none Player
 inl max_n = 100
 inl solutions = Array.init (max_n+1) (const not_visited)
 
-inl show = function
-    | [Some: .(x)] -> writeline x
-    | [None] -> failwith "Solution not found."
-
-met rec solve (!dyn n) (!dyn player, !dyn opposing_player) =
+met rec solve (!dyn player, !dyn opposing_player) (!dyn n) =
     inl take amount on_fail = 
-        if n >= amount && solve (n-amount) (opposing_player,player) = player then player
+        if n >= amount && solve (opposing_player,player) (n-amount) = player then player
         else on_fail ()
 
     met run () = Tuple.foldr (inl take on_fail _ -> take on_fail) (take 2, take 3, take 5) (const opposing_player) () 
@@ -1618,11 +1614,10 @@ met rec solve (!dyn n) (!dyn player, !dyn opposing_player) =
     else run()
     : player
 
-for {from=dyn 0; to=max_n; body=inl {i} -> solve i (first,second) |> ignore}
-
+inl show .(x) = writeline x
 inl parser = 
     inm t = parse_int
-    repeat t (inl i -> parse_int |>> (solutions >> show))
+    repeat t (inl i -> parse_int |>> (solve (first,second) >> show))
 
 run_with_unit_ret (readall()) parser
     """
@@ -1709,7 +1704,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp test82
+output_test_to_temp hacker_rank_4
 |> printfn "%s"
 |> ignore
 
