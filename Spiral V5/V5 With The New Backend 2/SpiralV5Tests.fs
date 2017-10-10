@@ -1623,7 +1623,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_5 =
-    "hacker_rank_5",[core;tuple;array;parsing;console;option],"Game of Stones",
+    "hacker_rank_5",[parsing;console],"Game of Stones",
     """
 // https://www.hackerrank.com/challenges/tower-breakers-1
 open Parsing
@@ -1639,6 +1639,46 @@ inl parser =
 run_with_unit_ret (readall()) parser
     """
 
+let hacker_rank_6 =
+    "hacker_rank_6",[core;tuple;array;arrayn;parsing;console;option],"A Chessboard Game",
+    """
+// https://www.hackerrank.com/challenges/a-chessboard-game-1
+open Parsing
+open Console
+open Option
+
+inl num_players = 2
+inl first = 0
+inl second = 1
+
+inl max_t = 15
+
+inl cache = 
+    inl cache = ArrayN.init (max_t,max_t,num_players) (const (none first))
+    inl op (x,y,player_one,player_two) -> cache op (x-1,y-1,player_one)
+
+met rec solve !dyn (x,y,player_one,player_two) as d = 
+    inl new_positions = (x-2,y+1),(x-2,y-1),(x+1,y-2),(x-1,y-2)
+    inl is_in_range x = x >= 1 && x <= 15
+    inl try x,y on_fail =
+        if is_in_range x && is_in_range y && solve (x,y,player_two,player_one) = player_one then player_one
+        else on_fail()
+    match cache.index d with
+    | [None] -> Tuple.foldr (inl pos next () -> try pos next) new_positions (const player_two) () |> inl x -> some x |> cache.set d; x
+    | [Some: x] -> x
+    : player_one
+
+inl show = function
+    | x when x = first -> writeline "First"
+    | _ -> writeline "Second"
+
+inl parser = 
+    inm t = parse_int
+    repeat t (inl i -> parse_int .>>. parse_int |>> inl x,y -> solve (x,y,first,second) |> show)
+
+run_with_unit_ret (readall()) parser
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1650,7 +1690,7 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
     test80;test81;test82
-    hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4
+    hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
@@ -1721,7 +1761,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_5
+output_test_to_temp hacker_rank_6
 |> printfn "%s"
 |> ignore
 
