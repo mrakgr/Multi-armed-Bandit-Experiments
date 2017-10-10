@@ -1679,6 +1679,26 @@ inl parser =
 run_with_unit_ret (readall()) parser
     """
 
+let hacker_rank_7 =
+    "hacker_rank_7",[core;tuple;array;arrayn;parsing;console;option],"Introduction to Nim Game",
+    """
+// https://www.hackerrank.com/challenges/nim-game-1/problem
+
+inl solve = Array.foldl (^^^) 0
+inl show = function
+    | 0 -> writeline "Second"
+    | _ -> writeline "First"
+
+inl parser = 
+    inm t = parse_int
+    repeat t (inl _ -> 
+        inm n = parse_int 
+        parse_array {n parser=parse_int; typ=int64} |>> (solve >> show)
+        )
+
+run_with_unit_ret (readall()) parser
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1761,7 +1781,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_6
+output_test_to_temp hacker_rank_7
 |> printfn "%s"
 |> ignore
 

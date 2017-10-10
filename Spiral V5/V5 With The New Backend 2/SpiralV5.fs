@@ -160,7 +160,10 @@ type Op =
     | GT 
     | GTE 
     | And 
-    | Or 
+    | Or
+    | BitwiseAnd
+    | BitwiseOr
+    | BitwiseXor
 
     | Fix
     | Apply
@@ -652,6 +655,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | _ -> false
     let inline is_int a = is_int' (get_type a)
 
+    let rec is_any_int' = function
+        | PrimT (UInt8T | UInt16T | UInt32T | UInt64T 
+            | Int8T | Int16T | Int32T | Int64T) -> true
+        | _ -> false
+    let inline is_any_int x = is_any_int' (get_type x)
+
     let rec is_int64' = function
         | PrimT Int64T -> true
         | _ -> false
@@ -921,8 +930,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | ArrayT(DotNetReference,t) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
         | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
-
-    let is_all_int64 size = List.forall is_int64 (tuple_field size)
 
     let on_type_er trace message = TypeError(trace,message) |> raise
 
@@ -1532,6 +1539,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let check a b = is_int a && is_int b
             prim_bin_op_template d er check prim_bin_op_helper a b t
 
+        let prim_bitwise_op d a b t =
+            let er a b = sprintf "`is_any_int a && is_any_int b` is false.\na=%A, b=%A" a b
+            let check a b = is_any_int a && is_any_int b
+            prim_bin_op_template d er check prim_bin_op_helper a b t
+
         let prim_shuffle_op d a b t =
             let er a b = sprintf "`is_int b` is false.\na=%A, b=%A" a b
             let check a b = is_int b
@@ -1850,6 +1862,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     
             | And,[a;b] -> prim_bool_op d a b And
             | Or,[a;b] -> prim_bool_op d a b Or
+
+            | BitwiseAnd,[a;b] -> prim_bitwise_op d a b BitwiseAnd
+            | BitwiseOr,[a;b] -> prim_bitwise_op d a b BitwiseOr
+            | BitwiseXor,[a;b] -> prim_bitwise_op d a b BitwiseXor
 
             | ShiftLeft,[a;b] -> prim_shift_op d a b ShiftLeft
             | ShiftRight,[a;b] -> prim_shift_op d a b ShiftRight
@@ -2411,13 +2427,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 f "+" 60; f "-" 60; f "*" 70; f "/" 70; f "%" 70
                 f "<|" 10; f "|>" 10; f "<<" 10; f ">>" 10
 
-            let no_assoc_ops =
+            let no_assoc_ops = // No associativity is really left associativity
                 let f str = add_infix_operator Associativity.None str 40
                 f "<="; f "<"; f "="; f ">"; f ">="; f "<>"
+                f "<<<"; f ">>>"; f "&&&"; f "|||"
 
             let right_associative_ops =
                 let f str prec = add_infix_operator Associativity.Right str prec
-                f "||" 20; f "&&" 30; f "::" 50
+                f "||" 20; f "&&" 30; f "::" 50; f "^^^" 45
          
             dict_operator
 
@@ -2810,6 +2827,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
                 | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
                 | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
+                | BitwiseAnd,[a;b] -> sprintf "(%s &&& %s)" (codegen a) (codegen b)
+                | BitwiseOr,[a;b] -> sprintf "(%s ||| %s)" (codegen a) (codegen b)
+                | BitwiseXor,[a;b] -> sprintf "(%s ^^^ %s)" (codegen a) (codegen b)
 
                 | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
                 | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
@@ -3066,7 +3086,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
 
             b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE; b "<>" NEQ
+            b "&&&" BitwiseAnd; b "|||" BitwiseOr; b "^^^" BitwiseXor
             b "::" VVCons; b "&&" And; b "||" Or
+            b "<<<" ShiftLeft; b ">>>" ShiftRight
 
             l "fst" (p <| fun x -> tuple_index x 0L)
             l "snd" (p <| fun x -> tuple_index x 1L)
