@@ -1622,6 +1622,23 @@ inl parser =
 run_with_unit_ret (readall()) parser
     """
 
+let hacker_rank_5 =
+    "hacker_rank_5",[core;tuple;array;parsing;console;option],"Game of Stones",
+    """
+// https://www.hackerrank.com/challenges/tower-breakers-1
+open Parsing
+open Console
+
+// This is the solution from the discussion forum that I've been spoilered on.
+inl solve n,m = if m = 1 || n % 2 = 0 then 2 else 1
+
+inl parser = 
+    inm t = parse_int
+    repeat t (inl i -> parse_int .>>. parse_int |>> (solve >> writeline))
+
+run_with_unit_ret (readall()) parser
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1704,7 +1721,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_4
+output_test_to_temp hacker_rank_5
 |> printfn "%s"
 |> ignore
 
