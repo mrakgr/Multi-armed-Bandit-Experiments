@@ -1732,6 +1732,16 @@ inl parser =
 run_with_unit_ret (readall()) parser
     """
 
+let hacker_rank_9 =
+    "hacker_rank_9",[core;tuple;array;arrayn;parsing;console;option],"Hackerland Radio Transmitters",
+    """
+// https://www.hackerrank.com/challenges/hackerland-radio-transmitters
+
+open Parsing
+open Console
+open Array
+    """
+
 
 let tests =
     [|
