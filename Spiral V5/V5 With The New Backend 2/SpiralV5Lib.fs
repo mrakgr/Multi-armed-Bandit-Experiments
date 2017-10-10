@@ -263,7 +263,10 @@ inl concat ar =
     (foldl << foldl) (inl i x -> ar' i <- x; i+1) (dyn 0) ar |> ignore
     ar'
 
-{empty singleton foldl foldr init map filter append concat}
+inl forall f ar = for' {from=0; near_to=array_length ar; state=true; body = inl {next state i} -> f (ar i) && next state}
+inl exists f ar = for' {from=0; near_to=array_length ar; state=false; body = inl {next state i} -> f (ar i) || next state}
+
+{empty singleton foldl foldr init map filter append concat forall exists}
     """) |> module_
 
 let arrayn =

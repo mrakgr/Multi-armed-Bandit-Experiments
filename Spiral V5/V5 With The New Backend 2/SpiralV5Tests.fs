@@ -1703,6 +1703,36 @@ inl parser =
 run_with_unit_ret (readall()) parser
     """
 
+let hacker_rank_8 =
+    "hacker_rank_8",[core;tuple;array;arrayn;parsing;console;option],"Misere Nim",
+    """
+// https://www.hackerrank.com/challenges/misere-nim-1
+
+open Parsing
+open Console
+open Array
+
+// https://mathoverflow.net/questions/71802/analysis-of-misere-nim
+inl solve ar = 
+    inl r = Array.foldl (^^^) 0 ar
+    if Array.forall ((=) 1) then r ^^^ 1
+    else r
+    
+inl show = function
+    | 0 -> writeline "Second"
+    | _ -> writeline "First"
+
+inl parser = 
+    inm t = parse_int
+    repeat t (inl _ -> 
+        inm n = parse_int 
+        parse_array {n parser=parse_int; typ=int64} |>> (solve >> show)
+        )
+
+run_with_unit_ret (readall()) parser
+    """
+
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1783,9 +1813,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
-output_test_to_temp hacker_rank_7
+output_test_to_temp hacker_rank_8
 |> printfn "%s"
 |> ignore
 
