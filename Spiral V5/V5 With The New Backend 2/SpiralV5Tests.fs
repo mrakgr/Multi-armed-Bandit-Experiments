@@ -1684,6 +1684,10 @@ let hacker_rank_7 =
     """
 // https://www.hackerrank.com/challenges/nim-game-1/problem
 
+open Parsing
+open Console
+open Array
+
 inl solve = Array.foldl (^^^) 0
 inl show = function
     | 0 -> writeline "Second"
@@ -1710,7 +1714,7 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
     test80;test81;test82
-    hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6
+    hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
@@ -1779,7 +1783,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache()
 
 output_test_to_temp hacker_rank_7
 |> printfn "%s"
