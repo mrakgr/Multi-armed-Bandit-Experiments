@@ -208,7 +208,7 @@ let test15 = //
     "test15",[],"Does basic .NET interop work?",
     """
 inl system = load_assembly .mscorlib
-inl builder_type = ."System.Text.StringBuilder" |> system 
+inl builder_type = system ."System.Text.StringBuilder"
 inl b = builder_type ("Qwe", 128i32)
 inl a x =
     b .Append x |> ignore
@@ -222,7 +222,7 @@ console .Write str |> ignore
 
 inl dictionary_type = ."System.Collections.Generic.Dictionary`2" |> system
 inl dict = dictionary_type(int64, int64)(128i32)
-dict.Add(1,2) |> ignore
+dict.Add(1,2)
 dict.get_Item 1
     """
 
@@ -1825,7 +1825,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp hacker_rank_8
+output_test_to_temp test15
 |> printfn "%s"
 |> ignore
 
