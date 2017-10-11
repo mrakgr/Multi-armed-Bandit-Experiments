@@ -63,12 +63,14 @@ inl for_template kind =
             else finally state
             : finally state
 
-        if is_static (from,to,by) then loop_body d
-        else (met d -> loop_body d) {d with from=dyn from}
+        match d with
+        | {static} when is_static (from,to,by) -> loop_body d
+        | _ -> (met d -> loop_body d) {d with from=dyn from}
 
     inl er_msg = "The by field should not be zero in loop as the program would diverge."
 
-    function | {from} as d -> d | d -> error_type "The from field to loop is missing."
+    function | {static_from} as d -> {d with static=()} | d -> d
+    >> function | {from ^ static_from=from} as d -> {d with from without static_from} | d -> error_type "The from field to loop is missing."
     >> function | {to ^ near_to} as d -> d | d -> "For loop needs exlusively to or near_to fields."
     >> function | {body} as d -> d | d -> error_type "The loop body is missing."
     >> function | {state} as d -> d | d -> {d with state=()}
@@ -242,7 +244,7 @@ inl init n f =
     assert (n >= 0) "The input to init needs to be greater or equal than 0."
     inl typ = type (f 0)
     inl ar = array_create n typ
-    for {from=dyn 0; near_to=n; body=inl {i} -> ar i <- f i}
+    for {from=0; near_to=n; body=inl {i} -> ar i <- f i}
     ar
 
 inl map f ar = init (array_length ar) (ar >> f)
@@ -267,43 +269,6 @@ inl forall f ar = for' {from=0; near_to=array_length ar; state=true; body = inl 
 inl exists f ar = for' {from=0; near_to=array_length ar; state=false; body = inl {next state i} -> f (ar i) || next state}
 
 {empty singleton foldl foldr init map filter append concat forall exists}
-    """) |> module_
-
-let arrayn =
-    (
-    "ArrayN",[tuple;loops],"The array module",
-    """
-open Loops
-inl offset_at_index array i =
-    inl rec loop offset = function
-        | {dim_sizes=dim_size::dim_sizes dim_offsets=dim_offset::dim_offsets ar}, i :: is ->
-            assert (i >= 0 && i < dim_size) "Argument out of bounds."
-            loop (offset+dim_offset*i) ({dim_sizes dim_offsets ar}, is)
-        | {dim_sizes=() dim_offsets=() ar}, () ->
-            offset
-    loop 0 (array,i)
-
-inl index {ar} as x i = ar (offset_at_index x i)
-inl set {ar} as x i v = ar (offset_at_index x i) <- v
-        
-inl init dim_sizes f =
-    match Tuple.foldl (inl s _ -> s + 1) 0 dim_sizes with
-    | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
-    | num_dims ->
-        inl len :: dim_offsets = Tuple.scanr (*) dim_sizes 1
-        inl ar = array_create len (type (f (Tuple.repeat num_dims 0)))
-        inl rec loop offset index = function
-            | dim_size :: dim_sizes, dim_offset :: dim_offsets ->
-                for {from=dyn 0; near_to=dim_size; state=offset; body=inl {state=offset i} ->
-                    loop offset (i :: index) (dim_sizes,dim_offsets)
-                    offset+dim_offset
-                    } |> ignore
-            | (),() -> ar offset <- f index
-        loop (dyn 0) () (dim_sizes,dim_offsets)
-        inl array_data = {dim_sizes dim_offsets ar}
-        {array_data index=index array_data; set=set array_data}
-                
-{init}
     """) |> module_
 
 let list =
@@ -712,3 +677,46 @@ inl create n typ =
 {create}
     """) |> module_
 
+let arrayn =
+    (
+    "ArrayN",[tuple;loops;console],"The array module",
+    """
+open Loops
+open Console
+inl offset_at_index array i =
+    inl rec loop offset = function
+        | {dim_ranges={from to}::dim_ranges dim_offsets=dim_offset::dim_offsets ar}, i :: is ->
+            assert (i >= from && i <= to) "Argument out of bounds."
+            loop (offset+dim_offset*(i-from)) ({dim_ranges dim_offsets ar}, is)
+        | {dim_ranges=() dim_offsets=() ar}, () ->
+            offset
+    loop 0 (array,i)
+
+inl index {ar} as x i = ar (offset_at_index x i)
+inl set {ar} as x i v = ar (offset_at_index x i) <- v
+        
+inl map_dims = 
+    Tuple.map (function
+        | {from to} as d -> d
+        | x -> {from=0; to=x-1})
+
+inl init !map_dims dim_ranges f =
+    match tuple_length dim_ranges with
+    | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
+    | num_dims ->
+        inl dim_size {from to} = to - from + 1 |> max 0
+        inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) dim_ranges 1
+        inl ar = array_create len (type (f (Tuple.repeat num_dims 0)))
+        inl rec loop offset index = function
+            | {from to} :: dim_ranges, dim_offset :: dim_offsets ->
+                for {from to state=offset; body=inl {state=offset i} ->
+                    loop offset (i :: index) (dim_ranges,dim_offsets)
+                    offset+dim_offset
+                    } |> ignore
+            | (),() -> ar offset <- f (Tuple.rev index)
+        loop (dyn 0) () (dim_ranges,dim_offsets)
+        inl array_data = {dim_ranges dim_offsets ar}
+        {array_data index=index array_data; set=set array_data}
+                
+{init}
+    """) |> module_

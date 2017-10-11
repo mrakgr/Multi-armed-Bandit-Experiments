@@ -1135,7 +1135,7 @@ let loop3 =
 open Console
 open Loops
 
-for {from=6; to=3; by= -1; state=0; body = inl {state i} ->
+for {static_from=6; to=3; by= -1; state=0; body = inl {state i} ->
     if i % 3 = 0 || i % 5 = 0 then state+i
     else state
     }
@@ -1160,7 +1160,7 @@ let loop5 =
     """
 open Loops
 
-for {from=2; to=2; body = inl {i} -> ()}
+for {static_from=2; to=2; body = inl {i} -> ()}
     """
 
 let loop6 =
@@ -1715,7 +1715,7 @@ open Array
 // https://mathoverflow.net/questions/71802/analysis-of-misere-nim
 inl solve ar = 
     inl r = Array.foldl (^^^) 0 ar
-    if Array.forall ((=) 1) then r ^^^ 1
+    if Array.forall ((=) 1) ar then r ^^^ 1
     else r
     
 inl show = function
@@ -1733,13 +1733,35 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_9 =
-    "hacker_rank_9",[core;tuple;array;arrayn;parsing;console;option],"Hackerland Radio Transmitters",
+    "hacker_rank_9",[core;tuple;array;arrayn;parsing;console;option],"The Power Sum",
     """
-// https://www.hackerrank.com/challenges/hackerland-radio-transmitters
+// https://www.hackerrank.com/challenges/the-power-sum
 
 open Parsing
 open Console
 open Array
+open Loops
+
+inl x_range = {from=1; to=1000}
+inl n_range = {from=2; to=10}
+
+inl x_to_n = 
+    inl cache = ArrayN.init (x_range,n_range) (inl x,n ->
+        for {from=2; to=n; state=x; body=inl {state=x'} -> x*x'}
+        )
+    cache.index
+
+met rec solve !dyn state !dyn sum !dyn from to,n =
+    for' {from to state body=inl {next state i=x} ->
+        inl sum = sum + x_to_n (x,n)
+        if sum = to then state + 1
+        elif sum < to then next (solve state sum (x+1) (to,n))
+        else state
+        }
+    : state
+
+inl parser = parse_int .>>. parse_int |>> (solve 0 0 1 >> writeline)
+run_with_unit_ret (readall()) parser 
     """
 
 
@@ -1754,7 +1776,7 @@ let tests =
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
     test80;test81;test82
-    hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7
+    hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7;hacker_rank_8;hacker_rank_9
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
@@ -1823,9 +1845,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache()
 
-output_test_to_temp test15
+output_test_to_temp hacker_rank_9
 |> printfn "%s"
 |> ignore
 
