@@ -315,6 +315,7 @@
     <Content Include="V5 With The New Backend 2\TestCache\test9.txt" />
     <None Include="V5 With The New Backend 2\system_type_inheritance.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v1.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v2.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
