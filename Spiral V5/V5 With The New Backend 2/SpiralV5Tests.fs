@@ -1768,6 +1768,7 @@ let hacker_rank_10 =
     "hacker_rank_10",[core;tuple;array;arrayn;parsing;console;option],"Crossword Puzzle",
     """
 
+
     """
 
 
