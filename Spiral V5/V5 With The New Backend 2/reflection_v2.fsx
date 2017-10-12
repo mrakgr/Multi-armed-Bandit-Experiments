@@ -5,5 +5,3 @@ let b = typeof<obj>
 
 a = b // true
 Object.ReferenceEquals(a,b) // true
-
-
