@@ -219,6 +219,7 @@
     <None Include="Scripts\load-project-release.fsx" />
     <None Include="Scripts\load-references-debug.fsx" />
     <None Include="Scripts\load-project-debug.fsx" />
+    <None Include="Scripts\cecil.fsx" />
     <None Include="V5 With The New Backend 2\patterns_v0.fsx" />
     <None Include="V5 With The New Backend 2\hosting_v0.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v0.fsx" />
@@ -360,6 +361,22 @@
     </Reference>
     <Reference Include="ManagedCuda">
       <HintPath>..\packages\ManagedCuda-75-Standalone.7.5.7\lib\net45\ManagedCuda.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil">
+      <HintPath>..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Mdb">
+      <HintPath>..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.Mdb.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Pdb">
+      <HintPath>..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.Pdb.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="Mono.Cecil.Rocks">
+      <HintPath>..\packages\Mono.Cecil.0.10.0-beta6\lib\net40\Mono.Cecil.Rocks.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="mscorlib" />
