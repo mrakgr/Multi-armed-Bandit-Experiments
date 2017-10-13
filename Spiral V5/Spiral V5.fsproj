@@ -219,7 +219,8 @@
     <None Include="Scripts\load-project-release.fsx" />
     <None Include="Scripts\load-references-debug.fsx" />
     <None Include="Scripts\load-project-debug.fsx" />
-    <None Include="Scripts\cecil.fsx" />
+    <None Include="Scripts\cecil_v0.fsx" />
+    <None Include="Scripts\Script1.fsx" />
     <None Include="V5 With The New Backend 2\patterns_v0.fsx" />
     <None Include="V5 With The New Backend 2\hosting_v0.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v0.fsx" />
