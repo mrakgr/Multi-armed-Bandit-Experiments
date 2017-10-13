@@ -23,15 +23,14 @@ let ctor =
         ||| Mono.Cecil.MethodAttributes.SpecialName ||| Mono.Cecil.MethodAttributes.RTSpecialName, module_.TypeSystem.Void)
 
 // create the constructor's method body
-let il = ctor.Body.GetILProcessor()
+ctor.Body.GetILProcessor() |> fun il ->
+    il.Append(il.Create(OpCodes.Ldarg_0))
 
-il.Append(il.Create(OpCodes.Ldarg_0))
+    // call the base constructor
+    il.Append(il.Create(OpCodes.Call, module_.ImportReference(typeof<obj>.GetConstructor([||]))))
 
-// call the base constructor
-il.Append(il.Create(OpCodes.Call, module_.ImportReference(typeof<obj>.GetConstructor([||]))))
-
-il.Append(il.Create(OpCodes.Nop))
-il.Append(il.Create(OpCodes.Ret))
+    il.Append(il.Create(OpCodes.Nop))
+    il.Append(il.Create(OpCodes.Ret))
 
 programType.Methods.Add(ctor)
 
@@ -50,20 +49,19 @@ let argsParameter =
 mainMethod.Parameters.Add(argsParameter);
 
 // create the method body
-il = mainMethod.Body.GetILProcessor()
+mainMethod.Body.GetILProcessor() |> fun il ->
+    il.Append(il.Create(OpCodes.Nop))
+    il.Append(il.Create(OpCodes.Ldstr, "Hello World"))
 
-il.Append(il.Create(OpCodes.Nop))
-il.Append(il.Create(OpCodes.Ldstr, "Hello World"))
+    let writeLineMethod = 
+        il.Create(OpCodes.Call,
+            module_.ImportReference(typeof<Console>.GetMethod("WriteLine", [|typeof<string>|])))
 
-let writeLineMethod = 
-    il.Create(OpCodes.Call,
-        module_.ImportReference(typeof<Console>.GetMethod("WriteLine", [|typeof<string>|])))
+    // call the method
+    il.Append(writeLineMethod)
 
-// call the method
-il.Append(writeLineMethod)
-
-il.Append(il.Create(OpCodes.Nop))
-il.Append(il.Create(OpCodes.Ret))
+    il.Append(il.Create(OpCodes.Nop))
+    il.Append(il.Create(OpCodes.Ret))
 
 // set the entry point and save the module
 myHelloWorldApp.EntryPoint <- mainMethod

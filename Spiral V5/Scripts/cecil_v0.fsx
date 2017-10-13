@@ -9,7 +9,7 @@ let mscorlib_path = @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscorlib.d
 let mscorlib = AssemblyDefinition.ReadAssembly(mscorlib_path)
 
 let m = mscorlib.Modules.[0]
-m.Types.[0].Methods.[0].
+m.Types.[0].Methods.[0]
 
 //let dictionary_type =
 //    mscorlib.Modules.[0].Types
