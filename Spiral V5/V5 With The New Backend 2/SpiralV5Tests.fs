@@ -1863,6 +1863,6 @@ run_with_unit_ret (readall()) p
 //rewrite_test_cache()
 
 output_test_to_temp hacker_rank_2
-//|> printfn "%s"
+|> printfn "%s"
 |> ignore
 

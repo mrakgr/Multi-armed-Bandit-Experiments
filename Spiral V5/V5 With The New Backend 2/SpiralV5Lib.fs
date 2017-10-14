@@ -683,14 +683,22 @@ let arrayn =
     """
 open Loops
 open Console
+
+inl dim_size {from to} = to - from + 1 |> max 0
 inl offset_at_index array i =
-    inl rec loop offset = function
-        | {dim_ranges={from to}::dim_ranges dim_offsets=dim_offset::dim_offsets ar}, i :: is ->
+    inl rec loop x state = 
+        match x with
+        | {dim_ranges=({from to} & dim_range) :: dim_ranges ar}, i :: is ->
+            inl offset, dim_offset = loop ({dim_ranges ar}, is) state
+            inl dim_offset = dim_offset() 
             assert (i >= from && i <= to) "Argument out of bounds."
-            loop (offset+dim_offset*(i-from)) ({dim_ranges dim_offsets ar}, is)
-        | {dim_ranges=() dim_offsets=() ar}, () ->
-            offset
-    loop 0 (array,i)
+            
+            // The function wrapper here is to simulate lazy eval in order to 
+            // avoid the multiply on the first index at the end of the loop.
+            (offset+dim_offset*(i-from)), inl _ -> dim_offset * dim_size dim_range 
+        | {dim_ranges=() ar}, () ->
+            state
+    loop (array,i) (0,inl _ -> 1) |> fst
 
 inl index {ar} as x i = ar (offset_at_index x i)
 inl set {ar} as x i v = ar (offset_at_index x i) <- v
@@ -704,7 +712,6 @@ inl init !map_dims dim_ranges f =
     match tuple_length dim_ranges with
     | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
     | num_dims ->
-        inl dim_size {from to} = to - from + 1 |> max 0
         inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) dim_ranges 1
         inl ar = array_create len (type (f (Tuple.repeat num_dims 0)))
         inl rec loop offset index = function
@@ -715,7 +722,7 @@ inl init !map_dims dim_ranges f =
                     } |> ignore
             | (),() -> ar offset <- f (Tuple.rev index)
         loop (dyn 0) () (dim_ranges,dim_offsets)
-        inl array_data = heap {dim_ranges dim_offsets ar}
+        inl array_data = heap {dim_ranges ar}
         {array_data index=(inl i -> index array_data i); set=(inl i v -> set array_data i v)}
                 
 {init}
