@@ -45,9 +45,9 @@ inl rec while {cond body state} as d =
     inl loop_body {state cond body} as d =
         if cond state then while {d with state=body state}
         else state
-        : state
-    if is_static state then loop_body d
-    else (met _ -> loop_body d) ()
+    match d with
+    | {static} -> loop_body d
+    | _ -> (met _ -> loop_body d : state) ()
 
 inl for_template kind =
     inl rec loop {from (near_to ^ to)=to by} as d =
