@@ -23,8 +23,7 @@ let rec method_14((var_0: bool), (var_1: string), (var_2: int64)): unit =
             let (var_8: int64) = System.Convert.ToInt64(var_5)
             let (var_9: int64) = System.Convert.ToInt64('0')
             let (var_10: int64) = (var_8 - var_9)
-            let (var_11: int64) = (0L + var_10)
-            method_15((var_0: bool), (var_1: string), (var_11: int64), (var_7: int64))
+            method_15((var_0: bool), (var_1: string), (var_10: int64), (var_7: int64))
         else
             (failwith "pint64")
     else
@@ -173,8 +172,7 @@ and method_18((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64)
             let (var_13: int64) = System.Convert.ToInt64(var_10)
             let (var_14: int64) = System.Convert.ToInt64('0')
             let (var_15: int64) = (var_13 - var_14)
-            let (var_16: int64) = (0L + var_15)
-            method_19((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: string), (var_16: int64), (var_12: int64))
+            method_19((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: string), (var_15: int64), (var_12: int64))
         else
             (failwith "pint64")
     else
@@ -280,30 +278,28 @@ and method_21((var_0: int64), (var_1: (int64 [])), (var_2: int64)): Tuple0 =
         let (var_7: int64) = (var_2 * var_0)
         let (var_8: int64) = (var_7 + var_0)
         let (var_9: int64) = var_1.[int32 var_8]
-        let (var_10: int64) = (0L + var_9)
-        let (var_11: int64) = (var_2 - var_0)
-        let (var_12: int64) = (var_11 - 1L)
-        let (var_13: bool) =
+        let (var_10: int64) = (var_2 - var_0)
+        let (var_11: int64) = (var_10 - 1L)
+        let (var_12: bool) =
             if (var_0 >= 0L) then
                 true
             else
                 (var_0 < var_2)
-        let (var_15: bool) =
-            if var_13 then
-                if (var_12 >= 0L) then
+        let (var_14: bool) =
+            if var_12 then
+                if (var_11 >= 0L) then
                     true
                 else
-                    (var_12 < var_2)
+                    (var_11 < var_2)
             else
                 false
-        if (var_15 = false) then
+        if (var_14 = false) then
             (failwith "Out of bounds.")
         else
             ()
-        let (var_16: int64) = (var_7 + var_12)
-        let (var_17: int64) = var_1.[int32 var_16]
-        let (var_18: int64) = (0L + var_17)
-        method_22((var_10: int64), (var_18: int64), (var_3: int64), (var_1: (int64 [])), (var_2: int64))
+        let (var_15: int64) = (var_7 + var_11)
+        let (var_16: int64) = var_1.[int32 var_15]
+        method_22((var_9: int64), (var_16: int64), (var_3: int64), (var_1: (int64 [])), (var_2: int64))
     else
         Tuple0(0L, 0L)
 and method_22((var_0: int64), (var_1: int64), (var_2: int64), (var_3: (int64 [])), (var_4: int64)): Tuple0 =

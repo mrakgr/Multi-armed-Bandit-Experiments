@@ -17,8 +17,7 @@ let rec method_14((var_0: bool), (var_1: string), (var_2: int64)): unit =
             let (var_8: int64) = System.Convert.ToInt64(var_5)
             let (var_9: int64) = System.Convert.ToInt64('0')
             let (var_10: int64) = (var_8 - var_9)
-            let (var_11: int64) = (0L + var_10)
-            method_15((var_0: bool), (var_1: string), (var_11: int64), (var_7: int64))
+            method_15((var_0: bool), (var_1: string), (var_10: int64), (var_7: int64))
         else
             (failwith "pint64")
     else

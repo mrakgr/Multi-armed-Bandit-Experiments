@@ -56,8 +56,7 @@ and method_20((var_0: bool), (var_1: int64), (var_2: (int64 [])), (var_3: int64)
             let (var_12: int64) = System.Convert.ToInt64(var_9)
             let (var_13: int64) = System.Convert.ToInt64('0')
             let (var_14: int64) = (var_12 - var_13)
-            let (var_15: int64) = (0L + var_14)
-            method_21((var_0: bool), (var_1: int64), (var_2: (int64 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_15: int64), (var_11: int64))
+            method_21((var_0: bool), (var_1: int64), (var_2: (int64 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_14: int64), (var_11: int64))
         else
             (failwith "pint64")
     else
@@ -191,8 +190,7 @@ and method_23((var_0: bool), (var_1: int64), (var_2: int64), (var_3: (int64 []))
             let (var_13: int64) = System.Convert.ToInt64(var_10)
             let (var_14: int64) = System.Convert.ToInt64('0')
             let (var_15: int64) = (var_13 - var_14)
-            let (var_16: int64) = (0L + var_15)
-            method_24((var_0: bool), (var_1: int64), (var_2: int64), (var_3: (int64 [])), (var_4: int64), (var_5: int64), (var_6: string), (var_16: int64), (var_12: int64))
+            method_24((var_0: bool), (var_1: int64), (var_2: int64), (var_3: (int64 [])), (var_4: int64), (var_5: int64), (var_6: string), (var_15: int64), (var_12: int64))
         else
             (failwith "pint64")
     else
@@ -290,28 +288,27 @@ and method_27((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64
             ()
         let (var_7: int64) = (var_4 - 1L)
         let (var_8: int64) = (9L * var_7)
-        let (var_9: int64) = (0L + var_8)
-        let (var_10: bool) =
+        let (var_9: bool) =
             if (var_0 >= 2L) then
                 (var_0 <= 10L)
             else
                 false
-        if (var_10 = false) then
+        if (var_9 = false) then
             (failwith "Argument out of bounds.")
         else
             ()
-        let (var_11: int64) = (var_0 - 2L)
-        let (var_12: int64) = (1L * var_11)
-        let (var_13: int64) = (var_9 + var_12)
-        let (var_14: int64) = var_1.[int32 var_13]
-        let (var_15: int64) = (var_2 + var_14)
-        if (var_15 = var_3) then
+        let (var_10: int64) = (var_0 - 2L)
+        let (var_11: int64) = (1L * var_10)
+        let (var_12: int64) = (var_8 + var_11)
+        let (var_13: int64) = var_1.[int32 var_12]
+        let (var_14: int64) = (var_2 + var_13)
+        if (var_14 = var_3) then
             (var_5 + 1L)
         else
-            if (var_15 < var_3) then
-                let (var_16: int64) = (var_4 + 1L)
-                let (var_17: int64) = method_26((var_16: int64), (var_0: int64), (var_1: (int64 [])), (var_5: int64), (var_15: int64), (var_3: int64))
-                method_27((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_16: int64), (var_17: int64))
+            if (var_14 < var_3) then
+                let (var_15: int64) = (var_4 + 1L)
+                let (var_16: int64) = method_26((var_15: int64), (var_0: int64), (var_1: (int64 [])), (var_5: int64), (var_14: int64), (var_3: int64))
+                method_27((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_15: int64), (var_16: int64))
             else
                 var_5
     else

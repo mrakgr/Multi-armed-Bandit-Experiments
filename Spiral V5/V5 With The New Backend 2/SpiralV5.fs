@@ -1495,15 +1495,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | LitUInt64 a, LitUInt64 b -> op_arith a b |> LitUInt64 |> TyLit
                     | LitFloat32 a, LitFloat32 b -> op_arith a b |> LitFloat32 |> TyLit
                     | LitFloat64 a, LitFloat64 b -> op_arith a b |> LitFloat64 |> TyLit
+                    | _ -> prim_bin_op_helper t a b
 
-                    | LitInt8 0y, _ | LitInt16 0s, _ | LitInt32 0, _ | LitInt64 0L, _
-                    | LitUInt8 0uy, _ | LitUInt16 0us, _ | LitUInt32 0u, _ | LitUInt64 0UL, _
-                    | LitFloat32 0.0f, _ | LitFloat64 0.0, _ -> op_arith_zero_num a b
+                | TyLit a', _ ->
+                    match a' with
+                    | LitInt8 0y | LitInt16 0s | LitInt32 0 | LitInt64 0L
+                    | LitUInt8 0uy | LitUInt16 0us | LitUInt32 0u | LitUInt64 0UL
+                    | LitFloat32 0.0f | LitFloat64 0.0 -> op_arith_zero_num a b
+                    | _ -> prim_bin_op_helper t a b
 
-                    | _, LitInt8 0y | _, LitInt16 0s | _, LitInt32 0 | _, LitInt64 0L
-                    | _, LitUInt8 0uy | _, LitUInt16 0us | _, LitUInt32 0u | _, LitUInt64 0UL
-                    | _, LitFloat32 0.0f | _, LitFloat64 0.0 -> op_arith_num_zero a b
-
+                | _, TyLit b' ->
+                    match b' with
+                    | LitInt8 0y | LitInt16 0s | LitInt32 0 | LitInt64 0L
+                    | LitUInt8 0uy | LitUInt16 0us | LitUInt32 0u | LitUInt64 0UL
+                    | LitFloat32 0.0f | LitFloat64 0.0 -> op_arith_num_zero a b
                     | _ -> prim_bin_op_helper t a b
                 | _ -> prim_bin_op_helper t a b
                 ) a b t
