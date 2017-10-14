@@ -31,9 +31,9 @@ and method_19((var_0: Rec0), (var_1: float)): float =
         let (var_4: Rec0) = var_2.mem_1
         let (var_5: float) = method_19((var_4: Rec0), (var_1: float))
         (var_3 + var_5)
-let (var_0: Rec0) = Rec0Case0
-let (var_1: float) = 0.000000
-let (var_2: float) = method_18((var_0: Rec0), (var_1: float))
+let (var_0: float) = 0.000000
+let (var_1: Rec0) = Rec0Case0
+let (var_2: float) = method_18((var_1: Rec0), (var_0: float))
 let (var_3: Rec0) = Rec0Case0
 let (var_4: float) = 0.000000
 let (var_5: float) = method_19((var_3: Rec0), (var_4: float))

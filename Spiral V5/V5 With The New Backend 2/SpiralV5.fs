@@ -213,7 +213,8 @@ type Op =
     | TypeLitCast
     | TypeLitIs
     | Dynamize
-    | IsStatic
+    | LitIs
+    | BoxIs
 
     // UnOps
     | Neg
@@ -1644,16 +1645,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyT (LitT _) -> TyLit <| LitBool true
             | _ -> TyLit <| LitBool false
 
-        let rec is_static' x =
-            let inline f x = is_static' x
-            match x with
-            | TyBox (x,_) -> f x
-            | Func (_,x,_) -> Map.forall (fun _ -> f) x
-            | TyVV x -> List.forall f x
-            | TyLit _ -> true
-            | _ -> false
+        let lit_is d a =
+            match tev d a with
+            | TyLit _ -> TyLit <| LitBool true
+            | _ -> TyLit <| LitBool false
 
-        let inline is_static d x = is_static' (tev d x) |> LitBool |> TyLit
+        let box_is d a =
+            match tev d a with
+            | TyBox _ -> TyLit <| LitBool true
+            | _ -> TyLit <| LitBool false
 
         let dynamize d a =
             let rec loop = function
@@ -1875,7 +1875,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeLitCast,[a] -> type_lit_cast d a
             | TypeLitIs,[a] -> type_lit_is d a
             | Dynamize,[a] -> dynamize d a
-            | IsStatic,[a] -> is_static d a
+            | LitIs,[a] -> lit_is d a
+            | BoxIs,[a] -> box_is d a
             | ModuleOpen,[a;b] -> module_open d a b
             | ModuleCreate,l -> module_create d l
             | ModuleWith, l -> module_with d l
@@ -3140,7 +3141,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "tuple_index" (p2 tuple_index')
             l "not" (p <| fun x -> eq x (lit <| LitBool false))
             l "string_length" (p <| fun x -> op(StringLength,[x]))
-            l "is_static" (p <| fun x -> op(IsStatic,[x]))
+            l "lit_is" (p <| fun x -> op(LitIs,[x]))
+            l "box_is" (p <| fun x -> op(BoxIs,[x]))
             l "failwith" (p <| fun x -> op(FailWith,[x]))
             l "assert" (p2 <| fun c x -> if_static (eq c (lit (LitBool false))) (op(FailWith,[x])) B)
             l "max" (p2 <| fun a b -> if_static (lt a b) b a)

@@ -810,8 +810,8 @@ let test65 =
     """
 open List
 
-foldl (+) 0.0 (dyn (empty float64)),
-foldr (+) (dyn (empty float64)) 0.0f64
+foldl (+) (dyn 0.0) (dyn (empty float64)),
+foldr (+) (dyn (empty float64)) (dyn 0.0f64)
     """
 
 let test66 =
@@ -1555,11 +1555,10 @@ inl main = {
         inl queue = Queue.create () state_type
         queue.enqueue init_state
 
-        inl print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
-            List.last path {
-                some = Console.writeline
-                none = inl _ -> failwith "Error: No moves taken."
-                }
+        met print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
+            match List.last path with
+            | [Some: x] -> Console.writeline x
+            | [None] -> failwith "Error: No moves taken."
 
         met evaluate_move state move on_fail =
             inl new_pos,_ as new_state = move state

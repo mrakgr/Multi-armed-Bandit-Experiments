@@ -37,60 +37,6 @@ inl none x = box (Option x) [None]
 {Option some none}
     """) |> module_
 
-let loops =
-    (
-    "Loops",[],"Various imperative loop constructors module.",
-    """
-inl rec while {cond body state} as d =
-    inl loop_body {state cond body} as d =
-        if cond state then while {d with state=body state}
-        else state
-    match d with
-    | {static} -> loop_body d
-    | _ -> (met _ -> loop_body d : state) ()
-
-inl for_template kind =
-    inl rec loop {from (near_to ^ to)=to by} as d =
-        inl loop_body {check from by state body finally} as d =
-            if check from then 
-                match kind with
-                | .Navigable ->
-                    inl d = {d without state}
-                    inl next state = loop {d with state from=from+by}
-                    body {next state i=from}
-                | .Standard ->
-                    loop {d with state=body {state i=from}; from=from+by}
-            else finally state
-            : finally state
-
-        match d with
-        | {static} when is_static (from,to,by) -> loop_body d
-        | _ -> (met d -> loop_body d) {d with from=dyn from}
-
-    inl er_msg = "The by field should not be zero in loop as the program would diverge."
-
-    function | {static_from} as d -> {d with static=()} | d -> d
-    >> function | {from ^ static_from=from} as d -> {d with from without static_from} | d -> error_type "The from field to loop is missing."
-    >> function | {to ^ near_to} as d -> d | d -> "For loop needs exlusively to or near_to fields."
-    >> function | {body} as d -> d | d -> error_type "The loop body is missing."
-    >> function | {state} as d -> d | d -> {d with state=()}
-    >> function | {by} as d -> d | d -> {d with by=1}
-    >> function | {finally} as d -> d | d -> {d with finally=id}
-    >> function 
-        | {by} when is_static by && by = 0 -> error_type er_msg
-        | {by state} when by = 0 -> failwith er_msg; state
-        // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
-        // That way it will get specialized even if `by` is dynamic.
-        | {by} as d -> 
-            if by < 0 then loop {d with check=match d with | {to} -> inl from -> from >= to | {near_to} -> inl from -> from > near_to}
-            else loop {d with check=match d with | {to} -> inl from -> from <= to | {near_to} -> inl from -> from < near_to}
-
-inl for = for_template .Standard
-inl for' = for_template .Navigable
-
-{for for' while}
-    """) |> module_
-
 let tuple =
     (
     "Tuple",[],"Operations on tuples.",
@@ -225,6 +171,61 @@ inl rec contains t x =
 {head tail foldl foldr scanl scanr rev map iter iteri forall exists filter zip unzip index init repeat append singleton range tryFind contains}
     """) |> module_
 
+let loops =
+    (
+    "Loops",[tuple],"Various imperative loop constructors module.",
+    """
+inl rec while {cond body state} as d =
+    inl loop_body {state cond body} as d =
+        if cond state then while {d with state=body state}
+        else state
+    match d with
+    | {static} -> loop_body d
+    | _ -> (met _ -> loop_body d : state) ()
+
+inl for_template kind =
+    inl rec loop {from (near_to ^ to)=to by} as d =
+        inl loop_body {check from by state body finally} as d =
+            if check from then 
+                match kind with
+                | .Navigable ->
+                    inl d = {d without state}
+                    inl next state = loop {d with state from=from+by}
+                    body {next state i=from}
+                | .Standard ->
+                    loop {d with state=body {state i=from}; from=from+by}
+            else finally state
+            : finally state
+
+        match d with
+        | {static} when Tuple.forall lit_is (from,to,by) -> loop_body d
+        | _ -> (met d -> loop_body d) {d with from=dyn from}
+
+    inl er_msg = "The by field should not be zero in loop as the program would diverge."
+
+    function | {static_from} as d -> {d with static=()} | d -> d
+    >> function | {from ^ static_from=from} as d -> {d with from without static_from} | d -> error_type "The from field to loop is missing."
+    >> function | {to ^ near_to} as d -> d | d -> "For loop needs exlusively to or near_to fields."
+    >> function | {body} as d -> d | d -> error_type "The loop body is missing."
+    >> function | {state} as d -> d | d -> {d with state=()}
+    >> function | {by} as d -> d | d -> {d with by=1}
+    >> function | {finally} as d -> d | d -> {d with finally=id}
+    >> function 
+        | {by} when lit_is by && by = 0 -> error_type er_msg
+        | {by state} when by = 0 -> failwith er_msg; state
+        // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
+        // That way it will get specialized even if `by` is dynamic.
+        | {by} as d -> 
+            if by < 0 then loop {d with check=match d with | {to} -> inl from -> from >= to | {near_to} -> inl from -> from > near_to}
+            else loop {d with check=match d with | {to} -> inl from -> from <= to | {near_to} -> inl from -> from < near_to}
+
+inl for = for_template .Standard
+inl for' = for_template .Navigable
+
+{for for' while}
+    """) |> module_
+
+
 let array =
     (
     "Array",[tuple;loops],"The array module",
@@ -273,11 +274,14 @@ inl exists f ar = for' {from=0; near_to=array_length ar; state=false; body = inl
 
 let list =
     (
-    "List",[tuple],"The list module.",
+    "List",[loops;option;tuple],"The List module.",
     """
-type list x =
+open Loops
+open Option
+
+type List x =
     ()
-    x, list x
+    x, List x
 
 inl lw x = 
     inl rec loop tup_type n x on_fail on_succ =
@@ -293,45 +297,47 @@ inl lw x =
                 | _ -> on_fail()
             | .cons -> on_succ (x :: ())
 
-    // Testing for whether the type is a list is not possible since the types are stripped away so ruthlesly in case.
+    // Testing for whether the type is a List is not possible since the types are stripped away so ruthlesly in case.
     match x with
     | [var: x] _ on_succ -> on_succ x
     | (.tup | .cons) & typ, (n, x) -> loop typ n x
 
-inl empty x = box (list x) ()
-inl singleton x = box (list x) (x, empty x)
+inl empty x = box (List x) ()
+inl singleton x = box (List x) (x, empty x)
 inl cons a b = 
-    inl t = list a
+    inl t = List a
     box t (a, box t b)
 
-inl init n f =
-    inl t = type (f 0)
-    met rec loop !dyn i =
-        if i < n then cons (f i) (loop (i+1))
-        else empty t
-        : list t
-    loop 0
+inl init = 
+    inl body n f =
+        inl t = type (f 0)
+        {from=0; near_to=n; state=empty t; body=inl {next i state} -> cons (f i) (next state)}
 
+    function
+    | .static n f -> body n f |> inl d -> {d with static=()} |> for'
+    | n f -> body n f |> for'
+    
+    
 inl elem_type l =
     match split l with
-    | (), (a,b) when eq_type (list a) l -> a
-    | _ -> error_type "Expected a list in elem_type."
+    | (), (a,b) when eq_type (List a) l -> a
+    | _ -> error_type "Expected a List in elem_type."
+
+inl is_static x = box_is x || lit_is x
 
 inl rec map f l = 
-    inl t' = type (f (elem_type l))
+    inl t = type (f (elem_type l))
     inl loop map =
         match l with
         | #lw (x :: xs) -> cons (f x) (map f xs)
-        | #lw () -> empty t'
-        : list t'
+        | #lw () -> empty t
+        : List t
     if is_static l then loop map
     else (met _ -> loop map) ()
 
 inl fold_template loop f s l = 
-    if (is_static s && is_static l) then loop f s l
-    else 
-        inl s,l = dyn s, dyn l
-        (met () -> loop f s l) ()
+    if is_static l then loop f s l
+    else (met () -> loop f s l) ()
 
 inl rec foldl x =
     fold_template (inl f s l ->
@@ -347,25 +353,23 @@ inl rec foldr f l s =
         | #lw () -> s
         : s) f s l
 
-inl head_tail_template f l ret = 
+inl head_tail_template f l = 
+    inl t = elem_type l
     match l with
-    | #lw (x :: xs) -> f (x, xs) |> ret .some
-    | #lw () -> ret .none ()
+    | #lw (x :: xs) -> f (x, xs) |> some
+    | #lw () -> none t
 
 inl head = head_tail_template fst
 inl tail = head_tail_template snd
 
-met rec last l ret = 
-    match l with
-    | #lw (x :: ()) -> ret .some x
-    | #lw (x :: xs) -> last xs ret
-    | #lw () -> ret .none ()
-    : ret .none ()
+met rec last l = 
+    inl t = elem_type l
+    foldl (inl _ x -> some x) (none t) l
 
 inl append a b = foldr cons a b
 inl concat l & !elem_type !elem_type t = foldr append l (empty t)
 
-{list lw init map foldl foldr empty cons singleton append concat head tail last}
+{List lw init map foldl foldr empty cons singleton append concat head tail last}
     """) |> module_
 
 let parsing =
@@ -476,7 +480,7 @@ inl stream_char = m {
 
 inl run data parser ret = 
     match data with
-    | _ : string -> parser .elem { ret with stream = string_stream data} { pos = if is_static data then 0 else dyn 0 }
+    | _ : string -> parser .elem { ret with stream = string_stream data} { pos = if lit_is data then 0 else dyn 0 }
     | _ -> error_type "Only strings supported for now."
 
 inl with_unit_ret = {
