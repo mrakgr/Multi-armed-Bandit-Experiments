@@ -14,9 +14,8 @@ and Env1 =
     end
 and Env2 =
     struct
-    val mem_ar: (bool [])
-    val mem_x: EnvHeap0
-    new(arg_mem_ar, arg_mem_x) = {mem_ar = arg_mem_ar; mem_x = arg_mem_x}
+    val mem_array_data: EnvHeap0
+    new(arg_mem_array_data) = {mem_array_data = arg_mem_array_data}
     end
 and Env3 =
     struct
@@ -40,8 +39,8 @@ and method_16((var_0: int64), (var_1: (bool [])), (var_2: int64), (var_3: int64)
         method_16((var_0: int64), (var_1: (bool [])), (var_2: int64), (var_6: int64), (var_5: int64))
     else
         var_4
-and method_17((var_0: EnvHeap0), (var_1: (bool []))): Env1 =
-    (Env1(var_0, (Env2(var_1, var_0)), (Env3(var_0))))
+and method_17((var_0: EnvHeap0)): Env1 =
+    (Env1(var_0, (Env2(var_0)), (Env3(var_0))))
 let (var_0: int64) = 10L
 let (var_1: int64) = 10L
 let (var_2: int64) = (var_0 - 1L)
@@ -64,5 +63,4 @@ let (var_10: int64) = 0L
 let (var_11: int64) = 0L
 let (var_12: int64) = method_15((var_5: int64), (var_3: int64), (var_9: (bool [])), (var_2: int64), (var_11: int64), (var_10: int64))
 let (var_13: EnvHeap0) = ({mem_0 = (var_9: (bool [])); mem_1 = (var_5: int64); mem_2 = (var_2: int64); mem_3 = (var_3: int64)} : EnvHeap0)
-let (var_14: (bool [])) = var_13.mem_0
-method_17((var_13: EnvHeap0), (var_14: (bool [])))
+method_17((var_13: EnvHeap0))

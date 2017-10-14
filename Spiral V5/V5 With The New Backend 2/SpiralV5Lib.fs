@@ -716,7 +716,7 @@ inl init !map_dims dim_ranges f =
             | (),() -> ar offset <- f (Tuple.rev index)
         loop (dyn 0) () (dim_ranges,dim_offsets)
         inl array_data = heap {dim_ranges dim_offsets ar}
-        {array_data index=index array_data; set=set array_data}
+        {array_data index=(inl i -> index array_data i); set=(inl i v -> set array_data i v)}
                 
 {init}
     """) |> module_
