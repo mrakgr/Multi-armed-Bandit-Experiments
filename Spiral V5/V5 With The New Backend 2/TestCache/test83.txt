@@ -3,7 +3,6 @@ type EnvHeap0 =
     mem_0: (bool [])
     mem_1: int64
     mem_2: int64
-    mem_3: int64
     }
 and Env1 =
     struct
@@ -62,5 +61,5 @@ let (var_9: (bool [])) = Array.zeroCreate<bool> (System.Convert.ToInt32(var_8))
 let (var_10: int64) = 0L
 let (var_11: int64) = 0L
 let (var_12: int64) = method_15((var_5: int64), (var_3: int64), (var_9: (bool [])), (var_2: int64), (var_11: int64), (var_10: int64))
-let (var_13: EnvHeap0) = ({mem_0 = (var_9: (bool [])); mem_1 = (var_5: int64); mem_2 = (var_2: int64); mem_3 = (var_3: int64)} : EnvHeap0)
+let (var_13: EnvHeap0) = ({mem_0 = (var_9: (bool [])); mem_1 = (var_2: int64); mem_2 = (var_3: int64)} : EnvHeap0)
 method_17((var_13: EnvHeap0))

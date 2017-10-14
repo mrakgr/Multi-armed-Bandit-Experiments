@@ -415,36 +415,36 @@ and method_32((var_0: (Union0 [])), (var_1: int64), (var_2: int64), (var_3: int6
     let (var_9: int64) = (var_2 - 2L)
     let (var_10: int64) = (var_1 - 1L)
     let (var_11: bool) =
-        if (var_10 >= 0L) then
-            (var_10 <= 14L)
+        if (var_3 >= 0L) then
+            (var_3 <= 1L)
         else
             false
     if (var_11 = false) then
         (failwith "Argument out of bounds.")
     else
         ()
-    let (var_12: int64) = (30L * var_10)
-    let (var_13: bool) =
+    let (var_12: bool) =
         if (var_7 >= 0L) then
             (var_7 <= 14L)
         else
             false
-    if (var_13 = false) then
+    if (var_12 = false) then
         (failwith "Argument out of bounds.")
     else
         ()
-    let (var_14: int64) = (2L * var_7)
-    let (var_15: int64) = (var_12 + var_14)
-    let (var_16: bool) =
-        if (var_3 >= 0L) then
-            (var_3 <= 1L)
+    let (var_13: int64) = (2L * var_7)
+    let (var_14: int64) = (var_3 + var_13)
+    let (var_15: bool) =
+        if (var_10 >= 0L) then
+            (var_10 <= 14L)
         else
             false
-    if (var_16 = false) then
+    if (var_15 = false) then
         (failwith "Argument out of bounds.")
     else
         ()
-    let (var_17: int64) = (var_15 + var_3)
+    let (var_16: int64) = (30L * var_10)
+    let (var_17: int64) = (var_14 + var_16)
     let (var_18: Union0) = var_0.[int32 var_17]
     match var_18 with
     | Union0Case0(var_19) ->
@@ -541,8 +541,8 @@ and method_32((var_0: (Union0 [])), (var_1: int64), (var_2: int64), (var_3: int6
                         else
                             var_4
         let (var_45: bool) =
-            if (var_10 >= 0L) then
-                (var_10 <= 14L)
+            if (var_3 >= 0L) then
+                (var_3 <= 1L)
             else
                 false
         if (var_45 = false) then
@@ -559,8 +559,8 @@ and method_32((var_0: (Union0 [])), (var_1: int64), (var_2: int64), (var_3: int6
         else
             ()
         let (var_47: bool) =
-            if (var_3 >= 0L) then
-                (var_3 <= 1L)
+            if (var_10 >= 0L) then
+                (var_10 <= 14L)
             else
                 false
         if (var_47 = false) then

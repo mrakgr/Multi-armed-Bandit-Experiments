@@ -278,27 +278,27 @@ and method_26((var_0: int64), (var_1: int64), (var_2: (int64 [])), (var_3: int64
 and method_27((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64)): int64 =
     if (var_4 <= var_3) then
         let (var_6: bool) =
-            if (var_4 >= 1L) then
-                (var_4 <= 1000L)
+            if (var_0 >= 2L) then
+                (var_0 <= 10L)
             else
                 false
         if (var_6 = false) then
             (failwith "Argument out of bounds.")
         else
             ()
-        let (var_7: int64) = (var_4 - 1L)
-        let (var_8: int64) = (9L * var_7)
-        let (var_9: bool) =
-            if (var_0 >= 2L) then
-                (var_0 <= 10L)
+        let (var_7: int64) = (var_0 - 2L)
+        let (var_8: bool) =
+            if (var_4 >= 1L) then
+                (var_4 <= 1000L)
             else
                 false
-        if (var_9 = false) then
+        if (var_8 = false) then
             (failwith "Argument out of bounds.")
         else
             ()
-        let (var_10: int64) = (var_0 - 2L)
-        let (var_11: int64) = (var_8 + var_10)
+        let (var_9: int64) = (var_4 - 1L)
+        let (var_10: int64) = (9L * var_9)
+        let (var_11: int64) = (var_7 + var_10)
         let (var_12: int64) = var_1.[int32 var_11]
         let (var_13: int64) = (var_2 + var_12)
         if (var_13 = var_3) then
