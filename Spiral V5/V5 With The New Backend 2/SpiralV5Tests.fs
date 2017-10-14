@@ -1765,7 +1765,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_10 =
-    "hacker_rank_10",[core;tuple;array;arrayn;parsing;console;option],"Crossword Puzzle",
+    "hacker_rank_10",[core;tuple;array;arrayn;list;parsing;console;option],"Crossword Puzzle",
     """
 
 

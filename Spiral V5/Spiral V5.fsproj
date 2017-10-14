@@ -242,6 +242,7 @@
     <Content Include="V5 With The New Backend 2\output.txt" />
     <None Include="V5 With The New Backend 2\unfinished_queue.fsx" />
     <None Include="V5 With The New Backend 2\exclusive_or.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v1.fsx" />
     <Compile Include="V5 With The New Backend 2\SpiralV5HashConsing.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralV5Lib.fs" />
@@ -316,7 +317,6 @@
     <Content Include="V5 With The New Backend 2\TestCache\test7.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test8.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test9.txt" />
-    <None Include="V5 With The New Backend 2\reflection_v1.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">

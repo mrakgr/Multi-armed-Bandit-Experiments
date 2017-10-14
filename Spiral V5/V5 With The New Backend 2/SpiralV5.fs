@@ -1469,6 +1469,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | Div -> a / b
                     | Mod -> a % b
                     | _ -> failwith "Expected an arithmetic operation."
+                let op_arith_num_zero a b =
+                    match t with
+                    | Add | Sub -> a
+                    | Mult -> b
+                    | Div -> on_type_er d.trace "Division by zero caught at compile time."
+                    | Mod -> on_type_er d.trace "Modulus by zero caught at compile time."
+                    | _ -> failwith "Expected an arithmetic operation."
+                let inline op_arith_zero_num a b =
+                    match t with
+                    | Add -> b
+                    | Sub -> TyOp(Neg,[b],get_type b)
+                    | Mult | Div | Mod -> a
+                    | _ -> failwith "Expected an arithmetic operation."
                 match a, b with
                 | TyLit a', TyLit b' ->
                     match a', b' with
@@ -1482,6 +1495,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | LitUInt64 a, LitUInt64 b -> op_arith a b |> LitUInt64 |> TyLit
                     | LitFloat32 a, LitFloat32 b -> op_arith a b |> LitFloat32 |> TyLit
                     | LitFloat64 a, LitFloat64 b -> op_arith a b |> LitFloat64 |> TyLit
+
+                    | LitInt8 0y, _ | LitInt16 0s, _ | LitInt32 0, _ | LitInt64 0L, _
+                    | LitUInt8 0uy, _ | LitUInt16 0us, _ | LitUInt32 0u, _ | LitUInt64 0UL, _
+                    | LitFloat32 0.0f, _ | LitFloat64 0.0, _ -> op_arith_zero_num a b
+
+                    | _, LitInt8 0y | _, LitInt16 0s | _, LitInt32 0 | _, LitInt64 0L
+                    | _, LitUInt8 0uy | _, LitUInt16 0us | _, LitUInt32 0u | _, LitUInt64 0UL
+                    | _, LitFloat32 0.0f | _, LitFloat64 0.0 -> op_arith_num_zero a b
+
                     | _ -> prim_bin_op_helper t a b
                 | _ -> prim_bin_op_helper t a b
                 ) a b t
