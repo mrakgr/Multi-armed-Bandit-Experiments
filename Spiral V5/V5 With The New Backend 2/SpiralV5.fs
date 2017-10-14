@@ -1476,11 +1476,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | Div -> on_type_er d.trace "Division by zero caught at compile time."
                     | Mod -> on_type_er d.trace "Modulus by zero caught at compile time."
                     | _ -> failwith "Expected an arithmetic operation."
-                let inline op_arith_zero_num a b =
+                let op_arith_zero_num a b =
                     match t with
                     | Add -> b
-                    | Sub -> TyOp(Neg,[b],get_type b)
+                    | Sub -> TyOp(Neg,[b],get_type b) |> destructure d
                     | Mult | Div | Mod -> a
+                    | _ -> failwith "Expected an arithmetic operation."
+                let op_arith_num_one a b =
+                    match t with
+                    | Mult | Div | Mod -> a
+                    | Add | Sub -> prim_bin_op_helper t a b
+                    | _ -> failwith "Expected an arithmetic operation."
+                let op_arith_one_num a b =
+                    match t with
+                    | Mult -> b
+                    | Div | Mod | Add | Sub -> prim_bin_op_helper t a b
                     | _ -> failwith "Expected an arithmetic operation."
                 match a, b with
                 | TyLit a', TyLit b' ->
@@ -1502,6 +1512,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | LitInt8 0y | LitInt16 0s | LitInt32 0 | LitInt64 0L
                     | LitUInt8 0uy | LitUInt16 0us | LitUInt32 0u | LitUInt64 0UL
                     | LitFloat32 0.0f | LitFloat64 0.0 -> op_arith_zero_num a b
+                    | LitInt8 1y | LitInt16 1s | LitInt32 1 | LitInt64 1L
+                    | LitUInt8 1uy | LitUInt16 1us | LitUInt32 1u | LitUInt64 1UL
+                    | LitFloat32 1.0f | LitFloat64 1.0 -> op_arith_one_num a b
                     | _ -> prim_bin_op_helper t a b
 
                 | _, TyLit b' ->
@@ -1509,6 +1522,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | LitInt8 0y | LitInt16 0s | LitInt32 0 | LitInt64 0L
                     | LitUInt8 0uy | LitUInt16 0us | LitUInt32 0u | LitUInt64 0UL
                     | LitFloat32 0.0f | LitFloat64 0.0 -> op_arith_num_zero a b
+                    | LitInt8 1y | LitInt16 1s | LitInt32 1 | LitInt64 1L
+                    | LitUInt8 1uy | LitUInt16 1us | LitUInt32 1u | LitUInt64 1UL
+                    | LitFloat32 1.0f | LitFloat64 1.0 -> op_arith_num_one a b
                     | _ -> prim_bin_op_helper t a b
                 | _ -> prim_bin_op_helper t a b
                 ) a b t
