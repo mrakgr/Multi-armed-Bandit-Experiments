@@ -311,7 +311,7 @@ and JoinPointType =
     | JoinPointMethod
     | JoinPointType
 
-and JoinPointKey = MemoKey * Tag
+and JoinPointKey = MemoKey
 and JoinPointValue = JoinPointType * Arguments * Renamer
 
 and MemoCases =
@@ -408,8 +408,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
 
     let ty_join_point memo_key value t =
-        let new_subtag = join_point_dict.Count
-        let key = memo_key,new_subtag
+        let key = memo_key
         join_point_dict.Add(key,value)
         TyJoinPoint(key,t)
 
@@ -2691,15 +2690,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> sprintf "'%s'"
                 | LitBool x -> if x then "true" else "false"
 
-//            let inline print_if' t f =
-//                match t with
-//                | Unit -> f (); ""
-//                | t ->
-//                    let if_var = sprintf "if_var_%i" (get_tag())
-//                    sprintf "let (%s: %s) =" if_var (print_type t) |> state
-//                    enter' <| fun _ -> f()
-//                    if_var
-
             let inline print_if_tail f = f()
 
             let inline print_if (_,t as v) f =
@@ -2712,14 +2702,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let inline if_ v cond tr fl =
                 let enter f = enter <| fun _ -> handle_unit_in_last_position f
                 
-                let inline f op a b = codegen (TyOp(op,[a;b],PrimT BoolT))
-
-                let print_op x =
-                    match v with
-                    | Some tyv -> sprintf "let %s = %s" (print_tyv_with_type tyv) x
-                    | None -> x
-                    |> state
-
                 let inline k() = 
                     sprintf "if %s then" (codegen cond) |> state
                     enter <| fun _ -> codegen tr
@@ -2793,7 +2775,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PrimT Float32T -> "float32"
                     | PrimT Float64T -> "float"
                     | _ -> failwith "impossible"
-                sprintf "%s %s" conv_func (codegen a)
+                sprintf "(%s %s)" conv_func (codegen a)
 
             match expr with
             | TyT Unit | TyV (_, Unit) -> ""
@@ -2815,7 +2797,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
             | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
             | TyLit x -> print_value x
-            | TyJoinPoint((S method_tag,_ as key),_) ->
+            | TyJoinPoint((S method_tag as key),_) ->
                 let method_name = print_method method_tag
                 match join_point_dict.[key] with
                 | JoinPointType, _, _ -> ""
