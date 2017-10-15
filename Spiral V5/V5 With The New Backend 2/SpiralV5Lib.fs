@@ -27,9 +27,7 @@ let option =
     (
     "Option",[],"The Option module.",
     """
-type Option x =
-    [Some: x]
-    [None]
+inl Option x = union (type ([Some: x])) (type ([None]))
 
 inl some x = box (Option x) [Some: x]
 inl none x = box (Option x) [None]

@@ -1,4 +1,4 @@
-let rec method_14((var_0: int64), (var_1: int64)): int64 =
+let rec method_0((var_0: int64), (var_1: int64)): int64 =
     if (var_1 <= var_0) then
         let (var_2: int64) = (var_1 % 4L)
         let (var_24: bool) =
@@ -51,11 +51,11 @@ let rec method_14((var_0: int64), (var_1: int64)): int64 =
             var_1
         else
             let (var_25: int64) = (var_1 + 1385670L)
-            method_14((var_0: int64), (var_25: int64))
+            method_0((var_0: int64), (var_25: int64))
     else
         -1L
 let (var_0: int64) = System.Int64.MaxValue
 let (var_1: int64) = 1385670L
-let (var_2: int64) = method_14((var_0: int64), (var_1: int64))
+let (var_2: int64) = method_0((var_0: int64), (var_1: int64))
 System.Console.WriteLine(var_2)
 

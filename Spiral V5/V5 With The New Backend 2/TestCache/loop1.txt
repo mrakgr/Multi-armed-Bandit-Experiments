@@ -1,4 +1,4 @@
-let rec method_14((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
+let rec method_0((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
     if (var_2 >= var_1) then
         let (var_4: int64) = (var_2 % 3L)
         let (var_6: bool) =
@@ -13,10 +13,10 @@ let rec method_14((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)
             else
                 var_3
         let (var_8: int64) = (var_2 + var_0)
-        method_14((var_0: int64), (var_1: int64), (var_8: int64), (var_7: int64))
+        method_0((var_0: int64), (var_1: int64), (var_8: int64), (var_7: int64))
     else
         var_3
-and method_15((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
+and method_1((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
     if (var_2 <= var_1) then
         let (var_4: int64) = (var_2 % 3L)
         let (var_6: bool) =
@@ -31,7 +31,7 @@ and method_15((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): i
             else
                 var_3
         let (var_8: int64) = (var_2 + var_0)
-        method_15((var_0: int64), (var_1: int64), (var_8: int64), (var_7: int64))
+        method_1((var_0: int64), (var_1: int64), (var_8: int64), (var_7: int64))
     else
         var_3
 let (var_0: int64) = 999L
@@ -44,8 +44,8 @@ let (var_7: int64) =
         var_3
     else
         if (var_2 < 0L) then
-            method_14((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
+            method_0((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
         else
-            method_15((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
+            method_1((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
 System.Console.WriteLine(var_7)
 

@@ -1,19 +1,19 @@
-let rec method_15((var_0: (int64 [])), (var_1: int64)): unit =
+let rec method_0((var_0: (int64 [])), (var_1: int64)): unit =
     if (var_1 < 16L) then
         var_0.[int32 var_1] <- var_1
         let (var_2: int64) = (var_1 + 1L)
-        method_15((var_0: (int64 [])), (var_2: int64))
+        method_0((var_0: (int64 [])), (var_2: int64))
     else
         ()
-and method_17((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64)): unit =
+and method_1((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64)): unit =
     if (var_3 < var_2) then
         let (var_4: int64) = var_1.[int32 var_3]
         var_0.[int32 var_3] <- (2L * var_4)
         let (var_5: int64) = (var_3 + 1L)
-        method_17((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_5: int64))
+        method_1((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_5: int64))
     else
         ()
-and method_18((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64)): int64 =
+and method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64)): int64 =
     if (var_3 < var_2) then
         let (var_5: int64) = var_0.[int32 var_3]
         let (var_6: int64) =
@@ -23,20 +23,20 @@ and method_18((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: 
             else
                 var_4
         let (var_7: int64) = (var_3 + 1L)
-        method_18((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_7: int64), (var_6: int64))
+        method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_7: int64), (var_6: int64))
     else
         var_4
-and method_20((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64)): unit =
+and method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64)): unit =
     if (var_3 < var_2) then
         let (var_4: int64) = var_1.[int32 var_3]
         var_0.[int32 var_3] <- var_4
         let (var_5: int64) = (var_3 + 1L)
-        method_20((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_5: int64))
+        method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_5: int64))
     else
         ()
 let (var_0: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(16L))
 let (var_1: int64) = 0L
-method_15((var_0: (int64 [])), (var_1: int64))
+method_0((var_0: (int64 [])), (var_1: int64))
 let (var_2: int64) = var_0.LongLength
 let (var_3: bool) = (var_2 >= 0L)
 if (var_3 = false) then
@@ -45,13 +45,13 @@ else
     ()
 let (var_5: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_2))
 let (var_6: int64) = 0L
-method_17((var_5: (int64 [])), (var_0: (int64 [])), (var_2: int64), (var_6: int64))
+method_1((var_5: (int64 [])), (var_0: (int64 [])), (var_2: int64), (var_6: int64))
 let (var_7: int64) = var_5.LongLength
 let (var_8: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_7))
 let (var_9: int64) = 0L
 let (var_10: int64) = var_5.LongLength
 let (var_11: int64) = 0L
-let (var_12: int64) = method_18((var_5: (int64 [])), (var_8: (int64 [])), (var_10: int64), (var_11: int64), (var_9: int64))
+let (var_12: int64) = method_2((var_5: (int64 [])), (var_8: (int64 [])), (var_10: int64), (var_11: int64), (var_9: int64))
 let (var_13: bool) = (var_12 >= 0L)
 if (var_13 = false) then
     (failwith "The input to init needs to be greater or equal than 0.")
@@ -59,5 +59,5 @@ else
     ()
 let (var_15: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_12))
 let (var_16: int64) = 0L
-method_20((var_15: (int64 [])), (var_8: (int64 [])), (var_12: int64), (var_16: int64))
+method_3((var_15: (int64 [])), (var_8: (int64 [])), (var_12: int64), (var_16: int64))
 var_15

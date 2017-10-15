@@ -1,5 +1,5 @@
-let rec method_14 ((var_0: int64), (var_1: int64)): unit =
+let rec method_0 ((var_0: int64), (var_1: int64)): unit =
     ()
-let (var_2: (int64 * int64 -> unit)) = method_14
+let (var_2: (int64 * int64 -> unit)) = method_0
 var_2(1L, 2L)
 

@@ -5,7 +5,7 @@ type Env0 =
     val mem_sum: int64
     new(arg_mem_a, arg_mem_b, arg_mem_sum) = {mem_a = arg_mem_a; mem_b = arg_mem_b; mem_sum = arg_mem_sum}
     end
-let rec method_14((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
+let rec method_0((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
     if (var_1 <= 4000000L) then
         let (var_3: int64) = (var_1 % 2L)
         let (var_4: int64) =
@@ -14,13 +14,13 @@ let rec method_14((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
             else
                 var_2
         let (var_5: int64) = (var_0 + var_1)
-        method_14((var_1: int64), (var_5: int64), (var_4: int64))
+        method_0((var_1: int64), (var_5: int64), (var_4: int64))
     else
         (Env0(var_0, var_1, var_2))
 let (var_0: int64) = 0L
 let (var_1: int64) = 1L
 let (var_2: int64) = 2L
-let (var_3: Env0) = method_14((var_1: int64), (var_2: int64), (var_0: int64))
+let (var_3: Env0) = method_0((var_1: int64), (var_2: int64), (var_0: int64))
 let (var_4: int64) = var_3.mem_a
 let (var_5: int64) = var_3.mem_b
 let (var_6: int64) = var_3.mem_sum

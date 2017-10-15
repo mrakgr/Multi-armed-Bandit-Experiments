@@ -183,6 +183,7 @@ type Op =
     | RecordStackify
     | RecordHeapify
     | TypeCreate
+    | TypeGet
     | TypeUnion
     | TypeSplit
     | TypeBox
@@ -535,6 +536,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let pat_pos pos x = PatPos(Pos(pos,x))
 
     let type_create a = op(TypeCreate,[a])
+    let type_get a = op(TypeGet,[a])
     let type_union a b = op(TypeUnion,[a;b])
     let type_split a = op(TypeSplit,[a])
     let type_box a b = op(TypeBox,[a;b])
@@ -1128,6 +1130,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let env = d.env |> Map.map (fun _ -> get_type >> tyt)
             let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
             tyt ret_ty
+
+        let type_get d a = tev_seq d a |> get_type |> TyT
                 
         let memoize_closure arg d x =
             let {fv=fv} as r = renamables0()
@@ -1929,6 +1933,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeUnion,[a;b] -> type_union d a b
             | TypeBox,[a;b] -> type_box d a b
             | TypeCreate,[a] -> type_create d a
+            | TypeGet,[a] -> type_get d a
             | TypeSplit,[a] -> type_split d a
             | EqType,[a;b] -> eq_type d a b
             | Neg,[a] -> prim_un_numeric d a Neg
@@ -2376,7 +2381,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 
             curlies (attempt module_with <|> module_create) <| s
 
-        let case_type expr = type_' >>. rounds expr |>> type_create // rounds are needed to avoid collisions with the statement parser
+        let case_type expr = type_' >>. rounds expr |>> type_get // rounds are needed to avoid collisions with the statement parser
 
         let case_named_tuple expr =
             let pat s = 
@@ -3095,20 +3100,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "stack" (p record_stackify)
             l "heap" (p record_heapify)
 
-            l "bool" (op(TypeCreate,[lit <| LitBool true]))
-            l "int64" (op(TypeCreate,[lit <| LitInt64 0L]))
-            l "int32" (op(TypeCreate,[lit <| LitInt32 0]))
-            l "int16" (op(TypeCreate,[lit <| LitInt16 0s]))
-            l "int8" (op(TypeCreate,[lit <| LitInt8 0y]))
-            l "uint64" (op(TypeCreate,[lit <| LitUInt64 0UL]))
-            l "uint32" (op(TypeCreate,[lit <| LitUInt32 0u]))
-            l "uint16" (op(TypeCreate,[lit <| LitUInt16 0us]))
-            l "uint8" (op(TypeCreate,[lit <| LitUInt8 0uy]))
-            l "float64" (op(TypeCreate,[lit <| LitFloat64 0.0]))
-            l "float32" (op(TypeCreate,[lit <| LitFloat32 0.0f]))
-            l "string" (op(TypeCreate,[lit <| LitString ""]))
-            l "char" (op(TypeCreate,[lit <| LitChar ' ']))
-            l "unit" (op(TypeCreate,[B]))
+            l "bool" (op(TypeGet,[lit <| LitBool true]))
+            l "int64" (op(TypeGet,[lit <| LitInt64 0L]))
+            l "int32" (op(TypeGet,[lit <| LitInt32 0]))
+            l "int16" (op(TypeGet,[lit <| LitInt16 0s]))
+            l "int8" (op(TypeGet,[lit <| LitInt8 0y]))
+            l "uint64" (op(TypeGet,[lit <| LitUInt64 0UL]))
+            l "uint32" (op(TypeGet,[lit <| LitUInt32 0u]))
+            l "uint16" (op(TypeGet,[lit <| LitUInt16 0us]))
+            l "uint8" (op(TypeGet,[lit <| LitUInt8 0uy]))
+            l "float64" (op(TypeGet,[lit <| LitFloat64 0.0]))
+            l "float32" (op(TypeGet,[lit <| LitFloat32 0.0f]))
+            l "string" (op(TypeGet,[lit <| LitString ""]))
+            l "char" (op(TypeGet,[lit <| LitChar ' ']))
+            l "unit" (op(TypeGet,[B]))
 
             l "type_lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
             l "type_lit_cast" (p <| fun x -> op(TypeLitCast,[x]))

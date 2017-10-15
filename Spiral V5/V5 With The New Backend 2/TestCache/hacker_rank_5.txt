@@ -1,4 +1,4 @@
-let rec method_14((var_0: bool), (var_1: string), (var_2: int64)): unit =
+let rec method_0((var_0: bool), (var_1: string), (var_2: int64)): unit =
     let (var_4: bool) =
         if (var_2 >= 0L) then
             let (var_3: int64) = (int64 var_1.Length)
@@ -17,12 +17,12 @@ let rec method_14((var_0: bool), (var_1: string), (var_2: int64)): unit =
             let (var_8: int64) = System.Convert.ToInt64(var_5)
             let (var_9: int64) = System.Convert.ToInt64('0')
             let (var_10: int64) = (var_8 - var_9)
-            method_15((var_0: bool), (var_1: string), (var_10: int64), (var_7: int64))
+            method_1((var_0: bool), (var_1: string), (var_10: int64), (var_7: int64))
         else
             (failwith "pint64")
     else
         (failwith "pint64")
-and method_15((var_0: bool), (var_1: string), (var_2: int64), (var_3: int64)): unit =
+and method_1((var_0: bool), (var_1: string), (var_2: int64), (var_3: int64)): unit =
     let (var_5: bool) =
         if (var_3 >= 0L) then
             let (var_4: int64) = (int64 var_1.Length)
@@ -54,7 +54,7 @@ and method_15((var_0: bool), (var_1: string), (var_2: int64), (var_3: int64)): u
             if var_13 then
                 let (var_14: int64) = (var_2 * 10L)
                 let (var_15: int64) = (var_14 + var_11)
-                method_15((var_0: bool), (var_1: string), (var_15: int64), (var_8: int64))
+                method_1((var_0: bool), (var_1: string), (var_15: int64), (var_8: int64))
             else
                 (failwith "integer overflow")
         else
@@ -64,7 +64,7 @@ and method_15((var_0: bool), (var_1: string), (var_2: int64), (var_3: int64)): u
                 else
                     (-var_2)
             let (var_17: int64) = 0L
-            method_16((var_16: int64), (var_1: string), (var_17: int64), (var_3: int64))
+            method_2((var_16: int64), (var_1: string), (var_17: int64), (var_3: int64))
     else
         let (var_18: int64) =
             if var_0 then
@@ -72,8 +72,8 @@ and method_15((var_0: bool), (var_1: string), (var_2: int64), (var_3: int64)): u
             else
                 (-var_2)
         let (var_19: int64) = 0L
-        method_16((var_18: int64), (var_1: string), (var_19: int64), (var_3: int64))
-and method_16((var_0: int64), (var_1: string), (var_2: int64), (var_3: int64)): unit =
+        method_2((var_18: int64), (var_1: string), (var_19: int64), (var_3: int64))
+and method_2((var_0: int64), (var_1: string), (var_2: int64), (var_3: int64)): unit =
     let (var_4: int64) = (var_2 + 1L)
     let (var_6: bool) =
         if (var_3 >= 0L) then
@@ -93,14 +93,14 @@ and method_16((var_0: int64), (var_1: string), (var_2: int64), (var_3: int64)): 
                     (var_7 = '\r')
         let (var_10: int64) = (var_3 + 1L)
         if var_9 then
-            method_16((var_0: int64), (var_1: string), (var_4: int64), (var_10: int64))
+            method_2((var_0: int64), (var_1: string), (var_4: int64), (var_10: int64))
         else
             let (var_11: int64) = 0L
-            method_17((var_1: string), (var_11: int64), (var_0: int64), (var_3: int64))
+            method_3((var_1: string), (var_11: int64), (var_0: int64), (var_3: int64))
     else
         let (var_12: int64) = 0L
-        method_17((var_1: string), (var_12: int64), (var_0: int64), (var_3: int64))
-and method_17((var_0: string), (var_1: int64), (var_2: int64), (var_3: int64)): unit =
+        method_3((var_1: string), (var_12: int64), (var_0: int64), (var_3: int64))
+and method_3((var_0: string), (var_1: int64), (var_2: int64), (var_3: int64)): unit =
     let (var_4: bool) = (var_1 < var_2)
     if var_4 then
         let (var_5: int64) = (var_1 + 1L)
@@ -116,16 +116,16 @@ and method_17((var_0: string), (var_1: int64), (var_2: int64), (var_3: int64)): 
             let (var_10: int64) = (var_3 + 1L)
             if var_9 then
                 let (var_11: bool) = false
-                method_18((var_11: bool), (var_5: int64), (var_2: int64), (var_0: string), (var_10: int64))
+                method_4((var_11: bool), (var_5: int64), (var_2: int64), (var_0: string), (var_10: int64))
             else
                 let (var_12: bool) = true
-                method_18((var_12: bool), (var_5: int64), (var_2: int64), (var_0: string), (var_3: int64))
+                method_4((var_12: bool), (var_5: int64), (var_2: int64), (var_0: string), (var_3: int64))
         else
             let (var_13: bool) = true
-            method_18((var_13: bool), (var_5: int64), (var_2: int64), (var_0: string), (var_3: int64))
+            method_4((var_13: bool), (var_5: int64), (var_2: int64), (var_0: string), (var_3: int64))
     else
         ()
-and method_18((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_4: int64)): unit =
+and method_4((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_4: int64)): unit =
     let (var_6: bool) =
         if (var_4 >= 0L) then
             let (var_5: int64) = (int64 var_3.Length)
@@ -144,12 +144,12 @@ and method_18((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (v
             let (var_10: int64) = System.Convert.ToInt64(var_7)
             let (var_11: int64) = System.Convert.ToInt64('0')
             let (var_12: int64) = (var_10 - var_11)
-            method_19((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_12: int64), (var_9: int64))
+            method_5((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_12: int64), (var_9: int64))
         else
             (failwith "pint64")
     else
         (failwith "pint64")
-and method_19((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_4: int64), (var_5: int64)): unit =
+and method_5((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_4: int64), (var_5: int64)): unit =
     let (var_7: bool) =
         if (var_5 >= 0L) then
             let (var_6: int64) = (int64 var_3.Length)
@@ -181,7 +181,7 @@ and method_19((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (v
             if var_15 then
                 let (var_16: int64) = (var_4 * 10L)
                 let (var_17: int64) = (var_16 + var_13)
-                method_19((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_17: int64), (var_10: int64))
+                method_5((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (var_17: int64), (var_10: int64))
             else
                 (failwith "integer overflow")
         else
@@ -191,7 +191,7 @@ and method_19((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (v
                 else
                     (-var_4)
             let (var_19: int64) = 0L
-            method_20((var_18: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_19: int64), (var_5: int64))
+            method_6((var_18: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_19: int64), (var_5: int64))
     else
         let (var_20: int64) =
             if var_0 then
@@ -199,8 +199,8 @@ and method_19((var_0: bool), (var_1: int64), (var_2: int64), (var_3: string), (v
             else
                 (-var_4)
         let (var_21: int64) = 0L
-        method_20((var_20: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_21: int64), (var_5: int64))
-and method_20((var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_4: int64), (var_5: int64)): unit =
+        method_6((var_20: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_21: int64), (var_5: int64))
+and method_6((var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_4: int64), (var_5: int64)): unit =
     let (var_6: int64) = (var_4 + 1L)
     let (var_8: bool) =
         if (var_5 >= 0L) then
@@ -220,7 +220,7 @@ and method_20((var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (
                     (var_9 = '\r')
         let (var_12: int64) = (var_5 + 1L)
         if var_11 then
-            method_20((var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_6: int64), (var_12: int64))
+            method_6((var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_6: int64), (var_12: int64))
         else
             let (var_14: bool) =
                 if (var_5 >= 0L) then
@@ -232,13 +232,13 @@ and method_20((var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (
                 let (var_15: bool) = ('-' = var_9)
                 if var_15 then
                     let (var_16: bool) = false
-                    method_21((var_16: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_12: int64))
+                    method_7((var_16: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_12: int64))
                 else
                     let (var_17: bool) = true
-                    method_21((var_17: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
+                    method_7((var_17: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
             else
                 let (var_18: bool) = true
-                method_21((var_18: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
+                method_7((var_18: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
     else
         let (var_20: bool) =
             if (var_5 >= 0L) then
@@ -252,14 +252,14 @@ and method_20((var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (
             let (var_23: int64) = (var_5 + 1L)
             if var_22 then
                 let (var_24: bool) = false
-                method_21((var_24: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_23: int64))
+                method_7((var_24: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_23: int64))
             else
                 let (var_25: bool) = true
-                method_21((var_25: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
+                method_7((var_25: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
         else
             let (var_26: bool) = true
-            method_21((var_26: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
-and method_21((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64)): unit =
+            method_7((var_26: bool), (var_0: int64), (var_1: int64), (var_2: int64), (var_3: string), (var_5: int64))
+and method_7((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64)): unit =
     let (var_7: bool) =
         if (var_5 >= 0L) then
             let (var_6: int64) = (int64 var_4.Length)
@@ -278,12 +278,12 @@ and method_21((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (va
             let (var_11: int64) = System.Convert.ToInt64(var_8)
             let (var_12: int64) = System.Convert.ToInt64('0')
             let (var_13: int64) = (var_11 - var_12)
-            method_22((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_13: int64), (var_10: int64))
+            method_8((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_13: int64), (var_10: int64))
         else
             (failwith "pint64")
     else
         (failwith "pint64")
-and method_22((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
+and method_8((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
     let (var_8: bool) =
         if (var_6 >= 0L) then
             let (var_7: int64) = (int64 var_4.Length)
@@ -315,7 +315,7 @@ and method_22((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (va
             if var_16 then
                 let (var_17: int64) = (var_5 * 10L)
                 let (var_18: int64) = (var_17 + var_14)
-                method_22((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_18: int64), (var_11: int64))
+                method_8((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_18: int64), (var_11: int64))
             else
                 (failwith "integer overflow")
         else
@@ -325,7 +325,7 @@ and method_22((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (va
                 else
                     (-var_5)
             let (var_20: int64) = 0L
-            method_23((var_19: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_20: int64), (var_6: int64))
+            method_9((var_19: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_20: int64), (var_6: int64))
     else
         let (var_21: int64) =
             if var_0 then
@@ -333,8 +333,8 @@ and method_22((var_0: bool), (var_1: int64), (var_2: int64), (var_3: int64), (va
             else
                 (-var_5)
         let (var_22: int64) = 0L
-        method_23((var_21: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_22: int64), (var_6: int64))
-and method_23((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
+        method_9((var_21: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_22: int64), (var_6: int64))
+and method_9((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
     let (var_7: int64) = (var_5 + 1L)
     let (var_9: bool) =
         if (var_6 >= 0L) then
@@ -354,7 +354,7 @@ and method_23((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (v
                     (var_10 = '\r')
         let (var_13: int64) = (var_6 + 1L)
         if var_12 then
-            method_23((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_7: int64), (var_13: int64))
+            method_9((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_7: int64), (var_13: int64))
         else
             let (var_15: bool) =
                 if (var_0 = 1L) then
@@ -368,7 +368,7 @@ and method_23((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (v
                 else
                     1L
             System.Console.WriteLine(var_16)
-            method_17((var_4: string), (var_2: int64), (var_3: int64), (var_6: int64))
+            method_3((var_4: string), (var_2: int64), (var_3: int64), (var_6: int64))
     else
         let (var_18: bool) =
             if (var_0 = 1L) then
@@ -382,7 +382,7 @@ and method_23((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (v
             else
                 1L
         System.Console.WriteLine(var_19)
-        method_17((var_4: string), (var_2: int64), (var_3: int64), (var_6: int64))
+        method_3((var_4: string), (var_2: int64), (var_3: int64), (var_6: int64))
 let (var_0: System.IO.Stream) = System.Console.OpenStandardInput()
 let (var_1: System.IO.StreamReader) = System.IO.StreamReader(var_0)
 let (var_2: string) = var_1.ReadToEnd()
@@ -399,11 +399,11 @@ if var_5 then
     let (var_8: int64) = (var_3 + 1L)
     if var_7 then
         let (var_9: bool) = false
-        method_14((var_9: bool), (var_2: string), (var_8: int64))
+        method_0((var_9: bool), (var_2: string), (var_8: int64))
     else
         let (var_10: bool) = true
-        method_14((var_10: bool), (var_2: string), (var_3: int64))
+        method_0((var_10: bool), (var_2: string), (var_3: int64))
 else
     let (var_11: bool) = true
-    method_14((var_11: bool), (var_2: string), (var_3: int64))
+    method_0((var_11: bool), (var_2: string), (var_3: int64))
 
