@@ -385,6 +385,9 @@ type ParserExpr =
 | ParserExpr of PosKey * Expr
 
 // Codegen types
+type TypeOrMethod =
+    | TomType of Ty
+    | TomMethod of MemoKey
 type Buf = ResizeArray<ProgramNode>
 and ProgramNode =
     | Statement of string
@@ -2541,8 +2544,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     // #Codegen
     let spiral_codegen main =
         let buffer_type_definitions = ResizeArray()
-        let buffer_code = ResizeArray()
-        let buffer = ResizeArray()
+        let buffer_method = ResizeArray()
+        let buffer_main = ResizeArray()
+        let buffer_temp = ResizeArray()
+        let buffer_final = ResizeArray()
         let exp x = String.concat "" x
 
         let process_statements (statements: ResizeArray<ProgramNode>) =
@@ -2554,8 +2559,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             Seq.fold process_statement (StringBuilder(),0) statements
             |> fun (code,ind) -> code.ToString()
 
-        let state x = buffer.Add <| Statement x
-        let enter' f = buffer.Add Indent; f(); buffer.Add Dedent
+        let state x = buffer_temp.Add <| Statement x
+        let enter' f = buffer_temp.Add Indent; f(); buffer_temp.Add Dedent
         let enter f = 
             enter' <| fun _ -> 
                 match f() with
@@ -2565,7 +2570,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let (|Unit|_|) x = if is_unit x then Some () else None
 
         let definitions_set = h0()
-        let definitions_queue = Queue()
+        let definitions_queue = Queue<TypeOrMethod>()
 
         let print_tag_tuple' t = sprintf "Tuple%i" t
         let print_tag_union' t = sprintf "Union%i" t
@@ -2584,7 +2589,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 v
 
         let def_enqueue f t =
-            if definitions_set.Add t then definitions_queue.Enqueue t
+            if definitions_set.Add (TomType t) then definitions_queue.Enqueue (TomType t)
             f (sym t)
 
         let print_tag_tuple t = def_enqueue print_tag_tuple' t
@@ -2659,12 +2664,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let print_case_union x i = print_tag_union x + sprintf "Case%i" i
 
         let inline handle_unit_in_last_position f =
-            let c = buffer.Count
+            let c = buffer_temp.Count
             match f () with
             | "" ->
-                match Seq.last buffer with
+                match Seq.last buffer_temp with
                 | Statement s when s.StartsWith "let " -> "()"
-                | _ when c = buffer.Count -> "()"
+                | _ when c = buffer_temp.Count -> "()"
                 | _ -> ""
             | x -> x
 
@@ -2798,9 +2803,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
             | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
             | TyLit x -> print_value x
-            | TyJoinPoint((S method_tag,_ as key),_) ->
+            | TyJoinPoint((S method_tag & method_key,_ as join_point_key),_) ->
+                if definitions_set.Add (TomMethod method_key) then definitions_queue.Enqueue (TomMethod method_key)
+
                 let method_name = print_method method_tag
-                match join_point_dict.[key] with
+                match join_point_dict.[join_point_key] with
                 | JoinPointType, _, _ -> ""
                 | JoinPointMethod, fv, _ -> sprintf "%s(%s)" method_name (print_args fv)
                 | JoinPointClosure args, fv, rev_renamer ->
@@ -2907,9 +2914,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 | x -> failwithf "Missing TyOp case. %A" x
 
-        let prefix =
-            let mutable prefix = false
-            fun () -> if prefix then "and" else prefix <- true; "type"
+        let type_prefix =
+            let mutable type_is_first = true
+            fun () -> if type_is_first then type_is_first <- false; "type" else "and"
+        let method_prefix =
+            let mutable method_is_first = true
+            fun () -> if method_is_first then method_is_first <- false; "let rec" else "and"
 
         let print_union_cases print_case tys =
             enter' <| fun _ ->
@@ -2927,7 +2937,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 |> String.concat sep
 
             if is_struct then
-                sprintf "%s %s =" (prefix()) name |> state
+                sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "struct" |> state
                     iter (fun k ty -> 
@@ -2939,11 +2949,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     let args_declaration = args ", " <| fun k -> sprintf "arg_mem_%s" k
                     let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
                     sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
-
                     "end" |> state
-
             else
-                sprintf "%s %s =" (prefix()) name |> state
+                sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "{" |> state
                     iter (fun k ty -> 
@@ -2953,36 +2961,27 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         ) tys
                     "}" |> state
 
-        let mutable is_first_method = true
-
         let print_method_definition tag (join_point_type, fv, body) = 
-            let prefix = if is_first_method then "let rec" else "and"
             let method_name = print_method tag
 
-            let print_body() =
-                is_first_method <- false
-                enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen' [] body)
+            let print_body() = enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen' [] body)
 
             match join_point_type with
             | JoinPointClosure args ->
                 let printed_fv = 
                     Seq.filter (fun x -> args.Contains x = false) fv
                     |> fun fv -> if Seq.isEmpty fv then "" else sprintf "(%s) " (print_args fv)
-                sprintf "%s %s %s(%s): %s =" prefix method_name printed_fv (print_args args) (print_type (get_type body)) |> state
+                sprintf "%s %s %s(%s): %s =" (method_prefix()) method_name printed_fv (print_args args) (print_type (get_type body)) |> state
                 print_body()
             | JoinPointMethod ->
-                sprintf "%s %s(%s): %s =" prefix method_name (print_args fv) (print_type (get_type body)) |> state
+                sprintf "%s %s(%s): %s =" (method_prefix()) method_name (print_args fv) (print_type (get_type body)) |> state
                 print_body()
             | JoinPointType -> ()
 
-        memoized_methods |> Seq.iter (fun x -> 
-            match x.Value with
-            | MemoMethod (join_point_type, fv, body) -> print_method_definition x.Key.Symbol (join_point_type, fv, body)
-            | _ -> ()) |> ignore
         codegen' [] main |> state // Can't forget the non-method
 
-        buffer_code.AddRange(buffer)
-        buffer.Clear()
+        let move_to (buffer: ResizeArray<_>) (temp: ResizeArray<_>) = buffer.AddRange(temp); temp.Clear()
+        move_to buffer_main buffer_temp
 
         while definitions_queue.Count > 0 do
             let inline print_fun_x is_stack env x =
@@ -2997,38 +2996,45 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     print_x_definition is_stack iter fold tuple_name fv
 
             match definitions_queue.Dequeue() with
-            | FunT(tys, _) as x ->
-                if is_unit_env tys = false then
-                    let tuple_name = print_tag_env x
-                    print_x_definition true Map.iter Map.fold tuple_name tys
-            | FunStackT(C env, _) as x -> print_fun_x true env x
-            | FunHeapT(C env, _) as x -> print_fun_x false env x
-            | RecT tag as x ->
-                let tys = rect_dict.[tag]
-                sprintf "%s %s =" (prefix ()) (print_tag_rec x) |> state
-                match tys with
-                | Unit -> "| " + print_tag_rec' tag |> state
-                | VVT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
-                | UnionT tys -> print_union_cases (print_case_rec x) (Set.toList tys)
-                | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
-            | UnionT tys as x ->
-                sprintf "%s %s =" (prefix()) (print_tag_union x) |> state
-                print_union_cases (print_case_union x) (Set.toList tys)
-            | VVT tys as x ->
-                if is_unit_tuple tys = false then
-                    let tuple_name = print_tag_tuple x
-                    let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-                    let iter f l = List.iteri (fun i x -> f (string i) x) l
-                    print_x_definition true iter fold tuple_name tys
-            | _ -> failwith "impossible"
+            | TomMethod key ->
+                match memoized_methods.[key] with
+                | MemoMethod (join_point_type, fv, body) -> 
+                    print_method_definition key.Symbol (join_point_type, fv, body)
+                    move_to buffer_method buffer_temp
+                | _ -> failwith "impossible"
+            | TomType ty ->
+                match ty with
+                | FunT(tys, _) as x ->
+                    if is_unit_env tys = false then
+                        let tuple_name = print_tag_env x
+                        print_x_definition true Map.iter Map.fold tuple_name tys
+                | FunStackT(C env, _) as x -> print_fun_x true env x
+                | FunHeapT(C env, _) as x -> print_fun_x false env x
+                | RecT tag as x ->
+                    let tys = rect_dict.[tag]
+                    sprintf "%s %s =" (type_prefix()) (print_tag_rec x) |> state
+                    match tys with
+                    | Unit -> "| " + print_tag_rec' tag |> state
+                    | VVT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
+                    | UnionT tys -> print_union_cases (print_case_rec x) (Set.toList tys)
+                    | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
+                | UnionT tys as x ->
+                    sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
+                    print_union_cases (print_case_union x) (Set.toList tys)
+                | VVT tys as x ->
+                    if is_unit_tuple tys = false then
+                        let tuple_name = print_tag_tuple x
+                        let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+                        let iter f l = List.iteri (fun i x -> f (string i) x) l
+                        print_x_definition true iter fold tuple_name tys
+                | _ -> failwith "impossible"
+                move_to buffer_type_definitions buffer_temp
 
-        buffer_type_definitions.AddRange(buffer)
-        buffer.Clear()
-
-        buffer.AddRange(buffer_type_definitions)
-        buffer.AddRange(buffer_code)
+        move_to buffer_final buffer_type_definitions
+        move_to buffer_final buffer_method
+        move_to buffer_final buffer_main
   
-        process_statements buffer
+        process_statements buffer_final
 
     // #Run
     let print_type_error (trace: Trace) message = 
@@ -3057,11 +3063,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         |> ignore
         error.ToString()
 
-    let data_empty () =
-        {ltag = ref 0; seq=ref id; trace=[]; rbeh=AnnotationDive
-         env = Map.empty
-         cse_env = ref Map.empty
-         }
+    let data_empty () = {
+        ltag = ref 0; seq=ref id; trace=[]; rbeh=AnnotationDive
+        env = Map.empty
+        cse_env = ref Map.empty
+        }
 
     let core_functions =
         let p f = inl "x" (f (v "x"))

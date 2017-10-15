@@ -1,11 +1,4 @@
-let rec method_0((var_0: (int64 [])), (var_1: int64)): unit =
-    if (var_1 < 8L) then
-        var_0.[int32 var_1] <- var_1
-        let (var_2: int64) = (var_1 + 1L)
-        method_0((var_0: (int64 [])), (var_2: int64))
-    else
-        ()
-and method_1((var_0: ((int64 []) [])), (var_1: int64)): unit =
+let rec method_1((var_0: ((int64 []) [])), (var_1: int64)): unit =
     if (var_1 < 4L) then
         let (var_2: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(8L))
         let (var_3: int64) = 0L
@@ -34,6 +27,13 @@ and method_3((var_0: ((int64 []) [])), (var_1: (int64 [])), (var_2: int64), (var
         method_3((var_0: ((int64 []) [])), (var_1: (int64 [])), (var_2: int64), (var_9: int64), (var_8: int64))
     else
         var_4
+and method_0((var_0: (int64 [])), (var_1: int64)): unit =
+    if (var_1 < 8L) then
+        var_0.[int32 var_1] <- var_1
+        let (var_2: int64) = (var_1 + 1L)
+        method_0((var_0: (int64 [])), (var_2: int64))
+    else
+        ()
 and method_4((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64)): int64 =
     if (var_3 < var_2) then
         let (var_5: int64) = var_0.[int32 var_3]

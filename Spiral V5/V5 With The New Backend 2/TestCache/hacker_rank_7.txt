@@ -293,6 +293,14 @@ and method_8((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64),
             (failwith "pint64")
     else
         (failwith "pint64")
+and method_11((var_0: (int64 [])), (var_1: int64), (var_2: int64)): int64 =
+    if (var_2 < var_1) then
+        let (var_3: int64) = var_0.[int32 var_2]
+        let (var_4: int64) = (0L ^^^ var_3)
+        let (var_5: int64) = (var_2 + 1L)
+        method_12((var_0: (int64 [])), (var_1: int64), (var_5: int64), (var_4: int64))
+    else
+        0L
 and method_9((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: int64), (var_7: string), (var_8: int64), (var_9: int64)): unit =
     let (var_11: bool) =
         if (var_9 >= 0L) then
@@ -344,6 +352,14 @@ and method_9((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64),
                 (-var_8)
         let (var_25: int64) = 0L
         method_10((var_24: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: int64), (var_7: string), (var_25: int64), (var_9: int64))
+and method_12((var_0: (int64 [])), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
+    if (var_2 < var_1) then
+        let (var_4: int64) = var_0.[int32 var_2]
+        let (var_5: int64) = (var_3 ^^^ var_4)
+        let (var_6: int64) = (var_2 + 1L)
+        method_12((var_0: (int64 [])), (var_1: int64), (var_6: int64), (var_5: int64))
+    else
+        var_3
 and method_10((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: int64), (var_7: string), (var_8: int64), (var_9: int64)): unit =
     let (var_10: int64) = (var_8 + 1L)
     let (var_12: bool) =
@@ -371,22 +387,6 @@ and method_10((var_0: int64), (var_1: (int64 [])), (var_2: int64), (var_3: int64
     else
         var_1.[int32 var_2] <- var_0
         method_7((var_1: (int64 [])), (var_5: int64), (var_6: int64), (var_7: string), (var_3: int64), (var_4: int64), (var_9: int64))
-and method_11((var_0: (int64 [])), (var_1: int64), (var_2: int64)): int64 =
-    if (var_2 < var_1) then
-        let (var_3: int64) = var_0.[int32 var_2]
-        let (var_4: int64) = (0L ^^^ var_3)
-        let (var_5: int64) = (var_2 + 1L)
-        method_12((var_0: (int64 [])), (var_1: int64), (var_5: int64), (var_4: int64))
-    else
-        0L
-and method_12((var_0: (int64 [])), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
-    if (var_2 < var_1) then
-        let (var_4: int64) = var_0.[int32 var_2]
-        let (var_5: int64) = (var_3 ^^^ var_4)
-        let (var_6: int64) = (var_2 + 1L)
-        method_12((var_0: (int64 [])), (var_1: int64), (var_6: int64), (var_5: int64))
-    else
-        var_3
 let (var_0: System.IO.Stream) = System.Console.OpenStandardInput()
 let (var_1: System.IO.StreamReader) = System.IO.StreamReader(var_0)
 let (var_2: string) = var_1.ReadToEnd()

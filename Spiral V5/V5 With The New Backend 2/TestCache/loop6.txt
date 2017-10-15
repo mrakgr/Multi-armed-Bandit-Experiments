@@ -66,12 +66,6 @@ and method_2((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (va
     else
         let (var_10: int64) = (var_4 + 1L)
         method_3((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_10: int64))
-and method_3((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
-    if (var_4 < 5L) then
-        let (var_5: int64) = 0L
-        method_2((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64))
-    else
-        (failwith "Failure.")
 and method_4((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64)): unit =
     if (var_5 < 5L) then
         System.Console.Write("I am at (")
@@ -103,6 +97,12 @@ and method_4((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (va
     else
         let (var_10: int64) = (var_4 + 1L)
         method_5((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_10: int64))
+and method_3((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
+    if (var_4 < 5L) then
+        let (var_5: int64) = 0L
+        method_2((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64))
+    else
+        (failwith "Failure.")
 and method_5((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
     if (var_4 < 5L) then
         let (var_5: int64) = 0L

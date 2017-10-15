@@ -1,11 +1,12 @@
 type Rec0 =
-    | Rec0Case0 of Tuple2
-    | Rec0Case1 of Tuple3
-    | Rec0Case2 of Tuple1
+    | Rec0Case0 of Tuple1
+    | Rec0Case1 of Tuple2
+    | Rec0Case2 of Tuple3
 and Tuple1 =
     struct
-    val mem_1: int64
-    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    val mem_1: Rec0
+    val mem_2: Rec0
+    new(arg_mem_1, arg_mem_2) = {mem_1 = arg_mem_1; mem_2 = arg_mem_2}
     end
 and Tuple2 =
     struct
@@ -15,14 +16,13 @@ and Tuple2 =
     end
 and Tuple3 =
     struct
-    val mem_1: Rec0
-    val mem_2: Rec0
-    new(arg_mem_1, arg_mem_2) = {mem_1 = arg_mem_1; mem_2 = arg_mem_2}
+    val mem_1: int64
+    new(arg_mem_1) = {mem_1 = arg_mem_1}
     end
 let rec method_5(): Rec0 =
-    (Rec0Case0(Tuple2((Rec0Case2(Tuple1(1L))), (Rec0Case2(Tuple1(2L))))))
+    (Rec0Case0(Tuple1((Rec0Case2(Tuple3(1L))), (Rec0Case2(Tuple3(2L))))))
 and method_6(): Rec0 =
-    (Rec0Case0(Tuple2((Rec0Case2(Tuple1(3L))), (Rec0Case2(Tuple1(4L))))))
+    (Rec0Case0(Tuple1((Rec0Case2(Tuple3(3L))), (Rec0Case2(Tuple3(4L))))))
 and method_7((var_0: Rec0), (var_1: Rec0)): int64 =
     let (var_2: int64) = method_8((var_0: Rec0))
     let (var_3: int64) = method_8((var_1: Rec0))

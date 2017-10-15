@@ -31,31 +31,6 @@ let rec method_0((var_0: (Env0 ref)), (var_1: int64)): unit =
         else
             (Env0(var_3, var_4, var_8))
     var_0 := var_14
-and method_1((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64)): unit =
-    if (var_2 < var_3) then
-        let (var_4: int64) = var_0.[int32 var_2]
-        var_1.[int32 (var_2 - var_2)] <- var_4
-        let (var_5: int64) = (var_2 + 1L)
-        method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_5: int64))
-    else
-        ()
-and method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
-    if (var_4 < var_3) then
-        let (var_5: int64) = var_0.[int32 var_4]
-        var_1.[int32 (var_4 - var_2)] <- var_5
-        let (var_6: int64) = (var_4 + 1L)
-        method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_6: int64))
-    else
-        ()
-and method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
-    if (var_4 < var_2) then
-        let (var_5: int64) = (var_3 - var_2)
-        let (var_6: int64) = var_0.[int32 var_4]
-        var_1.[int32 (var_5 + var_4)] <- var_6
-        let (var_7: int64) = (var_4 + 1L)
-        method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_7: int64))
-    else
-        ()
 and method_4((var_0: (Env0 ref))): int64 =
     let (var_1: Env0) = (!var_0)
     let (var_2: (int64 [])) = var_1.mem_ar
@@ -75,6 +50,31 @@ and method_4((var_0: (Env0 ref))): int64 =
             var_7
     var_0 := (Env0(var_2, var_8, var_4))
     var_2.[int32 var_3]
+and method_1((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64)): unit =
+    if (var_2 < var_3) then
+        let (var_4: int64) = var_0.[int32 var_2]
+        var_1.[int32 (var_2 - var_2)] <- var_4
+        let (var_5: int64) = (var_2 + 1L)
+        method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_5: int64))
+    else
+        ()
+and method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
+    if (var_4 < var_2) then
+        let (var_5: int64) = (var_3 - var_2)
+        let (var_6: int64) = var_0.[int32 var_4]
+        var_1.[int32 (var_5 + var_4)] <- var_6
+        let (var_7: int64) = (var_4 + 1L)
+        method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_7: int64))
+    else
+        ()
+and method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: int64)): unit =
+    if (var_4 < var_3) then
+        let (var_5: int64) = var_0.[int32 var_4]
+        var_1.[int32 (var_4 - var_2)] <- var_5
+        let (var_6: int64) = (var_4 + 1L)
+        method_2((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_6: int64))
+    else
+        ()
 let (var_0: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(1L))
 let (var_1: (Env0 ref)) = (ref (Env0(var_0, 0L, 0L)))
 let (var_2: int64) = 1L
