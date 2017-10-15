@@ -311,7 +311,7 @@ and JoinPointType =
     | JoinPointMethod
     | JoinPointType
 
-and JoinPointKey = MemoKey
+and JoinPointKey = MemoKey * Tag
 and JoinPointValue = JoinPointType * Arguments * Renamer
 
 and MemoCases =
@@ -408,7 +408,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
 
     let ty_join_point memo_key value t =
-        let key = memo_key
+        let new_subtag = join_point_dict.Count
+        let key = memo_key,new_subtag
         join_point_dict.Add(key,value)
         TyJoinPoint(key,t)
 
@@ -2797,7 +2798,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
             | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
             | TyLit x -> print_value x
-            | TyJoinPoint((S method_tag as key),_) ->
+            | TyJoinPoint((S method_tag,_ as key),_) ->
                 let method_name = print_method method_tag
                 match join_point_dict.[key] with
                 | JoinPointType, _, _ -> ""
