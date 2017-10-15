@@ -25,5 +25,11 @@ let dictionary_type =
     mscorlib.Modules.[0].Types
     |> Seq.find (fun x -> x.Name = "Dictionary`2")
 
-let dict_ins = dictionary_type.MakeGenericInstanceType([|r1;r2|])
-// Lacks the Methods field...
+let add_method =
+    dictionary_type.Methods
+    |> Seq.find (fun x -> x.Name = "Add")
+
+let dictionary_type_params = dictionary_type.GenericParameters.[0]
+let add_method_params = add_method.Parameters.[0]
+// Nope, they are not even the same class
+Object.ReferenceEquals(dictionary_type_params,add_method_params) // false
