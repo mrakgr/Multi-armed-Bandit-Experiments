@@ -385,6 +385,7 @@ type ParserExpr =
 | ParserExpr of PosKey * Expr
 
 // Codegen types
+type BackendType = | Cuda | FSharp
 type TypeOrMethod =
     | TomType of Ty
     | TomMethod of MemoKey
@@ -2542,7 +2543,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code
 
     // #Codegen
-    let spiral_codegen main =
+    let spiral_codegen backend_type main =
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
         let buffer_main = ResizeArray()
@@ -2594,26 +2595,51 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let print_tag_tuple t = def_enqueue print_tag_tuple' t
         let print_tag_union t = def_enqueue print_tag_union' t
-        let print_tag_rec t = def_enqueue print_tag_rec' t
+        let print_tag_rec t = 
+            match backend_type with
+            | Cuda -> on_type_er [] "Recursive types are not allowed on the Cuda side."
+            | FSharp -> def_enqueue print_tag_rec' t
         let print_tag_env t = def_enqueue print_tag_env' t
         let print_tag_env_stack t = def_enqueue print_tag_env_stack' t
-        let print_tag_env_heap t = def_enqueue print_tag_env_heap' t
+        let print_tag_env_heap t =  
+            match backend_type with
+            | Cuda -> on_type_er [] "Heap allocated types are not allowed on the Cuda side."
+            | FSharp -> def_enqueue print_tag_env_heap' t
 
         let rec print_type = function
-            | Unit -> "unit"
+            | Unit ->
+                match backend_type with
+                | Cuda -> on_type_er [] "Unit types should not be printed on the Cuda side."
+                | FSharp -> "unit"
             | FunT _ as x -> print_tag_env x
             | FunStackT _ as x -> print_tag_env_stack x
             | FunHeapT _ as x -> print_tag_env_heap x
             | VVT _ as x -> print_tag_tuple x
             | UnionT _ as x -> print_tag_union x
             | RecT _ as x -> print_tag_rec x
-            | ArrayT(DotNetReference,t) -> sprintf "(%s ref)" (print_type t)
-            | ArrayT(DotNetHeap,t) -> sprintf "(%s [])" (print_type t)
-            | ArrayT _ -> failwith "Not implemented."
-            | DotNetTypeInstanceT (N t) -> print_dotnet_instance_type t
+            | ArrayT(array_type,t) ->
+                match backend_type with
+                | Cuda ->
+                    match array_type with
+                    | CudaGlobal | CudaLocal -> sprintf "(%s [])" (print_type t)
+                    | CudaShared -> sprintf "(__shared__ %s [])" (print_type t)
+                    | _ -> on_type_er [] "Other array types not supported on the Cuda side."
+                | FSharp ->
+                    match array_type with
+                    | DotNetReference -> sprintf "(%s ref)" (print_type t)
+                    | DotNetHeap -> sprintf "(%s [])" (print_type t)
+                    | _ -> on_type_er [] "Other array types not supported on the F# side."
+            | DotNetTypeInstanceT (N t) -> 
+                match backend_type with
+                | FSharp -> print_dotnet_instance_type t
+                | Cuda -> failwith "Should have been stopped at the join point."
             | ClosureT(a,b) -> 
-                let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
-                sprintf "(%s -> %s)" a (print_type b)
+                match backend_type with
+                | FSharp ->
+                    let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
+                    sprintf "(%s -> %s)" a (print_type b)
+                | Cuda ->
+
             | PrimT x ->
                 match x with
                 | Int8T -> "int8"
