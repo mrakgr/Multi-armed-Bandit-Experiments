@@ -2806,39 +2806,42 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
-            let array_create d size = function
+            let fsharp_array_create d size = function
                 | ArrayT(_,t) -> sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type d t) (codegen size)
                 | _ -> failwith "impossible"
 
-            let reference_create x = sprintf "(ref %s)" (codegen x)
-            let array_index ar idx = sprintf "%s.[int32 %s]" (codegen ar) (codegen idx)
-            let array_length ar = sprintf "%s.LongLength" (codegen ar)
-            let reference_index x = sprintf "(!%s)" (codegen x)
+            let fsharp_reference_create x = sprintf "(ref %s)" (codegen x)
+            let fsharp_array_index ar idx = sprintf "%s.[int32 %s]" (codegen ar) (codegen idx)
+            let fsharp_array_length ar = sprintf "%s.LongLength" (codegen ar)
+            let fsharp_reference_index x = sprintf "(!%s)" (codegen x)
 
-            let array_set ar idx r = sprintf "%s <- %s" (array_index ar idx) (codegen r) |> state
-            let reference_set l r = sprintf "%s := %s" (codegen l) (codegen r) |> state
+            let fsharp_array_set ar idx r = sprintf "%s <- %s" (fsharp_array_index ar idx) (codegen r) |> state d
+            let fsharp_reference_set l r = sprintf "%s := %s" (codegen l) (codegen r) |> state d
 
-            let string_length str = sprintf "(int64 %s.Length)" (codegen str)
-            let string_index str idx = sprintf "%s.[int32 %s]" (codegen str) (codegen idx)
-            let string_slice str a b = sprintf "%s.[int32 %s..int32 %s]" (codegen str) (codegen a) (codegen b)
+            let cuda_array_index ar idx = sprintf "%s[%s]" (codegen ar) (codegen idx) |> state d
+            let cuda_array_set ar idx r = sprintf "%s = %s" (cuda_array_index ar idx) |> state d
+//
+//            let string_length str = sprintf "(int64 %s.Length)" (codegen str)
+//            let string_index str idx = sprintf "%s.[int32 %s]" (codegen str) (codegen idx)
+//            let string_slice str a b = sprintf "%s.[int32 %s..int32 %s]" (codegen str) (codegen a) (codegen b)
 
-            let match_with print_if v cases =
+            let match_with d print_if v cases =
                 print_if <| fun _ ->
                     let print_case =
                         match get_type v with
-                        | RecT _ as x -> print_case_rec x
-                        | UnionT _ as x -> print_case_union x
+                        | RecT _ as x -> print_case_rec d x
+                        | UnionT _ as x -> print_case_union d x
                         | _ -> failwith "impossible"
 
-                    sprintf "match %s with" (codegen v) |> state
+                    sprintf "match %s with" (codegen v) |> state d
                     let print_case i case = 
                         let case = codegen case
-                        if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state
-                        else sprintf "| %s(%s) ->" (print_case i) case |> state
+                        if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state d
+                        else sprintf "| %s(%s) ->" (print_case i) case |> state d
                     let rec loop i = function
                         | case :: body :: rest -> 
                             print_case i case
-                            enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
+                            enter d <| fun _ -> handle_unit_in_last_position d (fun _ -> codegen body)
                             loop (i+1) rest
                         | [] -> ()
                         | _ -> failwith "The cases should always be in pairs."
@@ -2863,20 +2866,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             match expr with
             | TyT Unit | TyV (_, Unit) -> ""
-            | TyT t -> on_type_er trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
+            | TyT t -> on_type_er (trace d) <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
             | TyV v -> print_tyv v
-            | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' trace b
+            | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' {d with trace=trace} b
             | TyState(b,rest,_,trace) ->
                 match b with
                 | TyOp(ArraySet,[ar;idx;b],_) ->
                     match get_type ar with
-                    | ArrayT(DotNetReference,_) -> reference_set ar b
-                    | ArrayT(DotNetHeap,_) -> array_set ar idx b
-                    | _ -> failwith "impossible"
+                    | ArrayT(DotNetReference,_) -> fsharp_reference_set ar b
+                    | ArrayT(DotNetHeap,_) -> fsharp_array_set ar idx b
+                    | ArrayT(CudaLocal,_) -> cuda_array_set ar idx b
+                    | _ -> on_type_er d.trace "Setting Cuda arrays on the F# side is not supported."
                 | _ ->
-                    let b = codegen' trace b
-                    if b <> "" then sprintf "%s" b |> state
-                codegen' trace rest
+                    let b = codegen' d b
+                    if b <> "" then sprintf "%s" b |> state d
+                codegen' d rest
             | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' trace rest
             | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
             | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
