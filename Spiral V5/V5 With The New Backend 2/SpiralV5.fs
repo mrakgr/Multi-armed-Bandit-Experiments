@@ -395,6 +395,11 @@ and ProgramNode =
     | Indent
     | Dedent
 
+type CodegenEnv = {
+    backend_type: BackendType
+    buffer: ResizeArray<ProgramNode>
+    }
+
 type Renamables =
     {
     memo : Dictionary<TypedExpr,TypedExpr>
