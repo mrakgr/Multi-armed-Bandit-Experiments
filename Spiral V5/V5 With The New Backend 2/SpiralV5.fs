@@ -398,6 +398,7 @@ and ProgramNode =
 type CodegenEnv = {
     backend_type: BackendType
     buffer: ResizeArray<ProgramNode>
+    trace: Trace
     }
 
 type Renamables =
@@ -954,6 +955,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let inline tev_method d expr = let d = {d with seq=ref id; cse_env=ref Map.empty} in tev d expr |> apply_seq d
         let inline tev_rec d expr = let d = {d with seq=ref id; cse_env=ref Map.empty; rbeh=AnnotationReturn} in tev d expr |> apply_seq d
 
+        let inline trace (d: LangEnv) = d.trace
+
         let inline tev2 d a b = tev d a, tev d b
         let inline tev3 d a b c = tev d a, tev d b, tev d c
 
@@ -981,13 +984,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             if is_unit ty then
                 if even_if_unit then 
                     let seq = !d.seq
-                    let trace = d.trace
+                    let trace = (trace d)
                     d.seq := fun rest -> TyState(ty_exp,rest,get_type rest,trace) |> seq
                 tyt ty
             else
                 let v = make_tyv_ty d ty
                 let seq = !d.seq
-                let trace = d.trace
+                let trace = (trace d)
                 d.seq := fun rest -> TyLet(v,ty_exp,rest,get_type rest,trace) |> seq
                 tyv v
             
@@ -1044,7 +1047,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let inline if_is_returnable ty_x f =
             if is_returnable' ty_x then f()
-            else on_type_er d.trace <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" ty_x
+            else on_type_er (trace d) <| sprintf "The following is not a type that can be returned from a if statement. Got: %A" ty_x
 
         let if_body d cond tr fl =
             let b x = cse_add' d cond (TyLit <| LitBool x)
@@ -1064,10 +1067,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | TyLit(LitBool true) -> tr
                         | TyLit(LitBool false) -> fl
                         | _ -> TyOp(If,[cond;tr;fl],type_tr) |> make_tyv_and_push_typed_expr_even_if_unit d
-            else on_type_er d.trace <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
+            else on_type_er (trace d) <| sprintf "Types in branches of If do not match.\nGot: %A and %A" type_tr type_fl
 
         let if_cond d tr fl cond =
-            if is_bool cond = false then on_type_er d.trace <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
+            if is_bool cond = false then on_type_er (trace d) <| sprintf "Expected a bool in conditional.\nGot: %A" (get_type cond)
             else if_body d cond tr fl
 
         let if_static d cond tr fl =
@@ -1092,7 +1095,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     else tyt (FunHeapT(env',t))
                 |> destructure d
             | TyType (FunStackT _ | FunHeapT _) as a -> a
-            | x -> on_type_er d.trace <| sprintf "Cannot turn the seleted type into a record. Got: %A" x
+            | x -> on_type_er (trace d) <| sprintf "Cannot turn the seleted type into a record. Got: %A" x
 
         let inline recordify_env is_stack d = record_map_env (recordify is_stack d)
 
@@ -1125,7 +1128,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let memo_type = memo_type renamer
             let typed_expr, memo_key = eval_method memo_type renamed_fv {d with env=renamed_env; ltag=ref renamer.Count} expr
             let typed_expr_ty = get_type typed_expr
-            if is_returnable' typed_expr_ty = false then on_type_er d.trace <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
+            if is_returnable' typed_expr_ty = false then on_type_er (trace d) <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else memo_key, fv, renamer_reversed, typed_expr_ty
 
         let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr_even_if_unit d
@@ -1179,7 +1182,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     else 
                         let l = List.map (snd >> get_type) cases
-                        on_type_er d.trace <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
+                        on_type_er (trace d) <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
                 | _ -> failwith "There should always be at least one clause here."
             | _ -> tev d case
            
@@ -1213,14 +1216,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             try f()
             with 
             | :? TypeError as e -> reraise()
-            | e -> on_type_er d.trace ("This is a .NET exception.\n"+e.Message)
+            | e -> on_type_er (trace d) ("This is a .NET exception.\n"+e.Message)
 
         let dotnet_load_assembly d x =
             match tev d x with
             | TypeString x ->
                 wrap_exception d <| fun _ ->
                     System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> tyt
-            | _ -> on_type_er d.trace "Expected a type level string."
+            | _ -> on_type_er (trace d) "Expected a type level string."
 
         let (|TyDotNetType|_|) = function
             | TyType (DotNetTypeRuntimeT (N x) | DotNetTypeInstanceT (N x)) -> Some x
@@ -1239,7 +1242,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match tev d a with
             | TyLit (LitString str) -> TyLit (LitInt64 (int64 str.Length))
             | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
-            | _ -> on_type_er d.trace "Expected a string."
+            | _ -> on_type_er (trace d) "Expected a string."
 
         let rec record_boxed_unseal d recf x =
             let inline f x = record_boxed_unseal d recf x
@@ -1277,15 +1280,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let env_term = unpack()
                 tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
             // apply_module
-            | FunTypeModule when is_term_cast -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" fun_type
+            | FunTypeModule when is_term_cast -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" fun_type
             | FunTypeModule ->
                 match args with
                 | TypeString n ->
-                    let unpack () = v_find env_term n (fun () -> on_type_er d.trace <| sprintf "Cannot find a member named %s inside the module." n)
+                    let unpack () = v_find env_term n (fun () -> on_type_er (trace d) <| sprintf "Cannot find a member named %s inside the module." n)
                     match r with
                     | RecordIndividual -> unpack()
                     | RecordStack | RecordHeap -> unpack() |> record_boxed_unseal d recf
-                | x -> on_type_er d.trace "Expected a type level string in module application." 
+                | x -> on_type_er (trace d) "Expected a type level string in module application." 
 
         let term_cast d a b =
             match tev d a, tev d b with
@@ -1298,7 +1301,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             
                 let args = instantiate_type_as_variable d (get_type args)
                 apply_func true d recf r env_term fun_type args
-            | x -> on_type_er d.trace <| sprintf "Expected a function in term casting application. Got: %A" x
+            | x -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" x
 
         let rec apply d a b =
             match destructure d a, destructure d b with
@@ -1308,10 +1311,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyLit (LitString str), TyVV [TyLitIndex a; TyLitIndex b] -> 
                 let f x = x >= 0 && x < str.Length
                 if f a && f b then TyLit(LitString str.[a..b])
-                else on_type_er d.trace "The slice into a string literal is out of bounds."
+                else on_type_er (trace d) "The slice into a string literal is out of bounds."
             | TyLit (LitString str), TyLitIndex x -> 
                 if x >= 0 && x < str.Length then TyLit(LitChar str.[x])
-                else on_type_er d.trace "The index into a string literal is out of bounds."
+                else on_type_er (trace d) "The index into a string literal is out of bounds."
             // apply_array
             | ar & TyType(ArrayT(array_ty,elem_ty)), idx ->
                 match array_ty, idx with
@@ -1319,19 +1322,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     if x = "elem_type" then elem_ty |> tyt
                     else failwithf "Unknown type string applied to array. Got: %s" x
                 | DotNetHeap, idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
-                | DotNetHeap, idx -> on_type_er d.trace <| sprintf "The index into an array is not an int. Got: %A" idx
+                | DotNetHeap, idx -> on_type_er (trace d) <| sprintf "The index into an array is not an int. Got: %A" idx
                 | DotNetReference, TyVV [] -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
-                | DotNetReference, _ -> on_type_er d.trace <| sprintf "The index into a reference is not a unit. Got: %A" idx
+                | DotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
             | TyType (DotNetAssemblyT (N a)), TypeString name -> 
                     wrap_exception d <| fun _ ->
                         match a.GetType(name) with
-                        | null -> on_type_er d.trace "A type cannot be found inside the assembly."
+                        | null -> on_type_er (trace d) "A type cannot be found inside the assembly."
                         | x -> 
                             if x.IsPublic then dotnet_type_runtimet x |> tyt
-                            else on_type_er d.trace "Cannot load a private type from an assembly."
-            | TyType (DotNetAssemblyT _), _ -> on_type_er d.trace "Expected a type level string as the second argument."
+                            else on_type_er (trace d) "Cannot load a private type from an assembly."
+            | TyType (DotNetAssemblyT _), _ -> on_type_er (trace d) "Expected a type level string as the second argument."
             | dotnet_type & TyType (DotNetTypeRuntimeT (N t) | DotNetTypeInstanceT (N t)), method_name & TypeString name ->
                 match t.GetField name with
                 | null ->
@@ -1343,17 +1346,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         TyOp(DotNetTypeGetField,[dotnet_type;method_name],field.FieldType |> dotnet_type_to_ty)
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     else
-                        on_type_er d.trace "Cannot get a private field."            
+                        on_type_er (trace d) "Cannot get a private field."            
             | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
                 wrap_exception d <| fun _ ->
                     match typ.GetMethod(method_name, method_args) with
-                    | null -> on_type_er d.trace "Cannot find a method with matching arguments."
+                    | null -> on_type_er (trace d) "Cannot find a method with matching arguments."
                     | meth -> 
                         if meth.IsPublic then
                             TyOp(DotNetTypeCallMethod,[dotnet_type;args],meth.ReturnType |> dotnet_type_to_ty)
                             |> make_tyv_and_push_typed_expr_even_if_unit d
                         else
-                            on_type_er d.trace "Cannot call a private method."
+                            on_type_er (trace d) "Cannot call a private method."
             | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TyTuple (TySystemTypeArgs system_type_args) ->
                 wrap_exception d <| fun _ ->
                     if runtime_type.ContainsGenericParameters then // instantiate generic type params
@@ -1361,27 +1364,27 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> dotnet_type_runtimet |> tyt
                     else // construct the type
                         match runtime_type.GetConstructor system_type_args with
-                        | null -> on_type_er d.trace "Cannot find a constructor with matching arguments."
+                        | null -> on_type_er (trace d) "Cannot find a constructor with matching arguments."
                         | con ->
                             if con.IsPublic then
                                 let instance_type = dotnet_type_instancet runtime_type
                                 TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
                             else
-                                on_type_er d.trace "Cannot call a private constructor."    
-            | TyType(DotNetTypeInstanceT _), _ -> on_type_er d.trace "Expected a type level string as the first argument for a method call."
+                                on_type_er (trace d) "Cannot call a private constructor."    
+            | TyType(DotNetTypeInstanceT _), _ -> on_type_er (trace d) "Expected a type level string as the first argument for a method call."
             // apply_string
             | TyType(PrimT StringT) & str, TyVV [a;b] -> 
                 if is_int a && is_int b then TyOp(StringSlice,[str;a;b],PrimT StringT) |> destructure d
-                else on_type_er d.trace "Expected an int as the second argument to string index."
+                else on_type_er (trace d) "Expected an int as the second argument to string index."
             | TyType(PrimT StringT) & str, idx -> 
                 if is_int idx then TyOp(StringIndex,[str;idx],PrimT CharT) |> destructure d
-                else on_type_er d.trace "Expected an int as the second argument to string index."
+                else on_type_er (trace d) "Expected an int as the second argument to string index."
             // apply_closure
             | closure & TyType(ClosureT (clo_arg_ty,clo_ret_ty)), args -> 
                 let arg_ty = get_type args
-                if arg_ty <> clo_arg_ty then on_type_er d.trace <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
+                if arg_ty <> clo_arg_ty then on_type_er (trace d) <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
                 else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,b -> on_type_er d.trace <| sprintf "Invalid use of apply. %A and %A" a b
+            | a,b -> on_type_er (trace d) <| sprintf "Invalid use of apply. %A and %A" a b
 
         let type_box d typec args =
             let typec & TyType ty, args = tev2 d typec args
@@ -1400,7 +1403,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let lam = inl' ["typec"; "args"] (op(Case,[v "args"; type_box (v "typec") (v "args")])) |> inner_compile
                 apply d (apply d lam typec) args
             | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
-            | _ -> on_type_er d.trace <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
+            | _ -> on_type_er (trace d) <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
 
 
         let apply_tev d expr args = apply d (tev d expr) (tev d args)
@@ -1410,10 +1413,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match v, i with
             | TyVV l, TyLitIndex i ->
                 if i >= 0 || i < List.length l then f l i
-                else on_type_er d.trace "Tuple index not within bounds."
+                else on_type_er (trace d) "Tuple index not within bounds."
             | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should always be destructured."
-            | v, TyLitIndex i -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
-            | v, i -> on_type_er d.trace <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
+            | v, TyLitIndex i -> on_type_er (trace d) <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
+            | v, i -> on_type_er (trace d) <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
         let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i |> destructure d
         let vv_slice_from d v i = vv_index_template (fun l i -> tyvv l.[i..]) d v i
@@ -1426,7 +1429,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let vv_length x = 
             vv_unop_template (fun l -> l.Length |> int64 |> LitInt64 |> TyLit) 
-                (fun _ -> on_type_er d.trace <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v) x
+                (fun _ -> on_type_er (trace d) <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v) x
                 
         let vv_is x = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false)) x
 
@@ -1438,7 +1441,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let a, b = tev2 d a b
             match b with
             | TyVV b -> tyvv(a::b)
-            | _ -> on_type_er d.trace "Expected a tuple on the right in VVCons."
+            | _ -> on_type_er (trace d) "Expected a tuple on the right in VVCons."
 
         let type_lit_create' d x = litt x |> tyt
 
@@ -1452,7 +1455,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match r with
                 | RecordIndividual -> opt id env_term
                 | RecordStack | RecordHeap -> opt (record_boxed_unseal d recf) env_term
-            | x -> on_type_er d.trace <| sprintf "The open expected a module type as input. Got: %A" x
+            | x -> on_type_er (trace d) <| sprintf "The open expected a module type as input. Got: %A" x
 
         let type_annot d a b =
             match d.rbeh with
@@ -1460,12 +1463,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | AnnotationDive ->
                 let a, b = tev d a, tev_seq {d with rbeh=AnnotationDive} b
                 let ta, tb = get_type a, get_type b
-                if ta = tb then a else on_type_er d.trace <| sprintf "Type annotation mismatch.\n%A <> %A" ta tb
+                if ta = tb then a else on_type_er (trace d) <| sprintf "Type annotation mismatch.\n%A <> %A" ta tb
 
         let inline prim_bin_op_template d check_error is_check k a b t =
             let a, b = tev2 d a b
             if is_check a b then k t a b
-            else on_type_er d.trace (check_error a b)
+            else on_type_er (trace d) (check_error a b)
 
         let inline prim_bin_op_helper t a b = TyOp(t,[a;b],get_type a)
         let inline prim_un_op_helper t a = TyOp(t,[a],get_type a)
@@ -1487,8 +1490,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match t with
                     | Add | Sub -> a
                     | Mult -> b
-                    | Div -> on_type_er d.trace "Division by zero caught at compile time."
-                    | Mod -> on_type_er d.trace "Modulus by zero caught at compile time."
+                    | Div -> on_type_er (trace d) "Division by zero caught at compile time."
+                    | Mod -> on_type_er (trace d) "Modulus by zero caught at compile time."
                     | _ -> failwith "Expected an arithmetic operation."
                 let op_arith_zero_num a b =
                     match t with
@@ -1609,7 +1612,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let prim_un_op_template d check_error is_check k a t =
             let a = tev d a
             if is_check a then k t a
-            else on_type_er d.trace (check_error a)
+            else on_type_er (trace d) (check_error a)
 
         let prim_un_floating d a t =
             let er a = sprintf "`is_float a` is false.\na=%A" a
@@ -1640,18 +1643,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let error_non_unit d a =
             let x = tev d a 
-            if get_type x <> BVVT then on_type_er d.trace "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
+            if get_type x <> BVVT then on_type_er (trace d) "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
             else x
 
         let type_lit_create d a =
             match tev d a with
             | TyLit a -> type_lit_create' d a
-            | _ -> on_type_er d.trace "Expected a literal in type literal create."
+            | _ -> on_type_er (trace d) "Expected a literal in type literal create."
 
         let type_lit_cast d a =
             match tev d a with
             | TyT (LitT x) -> TyLit x
-            | _ -> on_type_er d.trace "Expected a literal in type literal cast."
+            | _ -> on_type_er (trace d) "Expected a literal in type literal cast."
 
         let type_lit_is d a =
             match tev d a with
@@ -1681,8 +1684,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | V (N x) -> x :: acc
                 | VV (N l) -> List.fold loop acc l
                 | ExprPos p -> loop acc p.Expression
-                | x -> on_type_er d.trace <| sprintf "Only variable names are allowed in module create. Got: %A" x
-            let er n _ = on_type_er d.trace <| sprintf "In module create, the variable %s was not found." n
+                | x -> on_type_er (trace d) <| sprintf "Only variable names are allowed in module create. Got: %A" x
+            let er n _ = on_type_er (trace d) <| sprintf "In module create, the variable %s was not found." n
             let env = List.fold (fun s n -> Map.add n (v_find d.env n (er n)) s) Map.empty (loop [] l)
             tyfun(env, FunTypeModule)
 
@@ -1692,7 +1695,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let size,array_type =
                 match tev d size with
                 | size when is_int size -> size,arrayt(DotNetHeap,typ)
-                | size -> on_type_er d.trace <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
+                | size -> on_type_er (trace d) <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
 
             TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
 
@@ -1709,13 +1712,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ar & TyType (ArrayT(DotNetReference,t)), idx & TyVV [], r when t = get_type r -> 
                 if is_unit t then TyB
                 else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BVVT))
-            | x -> on_type_er d.trace <| sprintf "The two sides in array set have different types. %A" x
+            | x -> on_type_er (trace d) <| sprintf "The two sides in array set have different types. %A" x
 
         let array_length d ar =
             match tev d ar with
             | ar & TyType (ArrayT(DotNetHeap,t))-> make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
             | ar & TyType (ArrayT(DotNetReference,t))-> TyLit (LitInt64 1L)
-            | x -> on_type_er d.trace <| sprintf "ArrayLength is only supported for .NET arrays. Got: %A" x
+            | x -> on_type_er (trace d) <| sprintf "ArrayLength is only supported for .NET arrays. Got: %A" x
 
         let module_is d a =
             match tev d a with
@@ -1736,15 +1739,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> toList (record_boxed_unseal d recf)
                 |> tyvv
             | x ->
-                on_type_er d.trace <| sprintf "Expected a module. Got: %A" x
+                on_type_er (trace d) <| sprintf "Expected a module. Got: %A" x
 
         let module_has_member d a b =
             match tev2 d a b with
             | Func(_,env,FunTypeModule), b -> 
                 match b with
                 | TypeString b -> TyLit (LitBool <| Map.containsKey b env)
-                | _ -> on_type_er d.trace "Expecting a type literals as the second argument to ModuleHasMember."
-            | x -> on_type_er d.trace <| sprintf "Expecting a module as the first argument to ModuleHasMember. Got: %A" x
+                | _ -> on_type_er (trace d) "Expecting a type literals as the second argument to ModuleHasMember."
+            | x -> on_type_er (trace d) <| sprintf "Expecting a module as the first argument to ModuleHasMember. Got: %A" x
 
         let module_create d l =
             List.fold (fun env -> function
@@ -1767,8 +1770,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         match r with
                         | RecordIndividual -> r, env
                         | _ -> r, record_env_term_unseal d recf env
-                    | Some _ -> on_type_er d.trace <| sprintf "Variable %s is not a module." name
-                    | _ -> on_type_er d.trace <| sprintf "Module %s is not bound in the environment." name
+                    | Some _ -> on_type_er (trace d) <| sprintf "Variable %s is not a module." name
+                    | _ -> on_type_er (trace d) <| sprintf "Module %s is not bound in the environment." name
 
                 let inline re_record name f =
                     let r,env = unseal_record name
@@ -1798,7 +1801,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let failwith_ d a =
             match tev d a with
             | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BVVT) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | _ -> on_type_er d.trace "Expected a string as input to failwith."
+            | _ -> on_type_er (trace d) "Expected a string as input to failwith."
 
         let unsafe_convert d a b =
             let a,b = tev2 d a b
@@ -1818,7 +1821,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PrimT CharT -> char x |> LitChar
                     | PrimT Float32T -> float32 x |> LitFloat32
                     | PrimT Float64T -> float x |> LitFloat64
-                    | _ -> on_type_er d.trace "Cannot convert the literal to the following type: %A" bt
+                    | _ -> on_type_er (trace d) "Cannot convert the literal to the following type: %A" bt
                     |> TyLit
                 match a with
                 | TyLit (LitInt8 a) -> conv_lit a
@@ -1832,9 +1835,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | TyLit (LitChar a) -> conv_lit a
                 | TyLit (LitFloat32 a) -> conv_lit a
                 | TyLit (LitFloat64 a) -> conv_lit a
-                | TyLit (LitBool _) -> on_type_er d.trace "Cannot convert the a boolean literal to the following type: %A" bt
+                | TyLit (LitBool _) -> on_type_er (trace d) "Cannot convert the a boolean literal to the following type: %A" bt
                 // The string is not supported because it can't throw an exception if the conversion fails on the Cuda side.
-                | TyLit (LitString _) -> on_type_er d.trace "Cannot convert the a string literal to the following type: %A" bt
+                | TyLit (LitString _) -> on_type_er (trace d) "Cannot convert the a string literal to the following type: %A" bt
                 | _ ->
                     let is_convertible_primt x =
                         match x with
@@ -1842,13 +1845,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | PrimT _ -> true
                         | _ -> false
                     if is_convertible_primt at && is_convertible_primt bt then TyOp(UnsafeConvert,[a;b],bt)
-                    else on_type_er d.trace "Cannot convert %A to the following type: %A" a bt
+                    else on_type_er (trace d) "Cannot convert %A to the following type: %A" a bt
             
-        let inline add_trace d x = {d with trace = x :: d.trace}
+        let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
 
         match expr with
         | Lit (N value) -> TyLit value
-        | V (N x) -> v_find d.env x (fun () -> on_type_er d.trace <| sprintf "Variable %A not bound." x) |> destructure d
+        | V (N x) -> v_find d.env x (fun () -> on_type_er (trace d) <| sprintf "Variable %A not bound." x) |> destructure d
         | FunctionFilt(N (vars,N (pat, body))) -> 
             let env = Map.filter (fun k _ -> Set.contains k vars) d.env
             let pat = if vars.Contains pat then pat else ""
@@ -1946,10 +1949,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeSplit,[a] -> type_split d a
             | EqType,[a;b] -> eq_type d a b
             | Neg,[a] -> prim_un_numeric d a Neg
-            | ErrorType,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "%A" a
+            | ErrorType,[a] -> tev d a |> fun a -> on_type_er (trace d) <| sprintf "%A" a
             | ErrorNonUnit,[a] -> error_non_unit d a
-            | ErrorPatClause,[] -> on_type_er d.trace "Compiler error: The pattern matching clauses are malformed. PatClause is missing."
-            | ErrorPatMiss,[a] -> tev d a |> fun a -> on_type_er d.trace <| sprintf "Pattern miss error. The argument is %A" a
+            | ErrorPatClause,[] -> on_type_er (trace d) "Compiler error: The pattern matching clauses are malformed. PatClause is missing."
+            | ErrorPatMiss,[a] -> tev d a |> fun a -> on_type_er (trace d) <| sprintf "Pattern miss error. The argument is %A" a
 
             | Log,[a] -> prim_un_floating d a Log
             | Exp,[a] -> prim_un_floating d a Exp
@@ -2548,11 +2551,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code
 
     // #Codegen
-    let spiral_codegen backend_type main =
+    let spiral_codegen main =
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
         let buffer_main = ResizeArray()
-        let buffer_temp = ResizeArray()
         let buffer_final = ResizeArray()
         let exp x = String.concat "" x
 
@@ -2565,17 +2567,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             Seq.fold process_statement (StringBuilder(),0) statements
             |> fun (code,ind) -> code.ToString()
 
-        let state x = buffer_temp.Add <| Statement x
-        let enter' f = buffer_temp.Add Indent; f(); buffer_temp.Add Dedent
-        let enter f = 
-            enter' <| fun _ -> 
+        let buffer (d: CodegenEnv) = d.buffer
+        let trace (d: CodegenEnv) = d.trace
+
+        let state d x = (buffer d).Add <| Statement x
+        let enter' d f = (buffer d).Add Indent; f(); (buffer d).Add Dedent
+        let enter d f = 
+            enter' d <| fun _ -> 
                 match f() with
                 | "" -> ()
-                | s -> state s
+                | s -> state d s
 
         let (|Unit|_|) x = if is_unit x then Some () else None
 
-        let definitions_set = h0()
+        let fsharp_definitions_set = h0()
+        let cuda_definitions_set = h0()
         let definitions_queue = Queue<TypeOrMethod>()
 
         let print_tag_tuple' t = sprintf "Tuple%i" t
@@ -2584,9 +2590,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let print_tag_env' t = sprintf "Env%i" t
         let print_tag_env_stack' t = sprintf "EnvStack%i" t
         let print_tag_env_heap' t = sprintf "EnvHeap%i" t
+        let print_tag_closuret' t = sprintf "FunPointer%i" t
 
-        let sym_dict = d0()
-        let sym t =
+        let fsharp_sym_dict = d0()
+        let cuda_sym_dict = d0()
+        let sym (sym_dict: Dictionary<_,_>) t =
             match sym_dict.TryGetValue t with
             | true, v -> v
             | false, _ ->
@@ -2594,96 +2602,117 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 sym_dict.[t] <- v
                 v
 
-        let def_enqueue f t =
+        let def_enqueue d f t =
+            let definitions_set,sym_dict =
+                match d.backend_type with
+                | FSharp -> fsharp_definitions_set,fsharp_sym_dict
+                | Cuda -> cuda_definitions_set,cuda_sym_dict
             if definitions_set.Add (TomType t) then definitions_queue.Enqueue (TomType t)
-            f (sym t)
+            f (sym sym_dict t)
 
-        let print_tag_tuple t = def_enqueue print_tag_tuple' t
-        let print_tag_union t = def_enqueue print_tag_union' t
-        let print_tag_rec t = 
-            match backend_type with
-            | Cuda -> on_type_er [] "Recursive types are not allowed on the Cuda side."
-            | FSharp -> def_enqueue print_tag_rec' t
-        let print_tag_env t = def_enqueue print_tag_env' t
-        let print_tag_env_stack t = def_enqueue print_tag_env_stack' t
-        let print_tag_env_heap t =  
-            match backend_type with
-            | Cuda -> on_type_er [] "Heap allocated types are not allowed on the Cuda side."
-            | FSharp -> def_enqueue print_tag_env_heap' t
+        let print_tag_tuple d t = def_enqueue d print_tag_tuple' t
+        let print_tag_union d t = def_enqueue d print_tag_union' t
+        let print_tag_rec d t = 
+            match d.backend_type with
+            | Cuda -> on_type_er (trace d) "Recursive types are not allowed on the Cuda side."
+            | FSharp -> def_enqueue d print_tag_rec' t
+        let print_tag_env d t = def_enqueue d print_tag_env' t
+        let print_tag_env_stack d t = def_enqueue d print_tag_env_stack' t
+        let print_tag_env_heap d t =  
+            match d.backend_type with
+            | Cuda -> on_type_er (trace d) "Heap allocated types are not allowed on the Cuda side."
+            | FSharp -> def_enqueue d print_tag_env_heap' t
 
-        let rec print_type = function
+        let rec print_type d = function
             | Unit ->
-                match backend_type with
-                | Cuda -> on_type_er [] "Unit types should not be printed on the Cuda side."
+                match d.backend_type with
+                | Cuda -> "void"
                 | FSharp -> "unit"
-            | FunT _ as x -> print_tag_env x
-            | FunStackT _ as x -> print_tag_env_stack x
-            | FunHeapT _ as x -> print_tag_env_heap x
-            | VVT _ as x -> print_tag_tuple x
-            | UnionT _ as x -> print_tag_union x
-            | RecT _ as x -> print_tag_rec x
+            | FunT _ as x -> print_tag_env d x
+            | FunStackT _ as x -> print_tag_env_stack d x
+            | FunHeapT _ as x -> print_tag_env_heap d x
+            | VVT _ as x -> print_tag_tuple d x
+            | UnionT _ as x -> print_tag_union d x
+            | RecT _ as x -> print_tag_rec d x
             | ArrayT(array_type,t) ->
-                match backend_type with
+                match d.backend_type with
                 | Cuda ->
                     match array_type with
-                    | CudaGlobal | CudaLocal -> sprintf "(%s [])" (print_type t)
-                    | CudaShared -> sprintf "(__shared__ %s [])" (print_type t)
-                    | _ -> on_type_er [] "Other array types not supported on the Cuda side."
+                    | CudaGlobal | CudaLocal -> sprintf "(%s [])" (print_type d t)
+                    | CudaShared -> sprintf "(__shared__ %s [])" (print_type d t)
+                    | _ -> on_type_er (trace d) "Other array types not supported on the Cuda side."
                 | FSharp ->
                     match array_type with
-                    | DotNetReference -> sprintf "(%s ref)" (print_type t)
-                    | DotNetHeap -> sprintf "(%s [])" (print_type t)
-                    | _ -> on_type_er [] "Other array types not supported on the F# side."
+                    | DotNetReference -> sprintf "(%s ref)" (print_type d t)
+                    | DotNetHeap -> sprintf "(%s [])" (print_type d t)
+                    | _ -> on_type_er (trace d) "Other array types not supported on the F# side."
             | DotNetTypeInstanceT (N t) -> 
-                match backend_type with
+                match d.backend_type with
                 | FSharp -> print_dotnet_instance_type t
                 | Cuda -> failwith "Should have been stopped at the join point."
-            | ClosureT(a,b) -> 
-                match backend_type with
+            | ClosureT(a,b) as t ->
+                match d.backend_type with
                 | FSharp ->
-                    let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
-                    sprintf "(%s -> %s)" a (print_type b)
+                    let a = tuple_field_ty a |> List.map (print_type d) |> String.concat " * "
+                    sprintf "(%s -> %s)" a (print_type d b)
                 | Cuda ->
-
+                    def_enqueue d print_tag_closuret' t
             | PrimT x ->
-                match x with
-                | Int8T -> "int8"
-                | Int16T -> "int16"
-                | Int32T -> "int32"
-                | Int64T -> "int64"
-                | UInt8T -> "uint8"
-                | UInt16T -> "uint16"
-                | UInt32T -> "uint32"
-                | UInt64T -> "uint64"
-                | Float32T -> "float32"
-                | Float64T -> "float"
-                | BoolT -> "bool"
-                | StringT -> "string"
-                | CharT -> "char"
+                match d.backend_type with
+                | FSharp ->
+                    match x with
+                    | Int8T -> "int8"
+                    | Int16T -> "int16"
+                    | Int32T -> "int32"
+                    | Int64T -> "int64"
+                    | UInt8T -> "uint8"
+                    | UInt16T -> "uint16"
+                    | UInt32T -> "uint32"
+                    | UInt64T -> "uint64"
+                    | Float32T -> "float32"
+                    | Float64T -> "float"
+                    | BoolT -> "bool"
+                    | StringT -> "string"
+                    | CharT -> "char"
+                | Cuda ->
+                    match x with
+                    | UInt8T -> "unsigned char"
+                    | UInt16T -> "unsigned short"
+                    | UInt32T -> "unsigned int"
+                    | UInt64T -> "unsigned long long int"
+                    | Int8T -> "char"
+                    | Int16T -> "short"
+                    | Int32T -> "int"
+                    | Int64T -> "long long int"
+                    | Float32T -> "float"
+                    | Float64T -> "double"
+                    | BoolT -> "int"
+                    | CharT -> "unsigned short"
+                    | StringT -> "unsigned short *"
             | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
                 failwith "Should be covered in Unit."
                 
 
-        and print_dotnet_instance_type (x: System.Type) =
+        and print_dotnet_instance_type d (x: System.Type) =
             if x.GenericTypeArguments.Length > 0 then
                 [|
                 x.Namespace
                 "." 
                 x.Name.Split '`' |> Array.head
                 "<"
-                Array.map (dotnet_type_to_ty >> print_type) x.GenericTypeArguments |> String.concat ","
+                Array.map (dotnet_type_to_ty >> print_type d) x.GenericTypeArguments |> String.concat ","
                 ">"
                 |] |> String.concat null
             else
                 [|x.Namespace; "."; x.Name|] |> String.concat null
 
         let print_tyv (tag,ty) = sprintf "var_%i" tag
-        let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
+        let print_tyv_with_type d (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type d ty)
         let print_method tag = sprintf "method_%i" tag
 
-        let print_args args = 
+        let print_args d args = 
             Seq.choose (fun (_,ty as x) ->
-                if is_unit ty = false then print_tyv_with_type x |> Some
+                if is_unit ty = false then print_tyv_with_type d x |> Some
                 else None) args
             |> String.concat ", "
 
@@ -2691,61 +2720,79 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let mutable i = 0
             fun () -> i <- i + 1; i
 
-        let print_case_rec x i = print_tag_rec x + sprintf "Case%i" i
-        let print_case_union x i = print_tag_union x + sprintf "Case%i" i
+        let print_case_rec d x i = print_tag_rec d x + sprintf "Case%i" i
+        let print_case_union d x i = print_tag_union d x + sprintf "Case%i" i
 
-        let inline handle_unit_in_last_position f =
-            let c = buffer_temp.Count
+        let inline handle_unit_in_last_position d f =
+            let c = d.buffer.Count
             match f () with
             | "" ->
-                match Seq.last buffer_temp with
+                match Seq.last d.buffer with
                 | Statement s when s.StartsWith "let " -> "()"
-                | _ when c = buffer_temp.Count -> "()"
+                | _ when c = d.buffer.Count -> "()"
                 | _ -> ""
             | x -> x
 
-        let rec codegen' trace expr =
-            let inline codegen expr = codegen' trace expr
-            let print_value = function
-                | LitInt8 x -> sprintf "%iy" x
-                | LitInt16 x -> sprintf "%is" x
-                | LitInt32 x -> sprintf "%i" x
-                | LitInt64 x -> sprintf "%iL" x
-                | LitUInt8 x -> sprintf "%iuy" x
-                | LitUInt16 x -> sprintf "%ius" x
-                | LitUInt32 x -> sprintf "%iu" x
-                | LitUInt64 x -> sprintf "%iUL" x
-                | LitFloat32 x -> sprintf "%ff" x
-                | LitFloat64 x -> sprintf "%f" x
-                | LitString x -> sprintf "\"%s\"" x
-                | LitChar x -> 
+        let rec codegen' d expr =
+            let inline codegen expr = codegen' d expr
+            let print_value d x = 
+                match d.backend_type with
+                | FSharp ->
                     match x with
-                    | '\n' -> @"\n"
-                    | '\t' -> @"\t"
-                    | '\r' -> @"\r"
-                    | x -> string x
-                    |> sprintf "'%s'"
-                | LitBool x -> if x then "true" else "false"
+                    | LitInt8 x -> sprintf "%iy" x
+                    | LitInt16 x -> sprintf "%is" x
+                    | LitInt32 x -> sprintf "%i" x
+                    | LitInt64 x -> sprintf "%iL" x
+                    | LitUInt8 x -> sprintf "%iuy" x
+                    | LitUInt16 x -> sprintf "%ius" x
+                    | LitUInt32 x -> sprintf "%iu" x
+                    | LitUInt64 x -> sprintf "%iUL" x
+                    | LitFloat32 x -> sprintf "%ff" x
+                    | LitFloat64 x -> sprintf "%f" x
+                    | LitString x -> sprintf "\"%s\"" x
+                    | LitChar x -> 
+                        match x with
+                        | '\n' -> @"\n"
+                        | '\t' -> @"\t"
+                        | '\r' -> @"\r"
+                        | x -> string x
+                        |> sprintf "'%s'"
+                    | LitBool x -> if x then "true" else "false"
+                | Cuda ->
+                    match x with
+                    | LitUInt8 x -> string x 
+                    | LitUInt16 x -> string x 
+                    | LitUInt32 x -> string x 
+                    | LitUInt64 x -> string x 
+                    | LitInt8 x -> string x
+                    | LitInt16 x -> string x
+                    | LitInt32 x -> string x
+                    | LitInt64 x -> string x
+                    | LitFloat32 x -> string x
+                    | LitFloat64 x -> string x
+                    | LitBool x -> if x then "1" else "0"
+                    | LitChar x -> uint16 x |> string
+                    | LitString x -> on_type_er (trace d) "String literals are not implemented on the Cuda side."
 
             let inline print_if_tail f = f()
 
-            let inline print_if (_,t as v) f =
+            let inline print_if d (_,t as v) f =
                 match t with
                 | Unit -> f ()
                 | _ ->
-                    sprintf "let %s =" (print_tyv_with_type v) |> state
-                    enter' <| fun _ -> f()
+                    sprintf "let %s =" (print_tyv_with_type d v) |> state d
+                    enter' d <| fun _ -> f()
 
-            let inline if_ v cond tr fl =
-                let enter f = enter <| fun _ -> handle_unit_in_last_position f
+            let inline if_ d v cond tr fl =
+                let enter f = enter d <| fun _ -> handle_unit_in_last_position d f
                 
                 let inline k() = 
-                    sprintf "if %s then" (codegen cond) |> state
+                    sprintf "if %s then" (codegen cond) |> state d
                     enter <| fun _ -> codegen tr
-                    "else" |> state
+                    "else" |> state d
                     enter <| fun _ -> codegen fl
                 match v with
-                | Some tyv -> print_if tyv k
+                | Some tyv -> print_if d tyv k
                 | None -> k()
 
             let make_struct l on_empty on_rest =
@@ -2759,8 +2806,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
-            let array_create size = function
-                | ArrayT(_,t) -> sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type t) (codegen size)
+            let array_create d size = function
+                | ArrayT(_,t) -> sprintf "Array.zeroCreate<%s> (System.Convert.ToInt32(%s))" (print_type d t) (codegen size)
                 | _ -> failwith "impossible"
 
             let reference_create x = sprintf "(ref %s)" (codegen x)
