@@ -2542,7 +2542,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code
 
     // #Codegen
-    let spiral_codegen main =
+    let spiral_fsharp_codegen main =
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
         let buffer_main = ResizeArray()
@@ -3181,7 +3181,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             printfn "Time for peval was: %A" watch.Elapsed
             printfn "Time spent in renaming was: %A" renaming_time
             watch.Restart()
-            let x = Succ (spiral_codegen x)
+            let x = Succ (spiral_fsharp_codegen x)
             printfn "Time for codegen was: %A" watch.Elapsed
             x
         with 
