@@ -2542,55 +2542,135 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code
 
     // #Codegen
+    let process_statements sep (statements: ResizeArray<ProgramNode>) =
+        let process_statement (code: StringBuilder,ind as state) statement =
+            match statement with
+            | Statement x -> [|String.replicate ind " "; x; sep|] |> String.concat "" |> code.Append, ind
+            | Indent -> code, ind+4
+            | Dedent -> code, ind-4
+        Seq.fold process_statement (StringBuilder(),0) statements
+        |> fun (code,ind) -> code.ToString()
+
+    let state (buffer_temp: ResizeArray<_>) x = buffer_temp.Add <| Statement x
+    let enter' (buffer_temp: ResizeArray<_>) f = buffer_temp.Add Indent; f(); buffer_temp.Add Dedent
+    let enter buffer_temp f = 
+        enter' buffer_temp <| fun _ -> 
+            match f() with
+            | "" -> ()
+            | s -> state buffer_temp s
+
+    let (|Unit|_|) x = if is_unit x then Some () else None
+
+    let print_tag_tuple' t = sprintf "Tuple%i" t
+    let print_tag_union' t = sprintf "Union%i" t
+    let print_tag_env' t = sprintf "Env%i" t
+    let print_tag_env_stack' t = sprintf "EnvStack%i" t
+
+    let inline print_args print_tyv_with_type args = 
+        Seq.choose (fun (_,ty as x) ->
+            if is_unit ty = false then print_tyv_with_type x |> Some
+            else None) args
+        |> String.concat ", "
+
+    let inline make_struct codegen l on_empty on_rest =
+        Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
+        |> String.concat ", "
+        |> function
+            | "" -> on_empty
+            | x -> on_rest x
+
+    let print_tyv (tag,ty) = sprintf "var_%i" tag
+    let print_method tag = sprintf "method_%i" tag
+
+    let inline if_not_unit ty f = if is_unit ty then "" else f()
+    let inline def_enqueue (definitions_set: HashSet<_>) (definitions_queue: Queue<_>) (sym_dict: Dictionary<_,_>) f t =
+        if definitions_set.Add (TomType t) then definitions_queue.Enqueue (TomType t)
+
+        match sym_dict.TryGetValue t with
+        | true, v -> v
+        | false, _ ->
+            let v = sym_dict.Count
+            sym_dict.[t] <- v
+            v
+        |> f
+
+    let move_to (buffer: ResizeArray<_>) (temp: ResizeArray<_>) = buffer.AddRange(temp); temp.Clear()
+
+    let spiral_cuda_codegen (methods: Queue<MemoKey>) = 
+        let buffer_type_definitions = ResizeArray()
+        let buffer_method = ResizeArray()
+        let buffer_final = ResizeArray()
+        let buffer_temp = ResizeArray()
+
+        let process_statements x = process_statements ";" x
+        let state x = state buffer_temp x
+        let enter' x = enter' buffer_temp x
+        let enter x = enter buffer_temp x
+
+        let sym_dict = d0()
+        let definitions_set = h0()
+        let definitions_queue = Queue<TypeOrMethod>()
+
+        let inline def_enqueue x = def_enqueue definitions_set definitions_queue sym_dict x
+
+        let print_tag_tuple t = def_enqueue print_tag_tuple' t
+        let print_tag_union t = def_enqueue print_tag_union' t
+        let print_tag_env t = def_enqueue print_tag_env' t
+        let print_tag_env_stack t = def_enqueue print_tag_env_stack' t
+
+        let rec print_type = function
+            | Unit -> "void"
+            | FunT _ as x -> print_tag_env x
+            | FunStackT _ as x -> print_tag_env_stack x
+            | VVT _ as x -> print_tag_tuple x
+            | UnionT _ as x -> print_tag_union x
+            | ArrayT(DotNetReference,t) -> sprintf "(%s ref)" (print_type t)
+            | ArrayT(DotNetHeap,t) -> sprintf "(%s [])" (print_type t)
+            | ArrayT _ -> failwith "Not implemented."
+            | FunHeapT _ | RecT _ | DotNetTypeInstanceT _ as x -> failwithf "%A should have been caught at the join point to the Cuda side." x
+            | ClosureT(a,b) -> 
+                let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
+                sprintf "(%s -> %s)" a (print_type b)
+            | PrimT x ->
+                match x with
+                | Int8T -> "int8"
+                | Int16T -> "int16"
+                | Int32T -> "int32"
+                | Int64T -> "int64"
+                | UInt8T -> "uint8"
+                | UInt16T -> "uint16"
+                | UInt32T -> "uint32"
+                | UInt64T -> "uint64"
+                | Float32T -> "float32"
+                | Float64T -> "float"
+                | BoolT -> "bool"
+                | StringT -> "string"
+                | CharT -> "char"
+            | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
+                failwith "Should be covered in Unit."
+        ()
+
     let spiral_fsharp_codegen main =
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
         let buffer_main = ResizeArray()
         let buffer_temp = ResizeArray()
         let buffer_final = ResizeArray()
-        let exp x = String.concat "" x
 
-        let process_statements (statements: ResizeArray<ProgramNode>) =
-            let process_statement (code: StringBuilder,ind as state) statement =
-                match statement with
-                | Statement x -> [|String.replicate ind " "; x; "\n"|] |> exp |> code.Append, ind
-                | Indent -> code, ind+4
-                | Dedent -> code, ind-4
-            Seq.fold process_statement (StringBuilder(),0) statements
-            |> fun (code,ind) -> code.ToString()
+        let process_statements x = process_statements "\n" x
 
-        let state x = buffer_temp.Add <| Statement x
-        let enter' f = buffer_temp.Add Indent; f(); buffer_temp.Add Dedent
-        let enter f = 
-            enter' <| fun _ -> 
-                match f() with
-                | "" -> ()
-                | s -> state s
+        let state x = state buffer_temp x
+        let enter' x = enter' buffer_temp x
+        let enter x = enter buffer_temp x
 
-        let (|Unit|_|) x = if is_unit x then Some () else None
-
+        let sym_dict = d0()
         let definitions_set = h0()
         let definitions_queue = Queue<TypeOrMethod>()
 
-        let print_tag_tuple' t = sprintf "Tuple%i" t
-        let print_tag_union' t = sprintf "Union%i" t
         let print_tag_rec' t = sprintf "Rec%i" t
-        let print_tag_env' t = sprintf "Env%i" t
-        let print_tag_env_stack' t = sprintf "EnvStack%i" t
         let print_tag_env_heap' t = sprintf "EnvHeap%i" t
 
-        let sym_dict = d0()
-        let sym t =
-            match sym_dict.TryGetValue t with
-            | true, v -> v
-            | false, _ ->
-                let v = sym_dict.Count
-                sym_dict.[t] <- v
-                v
-
-        let def_enqueue f t =
-            if definitions_set.Add (TomType t) then definitions_queue.Enqueue (TomType t)
-            f (sym t)
+        let inline def_enqueue x = def_enqueue definitions_set definitions_queue sym_dict x
 
         let print_tag_tuple t = def_enqueue print_tag_tuple' t
         let print_tag_union t = def_enqueue print_tag_union' t
@@ -2646,19 +2726,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             else
                 [|x.Namespace; "."; x.Name|] |> String.concat null
 
-        let print_tyv (tag,ty) = sprintf "var_%i" tag
         let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
-        let print_method tag = sprintf "method_%i" tag
-
-        let print_args args = 
-            Seq.choose (fun (_,ty as x) ->
-                if is_unit ty = false then print_tyv_with_type x |> Some
-                else None) args
-            |> String.concat ", "
-
-        let get_tag =
-            let mutable i = 0
-            fun () -> i <- i + 1; i
+        let print_args x = print_args print_tyv_with_type x
 
         let print_case_rec x i = print_tag_rec x + sprintf "Case%i" i
         let print_case_union x i = print_tag_union x + sprintf "Case%i" i
@@ -2717,14 +2786,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Some tyv -> print_if tyv k
                 | None -> k()
 
-            let make_struct l on_empty on_rest =
-                Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
-                |> String.concat ", "
-                |> function
-                    | "" -> on_empty
-                    | x -> on_rest x
-
-            let if_not_unit ty f = if is_unit ty then "" else f()
+            let make_struct x = make_struct codegen x
 
             let (|DotNetPrintedArgs|) x = List.map codegen x |> List.filter ((<>) "") |> String.concat ", "
 
@@ -2873,11 +2935,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
                 | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
 
-        //        | ShuffleXor,[x;y],_) -> sprintf "cub::ShuffleXor(%s, %s)" (codegen x) (codegen y)
-        //        | ShuffleUp,[x;y],_) -> sprintf "cub::ShuffleUp(%s, %s)" (codegen x) (codegen y)
-        //        | ShuffleDown,[x;y],_) -> sprintf "cub::ShuffleDown(%s, %s)" (codegen x) (codegen y)
-        //        | ShuffleIndex,[x;y],_) -> sprintf "cub::ShuffleIndex(%s, %s)" (codegen x) (codegen y)
-
                 | Neg,[a] -> sprintf "(-%s)" (codegen a)
                 | VVIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | RecordIndividualUnseal,[r; TyLit (LitString k)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
@@ -2909,9 +2966,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match v with
                     | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s" (print_dotnet_instance_type t) name
                     | _ -> sprintf "%s.%s" (codegen v) name
-                // Cuda kernel constants
-        //        | Syncthreads,[],_) -> state "syncthreads();"; ""
-
                 | x -> failwithf "Missing TyOp case. %A" x
 
         let type_prefix =
@@ -2978,9 +3032,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 print_body()
             | JoinPointType -> ()
 
-        codegen' [] main |> state // Can't forget the non-method
-
-        let move_to (buffer: ResizeArray<_>) (temp: ResizeArray<_>) = buffer.AddRange(temp); temp.Clear()
+        codegen' [] main |> state
         move_to buffer_main buffer_temp
 
         while definitions_queue.Count > 0 do
