@@ -310,6 +310,7 @@ and JoinPointType =
     | JoinPointClosure of Arguments
     | JoinPointMethod
     | JoinPointType
+    | JoinPointCuda
 
 and JoinPointKey = MemoKey * Tag
 and JoinPointValue = JoinPointType * Arguments * Renamer
@@ -2599,7 +2600,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     let move_to (buffer: ResizeArray<_>) (temp: ResizeArray<_>) = buffer.AddRange(temp); temp.Clear()
 
-    let spiral_cuda_codegen (methods: Queue<MemoKey>) = 
+    let spiral_cuda_codegen (definitions_queue: Queue<TypeOrMethod>) = 
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
         let buffer_final = ResizeArray()
@@ -2612,7 +2613,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let sym_dict = d0()
         let definitions_set = h0()
-        let definitions_queue = Queue<TypeOrMethod>()
+        definitions_queue |> Seq.iter (definitions_set.Add >> ignore)
 
         let inline def_enqueue x = def_enqueue definitions_set definitions_queue sym_dict x
 
@@ -2621,7 +2622,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let print_tag_env t = def_enqueue print_tag_env' t
         let print_tag_env_stack t = def_enqueue print_tag_env_stack' t
 
-        let print_tag_closure' t = sprintf "Closure%i" t // Not actual closures. They are only function pointers on the Cuda side.
+        let print_tag_closure' t = sprintf "FunPointer%i" t // Not actual closures. They are only function pointers on the Cuda side.
         let print_tag_closure t = def_enqueue print_tag_closure' t
 
         let rec print_type trace = function
@@ -2739,12 +2740,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 let method_name = print_method method_tag
                 match join_point_dict.[join_point_key] with
-                | JoinPointType, _, _ -> ""
-                | JoinPointMethod, fv, _ -> sprintf "%s(%s)" method_name (print_args fv) |> branch_return
+                | JoinPointType, _, _ -> failwith "Should never be printed."
+                | (JoinPointCuda | JoinPointMethod), fv, _ -> sprintf "%s(%s)" method_name (print_args fv) |> branch_return
                 | JoinPointClosure args, fv, rev_renamer ->
                     let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
                     if Seq.isEmpty fv then method_name else on_type_er trace "The closure should not have free variables on the Cuda side."
                     |> branch_return
+            | TyBox(x, t) -> failwith "TODO"
 //            | TyBox(x, t) ->
 //                let case_name =
 //                    let union_idx s = Seq.findIndex ((=) (get_type x)) s
@@ -2788,14 +2790,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
                 | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
                 | EQ,[a;b] -> sprintf "(%s = %s)" (codegen a) (codegen b)
-                | NEQ,[a;b] -> sprintf "(%s <> %s)" (codegen a) (codegen b)
+                | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
                 | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
                 | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
                 | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
                 | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
-                | BitwiseAnd,[a;b] -> sprintf "(%s &&& %s)" (codegen a) (codegen b)
-                | BitwiseOr,[a;b] -> sprintf "(%s ||| %s)" (codegen a) (codegen b)
-                | BitwiseXor,[a;b] -> sprintf "(%s ^^^ %s)" (codegen a) (codegen b)
+                | BitwiseAnd,[a;b] -> sprintf "(%s & %s)" (codegen a) (codegen b)
+                | BitwiseOr,[a;b] -> sprintf "(%s | %s)" (codegen a) (codegen b)
+                | BitwiseXor,[a;b] -> sprintf "(%s ^ %s)" (codegen a) (codegen b)
 
                 | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
                 | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
@@ -2820,7 +2822,87 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | x -> failwithf "Missing TyOp case. %A" x
                 |> branch_return
 
-        ()
+        let print_closure_a a = tuple_field_ty a |> List.map (print_type []) |> String.concat ", "
+
+        let print_closure_type_definition (a,r) tag =
+            sprintf "typedef %s(*%s)(%s);" (print_type [] r) (print_tag_closure' tag) (print_closure_a a) |> state
+
+        let print_struct_definition iter fold name tys =
+            sprintf "struct %s {" name |> state
+            enter <| fun _ -> iter (fun k ty -> 
+                match ty with
+                | Unit -> ()
+                | _ -> sprintf "%s mem_%s;" (print_type [] ty) k |> state) tys; ""
+            "};" |> state
+
+            let print_args =
+                let args =
+                    fold (fun s k ty -> 
+                        match ty with
+                        | Unit -> s
+                        | _ -> sprintf "%s mem_%s" (print_type [] ty) k :: s) [] tys
+                    |> List.rev
+                    |> String.concat ", "
+                sprintf "__device__ __forceinline__ %s make_%s(%s){" name name args |> state
+            
+            enter' <| fun _ ->
+                sprintf "%s tmp;" name |> state
+                iter (fun k -> function
+                    | Unit -> ()
+                    | _ -> sprintf "tmp.mem_%s = mem_%s;" k k |> state) tys
+                "return tmp;" |> state
+            "}" |> state
+
+        let print_method_definition tag (join_point_type, fv, body) =
+            let method_name = print_method tag
+
+            let print_body() = enter <| fun _ -> codegen' {branch_return=sprintf "return %s"; trace=[]} body
+            let print_method prefix =
+                let args = print_args' [] fv
+                sprintf "%s %s %s(%s) {" prefix (print_type [] (get_type body)) method_name args |> state
+                print_body()
+                "}" |> state
+
+            match join_point_type with
+            | JoinPointClosure _ | JoinPointMethod -> print_method "__device__"
+            | JoinPointCuda -> print_method "__host__ __device__"
+            | JoinPointType -> ()
+            
+        while definitions_queue.Count > 0 do
+            let inline print_fun env x =
+                let {fv=fv} as r = renamables0()
+                if Map.forall (fun _ -> get_type >> is_unit) env = false then
+                    let tuple_name = print_tag_env_stack x
+                    let iter f = Seq.iter (fun (k,ty )-> f (string k) ty)
+                    let fold f = Seq.fold (fun s (k,ty) -> f s (string k) ty)
+                    print_struct_definition iter fold tuple_name fv
+
+            match definitions_queue.Dequeue() with
+            | TomMethod key ->
+                match memoized_methods.[key] with
+                | MemoMethod (join_point_type, fv, body) -> 
+                    print_method_definition key.Symbol (join_point_type, fv, body)
+                    move_to buffer_method buffer_temp
+                | _ -> failwith "impossible"
+            | TomType ty ->
+                match ty with
+                | FunT(tys, _) as x ->
+                    if is_unit_env tys = false then
+                        let tuple_name = print_tag_env x
+                        print_struct_definition Map.iter Map.fold tuple_name tys
+                | FunStackT(C env, _) as x -> print_fun env x
+//                | UnionT tys as x ->
+//                    sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
+//                    print_union_cases (print_case_union x) (Set.toList tys)
+                | VVT tys as x ->
+                    if is_unit_tuple tys = false then
+                        let tuple_name = print_tag_tuple x
+                        let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
+                        let iter f l = List.iteri (fun i x -> f (string i) x) l
+                        print_struct_definition iter fold tuple_name tys
+                | _ -> failwith "impossible"
+                move_to buffer_type_definitions buffer_temp
+
 
     let spiral_fsharp_codegen main =
         let buffer_type_definitions = ResizeArray()
@@ -3042,7 +3124,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 let method_name = print_method method_tag
                 match join_point_dict.[join_point_key] with
-                | JoinPointType, _, _ -> ""
+                | JoinPointType, _, _ -> failwith "Should never be printed."
                 | JoinPointMethod, fv, _ -> sprintf "%s(%s)" method_name (print_args fv)
                 | JoinPointClosure args, fv, rev_renamer ->
                     let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
@@ -3210,7 +3292,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         while definitions_queue.Count > 0 do
             let inline print_fun_x is_stack env x =
                 let {fv=fv} as r = renamables0()
-                renamer_apply_env r env |> ignore
                 if Map.forall (fun _ -> get_type >> is_unit) env = false then
                     let tuple_name = 
                         if is_stack then print_tag_env_stack x
