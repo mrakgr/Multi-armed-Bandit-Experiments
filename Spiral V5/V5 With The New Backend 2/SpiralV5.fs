@@ -881,6 +881,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the env can be renamed. Got: %A" e
             |> fun x -> memo.[e] <- x; x
 
+    let inline renamer_free_variables_template apply x =
+        let {fv=fv} as r = renamables0()
+        apply r x |> ignore
+        fv
+
+    let env_free_variables env = renamer_free_variables_template renamer_apply_env env
+    let typed_expr_free_variables exp = renamer_free_variables_template renamer_apply_typedexpr exp
+
     // #Recordify
     let rec record_map_env g = Map.map (fun _ -> record_map_typed_expr g)
     and record_map_typed_expr g e =
@@ -1141,8 +1149,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let type_get d a = tev_seq d a |> get_type |> TyT
                 
         let memoize_closure arg d x =
-            let {fv=fv} as r = renamables0()
-            let arg_ty = renamer_apply_typedexpr r arg |> get_type
+            let fv = typed_expr_free_variables arg
+            let arg_ty = get_type arg
             let memo_type renamer = JoinPointClosure <| renamer_apply_pool renamer fv
             memoize_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
                 ty_join_point memo_key (JoinPointClosure fv,args,rev_renamer) (closuret(arg_ty,ret_ty))) d x
@@ -2807,8 +2815,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | RecordIndividualUnseal,[r; TyLit (LitString k)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%s" (codegen r) k
                 | RecordBoxedUnseal,[r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
                 | (RecordStackify | RecordHeapify),[a] ->
-                    let {fv=fv} as r = renamables0()
-                    renamer_apply_typedexpr r a |> ignore
+                    let fv = typed_expr_free_variables a
                     match op with
                     | RecordStackify ->
                         let args = Seq.map print_tyv_with_type fv |> String.concat ", "
@@ -2870,7 +2877,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             
         while definitions_queue.Count > 0 do
             let inline print_fun env x =
-                let {fv=fv} as r = renamables0()
+                let fv = env_free_variables env
                 if Map.forall (fun _ -> get_type >> is_unit) env = false then
                     let tuple_name = print_tag_env_stack x
                     let iter f = Seq.iter (fun (k,ty )-> f (string k) ty)
@@ -3291,7 +3298,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         while definitions_queue.Count > 0 do
             let inline print_fun_x is_stack env x =
-                let {fv=fv} as r = renamables0()
+                let fv = env_free_variables env
                 if Map.forall (fun _ -> get_type >> is_unit) env = false then
                     let tuple_name = 
                         if is_stack then print_tag_env_stack x

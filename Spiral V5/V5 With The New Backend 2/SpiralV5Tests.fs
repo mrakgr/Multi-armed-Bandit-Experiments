@@ -983,6 +983,18 @@ met f _ = ar
 f true
     """
 
+let test84 =
+    "test84",[],"Can the Cuda context be loaded from the ManagedCuda library?",
+    """
+cuda {
+    stream = main_stream
+    dims = 128,1,1
+    kernel = cuda 
+        ...
+    }
+inl gridDimX gridDimY gridDimZ -> ...
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
