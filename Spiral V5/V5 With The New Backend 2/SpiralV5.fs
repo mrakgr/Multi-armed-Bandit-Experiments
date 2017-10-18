@@ -1105,7 +1105,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let record_stack d a = recordify true d (tev d a)
         let record_heap d a = recordify false d (tev d a)
 
-        let eval_method memo_type used_vars d expr =
+        let join_point_memoize memo_type used_vars d expr =
             let key_args = nodify_memo_key (expr, d.env) 
 
             match memoized_methods.TryGetValue key_args with
@@ -1121,7 +1121,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | true, _->
                 failwith "Expected a method."
 
-        let inline eval_renaming memo_type d expr =
+        let inline join_point_rename memo_type d expr =
             let env = d.env
             let stopwatch = Diagnostics.Stopwatch.StartNew()
             let {renamer=renamer; renamer_reversed=renamer_reversed; fv=fv; renamed_fv=renamed_fv} as k = renamables0()
@@ -1129,32 +1129,31 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             renaming_time <- renaming_time + stopwatch.Elapsed
 
             let memo_type = memo_type renamer
-            let typed_expr, memo_key = eval_method memo_type renamed_fv {d with env=renamed_env; ltag=ref renamer.Count} expr
+            let typed_expr, memo_key = join_point_memoize memo_type renamed_fv {d with env=renamed_env; ltag=ref renamer.Count} expr
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then on_type_er (trace d) <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
             else memo_key, fv, renamer_reversed, typed_expr_ty
 
-        let inline memoize_helper memo_type k d x = eval_renaming memo_type d x |> k |> make_tyv_and_push_typed_expr_even_if_unit d
-        let memoize_method d x = 
+        let inline join_point_helper memo_type k d x = join_point_rename memo_type d x |> k |> make_tyv_and_push_typed_expr_even_if_unit d
+        let join_point_method d x = 
             let memo_type = JoinPointMethod
-            memoize_helper (fun _ -> memo_type) (fun (memo_key,args,rev_renamer,ret_ty) -> 
+            join_point_helper (fun _ -> memo_type) (fun (memo_key,args,rev_renamer,ret_ty) -> 
                 ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty) d x
 
-        let memoize_type d x = 
-            let memo_type _ = JoinPointType
-            let env = d.env |> Map.map (fun _ -> get_type >> tyt)
-            let _,_,_,ret_ty = eval_renaming memo_type {d with env = env} x 
-            tyt ret_ty
-
-        let type_get d a = tev_seq d a |> get_type |> TyT
-                
-        let memoize_closure arg d x =
+        let join_point_closure arg d x =
             let fv = typed_expr_free_variables arg
             let arg_ty = get_type arg
             let memo_type renamer = JoinPointClosure <| renamer_apply_pool renamer fv
-            memoize_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
+            join_point_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
                 ty_join_point memo_key (JoinPointClosure fv,args,rev_renamer) (closuret(arg_ty,ret_ty))) d x
 
+        let join_point_type d x = 
+            let memo_type _ = JoinPointType
+            let env = d.env |> Map.map (fun _ -> get_type >> tyt)
+            let _,_,_,ret_ty = join_point_rename memo_type {d with env = env} x 
+            tyt ret_ty
+              
+        let type_get d a = tev_seq d a |> get_type |> TyT
         let rec case_type d args_ty =
             let union_case = function
                 | UnionT l -> Set.toList l
@@ -1271,7 +1270,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> record_env_term_unseal d recf env_term
 
             let inline tev x =
-                if is_term_cast then memoize_closure args x
+                if is_term_cast then join_point_closure args x
                 else tev x
 
             match fun_type with
@@ -1879,8 +1878,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
             | If,[cond;tr;fl] -> if_ d cond tr fl
-            | FuncJoinPoint,[a] -> memoize_method d a
-            | TypeJoinPoint,[a] -> memoize_type d a
+            | FuncJoinPoint,[a] -> join_point_method d a
+            | TypeJoinPoint,[a] -> join_point_type d a
             | TermCast,[a;b] -> term_cast d a b
             | UnsafeConvert,[a;b] -> unsafe_convert d a b
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
