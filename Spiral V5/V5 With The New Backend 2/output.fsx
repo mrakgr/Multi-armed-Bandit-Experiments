@@ -1,2 +1,4 @@
-type Q = Q of int
-and f x = x
+open System
+open FSharp.Core.CompilerServices
+
+FSharp.Core.CompilerServices.
