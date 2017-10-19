@@ -2130,7 +2130,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let b = pstring "''" >>% LitChar '''
             pchar ''' >>. (a <|> b) .>> spaces
 
-        let quoted_string =
+        let string_quoted =
             let normalChar = satisfy (fun c -> c <> '\\' && c <> '"')
             let unescape c = match c with
                              | 'n' -> '\n'
@@ -2142,12 +2142,24 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     (manyChars (normalChar <|> escapedChar))
             |>> LitString
 
+        let satisfy_nonquote = satisfy ((<>) '"')
+        let string_raw =
+            between (pstring "@\"") (pchar '"' >>. spaces) (manyChars satisfy_nonquote)
+            |>> LitString
+
+        let string_raw_triple =
+            let str = pstring "\"\"\""
+            between str (str >>. spaces) (manyChars satisfy_nonquote)
+            |>> LitString
+
         let lit_ s = 
             choice 
                 [|
                 pbool
                 pnumber
-                quoted_string
+                string_quoted
+                string_raw
+                string_raw_triple
                 quoted_char
                 |]
             <| s
