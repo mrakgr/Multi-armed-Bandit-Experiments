@@ -210,7 +210,6 @@ inl for_template kind =
     >> function | {finally} as d -> d | d -> {d with finally=id}
     >> function 
         | {by} when lit_is by && by = 0 -> error_type er_msg
-        | {by state} when by = 0 -> failwith er_msg; state
         // The `check` field is a binding time improvement so the loop gets specialized to negative steps.
         // That way it will get specialized even if `by` is dynamic.
         | {by} as d -> 

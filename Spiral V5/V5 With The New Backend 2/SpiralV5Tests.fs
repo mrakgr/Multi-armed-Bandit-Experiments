@@ -48,15 +48,6 @@ inl c = f .Mult 1 2
 a, b, c
     """
 
-let fib = // 
-    "fib",[],"Does recursion work on the fibonacci example?",
-    """
-met rec fib !dyn x = 
-    if x <= 0 then 0 else fib (x-1) + fib (x-2)
-    : x
-fib 1
-    """
-
 let test6 = // 
     "test6",[],"Does returning type level methods from methods work?",
     """
@@ -1782,10 +1773,17 @@ run_with_unit_ret (readall()) parser
 let hacker_rank_10 =
     "hacker_rank_10",[core;tuple;array;arrayn;list;parsing;console;option],"Crossword Puzzle",
     """
-
-
     """
 
+let cuda_1 = 
+    "cuda_1",[],"Does the simulated Cuda call work? This example is not inteded to work",
+    """
+inl rec fib n = cuda
+    if n > 1 then fib (n-1) + fib (n+2)
+    else 1
+    : int64
+fib (dyn 5)
+    """
 
 let tests =
     [|
@@ -1802,6 +1800,7 @@ let tests =
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
+    cuda_1
     |]
 
 open System.IO
@@ -1869,6 +1868,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp test84
+output_test_to_temp cuda_1
 |> printfn "%s"
 |> ignore
