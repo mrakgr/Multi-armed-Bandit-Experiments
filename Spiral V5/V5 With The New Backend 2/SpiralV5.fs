@@ -125,7 +125,8 @@ type Op =
     | StringSlice
 
     // DotNetOps
-    | DotNetLoadAssembly
+    | DotNetAssemblyLoad
+    | DotNetAssemblyLoadFile
     | DotNetTypeConstruct
     | DotNetTypeCallMethod
     | DotNetTypeGetField
@@ -1220,11 +1221,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | :? TypeError as e -> reraise()
             | e -> on_type_er (trace d) ("This is a .NET exception.\n"+e.Message)
 
-        let dotnet_load_assembly d x =
+        let dotnet_assembly_load is_load_file d x =
             match tev d x with
             | TypeString x ->
                 wrap_exception d <| fun _ ->
-                    System.Reflection.Assembly.Load(x) |> dotnet_assemblyt |> tyt
+                    if is_load_file then System.Reflection.Assembly.LoadFile(x) else System.Reflection.Assembly.Load(x)
+                    |> dotnet_assemblyt |> tyt
             | _ -> on_type_er (trace d) "Expected a type level string."
 
         let (|TyDotNetType|_|) = function
@@ -1866,7 +1868,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match op,vars with
             | Apply,[a;b] -> apply_tev d a b
             | StringLength,[a] -> string_length d a
-            | DotNetLoadAssembly,[a] -> dotnet_load_assembly d a
+            | DotNetAssemblyLoad,[a] -> dotnet_assembly_load false d a
+            | DotNetAssemblyLoadFile,[a] -> dotnet_assembly_load true d a
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
                 | TyFun(C env_term,FunTypeFunction core) -> tyfun(env_term,FunTypeRecFunction(core,name))
@@ -3434,8 +3437,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "unsafe_convert" (p2 <| fun a b -> op(UnsafeConvert,[a;b]))
             l "negate" (p <| fun x -> op(Neg,[x]))
         
-            l "load_assembly" (p <| fun x -> op(DotNetLoadAssembly,[x]))
-            l "mscorlib" (ap (v "load_assembly") (ap (v "type_lit_lift") (lit_string "mscorlib")))
+            l "assembly_load" (p <| fun x -> op(DotNetAssemblyLoad,[x]))
+            l "assembly_load_file" (p <| fun x -> op(DotNetAssemblyLoadFile,[x]))
+            l "mscorlib" (ap (v "assembly_load") (ap (v "type_lit_lift") (lit_string "mscorlib")))
             l "ignore" (inl "" B)
             l "id" (p <| id)
             l "const" (p <| fun x -> inl "" x)

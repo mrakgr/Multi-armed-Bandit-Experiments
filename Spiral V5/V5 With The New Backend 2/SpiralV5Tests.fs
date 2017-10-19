@@ -207,7 +207,7 @@ inter c
 let test15 = // 
     "test15",[],"Does basic .NET interop work?",
     """
-inl system = load_assembly .mscorlib
+inl system = assembly_load .mscorlib
 inl builder_type = system ."System.Text.StringBuilder"
 inl b = builder_type ("Qwe", 128i32)
 inl a x =
@@ -984,15 +984,11 @@ f true
     """
 
 let test84 =
-    "test84",[],"",
+    "test84",[],"Can the ManagedCuda assembly be loaded?",
     """
-cuda {
-    stream = main_stream
-    dims = 128,1,1
-    kernel = cuda 
-        ...
-    }
-inl gridDimX gridDimY gridDimZ -> ...
+inl managed_cuda_path = .(@"C:\Users\Marko\Documents\Visual Studio 2015\Projects\Multi-armed Bandit Experiments\packages\ManagedCuda-80.8.0.13\lib\net46\ManagedCuda.dll")
+inl mc = assembly_load_file managed_cuda_path
+0
     """
 
 let parsing1 = 
@@ -1871,8 +1867,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
-//output_test_to_temp hacker_rank_2
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp test84
+|> printfn "%s"
+|> ignore
