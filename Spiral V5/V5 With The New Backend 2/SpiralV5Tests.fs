@@ -1785,6 +1785,17 @@ inl rec fib n = cuda
 fib (dyn 5)
     """
 
+let cuda_2 =
+    "cuda_2",[],"Does the getting the VS path work?",
+    """
+inl ops = assembly_load."FSharp.Core"."Microsoft.FSharp.Core.Operators"
+inl visual_studio_path =
+    inl x = mscorlib."System.Environment".GetEnvironmentVariable("VS140COMNTOOLS")
+    if ops.IsNull {tyargs=x; args=x} then failwith "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
+    IO.Directory.GetParent(x).Parent.Parent.FullName
+
+    """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9

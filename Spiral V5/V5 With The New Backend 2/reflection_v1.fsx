@@ -8,10 +8,12 @@ let array_tys =
     |> Array.filter (fun x -> x.FullName.Contains "Array")
 
 let a = fs.GetType("Microsoft.FSharp.Collections.ArrayModule").GetMethod("SortWith").MakeGenericMethod([|typeof<int64>|])
-let b = fs.GetType("Microsoft.FSharp.Collections.ArrayModule").GetMethod("SortWith").MakeGenericMethod([|typeof<int64>|])
 
-a = b // true
-Object.ReferenceEquals(a,b) // true
+let operators =
+    fs.GetTypes()
+    |> Seq.find (fun x ->
+        x.Name = "Operators"
+        )
 
-
+let is_null = operators.GetMethod("IsNull")
 
