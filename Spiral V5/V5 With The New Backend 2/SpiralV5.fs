@@ -1240,7 +1240,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyType (DotNetTypeRuntimeT (N x) | DotNetTypeInstanceT (N x)) -> Some x
             | _ -> None
 
-        let (|TySystemTypeArgs|) args = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
+        let (|TySystemTypeArgs|) (TyTuple args) = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
 
         let (|TyLitIndex|_|) = function
             | TyLit (LitInt32 i) -> Some i
@@ -1358,17 +1358,41 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     else
                         on_type_er (trace d) "Cannot get a private field."            
-            | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TyTuple(TySystemTypeArgs method_args)] ->
+            | dotnet_type & TyDotNetType typ, TyTuple [TypeString method_name; args & TySystemTypeArgs method_args] ->
                 wrap_exception d <| fun _ ->
-                    match typ.GetMethod(method_name, method_args) with
-                    | null -> on_type_er (trace d) "Cannot find a method with matching arguments."
-                    | meth -> 
+                    let method_find (ty: Type) method_name (args: Type[]) = 
+                        let mutable result = None
+                        ty.GetMethods()
+                        |> Array.exists (fun method_ ->
+                            if method_.Name = method_name then
+                                let pars = method_.GetParameters()
+                                if pars.Length = args.Length then
+                                    let s = Dictionary()
+                                    (pars, args) ||> Array.forall2 (fun par arg ->
+                                        let par = par.ParameterType
+                                        if par.IsGenericParameter then
+                                            match s.TryGetValue par with
+                                            | true, par -> par = arg
+                                            | false, _ -> s.Add(par,arg); true
+                                        else par = arg
+                                        )
+                                    |> fun it_exists ->
+                                        if it_exists then result <- Some method_
+                                        it_exists
+                                else false
+                            else false
+                            )
+                        |> fun _ -> result
+                                        
+                    match method_find typ method_name method_args with
+                    | None -> on_type_er (trace d) "Cannot find a method with matching arguments."
+                    | Some meth ->
                         if meth.IsPublic then
                             TyOp(DotNetTypeCallMethod,[dotnet_type;args],meth.ReturnType |> dotnet_type_to_ty)
                             |> make_tyv_and_push_typed_expr_even_if_unit d
                         else
                             on_type_er (trace d) "Cannot call a private method."
-            | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TyTuple (TySystemTypeArgs system_type_args) ->
+            | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TySystemTypeArgs system_type_args ->
                 wrap_exception d <| fun _ ->
                     if runtime_type.ContainsGenericParameters then // instantiate generic type params
                         runtime_type.MakeGenericType system_type_args 
