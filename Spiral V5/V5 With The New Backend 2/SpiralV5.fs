@@ -1358,7 +1358,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     else
                         on_type_er (trace d) "Cannot get a private field."            
-            | dotnet_type & TyDotNetType typ, TyTuple [TypeString method_name; args & TySystemTypeArgs method_args] ->
+            | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TySystemTypeArgs method_args] ->
                 wrap_exception d <| fun _ ->
                     let method_find (ty: Type) method_name (args: Type[]) = 
                         let mutable result = None

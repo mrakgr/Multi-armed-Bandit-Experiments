@@ -1,15 +1,13 @@
-// __host__ __device__ long long int method_0(long long int var_0) {
-    // if ((var_0 > 1)) {
-        // long long int var_1 = (var_0 - 1);
-        // long long int var_2 = method_0(var_1);
-        // long long int var_3 = (var_0 + 2);
-        // long long int var_4 = method_0(var_3);
-        // return (var_2 + var_4);
-    // } else {
-        // return 1;
-    // }
-// }
 
-let (var_0: int64) = 5L
-// Cuda method call
-method_0((var_0: int64))
+let (var_0: System.Text.StringBuilder) = System.Text.StringBuilder("Qwe", 128)
+let (var_1: System.Text.StringBuilder) = var_0.Append(123L)
+let (var_2: System.Text.StringBuilder) = var_0.AppendLine()
+let (var_3: System.Text.StringBuilder) = var_0.Append(123s)
+let (var_4: System.Text.StringBuilder) = var_0.AppendLine()
+let (var_5: System.Text.StringBuilder) = var_0.Append("qwe")
+let (var_6: System.Text.StringBuilder) = var_0.AppendLine()
+let (var_7: string) = var_0.ToString()
+System.Console.Write(var_7)
+let (var_8: System.Collections.Generic.Dictionary<int64,int64>) = System.Collections.Generic.Dictionary<int64,int64>(128)
+var_8.Add(1L, 2L)
+var_8.get_Item(1L)

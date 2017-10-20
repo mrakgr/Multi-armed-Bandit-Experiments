@@ -1881,6 +1881,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp cuda_2
+output_test_to_temp test15
 |> printfn "%s"
 |> ignore
