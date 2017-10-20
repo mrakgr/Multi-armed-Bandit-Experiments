@@ -728,3 +728,16 @@ inl init !map_dims dim_ranges f =
                 
 {init}
     """) |> module_
+
+let cuda =
+    (
+    "Cuda",[],"The Cuda module.",
+    """
+inl fs = assembly_load."FSharp.Core"
+inl ops = fs."Microsoft.FSharp.Core.Operators"
+inl visual_studio_path =
+    inl x = mscorlib."System.Environment".GetEnvironmentVariable("VS140COMNTOOLS")
+    if ops.IsNull x then failwith "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
+    mscorlib."System.IO.Directory".GetParent(x).get_Parent().get_Parent().get_FullName()
+{visual_studio_path}
+    """) |> module_

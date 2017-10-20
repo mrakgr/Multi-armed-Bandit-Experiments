@@ -900,7 +900,7 @@ f x
     """
 
 let test76 =
-    "test76",[],"Do the xor module patterns work?",
+    "test76",[],"Do the xor module patterns work? This one is supposed to fail.",
     """
 inl x = {b=2; c=3}
 inl f = function
@@ -909,7 +909,7 @@ f x
     """
 
 let test77 =
-    "test77",[],"Do the xor module patterns work?",
+    "test77",[],"Do the xor module patterns work? This one is supposed to fail.",
     """
 inl x = {b=2; c=3}
 inl f = function
@@ -982,6 +982,15 @@ inl mc = assembly_load_file managed_cuda_path
 0
     """
 
+let test85 =
+    "test85",[],"Does the equality rewrite work?",
+    """
+inl x = dyn 123
+if x = 1 then x
+elif x = 2 then x
+else 3
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1042,7 +1051,7 @@ open Console
 
 inl p = 
     parse_array {parser=parse_int; typ=int64; n=16}
-    |>> writeline
+    >>. succ ()
 
 run_with_unit_ret (readall()) p
     """
@@ -1786,16 +1795,9 @@ fib (dyn 5)
     """
 
 let cuda_2 =
-    "cuda_2",[],"Does the getting the VS path work?",
+    "cuda_2",[cuda],"Does the getting the VS path work?",
     """
-inl fs = assembly_load."FSharp.Core"
-inl ops = fs."Microsoft.FSharp.Core.Operators"
-inl visual_studio_path =
-    inl x = mscorlib."System.Environment".GetEnvironmentVariable("VS140COMNTOOLS")
-    if ops.IsNull x then failwith "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
-    mscorlib."System.IO.Directory".GetParent(x)
-    //.Parent.Parent.FullName
-visual_studio_path
+Cuda.visual_studio_path
     """
 
 let tests =
@@ -1808,12 +1810,12 @@ let tests =
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
-    test80;test81;test82;test83
+    test80;test81;test82;test83;test84;test85
     hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7;hacker_rank_8;hacker_rank_9
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
-    cuda_1
+    cuda_1;cuda_2
     |]
 
 open System.IO
@@ -1879,8 +1881,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache()
 
-output_test_to_temp test15
-|> printfn "%s"
-|> ignore
+//output_test_to_temp test85
+//|> printfn "%s"
+//|> ignore

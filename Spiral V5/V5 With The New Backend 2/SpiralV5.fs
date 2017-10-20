@@ -1314,6 +1314,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 apply_func true d recf r env_term fun_type args
             | x -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" x
 
+        let compilation_source_name_attr = typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>
+
         let rec apply d a b =
             match destructure d a, destructure d b with
             // apply_function
@@ -1358,7 +1360,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     else
                         on_type_er (trace d) "Cannot get a private field."            
-            | dotnet_type & TyDotNetType typ, args & TyTuple [TypeString method_name; TySystemTypeArgs method_args] ->
+            | dotnet_type & TyDotNetType typ, TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
                 wrap_exception d <| fun _ ->
                     let method_find (ty: Type) method_name (args: Type[]) = 
                         let mutable result = None
@@ -1385,10 +1387,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> fun _ -> result
                                         
                     match method_find typ method_name method_args with
-                    | None -> on_type_er (trace d) "Cannot find a method with matching arguments."
+                    | None -> on_type_er (trace d) <| sprintf "Cannot find a method with matching arguments. method_name=%s method_args=%A" method_name method_args
                     | Some meth ->
                         if meth.IsPublic then
-                            TyOp(DotNetTypeCallMethod,[dotnet_type;args],meth.ReturnType |> dotnet_type_to_ty)
+                            let method_name' =
+                                meth.CustomAttributes
+                                |> Seq.tryFind (fun x -> x.AttributeType = compilation_source_name_attr)
+                                |> Option.map (fun atr -> 
+                                    atr.ConstructorArguments |> Seq.head 
+                                    |> fun x -> (x.Value :?> string) |> LitString |> litt |> tyt)
+                                |> Option.defaultValue method_name'
+
+                            TyOp(DotNetTypeCallMethod,[dotnet_type;tyvv [method_name'; method_args']],meth.ReturnType |> dotnet_type_to_ty)
                             |> make_tyv_and_push_typed_expr_even_if_unit d
                         else
                             on_type_er (trace d) "Cannot call a private method."
@@ -3411,7 +3421,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
-        spiral_cuda_codegen cuda_join_points |> state 
+        match spiral_cuda_codegen cuda_join_points with
+        | "" -> ()
+        | x -> state x
         move_to buffer_final buffer_temp
 
         move_to buffer_final buffer_type_definitions
