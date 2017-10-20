@@ -1797,9 +1797,30 @@ fib (dyn 5)
 let cuda_2 =
     "cuda_2",[cuda],"Does the getting the VS path work?",
     """
-Cuda.visual_studio_path
-    """
+open Cuda
+inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+inl Path = mscorlib ."System.IO.Path"
+inl ProcessStartInfo = system ."System.Diagnostics.ProcessStartInfo"
+inl compile_kernel_using_nvcc_bat_router (kernel_code: string) (kernel_name: string) =
+    inl nvcc_router_path = "nvcc_router.bat"
+    inl procStartInfo = ProcessStartInfo()
+    procStartInfo.set_RedirectStandardOutput true
+    procStartInfo.set_RedirectStandardError true
+    procStartInfo.set_UseShellExecute false
+    procStartInfo.set_FileName nvcc_router_path
+    inl p = system ."System.Diagnostics.Process"()
+    p.set_StartInfo procStartInfo
+    procStartInfo
 
+compile_kernel_using_nvcc_bat_router "qwe" "rty"
+
+//    inl outputHandler f (_sender:obj) (args:DataReceivedEventArgs) = f args.Data
+//    inl p = new Process(StartInfo = procStartInfo)
+//    inl print_to_standard_output = outputHandler <| fun x -> printfn "%s" x
+//    //p.OutputDataReceived.AddHandler(DataReceivedEventHandler (print_to_standard_output))
+//    p.ErrorDataReceived.AddHandler(DataReceivedEventHandler (print_to_standard_output))
+//    p.Dispose()
+    """
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1881,8 +1902,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
-//output_test_to_temp test85
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp cuda_2
+|> printfn "%s"
+|> ignore

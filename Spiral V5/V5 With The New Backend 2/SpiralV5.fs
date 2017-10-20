@@ -1236,8 +1236,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> dotnet_assemblyt |> tyt
             | _ -> on_type_er (trace d) "Expected a type level string."
 
-        let (|TyDotNetType|_|) = function
-            | TyType (DotNetTypeRuntimeT (N x) | DotNetTypeInstanceT (N x)) -> Some x
+        let (|TyDotNetType|_|) (TyType x) =
+            match x with
+            | DotNetTypeRuntimeT (N x) -> Some (x, false)
+            | DotNetTypeInstanceT (N x) -> Some (x, true)
             | _ -> None
 
         let (|TySystemTypeArgs|) (TyTuple args) = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
@@ -1360,7 +1362,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     else
                         on_type_er (trace d) "Cannot get a private field."            
-            | dotnet_type & TyDotNetType typ, TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
+            | dotnet_type & TyDotNetType (typ, is_instance), TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
                 wrap_exception d <| fun _ ->
                     let method_find (ty: Type) method_name (args: Type[]) = 
                         let mutable result = None
@@ -1398,8 +1400,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                                     |> fun x -> (x.Value :?> string) |> LitString |> litt |> tyt)
                                 |> Option.defaultValue method_name'
 
-                            TyOp(DotNetTypeCallMethod,[dotnet_type;tyvv [method_name'; method_args']],meth.ReturnType |> dotnet_type_to_ty)
-                            |> make_tyv_and_push_typed_expr_even_if_unit d
+                            let call_method() =
+                                TyOp(DotNetTypeCallMethod,[dotnet_type;tyvv [method_name'; method_args']],meth.ReturnType |> dotnet_type_to_ty)
+                                |> make_tyv_and_push_typed_expr_even_if_unit d
+
+                            if meth.IsStatic || is_instance then call_method()
+                            else on_type_er d.trace "Expected a instance of a dotnet type."
                         else
                             on_type_er (trace d) "Cannot call a private method."
             | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TySystemTypeArgs system_type_args ->
