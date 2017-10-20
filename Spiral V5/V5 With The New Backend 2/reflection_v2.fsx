@@ -10,4 +10,6 @@ let proc = system.GetType("System.Diagnostics.Process")
 proc.GetEvent("ErrorDataReceived")
 
 let proc' = System.Diagnostics.Process()
-proc'.ErrorDataReceived.AddHandler()
+proc'.ErrorDataReceived.add_ErrorDataReceived(fun x -> ())
+
+typeof<System.Diagnostics.DataReceivedEventHandler>
