@@ -991,6 +991,17 @@ elif x = 2 then x
 else 3
     """
 
+let test86 =
+    "test86",[console;tuple;core],"Does compiling multicast delegates work?",
+    """
+open Console
+open Core
+//inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+//inl delegate = system ."System.Diagnostics.DataReceivedEventHandler"
+term_cast_curry (inl _ x -> writeline x) (unit, string)
+    """
+
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1836,7 +1847,7 @@ let tests =
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
-    cuda_1;cuda_2
+    cuda_1
     |]
 
 open System.IO
@@ -1904,6 +1915,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp cuda_2
+output_test_to_temp test86
 |> printfn "%s"
 |> ignore

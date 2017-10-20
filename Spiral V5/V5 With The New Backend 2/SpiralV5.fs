@@ -1410,18 +1410,31 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             on_type_er (trace d) "Cannot call a private method."
             | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TySystemTypeArgs system_type_args ->
                 wrap_exception d <| fun _ ->
-                    if runtime_type.ContainsGenericParameters then // instantiate generic type params
-                        runtime_type.MakeGenericType system_type_args 
-                        |> dotnet_type_runtimet |> tyt
-                    else // construct the type
-                        match runtime_type.GetConstructor system_type_args with
-                        | null -> on_type_er (trace d) "Cannot find a constructor with matching arguments."
-                        | con ->
-                            if con.IsPublic then
-                                let instance_type = dotnet_type_instancet runtime_type
-                                TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
-                            else
-                                on_type_er (trace d) "Cannot call a private constructor."    
+//                    match args with
+//                    | del when runtime_type.BaseType = typeof<System.MulticastDelegate> ->
+//                        // I really hate both .NET and the F# compiler in times like these.
+//                        // The F# compiler for doing implicit conversions that are really great when you are
+//                        // programming in it, but not so great when you are compiling.
+//                        // The .NET for being a rat's nest of useless special cases.
+//                        // There is not an elegant way to do this.
+//                        let delegate_constructor_arguments =
+//                            runtime_type.GetMethod("Invoke").GetParameters()
+//                            |> Seq.map (fun x -> x.ParameterType |> dotnet_type_to_ty)
+
+//                    | TySystemTypeArgs system_type_args ->
+                        if runtime_type.ContainsGenericParameters then // instantiate generic type params
+                            runtime_type.MakeGenericType system_type_args 
+                            |> dotnet_type_runtimet |> tyt
+                        // construct the type
+                        else
+                            match runtime_type.GetConstructor system_type_args with
+                            | null -> on_type_er (trace d) "Cannot find a constructor with matching arguments."
+                            | con ->
+                                if con.IsPublic then
+                                    let instance_type = dotnet_type_instancet runtime_type
+                                    TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
+                                else
+                                    on_type_er (trace d) "Cannot call a private constructor."    
             | TyType(DotNetTypeInstanceT _), _ -> on_type_er (trace d) "Expected a type level string as the first argument for a method call."
             // apply_string
             | TyType(PrimT StringT) & str, TyVV [a;b] -> 

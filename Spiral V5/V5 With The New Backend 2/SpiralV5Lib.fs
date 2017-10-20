@@ -20,7 +20,15 @@ inl (=) a b =
         else body (a, b)
     if eq_type a b then a = b
     else error_type ("Trying to compare variables of two different types. Got:",a,b)
-{(=)}
+
+/// Generalizes term casting for curried functions. Used for F# interop involving delegates.
+inl term_cast_curry f tys =
+    inl rec loop vars tys =
+        match tys with
+        | x :: xs -> term_cast (inl x -> loop (x :: vars) xs) x
+        | () -> Tuple.foldr (inl var f -> f var) vars f
+    loop () tys
+{(=) term_cast_curry}
     """) |> module_
 
 let option =

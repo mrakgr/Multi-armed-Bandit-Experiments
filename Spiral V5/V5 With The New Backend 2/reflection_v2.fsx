@@ -1,15 +1,12 @@
 ﻿open System
 open System.Reflection
 
-let mscorlib = Reflection.Assembly.Load("mscorlib")
-let fscore = Reflection.Assembly.Load("FSharp.Core")
 let system = Reflection.Assembly.Load("system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")
 
-let proc = system.GetType("System.Diagnostics.Process")
+let del = system.GetType("System.Diagnostics.DataReceivedEventHandler")
 
-proc.GetEvent("ErrorDataReceived")
+let inv = del.GetMethod("Invoke")
+inv.GetParameters().[1].ParameterType
 
-let proc' = System.Diagnostics.Process()
-proc'.ErrorDataReceived.add_ErrorDataReceived(fun x -> ())
 
-typeof<System.Diagnostics.DataReceivedEventHandler>
+
