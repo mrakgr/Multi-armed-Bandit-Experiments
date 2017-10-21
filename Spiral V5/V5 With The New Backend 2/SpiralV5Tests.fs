@@ -1001,7 +1001,6 @@ open Core
 term_cast_curry (inl _ x -> writeline x) (unit, string)
     """
 
-
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1915,6 +1914,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp test86
+output_test_to_temp test15
 |> printfn "%s"
 |> ignore

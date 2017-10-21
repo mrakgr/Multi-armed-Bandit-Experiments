@@ -289,8 +289,7 @@ and Ty =
     | UnionT of Set<Ty>
     | RecT of int
     | ArrayT of ArrayType * Ty
-    | DotNetTypeRuntimeT of Node<Type> 
-    | DotNetTypeInstanceT of Node<Type>
+    | DotNetTypeT of Node<Type> 
     | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
@@ -461,8 +460,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let uniont x = UnionT x
     let closuret x = ClosureT x
     let arrayt x = ArrayT x
-    let dotnet_type_runtimet x = nodify_dotnet_type_runtimet x |> DotNetTypeRuntimeT
-    let dotnet_type_instancet x = nodify_dotnet_type_instancet x |> DotNetTypeInstanceT
+    let dotnet_typet x = nodify_dotnet_type_runtimet x |> DotNetTypeT
     let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
 
     let nodify_memo_key = nodify <| d0()
@@ -592,8 +590,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let rec is_unit_tuple t = List.forall is_unit t
     and is_unit_env x = Map.forall (fun _ -> is_unit) x
     and is_unit = function
-        | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> true
-        | UnionT _ | RecT _ | DotNetTypeInstanceT _ | ClosureT _ | PrimT _ -> false
+        | LitT _ | DotNetAssemblyT _ -> true
+        | UnionT _ | RecT _ | DotNetTypeT _ | ClosureT _ | PrimT _ -> false
         | ArrayT (_,t) -> is_unit t
         | FunT (env,_) -> is_unit_env env
         | FunStackT (C x, _) | FunHeapT (C x, _) -> typed_expr_env_free_var_exists x = false
@@ -925,8 +923,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         elif x.IsArray then arrayt(DotNetHeap,dotnet_type_to_ty (x.GetElementType()))
         // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
         elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
-        elif x.ContainsGenericParameters then dotnet_type_runtimet x
-        else dotnet_type_instancet x
+        else dotnet_typet x
 
     let rec dotnet_ty_to_type (x: Ty) =
         match x with
@@ -947,7 +944,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | PrimT CharT -> typeof<char>
         | ArrayT(DotNetHeap,t) -> (dotnet_ty_to_type t).MakeArrayType()
         | ArrayT(DotNetReference,t) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
-        | DotNetTypeInstanceT (N x) | DotNetTypeRuntimeT (N x) -> x
+        | DotNetTypeT (N x) -> x
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
     let on_type_er trace message = TypeError(trace,message) |> raise
@@ -1236,12 +1233,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> dotnet_assemblyt |> tyt
             | _ -> on_type_er (trace d) "Expected a type level string."
 
-        let (|TyDotNetType|_|) (TyType x) =
-            match x with
-            | DotNetTypeRuntimeT (N x) -> Some (x, false)
-            | DotNetTypeInstanceT (N x) -> Some (x, true)
-            | _ -> None
-
         let (|TySystemTypeArgs|) (TyTuple args) = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
 
         let (|TyLitIndex|_|) = function
@@ -1347,10 +1338,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         match a.GetType(name) with
                         | null -> on_type_er (trace d) "A type cannot be found inside the assembly."
                         | x -> 
-                            if x.IsPublic then dotnet_type_runtimet x |> tyt
+                            if x.IsPublic then dotnet_typet x |> tyt
                             else on_type_er (trace d) "Cannot load a private type from an assembly."
             | TyType (DotNetAssemblyT _), _ -> on_type_er (trace d) "Expected a type level string as the second argument."
-            | dotnet_type & TyType (DotNetTypeRuntimeT (N t) | DotNetTypeInstanceT (N t)), method_name & TypeString name ->
+            | dotnet_type & TyType (DotNetTypeT (N t)), method_name & TypeString name ->
                 match t.GetField name with
                 | null ->
                     let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
@@ -1362,54 +1353,76 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     else
                         on_type_er (trace d) "Cannot get a private field."            
-            | dotnet_type & TyDotNetType (typ, is_instance), TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
+            | dotnet_type & TyType (DotNetTypeT (N system_type) & spiral_ty), args ->
                 wrap_exception d <| fun _ ->
-                    let method_find (ty: Type) method_name (args: Type[]) = 
-                        let mutable result = None
-                        ty.GetMethods()
-                        |> Array.exists (fun method_ ->
-                            if method_.Name = method_name then
-                                let pars = method_.GetParameters()
-                                if pars.Length = args.Length then
-                                    let s = Dictionary()
-                                    (pars, args) ||> Array.forall2 (fun par arg ->
-                                        let par = par.ParameterType
-                                        if par.IsGenericParameter then
-                                            match s.TryGetValue par with
-                                            | true, par -> par = arg
-                                            | false, _ -> s.Add(par,arg); true
-                                        else par = arg
-                                        )
-                                    |> fun it_exists ->
-                                        if it_exists then result <- Some method_
-                                        it_exists
+                    match args with
+                    | TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
+                        let method_find (ty: Type) method_name (args: Type[]) = 
+                            let mutable result = None
+                            ty.GetMethods()
+                            |> Array.exists (fun method_ ->
+                                if method_.Name = method_name then
+                                    let pars = method_.GetParameters()
+                                    if pars.Length = args.Length then
+                                        let s = Dictionary()
+                                        (pars, args) ||> Array.forall2 (fun par arg ->
+                                            let par = par.ParameterType
+                                            if par.IsGenericParameter then
+                                                match s.TryGetValue par with
+                                                | true, par -> par = arg
+                                                | false, _ -> s.Add(par,arg); true
+                                            else par = arg
+                                            )
+                                        |> fun it_exists ->
+                                            if it_exists then result <- Some method_
+                                            it_exists
+                                    else false
                                 else false
-                            else false
-                            )
-                        |> fun _ -> result
+                                )
+                            |> fun _ -> result
                                         
-                    match method_find typ method_name method_args with
-                    | None -> on_type_er (trace d) <| sprintf "Cannot find a method with matching arguments. method_name=%s method_args=%A" method_name method_args
-                    | Some meth ->
-                        if meth.IsPublic then
-                            let method_name' =
-                                meth.CustomAttributes
-                                |> Seq.tryFind (fun x -> x.AttributeType = compilation_source_name_attr)
-                                |> Option.map (fun atr -> 
-                                    atr.ConstructorArguments |> Seq.head 
-                                    |> fun x -> (x.Value :?> string) |> LitString |> litt |> tyt)
-                                |> Option.defaultValue method_name'
+                        match method_find system_type method_name method_args with
+                        | None -> on_type_er (trace d) <| sprintf "Cannot find a method with matching arguments. method_name=%s method_args=%A" method_name method_args
+                        | Some meth ->
+                            if meth.IsPublic then
+                                let method_name' =
+                                    meth.CustomAttributes
+                                    |> Seq.tryFind (fun x -> x.AttributeType = compilation_source_name_attr)
+                                    |> Option.map (fun atr -> 
+                                        atr.ConstructorArguments |> Seq.head 
+                                        |> fun x -> (x.Value :?> string) |> LitString |> litt |> tyt)
+                                    |> Option.defaultValue method_name'
 
-                            let call_method() =
-                                TyOp(DotNetTypeCallMethod,[dotnet_type;tyvv [method_name'; method_args']],meth.ReturnType |> dotnet_type_to_ty)
-                                |> make_tyv_and_push_typed_expr_even_if_unit d
+                                let call_method () =
+                                    TyOp(DotNetTypeCallMethod,[dotnet_type;tyvv [method_name'; method_args']],meth.ReturnType |> dotnet_type_to_ty)
+                                    |> make_tyv_and_push_typed_expr_even_if_unit d
 
-                            if meth.IsStatic || is_instance then call_method()
-                            else on_type_er d.trace "Expected a instance of a dotnet type."
-                        else
-                            on_type_er (trace d) "Cannot call a private method."
-            | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TySystemTypeArgs system_type_args ->
-                wrap_exception d <| fun _ ->
+                                match dotnet_type with
+                                | TyV _ -> call_method ()
+                                | TyT _ when meth.IsStatic -> call_method ()
+                                | _ -> on_type_er d.trace "Expected a instance of a dotnet type."
+                            else
+                                on_type_er (trace d) "Cannot call a private method."
+                    | TySystemTypeArgs system_type_args ->
+                        match dotnet_type with
+                        | TyT _ ->
+                            let runtime_type = system_type
+                            if runtime_type.ContainsGenericParameters then // instantiate generic type params
+                                runtime_type.MakeGenericType system_type_args 
+                                |> dotnet_typet |> tyt
+                            // construct the type
+                            else
+                                match runtime_type.GetConstructor system_type_args with
+                                | null -> on_type_er (trace d) "Cannot find a constructor with matching arguments."
+                                | con ->
+                                    if con.IsPublic then
+                                        let instance_type = spiral_ty
+                                        TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
+                                    else
+                                        on_type_er (trace d) "Cannot call a private constructor."    
+                        | _ -> on_type_er (trace d) "Expected a type level string as the first argument for a method call."
+//            | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TySystemTypeArgs system_type_args ->
+//                wrap_exception d <| fun _ ->
 //                    match args with
 //                    | del when runtime_type.BaseType = typeof<System.MulticastDelegate> ->
 //                        // I really hate both .NET and the F# compiler in times like these.
@@ -1420,22 +1433,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 //                        let delegate_constructor_arguments =
 //                            runtime_type.GetMethod("Invoke").GetParameters()
 //                            |> Seq.map (fun x -> x.ParameterType |> dotnet_type_to_ty)
-
-//                    | TySystemTypeArgs system_type_args ->
-                        if runtime_type.ContainsGenericParameters then // instantiate generic type params
-                            runtime_type.MakeGenericType system_type_args 
-                            |> dotnet_type_runtimet |> tyt
-                        // construct the type
-                        else
-                            match runtime_type.GetConstructor system_type_args with
-                            | null -> on_type_er (trace d) "Cannot find a constructor with matching arguments."
-                            | con ->
-                                if con.IsPublic then
-                                    let instance_type = dotnet_type_instancet runtime_type
-                                    TyOp(DotNetTypeConstruct,[args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
-                                else
-                                    on_type_er (trace d) "Cannot call a private constructor."    
-            | TyType(DotNetTypeInstanceT _), _ -> on_type_er (trace d) "Expected a type level string as the first argument for a method call."
             // apply_string
             | TyType(PrimT StringT) & str, TyVV [a;b] -> 
                 if is_int a && is_int b then TyOp(StringSlice,[str;a;b],PrimT StringT) |> destructure d
@@ -2716,7 +2713,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | UnionT _ as x -> print_tag_union x
             | ArrayT((CudaLocal | CudaShared | CudaGlobal),t) -> sprintf "%s *" (print_type trace t)
             | ArrayT _ -> failwith "Not implemented."
-            | FunHeapT _ | RecT _ | DotNetTypeInstanceT _ as x -> on_type_er trace "%A is not supported on the Cuda side." x
+            | FunHeapT _ | RecT _ | DotNetTypeT _ as x -> on_type_er trace "%A is not supported on the Cuda side." x
             | ClosureT _ as t -> print_tag_closure t
             | PrimT x ->
                 match x with
@@ -2733,7 +2730,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | BoolT -> "int"
                 | CharT -> on_type_er trace "The char type is not supported on the Cuda side."
                 | StringT -> on_type_er trace "The string type is not supported on the Cuda side."
-            | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
+            | LitT _ | DotNetAssemblyT _ -> 
                 failwith "Should be covered in Unit."
 
         and print_tyv_with_type trace (tag,ty as v) = sprintf "%s %s" (print_type trace ty) (print_tyv v)
@@ -3042,7 +3039,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ArrayT(DotNetReference,t) -> sprintf "(%s ref)" (print_type t)
             | ArrayT(DotNetHeap,t) -> sprintf "(%s [])" (print_type t)
             | ArrayT _ -> failwith "Not implemented."
-            | DotNetTypeInstanceT (N t) -> print_dotnet_instance_type t
+            | DotNetTypeT (N t) -> print_dotnet_type t
             | ClosureT(a,b) -> 
                 let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
                 sprintf "(%s -> %s)" a (print_type b)
@@ -3061,11 +3058,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | BoolT -> "bool"
                 | StringT -> "string"
                 | CharT -> "char"
-            | LitT _ | DotNetAssemblyT _ | DotNetTypeRuntimeT _ -> 
+            | LitT _ | DotNetAssemblyT _ -> 
                 failwith "Should be covered in Unit."
                 
 
-        and print_dotnet_instance_type (x: System.Type) =
+        and print_dotnet_type (x: System.Type) =
             if x.GenericTypeArguments.Length > 0 then
                 [|
                 x.Namespace
@@ -3076,7 +3073,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 ">"
                 |] |> String.concat null
             else
-                [|x.Namespace; "."; x.Name|] |> String.concat null
+                x.FullName
 
         let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
         let print_args x = print_args print_tyv_with_type x
@@ -3311,15 +3308,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | FailWith,[x] -> sprintf "(failwith %s)" (codegen x)
                 | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] as x ->
                     match t with 
-                    | DotNetTypeInstanceT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_instance_type instance_type) args
+                    | DotNetTypeT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_type instance_type) args
                     | _ -> failwith "impossible"
                 | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
                     match v with
-                    | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_instance_type t) method_name method_args
+                    | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_type t) method_name method_args
                     | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
                 | DotNetTypeGetField,[v; TypeString name] ->
                     match v with
-                    | TyType (DotNetTypeRuntimeT (N t)) -> sprintf "%s.%s" (print_dotnet_instance_type t) name
+                    | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s" (print_dotnet_type t) name
                     | _ -> sprintf "%s.%s" (codegen v) name
                 | x -> failwithf "Missing TyOp case. %A" x
 
