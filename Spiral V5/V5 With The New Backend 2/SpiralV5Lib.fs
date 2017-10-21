@@ -1,36 +1,6 @@
 ﻿module Spiral.Lib
 open Main
 
-let core =
-    (
-    "Core",[],"The Core module.",
-    """
-inl prim_eq = (=)
-// Structural polymorphic equality for every type in the language (apart from functions).
-inl (=) a b =
-    inl rec (=) a b =
-        inl body = function
-            | .(a), .(b) -> a = b
-            | a :: as', b :: bs -> a = b && as' = bs
-            | {} & a, {} & b -> module_values a = module_values b
-            | (), () -> true
-            | a, b when eq_type a b -> prim_eq a b // This repeat eq_type check is because unboxed union types might lead to variables of different types to be compared.
-            | _ -> false
-        if boxed_variable_is a && boxed_variable_is b then (met _ -> body (a, b) : bool)()
-        else body (a, b)
-    if eq_type a b then a = b
-    else error_type ("Trying to compare variables of two different types. Got:",a,b)
-
-/// Generalizes term casting for curried functions. Used for F# interop involving delegates.
-inl term_cast_curry f tys =
-    inl rec loop vars tys =
-        match tys with
-        | x :: xs -> term_cast (inl x -> loop (x :: vars) xs) x
-        | () -> Tuple.foldr (inl var f -> f var) vars f
-    loop () tys
-{(=) term_cast_curry}
-    """) |> module_
-
 let option =
     (
     "Option",[],"The Option module.",
@@ -175,6 +145,38 @@ inl rec contains t x =
     | [None] -> false
 
 {head tail foldl foldr scanl scanr rev map iter iteri forall exists filter zip unzip index init repeat append singleton range tryFind contains}
+    """) |> module_
+
+let core =
+    (
+    "Core",[tuple],"The Core module.",
+    """
+inl fsharp_core = assembly_load."FSharp.Core"
+inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+inl prim_eq = (=)
+// Structural polymorphic equality for every type in the language (apart from functions).
+inl (=) a b =
+    inl rec (=) a b =
+        inl body = function
+            | .(a), .(b) -> a = b
+            | a :: as', b :: bs -> a = b && as' = bs
+            | {} & a, {} & b -> module_values a = module_values b
+            | (), () -> true
+            | a, b when eq_type a b -> prim_eq a b // This repeat eq_type check is because unboxed union types might lead to variables of different types to be compared.
+            | _ -> false
+        if boxed_variable_is a && boxed_variable_is b then (met _ -> body (a, b) : bool)()
+        else body (a, b)
+    if eq_type a b then a = b
+    else error_type ("Trying to compare variables of two different types. Got:",a,b)
+
+/// Generalizes term casting for curried functions. Used for F# interop involving delegates.
+inl term_cast_curry f tys =
+    inl rec loop vars tys =
+        match tys with
+        | x :: xs -> term_cast (inl x -> loop (x :: vars) xs) x
+        | () -> Tuple.foldr (inl var f -> f var) vars f
+    loop () tys
+{(=) term_cast_curry fsharp_core system}
     """) |> module_
 
 let loops =
@@ -618,7 +620,6 @@ inl sprintf format =
         on_fail = inl msg _ -> strb.ToString()
         } format
 
-
 {run run_with_unit_ret succ fail fatal_fail state type_ tuple (>>=) (|>>) (.>>.) (.>>) (>>.) (>>%) (<|>) choice stream_char 
  ifm (<?>) pdigit pchar pstring pint64 spaces parse_int repeat parse_array sprintf sprintf_template term_cast}
     """) |> module_
@@ -739,13 +740,36 @@ inl init !map_dims dim_ranges f =
 
 let cuda =
     (
-    "Cuda",[],"The Cuda module.",
+    "Cuda",[core],"The Cuda module.",
     """
-inl fs = assembly_load."FSharp.Core"
-inl ops = fs."Microsoft.FSharp.Core.Operators"
+open Core
+inl ops = fsharp_core."Microsoft.FSharp.Core.Operators"
+inl Environment = mscorlib."System.Environment"
+
+inl cuda_toolkit_path = 
+    inl x = Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
+    if ops.IsNull x then failwith "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
+    x
+
 inl visual_studio_path =
-    inl x = mscorlib."System.Environment".GetEnvironmentVariable("VS140COMNTOOLS")
+    inl x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")
     if ops.IsNull x then failwith "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
     mscorlib."System.IO.Directory".GetParent(x).get_Parent().get_Parent().get_FullName()
-{visual_studio_path}
+
+inl cub_path = // The path for the Cuda Unbound library.
+    inl x = Environment.GetEnvironmentVariable("CUB_PATH")
+    if ops.IsNull x then 
+        failwith 
+            @"If you are getting this exception then that means that CUB_PATH environment variable is not defined.
+
+Go to: https://nvlabs.github.io/cub/index.html#sec6
+...and download the latest version of the library, extract it somewhere like, 
+eg. : C:\cub-1.6.3
+and add that directory to the global enviroment by creating the CUB_PATH variable with a pointer to it."
+    x
+
+inl ManagedCuda = assembly_load ."ManagedCuda, Version=7.5.7.0, Culture=neutral, PublicKeyToken=242d898828717aa0"
+inl context = ManagedCuda ."ManagedCuda.CudaContext" false
+
+{cub_path visual_studio_path cuda_toolkit_path ManagedCuda context}
     """) |> module_

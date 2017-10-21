@@ -3130,7 +3130,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | LitUInt64 x -> sprintf "%iUL" x
                 | LitFloat32 x -> sprintf "%ff" x
                 | LitFloat64 x -> sprintf "%f" x
-                | LitString x -> sprintf "\"%s\"" x
+                | LitString x -> 
+                    let strb = StringBuilder(x.Length)
+                    String.iter (function
+                        | '"' -> strb.Append "\\\"" 
+                        | '\t' -> strb.Append "\t"
+                        | '\n' -> strb.Append "\n"
+                        | '\r' -> strb.Append "\r"
+                        | '\\' -> strb.Append "\\\\"
+                        | x -> strb.Append x
+                        >> ignore 
+                        ) x
+                    sprintf "\"%s\"" (strb.ToString())
                 | LitChar x -> 
                     match x with
                     | '\n' -> @"\n"

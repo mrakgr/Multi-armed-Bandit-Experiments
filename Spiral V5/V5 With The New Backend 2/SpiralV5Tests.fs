@@ -1797,8 +1797,8 @@ let hacker_rank_10 =
     """
     """
 
-let cuda_1 = 
-    "cuda_1",[],"Does the simulated Cuda call work? This example is not inteded to work",
+let cuda1 = 
+    "cuda1",[],"Does the simulated Cuda call work? This example is not inteded to work",
     """
 inl rec fib n = cuda
     if n > 1 then fib (n-1) + fib (n+2)
@@ -1807,33 +1807,79 @@ inl rec fib n = cuda
 fib (dyn 5)
     """
 
-let cuda_2 =
-    "cuda_2",[cuda],"Does the getting the VS path work?",
+let cuda2 =
+    "cuda2",[cuda;core;parsing;console],"Does the getting the VS path work?",
     """
+open Console
 open Cuda
-inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+open Core
+open Parsing
+
 inl Path = mscorlib ."System.IO.Path"
+inl File = mscorlib ."System.IO.File"
+inl StreamWriter = mscorlib ."System.IO.StreamWriter"
 inl ProcessStartInfo = system ."System.Diagnostics.ProcessStartInfo"
-inl compile_kernel_using_nvcc_bat_router (kernel_code: string) (kernel_name: string) =
+inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl nvcc_router_path = "nvcc_router.bat"
     inl procStartInfo = ProcessStartInfo()
     procStartInfo.set_RedirectStandardOutput true
     procStartInfo.set_RedirectStandardError true
     procStartInfo.set_UseShellExecute false
     procStartInfo.set_FileName nvcc_router_path
-    inl p = system ."System.Diagnostics.Process"()
-    p.set_StartInfo procStartInfo
-    procStartInfo
+    inl process = system ."System.Diagnostics.Process"()
+    process.set_StartInfo procStartInfo
+    inl print_to_standard_output = term_cast_curry (inl _ args -> args.get_Data() |> writeline)
+    inl add_handler event =
+        system ."System.Diagnostics.DataReceivedEventHandler" print_to_standard_output
+        |> event_add_handler process event
 
-compile_kernel_using_nvcc_bat_router "qwe" "rty"
+    add_handler .ErrorDataReceived
+//    add_handler .OutputDataReceived
+    
+    inl (+) a b = sprintf "%s%s" a b
 
-//    inl outputHandler f (_sender:obj) (args:DataReceivedEventArgs) = f args.Data
-//    inl p = new Process(StartInfo = procStartInfo)
-//    inl print_to_standard_output = outputHandler <| fun x -> printfn "%s" x
-//    //p.OutputDataReceived.AddHandler(DataReceivedEventHandler (print_to_standard_output))
-//    p.ErrorDataReceived.AddHandler(DataReceivedEventHandler (print_to_standard_output))
-//    p.Dispose()
+    /// Puts quotes around the string.
+    inl quote x = sprintf "\"%s\"" x
+    inl call x = sprintf "call %s" x
+    inl quoted_vs_path_to_vcvars = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64\vcvarsx86_amd64.bat") |> quote
+    inl quoted_vs_path_to_cl = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64") |> quote
+    inl quoted_cuda_toolkit_path_to_include = Path.Combine(cuda_toolkit_path,"include") |> quote
+    inl quoted_cub_path_to_include = cub_path |> quote
+    inl quoted_kernels_dir = kernels_dir |> quote
+    inl target_path = Path.Combine(kernels_dir,"cuda_kernels.ptx")
+    inl quoted_target_path = target_path |> quote
+    inl input_path = Path.Combine(kernels_dir,"cuda_kernels.cu")
+    inl quoted_input_path = input_path |> quote
+    
+    inl _ = 
+        if File.Exists nvcc_router_path then File.Delete nvcc_router_path
+        inl nvcc_router_file = File.OpenWrite(nvcc_router_path)
+        inl nvcc_router_stream = StreamWriter(nvcc_router_file)
+
+        nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
+        nvcc_router_stream.WriteLine(
+            sprintf 
+                "nvcc -gencode=arch=compute_30,code=\"sm_30,compute_30\" --use-local-env --cl-version 2015 -ccbin %s  -I%s -I%s --keep-dir %s -maxrregcount=0  --machine 64 -ptx -cudart static  -o %s %s"
+                quoted_vs_path_to_cl quoted_cuda_toolkit_path_to_include quoted_cub_path_to_include quoted_kernels_dir quoted_target_path quoted_input_path)
+        nvcc_router_file.Dispose()
+        nvcc_router_stream.Dispose()
+
+    if process.Start() = false then failwith "NVCC failed to run."
+    process.BeginOutputReadLine()
+    process.BeginErrorReadLine()
+    process.WaitForExit()
+
+    inl exit_code = process.get_ExitCode()
+    if exit_code <> 0i32 then failwith <| sprintf "NVCC failed compilation with code %i" exit_code
+
+    // Free memory
+    process.Dispose()
+    
+    context.LoadModulePTX target_path
+
+compile_kernel_using_nvcc_bat_router @"C:\Temp\"
     """
+
 let tests =
     [|
     test1;test2;test3;test4;test5;test6;test7;test8;test9
@@ -1849,7 +1895,7 @@ let tests =
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
-    cuda_1
+    cuda1;cuda2
     |]
 
 open System.IO
@@ -1897,8 +1943,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache()
 
-output_test_to_temp test86
+output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
