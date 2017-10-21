@@ -130,6 +130,7 @@ type Op =
     | DotNetTypeConstruct
     | DotNetTypeCallMethod
     | DotNetTypeGetField
+    | DotNetEventAddHandler
 
     // Module
     | ModuleCreate
@@ -1233,6 +1234,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> dotnet_assemblyt |> tyt
             | _ -> on_type_er (trace d) "Expected a type level string."
 
+        let dotnet_event_add_handler d dotnet_type event handler =
+            match tev d dotnet_type with
+            | TyV _ & TyType (DotNetTypeT (N system_type)) & dotnet_type ->
+                match tev d event with
+                | TypeString event_name & event_name' ->
+                    match tev d handler with
+                    | TyType handler_type & handler ->
+                        match system_type.GetEvent(event_name) with
+                        | null -> on_type_er d.trace <| sprintf "Event %s not found in the type." event_name
+                        | event when event.EventHandlerType = dotnet_ty_to_type handler_type -> TyOp(DotNetEventAddHandler,[dotnet_type;event_name';handler],BVVT)
+                        | _ -> on_type_er d.trace "Invalid handler type in event AddHandler."
+                | _ -> on_type_er d.trace "Expected a type level string in AddHandler."
+            | _ -> on_type_er d.trace "Expected a .NET type instance in AddHandler."
+
         let (|TySystemTypeArgs|) (TyTuple args) = List.toArray args |> Array.map (get_type >> dotnet_ty_to_type)
 
         let (|TyLitIndex|_|) = function
@@ -1937,6 +1952,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | StringLength,[a] -> string_length d a
             | DotNetAssemblyLoad,[a] -> dotnet_assembly_load false d a
             | DotNetAssemblyLoadFile,[a] -> dotnet_assembly_load true d a
+            | DotNetEventAddHandler,[a;b;c] -> dotnet_event_add_handler d a b c
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
                 | TyFun(C env_term,FunTypeFunction core) -> tyfun(env_term,FunTypeRecFunction(core,name))
@@ -3320,6 +3336,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match t with 
                     | DotNetTypeT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_type instance_type) args
                     | _ -> failwith "impossible"
+                | DotNetEventAddHandler,[dotnet_type;TypeString event_name;handler] ->
+                    sprintf "%s.%s.AddHandler(%s)" (codegen dotnet_type) event_name (codegen handler)
                 | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
                     match v with
                     | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_type t) method_name method_args
@@ -3567,6 +3585,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             b "eq_type" EqType
             l "module_values" (p <| fun x -> op(ModuleValues,[x]))
             l "boxed_variable_is" (p <| fun x -> op(BoxedVariableIs,[x]))
+            l "event_add_handler" (p3 <| fun a b c -> op(DotNetEventAddHandler,[a;b;c]))
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =

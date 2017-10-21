@@ -992,13 +992,16 @@ else 3
     """
 
 let test86 =
-    "test86",[console;tuple;core],"Does compiling multicast delegates work?",
+    "test86",[console;tuple;core],"Does compiling multicast delegates work? Does adding them to a handler work?",
     """
 open Console
 open Core
 inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+inl process = system ."System.Diagnostics.Process"()
+
 term_cast_curry (inl _ x -> writeline (x.get_Data()))
 |> system ."System.Diagnostics.DataReceivedEventHandler"
+|> event_add_handler process .ErrorDataReceived
     """
 
 let parsing1 = 
@@ -1894,7 +1897,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
 output_test_to_temp test86
 |> printfn "%s"
