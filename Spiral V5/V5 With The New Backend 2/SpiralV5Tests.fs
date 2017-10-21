@@ -1882,23 +1882,6 @@ let make_test_path_from_name name =
 let cache_test (name,aux,desc,body as m) = File.WriteAllText(make_test_path_from_name name, output_test_to_string m)
 let rewrite_test_cache () = Array.iter cache_test tests
 
-let get_diff_using_testcache (stream: StringBuilder) (name,aux,desc,body as m) =
-    let append x = stream.AppendLine x |> ignore
-    let path = make_test_path_from_name name
-    if File.Exists path then 
-        let original = File.ReadAllText path
-        let current = output_test_to_string m
-        if original <> current then 
-            append <| sprintf "Test %s differs from the one in the cache." name
-            append <| sprintf "Original:\n%s" original
-            append <| sprintf "Current:\n%s" current
-    else cache_test m
-    stream
-
-let get_all_diffs () = 
-    Array.fold get_diff_using_testcache (StringBuilder()) tests
-    |> fun x -> x.ToString()
-
 let speed1 =
     "speed1",[parsing;console],"Does the Parsing module work?",
     """
