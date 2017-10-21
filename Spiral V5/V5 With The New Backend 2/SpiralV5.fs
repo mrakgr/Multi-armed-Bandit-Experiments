@@ -1223,7 +1223,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             try f()
             with 
             | :? TypeError as e -> reraise()
-            | e -> on_type_er (trace d) ("This is a .NET exception.\n"+e.Message)
+            | e -> on_type_er (trace d) (".NET exception:\n"+e.Message)
 
         let dotnet_assembly_load is_load_file d x =
             match tev d x with
@@ -1356,6 +1356,28 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | dotnet_type & TyType (DotNetTypeT (N system_type) & spiral_ty), args ->
                 wrap_exception d <| fun _ ->
                     match args with
+                    | _ when system_type.BaseType = typeof<System.MulticastDelegate> -> // special case for delegate construction
+                        match dotnet_type with
+                        | TyT _  ->
+                            let delegate_constructor_arguments =
+                                system_type.GetMethod("Invoke").GetParameters()
+                                |> Array.map (fun x -> x.ParameterType |> dotnet_type_to_ty)
+                                |> Array.toList
+                            let rec check = function
+                                | arg :: args, ClosureT(x,xs) ->
+                                    if arg = x then check (args,xs)
+                                    else false
+                                | [], t ->
+                                    if is_unit t = false then on_type_er d.trace "Expected unit to be the return type of a delegate."
+                                    true
+                                | _ -> false
+                            let dcon_args = List.map tyt delegate_constructor_arguments |> tyvv
+                            match apply d args dcon_args with
+                            | TyType(ClosureT _ & clo_ty) & clo ->
+                                if check (delegate_constructor_arguments,clo_ty) then TyOp(DotNetTypeConstruct,[clo],spiral_ty)
+                                else on_type_er d.trace <| sprintf "The arguments for delegate construction do not match. Need: %A\n Got: %A" dcon_args clo
+                            | _ -> on_type_er d.trace "Expected a closure to be passed into the delegate constructor."
+                        | _ -> on_type_er d.trace "Expected a .NET runtime type instead of an instance."
                     | TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
                         let method_find (ty: Type) method_name (args: Type[]) = 
                             let mutable result = None
@@ -1421,18 +1443,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                                     else
                                         on_type_er (trace d) "Cannot call a private constructor."    
                         | _ -> on_type_er (trace d) "Expected a type level string as the first argument for a method call."
-//            | TyType (DotNetTypeRuntimeT (N runtime_type)), args & TySystemTypeArgs system_type_args ->
-//                wrap_exception d <| fun _ ->
-//                    match args with
-//                    | del when runtime_type.BaseType = typeof<System.MulticastDelegate> ->
-//                        // I really hate both .NET and the F# compiler in times like these.
-//                        // The F# compiler for doing implicit conversions that are really great when you are
-//                        // programming in it, but not so great when you are compiling.
-//                        // The .NET for being a rat's nest of useless special cases.
-//                        // There is not an elegant way to do this.
-//                        let delegate_constructor_arguments =
-//                            runtime_type.GetMethod("Invoke").GetParameters()
-//                            |> Seq.map (fun x -> x.ParameterType |> dotnet_type_to_ty)
             // apply_string
             | TyType(PrimT StringT) & str, TyVV [a;b] -> 
                 if is_int a && is_int b then TyOp(StringSlice,[str;a;b],PrimT StringT) |> destructure d
