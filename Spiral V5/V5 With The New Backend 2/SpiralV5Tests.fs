@@ -1326,13 +1326,12 @@ open Option
 // What is the largest prime factor of the number 600851475143 ?
 
 inl math = mscorlib ."System.Math"
-inl conv a b = unsafe_convert b a
 
 inl target = dyn 600851475143
 
 inl sieve_length = 
-    math.Sqrt(conv float64 target)
-    |> conv int64
+    math.Sqrt(unsafe_convert float64 target)
+    |> unsafe_convert int64
 
 inl sieve = Array.init (sieve_length+1) (inl _ -> true)
 for {from=2; to=sieve_length; body = inl {i} ->
@@ -1808,7 +1807,7 @@ fib (dyn 5)
     """
 
 let cuda2 =
-    "cuda2",[cuda;core;parsing;console],"Does the getting the VS path work?",
+    "cuda2",[tuple;cuda;core;parsing;console],"Does the getting the VS path work?",
     """
 open Console
 open Cuda
@@ -1836,11 +1835,26 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     add_handler .ErrorDataReceived
 //    add_handler .OutputDataReceived
     
-    inl (+) a b = sprintf "%s%s" a b
+    inl concat' l =
+        inl StringBuilder = mscorlib."System.Text.StringBuilder"
+        inl len = 64i32
+//            Tuple.foldl (inl s -> function
+//                | x : string -> unsafe_convert int32 (string_length x) + s
+//                | x : StringBuilder -> x.get_Length() + s
+//                | _ -> 1i32 + s
+//                ) 0i32 l
+        inl strb = StringBuilder len
+        Tuple.foldl (inl s -> function
+            | x : StringBuilder -> x.ToString() |> s.Append
+            | x -> s.Append x
+            ) strb l
+
+    inl concat = concat' >> inl x -> x.ToString()
+    inl (+) a b = concat (a, b)
 
     /// Puts quotes around the string.
-    inl quote x = sprintf "\"%s\"" x
-    inl call x = sprintf "call %s" x
+    inl quote x = concat ('"',x,"'")
+    inl call x = concat ("call ", x)
     inl quoted_vs_path_to_vcvars = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64\vcvarsx86_amd64.bat") |> quote
     inl quoted_vs_path_to_cl = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64") |> quote
     inl quoted_cuda_toolkit_path_to_include = Path.Combine(cuda_toolkit_path,"include") |> quote
@@ -1857,10 +1871,11 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
         inl nvcc_router_stream = StreamWriter(nvcc_router_file)
 
         nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
-        nvcc_router_stream.WriteLine(
-            sprintf 
-                "nvcc -gencode=arch=compute_30,code=\"sm_30,compute_30\" --use-local-env --cl-version 2015 -ccbin %s  -I%s -I%s --keep-dir %s -maxrregcount=0  --machine 64 -ptx -cudart static  -o %s %s"
-                quoted_vs_path_to_cl quoted_cuda_toolkit_path_to_include quoted_cub_path_to_include quoted_kernels_dir quoted_target_path quoted_input_path)
+        concat (
+            "nvcc -gencode=arch=compute_30,code=\"sm_30,compute_30\" --use-local-env --cl-version 2015 -ccbin ",quoted_vs_path_to_cl,
+            "  -I",quoted_cuda_toolkit_path_to_include," -I",quoted_cub_path_to_include," --keep-dir ",quoted_kernels_dir,
+            " -maxrregcount=0  --machine 64 -ptx -cudart static  -o ",quoted_target_path,' ',quoted_input_path
+            ) |> nvcc_router_stream.WriteLine
         nvcc_router_file.Dispose()
         nvcc_router_stream.Dispose()
 
@@ -1870,7 +1885,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     process.WaitForExit()
 
     inl exit_code = process.get_ExitCode()
-    if exit_code <> 0i32 then failwith <| sprintf "NVCC failed compilation with code %i" exit_code
+    if exit_code <> 0i32 then failwith <| concat ("NVCC failed compilation with code ", exit_code)
 
     // Free memory
     process.Dispose()
@@ -1943,7 +1958,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
 output_test_to_temp cuda2
 |> printfn "%s"

@@ -3559,7 +3559,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "type_lit_cast" (p <| fun x -> op(TypeLitCast,[x]))
             l "type_lit_is" (p <| fun x -> op(TypeLitIs,[x]))
             l "term_cast" (p2 term_cast)
-            l "unsafe_convert" (p2 <| fun a b -> op(UnsafeConvert,[a;b]))
+            l "unsafe_convert" (p2 <| fun a b -> op(UnsafeConvert,[b;a])) // I made a mistake in argument ordering for this one.
             l "negate" (p <| fun x -> op(Neg,[x]))
         
             l "assembly_load" (p <| fun x -> op(DotNetAssemblyLoad,[x]))
