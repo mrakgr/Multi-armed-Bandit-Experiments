@@ -1807,7 +1807,7 @@ fib (dyn 5)
     """
 
 let cuda2 =
-    "cuda2",[tuple;cuda;core;parsing;console],"Does the getting the VS path work?",
+    "cuda2",[tuple;cuda;core;parsing;console],"Does the getting the VS path work? Does the compile function work?",
     """
 open Console
 open Cuda
