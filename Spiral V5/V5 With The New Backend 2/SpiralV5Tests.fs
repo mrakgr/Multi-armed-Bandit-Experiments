@@ -1797,91 +1797,22 @@ let hacker_rank_10 =
     """
 
 let cuda1 = 
-    "cuda1",[],"Does the simulated Cuda call work? This example is not inteded to work",
+    "cuda1",[array;cuda],"Does the simulated Cuda call work?",
     """
-inl rec fib n = cuda
-    if n > 1 then fib (n-1) + fib (n+2)
-    else 1
-    : int64
-fib (dyn 5)
+open Cuda
+inl add a b = cuda 
+    a + b |> dyn |> ignore
+inl to_obj_ar args = Array.init.static (tuple_length args) (tuple_index args >> unsafe_upcast_to (mscorlib ."System.Object"))
+inl method_name, !to_obj_ar args = add (dyn 1) (dyn 2)
+inl main_stream = ManagedCuda."ManagedCuda.CudaStream"()
+inl kernel = ManagedCuda."ManagedCuda.CudaKernel"(method_name,modules,context)
+kernel.RunAsync(main_stream.get_Stream(),args)
     """
 
 let cuda2 =
-    "cuda2",[tuple;cuda;core;parsing;console],"Does the getting the VS path work? Does the compile function work?",
+    "cuda2",[tuple;cuda;core;console],"Does the getting the VS path work? Does the compile function work?",
     """
-open Console
-open Cuda
-open Core
-open Parsing
 
-inl Path = mscorlib ."System.IO.Path"
-inl File = mscorlib ."System.IO.File"
-inl StreamWriter = mscorlib ."System.IO.StreamWriter"
-inl ProcessStartInfo = system ."System.Diagnostics.ProcessStartInfo"
-inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) (kernel_code: string) =
-    inl nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
-    inl procStartInfo = ProcessStartInfo()
-    procStartInfo.set_RedirectStandardOutput true
-    procStartInfo.set_RedirectStandardError true
-    procStartInfo.set_UseShellExecute false
-    procStartInfo.set_FileName nvcc_router_path
-    inl process = system ."System.Diagnostics.Process"()
-    process.set_StartInfo procStartInfo
-    inl print_to_standard_output = term_cast_curry (inl _ args -> args.get_Data() |> writeline)
-    inl add_handler event =
-        system ."System.Diagnostics.DataReceivedEventHandler" print_to_standard_output
-        |> event_add_handler process event
-
-    add_handler .ErrorDataReceived
-//    add_handler .OutputDataReceived
-    
-    inl concat = string_concat ""
-    inl (+) a b = concat (a, b)
-
-    /// Puts quotes around the string.
-    inl quote x = concat ('"',x,"'")
-    inl call x = concat ("call ", x)
-    inl quoted_vs_path_to_vcvars = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64\vcvarsx86_amd64.bat") |> quote
-    inl quoted_vs_path_to_cl = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64") |> quote
-    inl quoted_cuda_toolkit_path_to_include = Path.Combine(cuda_toolkit_path,"include") |> quote
-    inl quoted_cub_path_to_include = cub_path |> quote
-    inl quoted_kernels_dir = kernels_dir |> quote
-    inl target_path = Path.Combine(kernels_dir,"cuda_kernels.ptx")
-    inl quoted_target_path = target_path |> quote
-    inl input_path = Path.Combine(kernels_dir,"cuda_kernels.cu")
-    inl quoted_input_path = input_path |> quote
-
-    if File.Exists input_path then File.Delete input_path
-    File.WriteAllText(input_path,kernel_code)
-    
-    inl _ = 
-        if File.Exists nvcc_router_path then File.Delete nvcc_router_path
-        inl nvcc_router_file = File.OpenWrite(nvcc_router_path)
-        inl nvcc_router_stream = StreamWriter(nvcc_router_file)
-
-        nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
-        concat (
-            "nvcc -gencode=arch=compute_30,code=\"sm_30,compute_30\" --use-local-env --cl-version 2015 -ccbin ",quoted_vs_path_to_cl,
-            "  -I",quoted_cuda_toolkit_path_to_include," -I",quoted_cub_path_to_include," --keep-dir ",quoted_kernels_dir,
-            " -maxrregcount=0  --machine 64 -ptx -cudart static  -o ",quoted_target_path,' ',quoted_input_path
-            ) |> nvcc_router_stream.WriteLine
-        nvcc_router_file.Dispose()
-        nvcc_router_stream.Dispose()
-
-    if process.Start() = false then failwith "NVCC failed to run."
-    process.BeginOutputReadLine()
-    process.BeginErrorReadLine()
-    process.WaitForExit()
-
-    inl exit_code = process.get_ExitCode()
-    if exit_code <> 0i32 then failwith <| concat ("NVCC failed compilation with code ", exit_code)
-
-    // Free memory
-    process.Dispose()
-    
-    context.LoadModulePTX target_path
-
-compile_kernel_using_nvcc_bat_router @"C:\Temp\" "test"
     """
 
 let tests =
@@ -1917,8 +1848,8 @@ let output_test_to_string test =
 let output_test_to_temp test = 
     match spiral_peval (module_ test) with
     | Succ x | Fail x -> 
-        let file = if x.Length > 1024*128 then "output.txt" else "output.fsx"
-        File.WriteAllText(Path.Combine(__SOURCE_DIRECTORY__,file),x)
+        let file = if x.Length > 1024*128 then "output.txt" else "output.fs"
+        File.WriteAllText(Path.Combine(@"C:\Users\Marko\Documents\Visual Studio 2015\Projects\Multi-armed Bandit Experiments\SpiralExample",file),x)
         x
 
 let output_tests_to_file file =

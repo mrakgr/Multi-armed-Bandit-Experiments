@@ -116,6 +116,7 @@ type Value =
 type Op =
     // Cuda
     | CudaKernels
+    | UnsafeUpcastTo
 
     // Pattern matching errors
     | ErrorPatMiss
@@ -408,6 +409,8 @@ type Renamables = {
     fv : LinkedHashSet<Tag * Ty>
     renamed_fv : LinkedHashSet<Tag * Ty>
     }
+
+let cuda_kernels_name = "cuda_kernels"
 
 // #Main
 let spiral_peval (Module(N(module_name,_,_,_)) as module_main) = 
@@ -951,6 +954,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
     let on_type_er trace message = TypeError(trace,message) |> raise
+    let print_method tag = sprintf "method_%i" tag
 
     // #Type directed partial evaluation
     let rec expr_peval (d: LangEnv) (expr: Expr) =
@@ -1158,8 +1162,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let join_point_cuda d x =
             let memo_type = JoinPointCuda
-            join_point_helper (fun _ -> memo_type) (fun (memo_key,args,rev_renamer,ret_ty) -> 
-                ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty) d x
+            let memo_key,args,rev_renamer,ret_ty = join_point_rename (fun _ -> memo_type) d x
+            if is_unit ret_ty = false then on_type_er d.trace "The return type of Cuda join point must be unit."
+
+            ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty 
+            |> make_tyv_and_push_typed_expr_even_if_unit d |> ignore
+
+            let method_name = print_method memo_key.Symbol |> LitString |> TyLit
+            let args = Seq.toList args |> List.map tyv |> tyvv
+            tyvv [method_name; args]
+            
               
         let type_get d a = tev_seq d a |> get_type |> TyT
         let rec case_type d args_ty =
@@ -1935,7 +1947,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     if is_convertible_primt at && is_convertible_primt bt then TyOp(UnsafeConvert,[a;b],bt)
                     else on_type_er (trace d) "Cannot convert %A to the following type: %A" a bt
 
-        let cuda_kernels d = TyOp(CudaKernels,[],PrimT StringT) |> make_tyv_and_push_typed_expr d
+        let cuda_kernels d = TyOp(CudaKernels,[],PrimT StringT)
+        let unsafe_upcast_to d a b =
+            let a, b = tev2 d a b
+            TyOp(UnsafeUpcastTo,[a;b],get_type a)
             
         let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
 
@@ -2049,6 +2064,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | FailWith,[a] -> failwith_ d a
 
             | CudaKernels,[] -> cuda_kernels d
+            | UnsafeUpcastTo,[a;b] -> unsafe_upcast_to d a b
 
             // Constants
             | x -> failwithf "Missing Op case. %A" x
@@ -2696,7 +2712,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | x -> on_rest x
 
     let print_tyv (tag,ty) = sprintf "var_%i" tag
-    let print_method tag = sprintf "method_%i" tag
 
     let inline if_not_unit ty f = if is_unit ty then "" else f()
     let inline def_enqueue (definitions_set: HashSet<_>) (definitions_queue: Queue<_>) (sym_dict: Dictionary<_,_>) f t =
@@ -3022,7 +3037,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
-        "let cuda_kernels = \"\"\"" |> state_new
+        "module SpiralExample" |> state_new
+        sprintf "let %s = \"\"\"" cuda_kernels_name |> state_new
         "extern \"C\" {" |> state_new
         enter' <| fun _ ->
             move_to buffer_temp buffer_type_definitions
@@ -3265,7 +3281,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | JoinPointMethod, fv, _ -> sprintf "%s(%s)" method_name (print_args fv)
                 | JoinPointCuda, fv, _ -> 
                     @"// Cuda method call" |> state
-                    sprintf "%s(%s)" method_name (print_args fv)
+                    sprintf "// %s(%s)" method_name (print_args fv)
                 | JoinPointClosure args, fv, rev_renamer ->
                     let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
                     if Seq.isEmpty fv then method_name
@@ -3362,7 +3378,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match v with
                     | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s" (print_dotnet_type t) name
                     | _ -> sprintf "%s.%s" (codegen v) name
-                | CudaKernels,[] -> "cuda_kernels"
+                | CudaKernels,[] -> cuda_kernels_name
+                | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
                 | x -> failwithf "Missing TyOp case. %A" x
 
         let type_prefix =
@@ -3601,6 +3618,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "boxed_variable_is" (p <| fun x -> op(BoxedVariableIs,[x]))
             l "event_add_handler" (p3 <| fun a b c -> op(DotNetEventAddHandler,[a;b;c]))
             l "cuda_kernels" (op(CudaKernels,[]))
+            l "unsafe_upcast_to" (p2 <| fun a b -> op(UnsafeUpcastTo,[a;b]))
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =

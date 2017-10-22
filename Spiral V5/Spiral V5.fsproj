@@ -239,8 +239,6 @@
     <None Include="V5 With The New Backend 2\weak_conditional_table.fsx" />
     <None Include="V5 With The New Backend 2\parsing3.fsx" />
     <None Include="V5 With The New Backend 2\parsing4.fsx" />
-    <None Include="V5 With The New Backend 2\output.fsx" />
-    <Content Include="V5 With The New Backend 2\output.txt" />
     <None Include="V5 With The New Backend 2\unfinished_queue.fsx" />
     <None Include="V5 With The New Backend 2\exclusive_or.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v1.fsx" />

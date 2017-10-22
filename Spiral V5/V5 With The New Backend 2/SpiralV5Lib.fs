@@ -275,12 +275,20 @@ inl singleton x =
 inl foldl f state ar = for {from=0; near_to=array_length ar; state; body=inl {state i} -> f state (ar i)}
 inl foldr f ar state = for {to=0; from=array_length ar-1; by= -1; state; body=inl {state i} -> f (ar i) state}
 
-inl init n f =
-    assert (n >= 0) "The input to init needs to be greater or equal than 0."
-    inl typ = type (f 0)
-    inl ar = array_create n typ
-    for {from=0; near_to=n; body=inl {i} -> ar i <- f i}
-    ar
+inl init = 
+    inl body is_static n f =
+        assert (n >= 0) "The input to init needs to be greater or equal than 0."
+        inl typ = type (f 0)
+        inl ar = array_create n typ
+        inl d = 
+            inl d = {from=0; near_to=n; body=inl {i} -> ar i <- f i}
+            if is_static then {d with static = ()} else d
+        for d
+        ar
+    function
+    | .static n f -> body true n f
+    | n f -> body false n f
+
 
 inl map f ar = init (array_length ar) (ar >> f)
 inl filter f ar =
@@ -767,9 +775,11 @@ inl init !map_dims dim_ranges f =
 
 let cuda =
     (
-    "Cuda",[core],"The Cuda module.",
+    "Cuda",[core;console],"The Cuda module.",
     """
 open Core
+open Console
+
 inl ops = fsharp_core."Microsoft.FSharp.Core.Operators"
 inl Environment = mscorlib."System.Environment"
 
@@ -798,5 +808,78 @@ and add that directory to the global enviroment by creating the CUB_PATH variabl
 inl ManagedCuda = assembly_load ."ManagedCuda, Version=7.5.7.0, Culture=neutral, PublicKeyToken=242d898828717aa0"
 inl context = ManagedCuda ."ManagedCuda.CudaContext" false
 
-{cub_path visual_studio_path cuda_toolkit_path ManagedCuda context}
+inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
+    
+    inl Path = mscorlib ."System.IO.Path"
+    inl File = mscorlib ."System.IO.File"
+    inl StreamWriter = mscorlib ."System.IO.StreamWriter"
+    inl ProcessStartInfo = system ."System.Diagnostics.ProcessStartInfo"
+
+    inl nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
+    inl procStartInfo = ProcessStartInfo()
+    procStartInfo.set_RedirectStandardOutput true
+    procStartInfo.set_RedirectStandardError true
+    procStartInfo.set_UseShellExecute false
+    procStartInfo.set_FileName nvcc_router_path
+    inl process = system ."System.Diagnostics.Process"()
+    process.set_StartInfo procStartInfo
+    inl print_to_standard_output = term_cast_curry (inl _ args -> args.get_Data() |> writeline)
+    inl add_handler event =
+        system ."System.Diagnostics.DataReceivedEventHandler" print_to_standard_output
+        |> event_add_handler process event
+
+    add_handler .ErrorDataReceived
+//    add_handler .OutputDataReceived
+    
+    inl concat = string_concat ""
+    inl (+) a b = concat (a, b)
+
+    /// Puts quotes around the string.
+    inl quote x = concat ('"',x,"'")
+    inl call x = concat ("call ", x)
+    inl quoted_vs_path_to_vcvars = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64\vcvarsx86_amd64.bat") |> quote
+    inl quoted_vs_path_to_cl = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64") |> quote
+    inl quoted_cuda_toolkit_path_to_include = Path.Combine(cuda_toolkit_path,"include") |> quote
+    inl quoted_cub_path_to_include = cub_path |> quote
+    inl quoted_kernels_dir = kernels_dir |> quote
+    inl target_path = Path.Combine(kernels_dir,"cuda_kernels.ptx")
+    inl quoted_target_path = target_path |> quote
+    inl input_path = Path.Combine(kernels_dir,"cuda_kernels.cu")
+    inl quoted_input_path = input_path |> quote
+
+    if File.Exists input_path then File.Delete input_path
+    File.WriteAllText(input_path,cuda_kernels)
+    
+    inl _ = 
+        if File.Exists nvcc_router_path then File.Delete nvcc_router_path
+        inl nvcc_router_file = File.OpenWrite(nvcc_router_path)
+        inl nvcc_router_stream = StreamWriter(nvcc_router_file)
+
+        nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
+        concat (
+            "nvcc -gencode=arch=compute_30,code=\"sm_30,compute_30\" --use-local-env --cl-version 2015 -ccbin ",quoted_vs_path_to_cl,
+            "  -I",quoted_cuda_toolkit_path_to_include," -I",quoted_cub_path_to_include," --keep-dir ",quoted_kernels_dir,
+            " -maxrregcount=0  --machine 64 -ptx -cudart static  -o ",quoted_target_path,' ',quoted_input_path
+            ) |> nvcc_router_stream.WriteLine
+        nvcc_router_file.Dispose()
+        nvcc_router_stream.Dispose()
+
+    if process.Start() = false then failwith "NVCC failed to run."
+    process.BeginOutputReadLine()
+    process.BeginErrorReadLine()
+    process.WaitForExit()
+
+    inl exit_code = process.get_ExitCode()
+    if exit_code <> 0i32 then failwith <| concat ("NVCC failed compilation with code ", exit_code)
+
+    // Free memory
+    process.Dispose()
+    
+    context.LoadModulePTX target_path
+
+inl current_directory = Environment.get_CurrentDirectory()
+inl modules = compile_kernel_using_nvcc_bat_router current_directory
+writeline (Core.string_concat "" ("Compiled the kernels into the following directory: ", current_directory))
+
+{ManagedCuda context modules}
     """) |> module_
