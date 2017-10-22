@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Rec0 =
     | Rec0Case0
     | Rec0Case1 of Tuple2
@@ -31,10 +36,11 @@ and method_5((var_0: Rec0), (var_1: float)): float =
         let (var_4: Rec0) = var_2.mem_1
         let (var_5: float) = method_5((var_4: Rec0), (var_1: float))
         (var_3 + var_5)
-let (var_0: float) = 0.000000
-let (var_1: Rec0) = Rec0Case0
-let (var_2: float) = method_4((var_1: Rec0), (var_0: float))
-let (var_3: Rec0) = Rec0Case0
-let (var_4: float) = 0.000000
-let (var_5: float) = method_5((var_3: Rec0), (var_4: float))
-Tuple1(var_2, var_5)
+let (var_0: string) = cuda_kernels
+let (var_1: float) = 0.000000
+let (var_2: Rec0) = Rec0Case0
+let (var_3: float) = method_4((var_2: Rec0), (var_1: float))
+let (var_4: Rec0) = Rec0Case0
+let (var_5: float) = 0.000000
+let (var_6: float) = method_5((var_4: Rec0), (var_5: float))
+Tuple1(var_3, var_6)

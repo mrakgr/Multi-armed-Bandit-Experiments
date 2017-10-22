@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Env0 =
     struct
     val mem_a: int64
@@ -17,12 +22,13 @@ let rec method_0((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
         method_0((var_1: int64), (var_5: int64), (var_4: int64))
     else
         (Env0(var_0, var_1, var_2))
-let (var_0: int64) = 0L
-let (var_1: int64) = 1L
-let (var_2: int64) = 2L
-let (var_3: Env0) = method_0((var_1: int64), (var_2: int64), (var_0: int64))
-let (var_4: int64) = var_3.mem_a
-let (var_5: int64) = var_3.mem_b
-let (var_6: int64) = var_3.mem_sum
-System.Console.WriteLine(var_6)
+let (var_0: string) = cuda_kernels
+let (var_1: int64) = 0L
+let (var_2: int64) = 1L
+let (var_3: int64) = 2L
+let (var_4: Env0) = method_0((var_2: int64), (var_3: int64), (var_1: int64))
+let (var_5: int64) = var_4.mem_a
+let (var_6: int64) = var_4.mem_b
+let (var_7: int64) = var_4.mem_sum
+System.Console.WriteLine(var_7)
 

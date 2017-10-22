@@ -176,7 +176,34 @@ inl term_cast_curry f tys =
         | x :: xs -> term_cast (inl x -> loop (x :: vars) xs) x
         | () -> Tuple.foldr (inl var f -> f var) vars f
     loop () tys
-{(=) term_cast_curry fsharp_core system}
+
+/// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
+/// It is a decent bit more flexible that it too.
+inl rec string_concat sep l =
+    inl StringBuilder = mscorlib."System.Text.StringBuilder"
+    inl ap s = function
+        | x : string when lit_is x && x = "" -> s
+        | _ :: _ as l -> string_concat sep l
+        | x -> s.Append x
+    inl ap_sep s x = ap (ap s sep) x
+
+    inl len =
+        inl rec len = 
+            inl f (static_len, dyn_len, num_sep as s) = function
+                | x : string ->
+                    if lit_is x then (static_len + string_length x, dyn_len, num_sep+1)
+                    else (static_len, dyn_len + string_length x, num_sep+1)
+                | _ :: _ as l -> len s l
+                | x -> (static_len+6, dyn_len, num_sep+1)
+            Tuple.foldl f
+        inl static_len, dyn_len, num_sep = len (0,0,-1) l
+        static_len + num_sep * string_length sep + dyn_len
+        |> unsafe_convert int32
+
+    Tuple.foldl ap_sep (ap (StringBuilder len) (Tuple.head l)) (Tuple.tail l)
+    <| .ToString <| ()
+
+{(=) term_cast_curry fsharp_core system string_concat}
     """) |> module_
 
 let loops =

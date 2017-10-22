@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Union0 =
     | Union0Case0 of Tuple1
     | Union0Case1
@@ -569,31 +574,32 @@ and method_13((var_0: (Union0 [])), (var_1: int64), (var_2: int64), (var_3: int6
             ()
         var_0.[int32 var_17] <- (Union0Case0(Tuple1(var_44)))
         var_44
-let (var_0: (Union0 [])) = Array.zeroCreate<Union0> (System.Convert.ToInt32(450L))
-let (var_1: int64) = 0L
+let (var_0: string) = cuda_kernels
+let (var_1: (Union0 [])) = Array.zeroCreate<Union0> (System.Convert.ToInt32(450L))
 let (var_2: int64) = 0L
-let (var_3: int64) = method_0((var_0: (Union0 [])), (var_2: int64), (var_1: int64))
-let (var_4: System.IO.Stream) = System.Console.OpenStandardInput()
-let (var_5: System.IO.StreamReader) = System.IO.StreamReader(var_4)
-let (var_6: string) = var_5.ReadToEnd()
-let (var_7: int64) = 0L
-let (var_9: bool) =
-    if (var_7 >= 0L) then
-        let (var_8: int64) = (int64 var_6.Length)
-        (var_7 < var_8)
+let (var_3: int64) = 0L
+let (var_4: int64) = method_0((var_1: (Union0 [])), (var_3: int64), (var_2: int64))
+let (var_5: System.IO.Stream) = System.Console.OpenStandardInput()
+let (var_6: System.IO.StreamReader) = System.IO.StreamReader(var_5)
+let (var_7: string) = var_6.ReadToEnd()
+let (var_8: int64) = 0L
+let (var_10: bool) =
+    if (var_8 >= 0L) then
+        let (var_9: int64) = (int64 var_7.Length)
+        (var_8 < var_9)
     else
         false
-if var_9 then
-    let (var_10: char) = var_6.[int32 var_7]
-    let (var_11: bool) = ('-' = var_10)
-    let (var_12: int64) = (var_7 + 1L)
-    if var_11 then
-        let (var_13: bool) = false
-        method_3((var_13: bool), (var_0: (Union0 [])), (var_6: string), (var_12: int64))
+if var_10 then
+    let (var_11: char) = var_7.[int32 var_8]
+    let (var_12: bool) = ('-' = var_11)
+    let (var_13: int64) = (var_8 + 1L)
+    if var_12 then
+        let (var_14: bool) = false
+        method_3((var_14: bool), (var_1: (Union0 [])), (var_7: string), (var_13: int64))
     else
-        let (var_14: bool) = true
-        method_3((var_14: bool), (var_0: (Union0 [])), (var_6: string), (var_7: int64))
+        let (var_15: bool) = true
+        method_3((var_15: bool), (var_1: (Union0 [])), (var_7: string), (var_8: int64))
 else
-    let (var_15: bool) = true
-    method_3((var_15: bool), (var_0: (Union0 [])), (var_6: string), (var_7: int64))
+    let (var_16: bool) = true
+    method_3((var_16: bool), (var_1: (Union0 [])), (var_7: string), (var_8: int64))
 

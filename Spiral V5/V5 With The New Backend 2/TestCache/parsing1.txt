@@ -1,6 +1,12 @@
-let (var_0: System.IO.Stream) = System.Console.OpenStandardInput()
-let (var_1: System.IO.StreamReader) = System.IO.StreamReader(var_0)
-let (var_2: string) = var_1.ReadToEnd()
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
+let (var_0: string) = cuda_kernels
+let (var_1: System.IO.Stream) = System.Console.OpenStandardInput()
+let (var_2: System.IO.StreamReader) = System.IO.StreamReader(var_1)
+let (var_3: string) = var_2.ReadToEnd()
 System.Console.WriteLine(1L)
-let (var_3: int64) = 0L
+let (var_4: int64) = 0L
 

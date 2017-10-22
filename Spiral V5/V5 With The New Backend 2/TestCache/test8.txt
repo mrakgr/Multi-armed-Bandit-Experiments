@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Union0 =
     | Union0Case0 of Tuple1
     | Union0Case1
@@ -8,10 +13,11 @@ and Tuple1 =
     end
 let rec method_4(): Union0 =
     Union0Case1
-let (var_0: Union0) = method_4()
-match var_0 with
-| Union0Case0(var_1) ->
-    var_1.mem_1
+let (var_0: string) = cuda_kernels
+let (var_1: Union0) = method_4()
+match var_1 with
+| Union0Case0(var_2) ->
+    var_2.mem_1
 | Union0Case1 ->
     0L
 

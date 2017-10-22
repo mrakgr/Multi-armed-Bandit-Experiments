@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 let rec method_0((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
     if (var_2 >= var_1) then
         let (var_4: int64) = (var_2 % 3L)
@@ -34,14 +39,15 @@ and method_1((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): in
         method_1((var_0: int64), (var_1: int64), (var_8: int64), (var_7: int64))
     else
         var_3
-let (var_0: int64) = 999L
-let (var_1: int64) = 3L
-let (var_2: int64) = -1L
-let (var_3: int64) = 0L
-let (var_6: int64) =
-    if (var_2 < 0L) then
-        method_0((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
+let (var_0: string) = cuda_kernels
+let (var_1: int64) = 999L
+let (var_2: int64) = 3L
+let (var_3: int64) = -1L
+let (var_4: int64) = 0L
+let (var_7: int64) =
+    if (var_3 < 0L) then
+        method_0((var_3: int64), (var_2: int64), (var_1: int64), (var_4: int64))
     else
-        method_1((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
-System.Console.WriteLine(var_6)
+        method_1((var_3: int64), (var_2: int64), (var_1: int64), (var_4: int64))
+System.Console.WriteLine(var_7)
 

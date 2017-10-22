@@ -1,27 +1,33 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 let rec method_0((var_0: bool)): bool =
     var_0
-let (var_0: bool) = true
-let (var_1: bool) = false
-let (var_2: bool) = true
-let (var_3: bool) = false
-let (var_4: bool) = true
-let (var_5: bool) = method_0((var_0: bool))
-let (var_7: bool) =
-    if var_5 then
-        method_0((var_1: bool))
+let (var_0: string) = cuda_kernels
+let (var_1: bool) = true
+let (var_2: bool) = false
+let (var_3: bool) = true
+let (var_4: bool) = false
+let (var_5: bool) = true
+let (var_6: bool) = method_0((var_1: bool))
+let (var_8: bool) =
+    if var_6 then
+        method_0((var_2: bool))
     else
         false
-if var_7 then
+if var_8 then
     true
 else
-    let (var_8: bool) = method_0((var_2: bool))
-    let (var_10: bool) =
-        if var_8 then
-            method_0((var_3: bool))
+    let (var_9: bool) = method_0((var_3: bool))
+    let (var_11: bool) =
+        if var_9 then
+            method_0((var_4: bool))
         else
             false
-    if var_10 then
+    if var_11 then
         true
     else
-        method_0((var_4: bool))
+        method_0((var_5: bool))
 

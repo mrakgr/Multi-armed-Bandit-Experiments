@@ -97,7 +97,6 @@ type ArrayType =
     | CudaGlobal
     | CudaShared
     | CudaLocal
-    | CudaReference
 
 type Value = 
     | LitUInt8 of uint8
@@ -115,6 +114,9 @@ type Value =
     | LitChar of char
 
 type Op =
+    // Cuda
+    | CudaKernels
+
     // Pattern matching errors
     | ErrorPatMiss
     | ErrorPatClause
@@ -1932,6 +1934,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | _ -> false
                     if is_convertible_primt at && is_convertible_primt bt then TyOp(UnsafeConvert,[a;b],bt)
                     else on_type_er (trace d) "Cannot convert %A to the following type: %A" a bt
+
+        let cuda_kernels d = TyOp(CudaKernels,[],PrimT StringT) |> make_tyv_and_push_typed_expr d
             
         let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
 
@@ -2043,6 +2047,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Exp,[a] -> prim_un_floating d a Exp
             | Tanh,[a] -> prim_un_floating d a Tanh
             | FailWith,[a] -> failwith_ d a
+
+            | CudaKernels,[] -> cuda_kernels d
 
             // Constants
             | x -> failwithf "Missing Op case. %A" x
@@ -2709,7 +2715,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let spiral_cuda_codegen (definitions_queue: Queue<TypeOrMethod>) = 
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
-        let buffer_final = ResizeArray()
         let buffer_temp = ResizeArray()
 
         let state x = state_c buffer_temp x
@@ -2979,7 +2984,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             match join_point_type with
             | JoinPointClosure _ | JoinPointMethod -> print_method "__device__"
-            | JoinPointCuda -> print_method "__host__ __device__"
+            | JoinPointCuda -> print_method "__global__"
             | JoinPointType -> ()
             
         while definitions_queue.Count > 0 do
@@ -3017,14 +3022,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
-        move_to buffer_final buffer_type_definitions
-        move_to buffer_final buffer_method
-        buffer_final
-        |> Seq.map (function
-            | Statement(sep, x) -> Statement(sep,@"// " + x)
-            | x -> x
-            )
-        |> process_statements
+        "let cuda_kernels = \"\"\"" |> state_new
+        "extern \"C\" {" |> state_new
+        enter' <| fun _ ->
+            move_to buffer_temp buffer_type_definitions
+            move_to buffer_temp buffer_method
+        "}" |> state_new
+        "\"\"\"" |> state_new
+
+        buffer_temp |> process_statements
 
 
     let spiral_fsharp_codegen main =
@@ -3032,7 +3038,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let buffer_method = ResizeArray()
         let buffer_main = ResizeArray()
         let buffer_temp = ResizeArray()
-        let buffer_final = ResizeArray()
 
         let state x = state_new buffer_temp x
         let enter' x = enter' buffer_temp x
@@ -3357,6 +3362,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match v with
                     | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s" (print_dotnet_type t) name
                     | _ -> sprintf "%s.%s" (codegen v) name
+                | CudaKernels,[] -> "cuda_kernels"
                 | x -> failwithf "Missing TyOp case. %A" x
 
         let type_prefix =
@@ -3476,16 +3482,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
-        match spiral_cuda_codegen cuda_join_points with
-        | "" -> ()
-        | x -> state x
-        move_to buffer_final buffer_temp
+        spiral_cuda_codegen cuda_join_points |> state
 
-        move_to buffer_final buffer_type_definitions
-        move_to buffer_final buffer_method
-        move_to buffer_final buffer_main
+        move_to buffer_temp buffer_type_definitions
+        move_to buffer_temp buffer_method
+        move_to buffer_temp buffer_main
   
-        process_statements buffer_final
+        process_statements buffer_temp
 
     // #Run
     let print_type_error (trace: Trace) message = 
@@ -3597,6 +3600,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "module_values" (p <| fun x -> op(ModuleValues,[x]))
             l "boxed_variable_is" (p <| fun x -> op(BoxedVariableIs,[x]))
             l "event_add_handler" (p3 <| fun a b c -> op(DotNetEventAddHandler,[a;b;c]))
+            l "cuda_kernels" (op(CudaKernels,[]))
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =

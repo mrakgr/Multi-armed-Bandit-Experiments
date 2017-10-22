@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Tuple0 =
     struct
     val mem_0: int64
@@ -12,6 +17,7 @@ let rec method_0 ((var_0: int64)) ((var_1: int64), (var_2: Tuple0), (var_3: int6
     let (var_8: int64) = (var_7 + var_4)
     let (var_9: int64) = (var_8 + var_5)
     (var_9 + var_3)
-let (var_0: int64) = 7L
-let (var_4: (int64 * Tuple0 * int64 -> int64)) = method_0((var_0: int64))
-var_4(1L, Tuple0(2L, 5L), 3L)
+let (var_0: string) = cuda_kernels
+let (var_1: int64) = 7L
+let (var_5: (int64 * Tuple0 * int64 -> int64)) = method_0((var_1: int64))
+var_5(1L, Tuple0(2L, 5L), 3L)

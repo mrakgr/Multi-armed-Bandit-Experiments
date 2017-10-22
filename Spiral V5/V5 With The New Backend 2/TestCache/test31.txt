@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Union0 =
     | Union0Case0 of Tuple2
     | Union0Case1 of Tuple4
@@ -21,12 +26,13 @@ and Tuple4 =
     val mem_1: string
     new(arg_mem_1) = {mem_1 = arg_mem_1}
     end
-let (var_0: Union0) = (Union0Case0(Tuple2(Tuple1(2L, 3L))))
-match var_0 with
-| Union0Case0(var_1) ->
-    let (var_3: Tuple1) = var_1.mem_1
-    (Union3Case0(Tuple2(var_3)))
-| Union0Case1(var_2) ->
-    let (var_4: string) = var_2.mem_1
-    (Union3Case1(Tuple4(var_4)))
+let (var_0: string) = cuda_kernels
+let (var_1: Union0) = (Union0Case0(Tuple2(Tuple1(2L, 3L))))
+match var_1 with
+| Union0Case0(var_2) ->
+    let (var_4: Tuple1) = var_2.mem_1
+    (Union3Case0(Tuple2(var_4)))
+| Union0Case1(var_3) ->
+    let (var_5: string) = var_3.mem_1
+    (Union3Case1(Tuple4(var_5)))
 

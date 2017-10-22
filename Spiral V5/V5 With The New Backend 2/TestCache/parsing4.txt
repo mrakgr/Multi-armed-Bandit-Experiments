@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 let rec method_0((var_0: bool), (var_1: string), (var_2: int64)): unit =
     let (var_4: bool) =
         if (var_2 >= 0L) then
@@ -98,25 +103,26 @@ and method_2((var_0: int64), (var_1: string), (var_2: int64), (var_3: int64)): u
             System.Console.WriteLine(var_0)
     else
         System.Console.WriteLine(var_0)
-let (var_0: string) = "1 2 3"
-let (var_1: int64) = 0L
-let (var_3: bool) =
-    if (var_1 >= 0L) then
-        let (var_2: int64) = (int64 var_0.Length)
-        (var_1 < var_2)
+let (var_0: string) = cuda_kernels
+let (var_1: string) = "1 2 3"
+let (var_2: int64) = 0L
+let (var_4: bool) =
+    if (var_2 >= 0L) then
+        let (var_3: int64) = (int64 var_1.Length)
+        (var_2 < var_3)
     else
         false
-if var_3 then
-    let (var_4: char) = var_0.[int32 var_1]
-    let (var_5: bool) = ('-' = var_4)
-    let (var_6: int64) = (var_1 + 1L)
-    if var_5 then
-        let (var_7: bool) = false
-        method_0((var_7: bool), (var_0: string), (var_6: int64))
+if var_4 then
+    let (var_5: char) = var_1.[int32 var_2]
+    let (var_6: bool) = ('-' = var_5)
+    let (var_7: int64) = (var_2 + 1L)
+    if var_6 then
+        let (var_8: bool) = false
+        method_0((var_8: bool), (var_1: string), (var_7: int64))
     else
-        let (var_8: bool) = true
-        method_0((var_8: bool), (var_0: string), (var_1: int64))
+        let (var_9: bool) = true
+        method_0((var_9: bool), (var_1: string), (var_2: int64))
 else
-    let (var_9: bool) = true
-    method_0((var_9: bool), (var_0: string), (var_1: int64))
+    let (var_10: bool) = true
+    method_0((var_10: bool), (var_1: string), (var_2: int64))
 

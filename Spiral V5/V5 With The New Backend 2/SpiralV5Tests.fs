@@ -1818,8 +1818,8 @@ inl Path = mscorlib ."System.IO.Path"
 inl File = mscorlib ."System.IO.File"
 inl StreamWriter = mscorlib ."System.IO.StreamWriter"
 inl ProcessStartInfo = system ."System.Diagnostics.ProcessStartInfo"
-inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
-    inl nvcc_router_path = "nvcc_router.bat"
+inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) (kernel_code: string) =
+    inl nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
     inl procStartInfo = ProcessStartInfo()
     procStartInfo.set_RedirectStandardOutput true
     procStartInfo.set_RedirectStandardError true
@@ -1835,21 +1835,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     add_handler .ErrorDataReceived
 //    add_handler .OutputDataReceived
     
-    inl concat' l =
-        inl StringBuilder = mscorlib."System.Text.StringBuilder"
-        inl len = 64i32
-//            Tuple.foldl (inl s -> function
-//                | x : string -> unsafe_convert int32 (string_length x) + s
-//                | x : StringBuilder -> x.get_Length() + s
-//                | _ -> 1i32 + s
-//                ) 0i32 l
-        inl strb = StringBuilder len
-        Tuple.foldl (inl s -> function
-            | x : StringBuilder -> x.ToString() |> s.Append
-            | x -> s.Append x
-            ) strb l
-
-    inl concat = concat' >> inl x -> x.ToString()
+    inl concat = string_concat ""
     inl (+) a b = concat (a, b)
 
     /// Puts quotes around the string.
@@ -1864,6 +1850,9 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl quoted_target_path = target_path |> quote
     inl input_path = Path.Combine(kernels_dir,"cuda_kernels.cu")
     inl quoted_input_path = input_path |> quote
+
+    if File.Exists input_path then File.Delete input_path
+    File.WriteAllText(input_path,kernel_code)
     
     inl _ = 
         if File.Exists nvcc_router_path then File.Delete nvcc_router_path
@@ -1892,7 +1881,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     
     context.LoadModulePTX target_path
 
-compile_kernel_using_nvcc_bat_router @"C:\Temp\"
+compile_kernel_using_nvcc_bat_router @"C:\Temp\" "test"
     """
 
 let tests =
@@ -1960,6 +1949,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp cuda2
+output_test_to_temp cuda1
 |> printfn "%s"
 |> ignore

@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Env0 =
     struct
     val mem_a: int64
@@ -7,4 +12,5 @@ type Env0 =
     val mem_e: int64
     new(arg_mem_a, arg_mem_b, arg_mem_c, arg_mem_d, arg_mem_e) = {mem_a = arg_mem_a; mem_b = arg_mem_b; mem_c = arg_mem_c; mem_d = arg_mem_d; mem_e = arg_mem_e}
     end
+let (var_0: string) = cuda_kernels
 (Env0(1L, 2L, 3L, 4L, 5L))

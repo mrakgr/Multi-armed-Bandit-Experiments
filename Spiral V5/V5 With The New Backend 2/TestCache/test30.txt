@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Rec0 =
     | Rec0Case0 of Tuple2
     | Rec0Case1
@@ -22,6 +27,7 @@ let rec method_4((var_0: Rec0), (var_1: int64)): int64 =
         method_4((var_5: Rec0), (var_6: int64))
     | Rec0Case1 ->
         var_1
-let (var_0: Rec0) = (Rec0Case0(Tuple2(Tuple1(1L, (Rec0Case0(Tuple2(Tuple1(2L, (Rec0Case0(Tuple2(Tuple1(3L, Rec0Case1))))))))))))
-let (var_1: int64) = 0L
-method_4((var_0: Rec0), (var_1: int64))
+let (var_0: string) = cuda_kernels
+let (var_1: Rec0) = (Rec0Case0(Tuple2(Tuple1(1L, (Rec0Case0(Tuple2(Tuple1(2L, (Rec0Case0(Tuple2(Tuple1(3L, Rec0Case1))))))))))))
+let (var_2: int64) = 0L
+method_4((var_1: Rec0), (var_2: int64))

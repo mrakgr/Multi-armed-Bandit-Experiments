@@ -1,3 +1,8 @@
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
 type Env0 =
     struct
     val mem_a: int64
@@ -36,4 +41,5 @@ and method_2((var_0: int64)): Env2 =
     (Env2(var_0, 2L))
 and method_3((var_0: int64), (var_1: int64)): Env0 =
     (Env0(var_0, var_1, Tuple3(2.200000, 3L, 4.500000)))
+let (var_0: string) = cuda_kernels
 method_0()
