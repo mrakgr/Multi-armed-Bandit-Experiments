@@ -1,8 +1,15 @@
 module SpiralExample
 let cuda_kernels = """
 extern "C" {
-    __global__ void method_2(long long int var_0, long long int var_1) {
-        long long int var_2 = (var_0 + var_1);
+    __global__ void method_2() {
+        long long int var_0 = threadIdx.x;
+        long long int var_1 = threadIdx.y;
+        long long int var_2 = threadIdx.z;
+        long long int var_3 = blockIdx.x;
+        long long int var_4 = blockIdx.y;
+        long long int var_5 = blockIdx.z;
+        long long int var_6 = 64;
+        long long int var_7 = (var_6 + 1);
     }
 }
 """
@@ -191,14 +198,14 @@ let (var_129: System.Text.StringBuilder) = var_128.Append(var_12)
 let (var_130: string) = var_129.ToString()
 System.Console.WriteLine(var_130)
 let (var_131: ManagedCuda.CudaStream) = ManagedCuda.CudaStream()
-let (var_132: int64) = 1L
-let (var_133: int64) = 2L
 // Cuda method call
-// method_2((var_132: int64), (var_133: int64))
-let (var_134: (System.Object [])) = Array.zeroCreate<System.Object> (System.Convert.ToInt32(2L))
-var_134.[int32 0L] <- (var_132 :> System.Object)
-var_134.[int32 1L] <- (var_133 :> System.Object)
-let (var_135: ManagedCuda.CudaKernel) = ManagedCuda.CudaKernel("method_2", var_124, var_11)
+// method_2()
+let (var_132: (System.Object [])) = Array.zeroCreate<System.Object> (System.Convert.ToInt32(0L))
+let (var_133: ManagedCuda.CudaKernel) = ManagedCuda.CudaKernel("method_2", var_124, var_11)
+let (var_134: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(32u, 1u, 1u)
+var_133.set_GridDimensions(var_134)
+let (var_135: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(64u, 1u, 1u)
+var_133.set_BlockDimensions(var_135)
 let (var_136: ManagedCuda.BasicTypes.CUstream) = var_131.get_Stream()
-var_135.RunAsync(var_136, var_134)
+var_133.RunAsync(var_136, var_132)
 

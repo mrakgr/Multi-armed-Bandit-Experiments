@@ -1377,7 +1377,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match t.GetField name with
                 | null ->
                     let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
-                              |> inner_compile
+                                |> inner_compile
                     apply d (apply d lam dotnet_type) method_name
                 | field ->
                     if field.IsPublic then
@@ -1412,9 +1412,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | _ -> on_type_er d.trace "Expected a .NET runtime type instead of an instance."
                     | TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
                         let method_find (ty: Type) method_name (args: Type[]) = 
-                            let mutable result = None
                             ty.GetMethods()
-                            |> Array.exists (fun method_ ->
+                            |> Array.tryPick (fun method_ ->
                                 if method_.Name = method_name then
                                     let pars = method_.GetParameters()
                                     if pars.Length = args.Length then
@@ -1428,12 +1427,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                                             else par = arg
                                             )
                                         |> fun it_exists ->
-                                            if it_exists then result <- Some method_
-                                            it_exists
-                                    else false
-                                else false
+                                            if it_exists then Some method_
+                                            else None
+                                    else None
+                                else None
                                 )
-                            |> fun _ -> result
                                         
                         match method_find system_type method_name method_args with
                         | None -> on_type_er (trace d) <| sprintf "Cannot find a method with matching arguments. method_name=%s method_args=%A" method_name method_args
@@ -1515,14 +1513,22 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let v,i = tev2 d v i
             match v, i with
             | TyVV l, TyLitIndex i ->
-                if i >= 0 || i < List.length l then f l i
-                else on_type_er (trace d) "Tuple index not within bounds."
+                match f i l with
+                | Some v -> v
+                | None -> on_type_er (trace d) "Tuple index not within bounds."
             | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should always be destructured."
             | v, TyLitIndex i -> on_type_er (trace d) <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
             | v, i -> on_type_er (trace d) <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
-        let vv_index d v i = vv_index_template (fun l i -> l.[i]) d v i |> destructure d
-        let vv_slice_from d v i = vv_index_template (fun l i -> tyvv l.[i..]) d v i
+        let vv_index d v i = vv_index_template List.tryItem d v i |> destructure d
+        let vv_slice_from d v i = 
+            let rec loop i l = 
+                if i = 0 then tyvv l |> Some
+                else
+                    match l with
+                    | x :: xs -> loop (i-1) xs
+                    | [] -> None
+            vv_index_template loop d v i
 
         let inline vv_unop_template on_succ on_fail d v =
             match tev d v with
@@ -2070,6 +2076,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | UnsafeUpcastTo,[a;b] -> unsafe_upcast_to d a b
 
             // Constants
+            | (ThreadIdxX | ThreadIdxY | ThreadIdxZ | BlockIdxX | BlockIdxY | BlockIdxZ | BlockDimX | BlockDimY | BlockDimZ | GridDimX | GridDimY | GridDimZ),[] -> TyOp(op,[],PrimT Int64T)
+
             | x -> failwithf "Missing Op case. %A" x
 
 
@@ -2529,7 +2537,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let case_negate expr = previousCharSatisfiesNot (is_separator_char >> not) >>. prefix_negate >>. expr |>> (ap (v "negate"))
         let case_join_point expr = keywordString "join" >>. expr |>> join_point_entry_method
-        let case_cuda expr = keywordString "cuda" >>. expr |>> inl' ["blockDim";"gridDim"]
+        let case_cuda expr = keywordString "cuda" >>. expr |>> inl' ["threadIdx"; "blockIdx"; "blockDim";"gridDim"]
 
         let rec expressions expr s =
             let unary_ops = 
@@ -2952,6 +2960,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Exp,[x] -> sprintf "exp(%s)" (codegen x)
                 | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
                 | FailWith,[x] -> on_type_er trace "Exceptions and hence failwith are not supported on the Cuda side."
+
+                | ThreadIdxX,[] -> "threadIdx.x"
+                | ThreadIdxY,[] -> "threadIdx.y"
+                | ThreadIdxZ,[] -> "threadIdx.z"
+                | BlockIdxX,[] -> "blockIdx.x"
+                | BlockIdxY,[] -> "blockIdx.y"
+                | BlockIdxZ,[] -> "blockIdx.z"
+
+                | BlockDimX,[] -> "blockDim.x"
+                | BlockDimY,[] -> "blockDim.y"
+                | BlockDimZ,[] -> "blockDim.z"
+                | GridDimX,[] -> "gridDim.x"
+                | GridDimY,[] -> "gridDim.y"
+                | GridDimZ,[] -> "gridDim.z"
+
                 | x -> failwithf "Missing TyOp case. %A" x
                 |> branch_return
 
@@ -3344,8 +3367,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | BitwiseOr,[a;b] -> sprintf "(%s ||| %s)" (codegen a) (codegen b)
                 | BitwiseXor,[a;b] -> sprintf "(%s ^^^ %s)" (codegen a) (codegen b)
 
-                | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
-                | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
+                | ShiftLeft,[x;y] -> sprintf "(%s <<< %s)" (codegen x) (codegen y)
+                | ShiftRight,[x;y] -> sprintf "(%s >>> %s)" (codegen x) (codegen y)
 
                 | Neg,[a] -> sprintf "(-%s)" (codegen a)
                 | VVIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
@@ -3623,6 +3646,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "cuda_kernels" (op(CudaKernels,[]))
             l "unsafe_upcast_to" (p2 <| fun a b -> op(UnsafeUpcastTo,[a;b]))
             l "join_point_entry_cuda" (p join_point_entry_cuda)
+
+            l "__threadIdxX" (p <| fun _ -> op(ThreadIdxX,[]))
+            l "__threadIdxY" (p <| fun _ -> op(ThreadIdxY,[]))
+            l "__threadIdxZ" (p <| fun _ -> op(ThreadIdxZ,[]))
+            l "__blockIdxX" (p <| fun _ -> op(BlockIdxX,[]))
+            l "__blockIdxY" (p <| fun _ -> op(BlockIdxY,[]))
+            l "__blockIdxZ" (p <| fun _ -> op(BlockIdxZ,[]))
+
+            l "__blockDimX" (p <| fun _ -> op(BlockDimX,[]))
+            l "__blockDimY" (p <| fun _ -> op(BlockDimY,[]))
+            l "__blockDimZ" (p <| fun _ -> op(BlockDimZ,[]))
+            l "__gridDimX" (p <| fun _ -> op(GridDimX,[]))
+            l "__gridDimY" (p <| fun _ -> op(GridDimY,[]))
+            l "__gridDimZ" (p <| fun _ -> op(GridDimZ,[]))
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =

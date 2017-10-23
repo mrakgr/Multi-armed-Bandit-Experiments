@@ -881,7 +881,11 @@ inl current_directory = Environment.get_CurrentDirectory()
 inl modules = compile_kernel_using_nvcc_bat_router current_directory
 writeline (Core.string_concat "" ("Compiled the kernels into the following directory: ", current_directory))
 
-inl dim3 = ManagedCuda ."ManagedCuda.VectorTypes.dim3"
+inl dim3 = function
+    | {x y z} as m -> m
+    | x,y,z -> {x=x: int64; y=y: int64; z=z: int64}
+    | x,y -> {x=x: int64; y=y: int64; z=1}
+    | x -> {x=x: int64; y=1; z=1}
 
 {ManagedCuda context modules dim3}
     """) |> module_
