@@ -1800,13 +1800,28 @@ let cuda1 =
     "cuda1",[array;cuda],"Does the simulated Cuda call work?",
     """
 open Cuda
-inl add a b = cuda 
-    a + b |> dyn |> ignore
-inl to_obj_ar args = Array.init.static (tuple_length args) (tuple_index args >> unsafe_upcast_to (mscorlib ."System.Object"))
-inl method_name, !to_obj_ar args = add (dyn 1) (dyn 2)
-inl main_stream = ManagedCuda."ManagedCuda.CudaStream"()
-inl kernel = ManagedCuda."ManagedCuda.CudaKernel"(method_name,modules,context)
-kernel.RunAsync(main_stream.get_Stream(),args)
+inl add a b = a + b |> dyn |> ignore
+
+inl kernel_run {stream blockDim gridDim kernel} =
+    inl to_obj_ar args =
+        inl len = tuple_length args
+        inl typ = mscorlib ."System.Object"
+        if len > 0 then Array.init.static len (tuple_index args >> unsafe_upcast_to typ)
+        else Array.empty typ
+
+    inl kernel _ = kernel blockDim gridDim
+    inl method_name, !to_obj_ar args = join_point_entry_cuda kernel
+    inl kernel = ManagedCuda."ManagedCuda.CudaKernel"(method_name,modules,context)
+    kernel.RunAsync(stream.get_Stream(),args)
+    
+kernel_run {
+    stream = ManagedCuda."ManagedCuda.CudaStream"()
+    blockDim = (64u32,1u32,1u32)
+    gridDim = (32u32,1u32,1u32)
+    kernel =
+        inl a,b = dyn 1, dyn 2
+        cuda add a b
+    }
     """
 
 let cuda2 =

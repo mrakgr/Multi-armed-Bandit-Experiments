@@ -317,7 +317,7 @@ and JoinPointType =
     | JoinPointClosure of Arguments
     | JoinPointMethod
     | JoinPointType
-    | JoinPointCuda of TypedExpr * TypedExpr * TypedExpr * TypedExpr
+    | JoinPointCuda
 
 and JoinPointKey = MemoKey * Tag
 and JoinPointValue = JoinPointType * Arguments * Renamer
@@ -499,18 +499,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let l_rec v b e = ap (inl v e) (fix v b)
 
     let inl' args body = List.foldBack inl args body
-    
-    let join_point_entry_method y = (JoinPointEntryMethod,[y]) |> op
-    let join_point_entry_type y = (JoinPointEntryType,[y]) |> op
-    let join_point_entry_cuda y = (JoinPointEntryCuda,[y]) |> op
-    let meth x y = inl x (join_point_entry_method y)
-
-    let module_create l = (ModuleCreate,[l]) |> op
-    let module_open a b = (ModuleOpen,[a;b]) |> op
 
     let B = vv []
     let BVVT = vvt []
     let TyB = tyvv []
+    
+    let join_point_entry_method y = (JoinPointEntryMethod,[y]) |> op
+    let join_point_entry_type y = (JoinPointEntryType,[y]) |> op
+    let join_point_entry_cuda expr = (JoinPointEntryCuda,[ap expr B]) |> op
+    let meth x y = inl x (join_point_entry_method y)
+
+    let module_create l = (ModuleCreate,[l]) |> op
+    let module_open a b = (ModuleOpen,[a;b]) |> op
 
     let cons a b = (VVCons,[a;b]) |> op
 
@@ -1163,8 +1163,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let _,_,_,ret_ty = join_point_rename memo_type {d with env = env} x 
             tyt ret_ty
 
-        let join_point_cuda d block_dims grid_dims shared_size cuda_stream x =
-            let memo_type = JoinPointCuda <| tev4 d block_dims grid_dims shared_size cuda_stream
+        let join_point_cuda d x =
+            let memo_type = JoinPointCuda
             let memo_key,args,rev_renamer,ret_ty = join_point_rename (fun _ -> memo_type) d x
             if is_unit ret_ty = false then on_type_er d.trace "The return type of Cuda join point must be unit."
 
@@ -2528,9 +2528,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             squares (many (pat .>> optional semicolon')) |>> function [x] -> x | x -> vv x
 
         let case_negate expr = previousCharSatisfiesNot (is_separator_char >> not) >>. prefix_negate >>. expr |>> (ap (v "negate"))
-        let case_join_point expr =
-            (keywordString "cuda" >>. expr |>> join_point_entry_cuda)
-            <|> (keywordString "join" >>. expr |>> join_point_entry_method)
+        let case_join_point expr = keywordString "join" >>. expr |>> join_point_entry_method
+        let case_cuda expr = keywordString "cuda" >>. expr |>> inl' ["blockDim";"gridDim"]
 
         let rec expressions expr s =
             let unary_ops = 
@@ -2538,7 +2537,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 |> List.map (fun x -> x (expressions expr) |> attempt)
                 |> choice
             let expressions = 
-                [case_print_env; case_print_expr; case_type; case_join_point;
+                [case_print_env; case_print_expr; case_type; case_join_point; case_cuda
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
                  case_rounds; case_typecase; case_typeinl; case_var; case_module; case_named_tuple]
                 |> List.map (fun x -> x expr |> attempt)
@@ -2762,7 +2761,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | UnionT _ as x -> print_tag_union x
             | ArrayT((CudaLocal | CudaShared | CudaGlobal),t) -> sprintf "%s *" (print_type trace t)
             | ArrayT _ -> failwith "Not implemented."
-            | FunHeapT _ | RecT _ | DotNetTypeT _ as x -> on_type_er trace "%A is not supported on the Cuda side." x
+            | FunHeapT _ | RecT _ | DotNetTypeT _ as x -> on_type_er trace <| sprintf "%A is not supported on the Cuda side." x
             | ClosureT _ as t -> print_tag_closure t
             | PrimT x ->
                 match x with
@@ -2876,7 +2875,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let method_name = print_method method_tag
                 match join_point_dict.[join_point_key] with
                 | JoinPointType, _, _ -> failwith "Should never be printed."
-                | (JoinPointMethod | JoinPointCuda), fv, _ -> sprintf "%s(%s)" method_name (print_join_point_args fv) |> branch_return
+                | (JoinPointMethod | JoinPointCuda _), fv, _ -> sprintf "%s(%s)" method_name (print_join_point_args fv) |> branch_return
                 | JoinPointClosure args, fv, rev_renamer ->
                     let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
                     if Seq.isEmpty fv then method_name else on_type_er trace "The closure should not have free variables on the Cuda side."
@@ -3002,7 +3001,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             match join_point_type with
             | JoinPointClosure _ | JoinPointMethod -> print_method "__device__"
-            | JoinPointCuda -> print_method "__global__"
+            | JoinPointCuda _ -> print_method "__global__"
             | JoinPointType -> ()
             
         while definitions_queue.Count > 0 do
@@ -3282,7 +3281,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match join_point_dict.[join_point_key] with
                 | JoinPointType, _, _ -> failwith "Should never be printed."
                 | JoinPointMethod, fv, _ -> sprintf "%s(%s)" method_name (print_args fv)
-                | JoinPointCuda, fv, _ -> 
+                | JoinPointCuda _, fv, _ -> 
                     @"// Cuda method call" |> state
                     sprintf "// %s(%s)" method_name (print_args fv)
                 | JoinPointClosure args, fv, rev_renamer ->
@@ -3448,7 +3447,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 sprintf "%s %s(%s): %s =" (method_prefix()) method_name (print_args fv) (print_type (get_type body)) |> state
                 print_body()
             | JoinPointType -> ()
-            | JoinPointCuda -> failwith "These should be printed in the Cuda codegen."
+            | JoinPointCuda _ -> failwith "These should be printed in the Cuda codegen."
 
         codegen' [] main |> state
         move_to buffer_main buffer_temp
@@ -3469,7 +3468,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match definitions_queue.Dequeue() with
             | TomMethod key as x ->
                 match memoized_methods.[key] with
-                | MemoMethod (JoinPointCuda, fv, body) -> cuda_join_points.Enqueue x
+                | MemoMethod (JoinPointCuda _, fv, body) -> cuda_join_points.Enqueue x
                 | MemoMethod (join_point_type, fv, body) -> 
                     print_method_definition key.Symbol (join_point_type, fv, body)
                     move_to buffer_method buffer_temp
@@ -3547,12 +3546,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let p f = inl "x" (f (v "x"))
         let p2 f = inl' ["x"; "y"] (f (v "x") (v "y"))
         let p3 f = inl' ["x"; "y"; "z"] (f (v "x") (v "y") (v "z"))
+        let p4 f = inl' ["1"; "2"; "3"; "4"] (f (v "1") (v "2") (v "3") (v "4"))
+        let p5 f = inl' ["1"; "2"; "3"; "4"; "5"] (f (v "1") (v "2") (v "3") (v "4") (v "5"))
         let binop' op' a b = op(op',[a;b])
         let binop op = p2 (binop' op)
         let b str op = l str (binop op)
         let apply a b = binop' Apply a b
         let compose a b c = apply a (apply b c)
-        let con x = op(x,[])
         s  [l "error_type" (p error_type)
             l "print_static" (p print_static)
             l "dyn" (p dynamize)
@@ -3622,6 +3622,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "event_add_handler" (p3 <| fun a b c -> op(DotNetEventAddHandler,[a;b;c]))
             l "cuda_kernels" (op(CudaKernels,[]))
             l "unsafe_upcast_to" (p2 <| fun a b -> op(UnsafeUpcastTo,[a;b]))
+            l "join_point_entry_cuda" (p join_point_entry_cuda)
             ]
 
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =
