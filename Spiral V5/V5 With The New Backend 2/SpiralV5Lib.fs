@@ -809,7 +809,6 @@ inl ManagedCuda = assembly_load ."ManagedCuda, Version=7.5.7.0, Culture=neutral,
 inl context = ManagedCuda ."ManagedCuda.CudaContext" false
 
 inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
-    
     inl Path = mscorlib ."System.IO.Path"
     inl File = mscorlib ."System.IO.File"
     inl StreamWriter = mscorlib ."System.IO.StreamWriter"
@@ -887,5 +886,38 @@ inl dim3 = function
     | x,y -> {x=x: int64; y=y: int64; z=1}
     | x -> {x=x: int64; y=1; z=1}
 
-{ManagedCuda context modules dim3}
+inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
+    inl to_obj_ar args =
+        inl len = tuple_length args
+        inl typ = mscorlib ."System.Object"
+        if len > 0 then Array.init.static len (tuple_index args >> unsafe_upcast_to typ)
+        else Array.empty typ
+
+    inl kernel =
+        inl map_to_op_if_not_static {x y z} (x', y', z') = 
+            inl f x x' = if lit_is x then const x else x' 
+            f x x', f y y', f z z'
+        inl x,y,z = map_to_op_if_not_static blockDim (__blockDimX,__blockDimY,__blockDimZ)
+        inl x',y',z' = map_to_op_if_not_static gridDim (__gridDimX,__gridDimY,__gridDimZ)
+        inl _ -> // This convoluted way of swaping non-literals for ops is so they do not get called outside of the kernel.
+            inl threadIdx = {x=__threadIdxX(); y=__threadIdxY(); z=__threadIdxZ()}
+            inl blockIdx = {x=__blockIdxX(); y=__blockIdxY(); z=__blockIdxZ()}
+            inl blockDim = {x=x(); y=y(); z=z()}
+            inl gridDim = {x=x'(); y=y'(); z=z'()}
+            kernel threadIdx blockIdx blockDim gridDim
+    inl method_name, !to_obj_ar args = join_point_entry_cuda kernel
+    inl dim3 {x y z} = Tuple.map (unsafe_convert uint32) (x,y,z) |> ManagedCuda ."ManagedCuda.VectorTypes.dim3"
+    
+    inl context = match runable with | {context} | _ -> context
+    inl cuda_kernel = ManagedCuda."ManagedCuda.CudaKernel"(method_name,modules,context)
+    cuda_kernel.set_GridDimensions(dim3 gridDim)
+    cuda_kernel.set_BlockDimensions(dim3 blockDim)
+
+    match runable with
+    | {stream} -> cuda_kernel.RunAsync(stream.get_Stream(),args)
+    | _ -> cuda_kernel.Run(args)
+
+inl stream_create x = ManagedCuda."ManagedCuda.CudaStream" x
+
+{ManagedCuda context dim3 run stream_create}
     """) |> module_

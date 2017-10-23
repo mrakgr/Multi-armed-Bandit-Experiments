@@ -1799,41 +1799,10 @@ let hacker_rank_10 =
 let cuda1 = 
     "cuda1",[tuple;array;cuda],"Does the simulated Cuda call work?",
     """
-open Cuda
 inl add a b = a + b |> dyn |> ignore
-
-inl kernel_run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as x =
-    inl to_obj_ar args =
-        inl len = tuple_length args
-        inl typ = mscorlib ."System.Object"
-        if len > 0 then Array.init.static len (tuple_index args >> unsafe_upcast_to typ)
-        else Array.empty typ
-
-    inl kernel =
-        inl map_to_op_if_not_static {x y z} (x', y', z') = 
-            inl f x x' = if lit_is x then const x else x' 
-            f x x', f y y', f z z'
-        inl x,y,z = map_to_op_if_not_static blockDim (__blockDimX,__blockDimY,__blockDimZ)
-        inl x',y',z' = map_to_op_if_not_static gridDim (__gridDimX,__gridDimY,__gridDimZ)
-        inl _ -> // This convoluted way of swaping non-literals for ops is so they do not get called outside of the kernel.
-            inl threadIdx = {x=__threadIdxX(); y=__threadIdxY(); z=__threadIdxZ()}
-            inl blockIdx = {x=__blockIdxX(); y=__blockIdxY(); z=__blockIdxZ()}
-            inl blockDim = {x=x(); y=y(); z=z()}
-            inl gridDim = {x=x'(); y=y'(); z=z'()}
-            kernel threadIdx blockIdx blockDim gridDim
-    inl method_name, !to_obj_ar args = join_point_entry_cuda kernel
-    inl dim3 {x y z} = Tuple.map (unsafe_convert uint32) (x,y,z) |> ManagedCuda ."ManagedCuda.VectorTypes.dim3"
-
-    inl cuda_kernel = ManagedCuda."ManagedCuda.CudaKernel"(method_name,modules,context)
-    cuda_kernel.set_GridDimensions(dim3 gridDim)
-    cuda_kernel.set_BlockDimensions(dim3 blockDim)
-
-    match x with
-    | {stream} -> cuda_kernel.RunAsync(stream.get_Stream(),args)
-    | _ -> cuda_kernel.Run(args)
    
-kernel_run {
-    stream = ManagedCuda."ManagedCuda.CudaStream"()
+Cuda.run {
+    stream = Cuda.stream_create()
     blockDim = 64
     gridDim = 32
     kernel = cuda add (dyn <| blockDim.x) (dyn gridDim.y)
@@ -1909,7 +1878,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache()
+//rewrite_test_cache()
 
 output_test_to_temp cuda1
 |> printfn "%s"
