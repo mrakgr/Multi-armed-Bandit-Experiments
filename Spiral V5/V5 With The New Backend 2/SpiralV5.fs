@@ -115,8 +115,15 @@ type Value =
 
 type Op =
     // Cuda
+    | Syncthreads
     | CudaKernels
     | UnsafeUpcastTo
+
+    | ThreadIdxX | ThreadIdxY | ThreadIdxZ
+    | BlockIdxX | BlockIdxY | BlockIdxZ
+
+    | BlockDimX | BlockDimY | BlockDimZ
+    | GridDimX | GridDimY | GridDimZ
 
     // Pattern matching errors
     | ErrorPatMiss
@@ -229,11 +236,6 @@ type Op =
     | Exp
     | Tanh
     | FailWith
-    
-    // Constants
-    | Syncthreads
-    | BlockDimX | BlockDimY | BlockDimZ
-    | GridDimX | GridDimY | GridDimZ
 
 type FunctionCore = string * Expr
 
@@ -315,7 +317,7 @@ and JoinPointType =
     | JoinPointClosure of Arguments
     | JoinPointMethod
     | JoinPointType
-    | JoinPointCuda
+    | JoinPointCuda of TypedExpr * TypedExpr * TypedExpr * TypedExpr
 
 and JoinPointKey = MemoKey * Tag
 and JoinPointValue = JoinPointType * Arguments * Renamer
@@ -967,6 +969,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let inline tev2 d a b = tev d a, tev d b
         let inline tev3 d a b c = tev d a, tev d b, tev d c
+        let inline tev4 d a b c d' = tev d a, tev d b, tev d c, tev d d'
 
         let inline inner_compile x = expr_prepass x |> snd |> tev d
 
@@ -1160,8 +1163,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let _,_,_,ret_ty = join_point_rename memo_type {d with env = env} x 
             tyt ret_ty
 
-        let join_point_cuda d x =
-            let memo_type = JoinPointCuda
+        let join_point_cuda d block_dims grid_dims shared_size cuda_stream x =
+            let memo_type = JoinPointCuda <| tev4 d block_dims grid_dims shared_size cuda_stream
             let memo_key,args,rev_renamer,ret_ty = join_point_rename (fun _ -> memo_type) d x
             if is_unit ret_ty = false then on_type_er d.trace "The return type of Cuda join point must be unit."
 

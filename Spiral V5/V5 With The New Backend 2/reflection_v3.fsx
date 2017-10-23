@@ -35,4 +35,3 @@ ty.CustomAttributes
 let con = (ty.CustomAttributes |> Seq.head).ConstructorArguments |> Seq.head
 con.Value
 
-//
