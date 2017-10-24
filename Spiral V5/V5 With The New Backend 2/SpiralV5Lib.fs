@@ -805,8 +805,8 @@ eg. : C:\cub-1.6.3
 and add that directory to the global enviroment by creating the CUB_PATH variable with a pointer to it."
     x
 
-inl ManagedCuda = assembly_load ."ManagedCuda, Version=7.5.7.0, Culture=neutral, PublicKeyToken=242d898828717aa0"
-inl context = ManagedCuda ."ManagedCuda.CudaContext" false
+inl ManagedCuda = assembly_load ."ManagedCuda, Version=7.5.7.0, Culture=neutral, PublicKeyToken=242d898828717aa0" .ManagedCuda
+inl context = ManagedCuda.CudaContext false
 
 inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl Path = mscorlib ."System.IO.Path"
@@ -917,7 +917,5 @@ inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
     | {stream} -> cuda_kernel.RunAsync(stream.get_Stream(),args)
     | _ -> cuda_kernel.Run(args)
 
-inl stream_create x = ManagedCuda."ManagedCuda.CudaStream" x
-
-{ManagedCuda context dim3 run stream_create}
+{ManagedCuda context dim3 run}
     """) |> module_

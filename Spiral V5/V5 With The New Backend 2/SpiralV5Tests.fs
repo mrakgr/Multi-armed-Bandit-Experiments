@@ -195,11 +195,12 @@ met rec inter x =
 inter c
     """
 
-let test15 = // 
+let test15 =
     "test15",[],"Does basic .NET interop work?",
     """
-inl system = assembly_load .mscorlib
-inl builder_type = system ."System.Text.StringBuilder"
+inl system = assembly_load .mscorlib .System
+inl builder_type = system.Text.StringBuilder
+print_static builder_type
 inl b = builder_type ("Qwe", 128i32)
 inl a x =
     b .Append x |> ignore
@@ -208,10 +209,10 @@ a 123
 a 123i16
 a "qwe"
 inl str = b.ToString()
-inl console = ."System.Console" |> system
+inl console = system.Console
 console .Write str |> ignore
 
-inl dictionary_type = ."System.Collections.Generic.Dictionary`2" |> system
+inl dictionary_type = system ."Collections.Generic.Dictionary`2"
 inl dict = dictionary_type(int64, int64)(128i32)
 dict.Add(1,2)
 dict.get_Item 1
@@ -1802,7 +1803,7 @@ let cuda1 =
 inl add a b = a + b |> dyn |> ignore
    
 Cuda.run {
-    stream = Cuda.stream_create()
+    stream = Cuda.ManagedCuda.CudaStream()
     blockDim = 64
     gridDim = 32
     kernel = cuda add (dyn <| blockDim.x) (dyn gridDim.y)
@@ -1813,8 +1814,8 @@ let cuda2 =
     "cuda2",[tuple;cuda;core;console],"Does the new Cuda array work?",
     """
 open Cuda
-inl SizeT = ManagedCuda."ManagedCuda.BasicTypes.SizeT"
-inl cuda_array = ManagedCuda."ManagedCuda.CudaDeviceVariable`1"
+inl SizeT = ManagedCuda."BasicTypes.SizeT"
+inl cuda_array = ManagedCuda."CudaDeviceVariable`1"
 cuda_array int64 (SizeT 10)
     """
 

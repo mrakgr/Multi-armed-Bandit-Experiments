@@ -1339,9 +1339,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 apply_func true d recf r env_term fun_type args
             | x -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" x
 
-        let compilation_source_name_attr = typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>
+        let type_lit_create' d x = litt x |> tyt
 
         let rec apply d a b =
+            let lambdify a b =
+                let lam = 
+                    inl' ["a";"b";"c"] (ap (v "a") (vv [v "b"; v "c"]))
+                    |> inner_compile
+                apply d (apply d lam a) b
+
             match destructure d a, destructure d b with
             // apply_function
             | recf & Func(r,env_term,fun_type), args -> apply_func false d recf r env_term fun_type args
@@ -1365,20 +1371,35 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | DotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
-            | TyType (DotNetAssemblyT (N a)), TypeString name -> 
+            | TyType (DotNetAssemblyT (N a)) & assembly, args -> 
+                let inline get_type name' on_maybe =
+                    let mutable r = None
+                    a.GetTypes()
+                    |> Array.exists (fun x -> 
+                        if x.FullName = name' then r <- Some x; true
+                        elif x.FullName.StartsWith name' then r <- Some null; false
+                        else false)
+                    |> ignore
+
+                    match r with
+                    | None -> on_type_er (trace d) "A type cannot be found inside the assembly."
+                    | Some null -> on_maybe ()
+                    | Some x ->
+                        if x.IsPublic then dotnet_typet x |> tyt
+                        else on_type_er (trace d) "Cannot load a private type from an assembly."
+
+                match args with
+                | TypeString name' & name ->
                     wrap_exception d <| fun _ ->
-                        match a.GetType(name) with
-                        | null -> on_type_er (trace d) "A type cannot be found inside the assembly."
-                        | x -> 
-                            if x.IsPublic then dotnet_typet x |> tyt
-                            else on_type_er (trace d) "Cannot load a private type from an assembly."
-            | TyType (DotNetAssemblyT _), _ -> on_type_er (trace d) "Expected a type level string as the second argument."
+                        get_type name' (fun _ -> lambdify assembly name)
+                | TyTuple [TypeString namespace_name; TypeString type_name] ->
+                    wrap_exception d <| fun _ ->
+                        let name' = String.concat "." [|namespace_name;type_name|]
+                        get_type name' (fun _ -> LitString name' |> type_lit_create' d |> lambdify assembly)
+                | _ -> on_type_er (trace d) "Expected a type level string as the second argument."
             | dotnet_type & TyType (DotNetTypeT (N t)), method_name & TypeString name ->
                 match t.GetField name with
-                | null ->
-                    let lam = inl' ["instance";"method_name";"args"] (ap (v "instance") (vv [v "method_name"; v "args"]))
-                                |> inner_compile
-                    apply d (apply d lam dotnet_type) method_name
+                | null -> lambdify dotnet_type method_name
                 | field ->
                     if field.IsPublic then
                         TyOp(DotNetTypeGetField,[dotnet_type;method_name],field.FieldType |> dotnet_type_to_ty)
@@ -1439,7 +1460,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             if meth.IsPublic then
                                 let method_name' =
                                     meth.CustomAttributes
-                                    |> Seq.tryFind (fun x -> x.AttributeType = compilation_source_name_attr)
+                                    |> Seq.tryFind (fun x -> x.AttributeType = typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>)
                                     |> Option.map (fun atr -> 
                                         atr.ConstructorArguments |> Seq.head 
                                         |> fun x -> (x.Value :?> string) |> LitString |> litt |> tyt)
@@ -1551,8 +1572,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match b with
             | TyVV b -> tyvv(a::b)
             | _ -> on_type_er (trace d) "Expected a tuple on the right in VVCons."
-
-        let type_lit_create' d x = litt x |> tyt
 
         let module_open d a b =
             let a = tev d a
