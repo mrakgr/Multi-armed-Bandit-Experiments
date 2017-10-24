@@ -195,7 +195,7 @@ met rec inter x =
 inter c
     """
 
-let test15 = // 
+let test15 =
     "test15",[],"Does basic .NET interop work?",
     """
 inl system = assembly_load .mscorlib
@@ -1883,6 +1883,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp cuda2
+output_test_to_temp test15
 |> printfn "%s"
 |> ignore
