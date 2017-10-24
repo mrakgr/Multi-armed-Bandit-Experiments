@@ -906,10 +906,10 @@ inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
             inl gridDim = {x=x'(); y=y'(); z=z'()}
             kernel threadIdx blockIdx blockDim gridDim
     inl method_name, !to_obj_ar args = join_point_entry_cuda kernel
-    inl dim3 {x y z} = Tuple.map (unsafe_convert uint32) (x,y,z) |> ManagedCuda ."ManagedCuda.VectorTypes.dim3"
+    inl dim3 {x y z} = Tuple.map (unsafe_convert uint32) (x,y,z) |> ManagedCuda.VectorTypes.dim3
     
     inl context = match runable with | {context} | _ -> context
-    inl cuda_kernel = ManagedCuda."ManagedCuda.CudaKernel"(method_name,modules,context)
+    inl cuda_kernel = ManagedCuda.CudaKernel(method_name,modules,context)
     cuda_kernel.set_GridDimensions(dim3 gridDim)
     cuda_kernel.set_BlockDimensions(dim3 blockDim)
 

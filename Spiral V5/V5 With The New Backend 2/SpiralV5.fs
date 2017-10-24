@@ -249,7 +249,7 @@ and Pattern =
     | PatVar of string
     | PatTuple of Pattern list
     | PatCons of Pattern list
-    | PatType of Pattern * Expr
+    | PatTypeEq of Pattern * Expr
     | PatActive of string * Pattern
     | PatPartActive of string * Pattern
     | PatExtActive of string * Pattern
@@ -776,7 +776,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match pat with
             | E -> on_succ
             | PatVar x -> l x arg on_succ
-            | PatType (exp,typ) ->
+            | PatTypeEq (exp,typ) ->
                 let on_succ = cp arg exp on_succ on_fail
                 if_static (eq_type arg typ) on_succ on_fail
                 |> case arg
@@ -792,7 +792,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PatOr l -> List.foldBack (fun pat on_fail -> f pat' on_fail pat) l on_fail
                     | PatCons l -> vv [type_lit_lift (LitString "cons"); vv [l.Length-1 |> int64 |> LitInt64 |> lit; arg]] |> pat_part_active a (pat' <| PatTuple l) on_fail
                     | PatTuple l as pat -> vv [type_lit_lift (LitString "tup"); vv [l.Length |> int64 |> LitInt64 |> lit; arg]] |> pat_part_active a (pat' pat) on_fail
-                    | PatType (a,typ) -> f (fun a -> PatType(a,typ) |> pat') on_fail a
+                    | PatTypeEq (a,typ) -> f (fun a -> PatTypeEq(a,typ) |> pat') on_fail a
                     | PatWhen (pat, e) -> f (fun pat -> PatWhen(pat,e) |> pat') on_fail pat
                     | PatClauses _ -> failwith "Clauses should not appear inside other clauses."
                     | pat -> vv [type_lit_lift (LitString "var"); arg] |> pat_part_active a (pat' pat) on_fail
@@ -1372,6 +1372,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
             | TyType (DotNetAssemblyT (N a)) & assembly, args -> 
+                // TODO: Replace the Assembly with a `AssemblyDict = AssemblyDict of Dictionary<string, AssemblyDict> | AssemblyType of Type`.
                 let inline get_type name' on_maybe =
                     let mutable r = None
                     a.GetTypes()
@@ -2304,7 +2305,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let pat_tuple pattern = sepBy1 pattern comma |>> function [x] -> x | x -> PatTuple x
         let pat_cons pattern = sepBy1 pattern cons |>> function [x] -> x | x -> PatCons x
         let pat_rounds pattern = rounds (pattern <|>% PatTuple [])
-        let pat_type expr pattern = tuple2 pattern (opt (pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatType(a,b) | a, None -> a
+        let pat_type expr pattern = tuple2 pattern (opt (pp >>. ((var_name |>> v) <|> rounds expr))) |>> function a,Some b as x-> PatTypeEq(a,b) | a, None -> a
         let pat_active pattern = 
             let active_pat = choice [active_pat >>% PatActive; part_active_pat >>% PatPartActive; ext_active_pat >>% PatExtActive]
             pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)
