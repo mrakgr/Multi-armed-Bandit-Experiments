@@ -211,7 +211,7 @@ inl str = b.ToString()
 inl console = ."System.Console" |> system
 console .Write str |> ignore
 
-inl dictionary_type = ."System.Collections.Generic.Dictionary`2" |> system
+inl dictionary_type = ."System.Collections.Generic.Dictionary" |> system
 inl dict = dictionary_type(int64, int64)(128i32)
 dict.Add(1,2)
 dict.get_Item 1
@@ -1814,7 +1814,7 @@ let cuda2 =
     """
 open Cuda
 inl SizeT = ManagedCuda."ManagedCuda.BasicTypes.SizeT"
-inl cuda_array = ManagedCuda."ManagedCuda.CudaDeviceVariable`1"
+inl cuda_array = ManagedCuda.CudaDeviceVariable
 cuda_array int64 (SizeT 10)
     """
 
