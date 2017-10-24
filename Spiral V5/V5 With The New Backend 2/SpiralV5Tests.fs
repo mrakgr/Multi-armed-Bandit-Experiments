@@ -1797,7 +1797,7 @@ let hacker_rank_10 =
     """
 
 let cuda1 = 
-    "cuda1",[tuple;array;cuda],"Does the simulated Cuda call work?",
+    "cuda1",[tuple;array;cuda],"Does the Cuda call work?",
     """
 inl add a b = a + b |> dyn |> ignore
    
@@ -1810,9 +1810,12 @@ Cuda.run {
     """
 
 let cuda2 =
-    "cuda2",[tuple;cuda;core;console],"Does the getting the VS path work? Does the compile function work?",
+    "cuda2",[tuple;cuda;core;console],"Does the new Cuda array work?",
     """
-
+open Cuda
+inl SizeT = ManagedCuda."ManagedCuda.BasicTypes.SizeT"
+inl cuda_array = ManagedCuda."ManagedCuda.CudaDeviceVariable`1"
+cuda_array int64 (SizeT 10)
     """
 
 let tests =
@@ -1880,6 +1883,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache()
 
-output_test_to_temp cuda1
+output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
