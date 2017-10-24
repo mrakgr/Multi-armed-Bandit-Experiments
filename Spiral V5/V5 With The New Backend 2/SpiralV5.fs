@@ -1348,7 +1348,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> Array.tryFind (fun x -> x.Name = type_name || x.FullName = type_name)
                     |> function
                         | None -> on_type_er (trace d) "A type cannot be found inside the assembly."
-                        | Some runtime_type -> runtime_type
+                        | Some x -> x
 
             let method_find (ty: Type) method_name (args: Type[]) = 
                 ty.GetMethods()
@@ -1372,15 +1372,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     else None
                     )
 
-            let construct_type (TySystemTypeArgs con_args' as con_args) (runtime_type: Type) =
-                match runtime_type.GetConstructor con_args' with
-                | null -> on_type_er (trace d) "Cannot find a constructor with matching arguments."
-                | con ->
-                    if con.IsPublic then
-                        let instance_type = dotnet_typet runtime_type
-                        TyOp(DotNetTypeConstruct,[con_args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
-                    else
-                        on_type_er (trace d) "Cannot call a private constructor."
+            let dotnet_type_apply con_args (runtime_type: Type) =
+                match con_args with
+                | TySystemTypeArgs con_args' ->
+                    match runtime_type.GetConstructor con_args' with
+                    | null -> on_type_er (trace d) "Cannot find a constructor with matching arguments."
+                    | con ->
+                        if con.IsPublic then
+                            let instance_type = dotnet_typet runtime_type
+                            TyOp(DotNetTypeConstruct,[con_args],instance_type) |> make_tyv_and_push_typed_expr_even_if_unit d
+                        else
+                            on_type_er (trace d) "Cannot call a private constructor."
 
             match destructure d a, destructure d b with
             // apply_function
@@ -1405,24 +1407,33 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | DotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
-            | TyType (DotNetAssemblyT assembly') & assembly, TypeString _ & type_name -> 
+            | TyType (DotNetAssemblyT (N assembly')) & assembly, TypeString _ & type_name -> 
                 let lam = 
                     inl' ["assembly";"type_name";"args"] (ap (v "assembly") (vv [v "type_name"; v "args"]))
                     |> inner_compile
                 apply d (apply d lam assembly) type_name
-            | TyType (DotNetAssemblyT (N assembly')) & assembly, TyTuple [type_name & TypeString type_name'; con_args]-> 
-                printfn "%s" type_name'
-                let runtime_type = assembly_get_type type_name' assembly'
-                if runtime_type.ContainsGenericParameters = false then construct_type con_args runtime_type
-                else
+            | TyType (DotNetAssemblyT (N assembly')) & assembly, TyTuple [type_name & TypeString type_name'; args]-> 
+                match args with
+                | TypeString _ & method_name ->
                     let lam = 
-                        inl' ["assembly";"type_name";"type_args";"con_args"] (ap (v "assembly") (vv [v "type_name"; v "type_args"; v "con_args"]))
+                        inl' ["runtime_type";"method_name";"args"] (ap (v "runtime_type") (vv [v "method_name"; v "args"]))
                         |> inner_compile
-                    apply d (apply d (apply d lam assembly) type_name) con_args
+                    let runtime_type = assembly_get_type type_name' assembly'
+                    apply d (apply d lam (tyt (dotnet_typet runtime_type))) method_name
+                | TySystemTypeArgs con_args' ->
+//                    let runtime_type = assembly_get_type type_name' assembly'
+                    let type_name' = if type_args'.Length > 0 then sprintf "%s`%i" type_name' type_args'.Length else er_no_type()
+    //                    dotnet_type_apply con_args runtime_type
+                    if runtime_type.ContainsGenericParameters = false then dotnet_type_apply con_args runtime_type
+                    else
+                        let lam = 
+                            inl' ["assembly";"type_name";"type_args";"con_args"] (ap (v "assembly") (vv [v "type_name"; v "type_args"; v "con_args"]))
+                            |> inner_compile
+                        apply d (apply d (apply d lam assembly) type_name) args
             | TyType (DotNetAssemblyT (N assembly')), TyTuple [TypeString type_name'; TySystemTypeArgs type_args'; con_args]-> 
-                let type_name' = if type_args'.Length > 0 then sprintf "%s`%i" type_name' type_args'.Length else type_name'
+                
                 let runtime_type = assembly_get_type type_name' assembly'
-                runtime_type.MakeGenericType type_args' |> construct_type con_args
+                runtime_type.MakeGenericType type_args' |> dotnet_type_apply con_args
             | dotnet_type & TyType (DotNetTypeT (N t)), method_name & TypeString name ->
                 match t.GetField name with
                 | null ->
