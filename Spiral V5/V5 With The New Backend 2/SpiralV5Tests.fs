@@ -1867,7 +1867,9 @@ let make_test_path_from_name name =
     Path.Combine(dir,name+".txt")
 
 let cache_test (name,aux,desc,body as m) = File.WriteAllText(make_test_path_from_name name, output_test_to_string m)
-let rewrite_test_cache () = Array.iter cache_test tests
+let rewrite_test_cache = function
+    | Some (min, max) -> Array.iter cache_test tests.[min..max]
+    | None -> Array.iter cache_test tests
 
 let speed1 =
     "speed1",[parsing;console],"Does the Parsing module work?",
@@ -1882,9 +1884,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache()
+rewrite_test_cache (Some(0,32))
 
-output_test_to_temp cuda2
+output_test_to_temp test8
 |> printfn "%s"
 |> ignore
 

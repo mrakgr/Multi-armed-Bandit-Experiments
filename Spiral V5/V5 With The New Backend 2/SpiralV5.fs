@@ -1023,20 +1023,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | None -> on_fail r
             let inline chase_recurse r = chase_cse destructure id r
 
-            let inline destructure_var r =
-                let index_tuple_args tuple_types = 
-                    let unpack i typ = destructure <| TyOp(ListIndex,[r;TyLit <| LitInt64 (int64 i)],typ)
-                    List.mapi unpack tuple_types
-                let env_unseal x =
-                    let unseal (m,s) (k: string) typ = 
-                        let r = TyOp(MapGetField,[r; tyv(s,typ)], typ) |> destructure 
-                        Map.add k r m, s + 1
-                    Map.fold unseal (Map.empty,0) x |> fst
-                match get_type r with
-                | VVT tuple_types -> tyvv(index_tuple_args tuple_types)
-                | FunT (env,t) -> tyfun(env_unseal env, t)
-                | _ -> chase_recurse r
-           
             let inline destructure_cse r = 
                 chase_cse 
                     chase_recurse
@@ -1045,11 +1031,33 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         cse_add d r x
                         x)
                     r
+
+            let index_tuple_args r tuple_types = 
+                let unpack (s,i as state) typ = 
+                    if is_unit typ then tyt typ :: s, i
+                    else (destructure <| TyOp(ListIndex,[r;TyLit <| LitInt64 (int64 i)],typ)) :: s, i + 1
+                List.fold unpack ([],0) tuple_types
+                |> fst |> List.rev
+
+            let env_unseal r x =
+                let unseal (m,i as state) (k: string) typ = 
+                    if is_unit typ then Map.add k (tyt typ) m, i
+                    else
+                        let r = TyOp(MapGetField,[r; tyv(i,typ)], typ) |> destructure 
+                        Map.add k r m, i + 1
+                Map.fold unseal (Map.empty,0) x |> fst
+
+            let inline destructure_var r map_vvt map_funt =
+                match get_type r with
+                | VVT tuple_types -> tyvv(map_vvt tuple_types)
+                | FunT (env,t) -> tyfun(map_funt env, t)
+                | _ -> chase_recurse r
             
             match r with
             | TyMap _ | TyList _ | TyLit _ -> r
             | TyBox _ -> chase_recurse r
-            | TyT _ | TyV _ -> destructure_var r
+            | TyT _ -> destructure_var r (List.map (tyt >> destructure)) (Map.map (fun _ -> (tyt >> destructure)))
+            | TyV _ -> destructure_var r (index_tuple_args r) (env_unseal r)
             | TyOp _ -> destructure_cse r
             | TyJoinPoint _ | TyLet _ | TyState _ -> failwithf "This should never appear in destructure. It should go directly into d.seq. Got: %A" r
 
@@ -3433,37 +3441,30 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | Unit -> "| " + print_case i |> state
                     | x -> sprintf "| %s of %s" (print_case i) (print_type x) |> state) tys
 
-        let print_x_definition is_struct iter fold name tys =
-            let args sep f =
-                fold (fun s k ty -> 
-                    match ty with
-                    | Unit -> s
-                    | _ -> f k :: s) [] tys
-                |> List.rev
-                |> String.concat sep
-
+        let print_type_definition is_struct name tys =
             if is_struct then
                 sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "struct" |> state
-                    iter (fun k ty -> 
-                        match ty with
-                        | Unit -> ()
-                        | _ -> sprintf "val mem_%s: %s" k (print_type ty) |> state
+                    List.iter (fun (name,typ) ->
+                        sprintf "val %s: %s" name (print_type typ) |> state
                         ) tys
 
-                    let args_declaration = args ", " <| fun k -> sprintf "arg_mem_%s" k
-                    let args_mapping = args "; " <| fun k -> sprintf "mem_%s = arg_mem_%s" k k
+                    let args_declaration = 
+                        List.map(fun (name,typ) -> sprintf "arg_%s" name) tys
+                        |> String.concat ", "
+                    let args_mapping = 
+                        List.map(fun (name,typ) -> sprintf "%s = arg_%s" name name) tys
+                        |> String.concat "; "
+
                     sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
                     "end" |> state
             else
                 sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "{" |> state
-                    iter (fun k ty -> 
-                        match ty with
-                        | Unit -> ()
-                        | _ -> sprintf "mem_%s: %s" k (print_type ty) |> state
+                    List.iter (fun (name,typ) ->
+                        sprintf "%s: %s" name (print_type typ) |> state
                         ) tys
                     "}" |> state
 
@@ -3491,16 +3492,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let cuda_join_points = Queue()
 
         while definitions_queue.Count > 0 do
-            let inline print_fun_x is_stack env x =
-                let fv = env_free_variables env
-                if Map.forall (fun _ -> get_type >> is_unit) env = false then
-                    let tuple_name = 
-                        if is_stack then print_tag_env_stack x
-                        else print_tag_env_heap x
-                    let iter f = Seq.iter (fun (k,ty )-> f (string k) ty)
-                    let fold f = Seq.fold (fun s (k,ty) -> f s (string k) ty)
-                    print_x_definition is_stack iter fold tuple_name fv
-
             match definitions_queue.Dequeue() with
             | TomMethod key as x ->
                 match memoized_methods.[key] with
@@ -3510,13 +3501,24 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     move_to buffer_method buffer_temp
                 | _ -> failwith "impossible"
             | TomType ty ->
+                let inline rename_list (s,i as state) t =
+                    if is_unit t then state
+                    else (sprintf "mem_%i" i, t) :: s, i+1
+                let inline rename_map state k t = rename_list state t
+                let inline rename_keys fold tys = fold ([],0) tys |> fst |> List.rev
                 match ty with
+                | VVT tys as x ->
+                    if is_unit_tuple tys = false then
+                        let tuple_name = print_tag_tuple x
+                        let tys = rename_keys (List.fold rename_list) tys
+                        print_type_definition true tuple_name tys
                 | FunT(tys, _) as x ->
                     if is_unit_env tys = false then
                         let tuple_name = print_tag_env x
-                        print_x_definition true Map.iter Map.fold tuple_name tys
-                | FunStackT(C env, _) as x -> print_fun_x true env x
-                | FunHeapT(C env, _) as x -> print_fun_x false env x
+                        let tys = rename_keys (Map.fold rename_map) tys
+                        print_type_definition true tuple_name tys
+//                | FunStackT(C env, _) as x -> print_fun_x true env x
+//                | FunHeapT(C env, _) as x -> print_fun_x false env x
                 | RecT tag as x ->
                     let tys = rect_dict.[tag]
                     sprintf "%s %s =" (type_prefix()) (print_tag_rec x) |> state
@@ -3528,12 +3530,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | UnionT tys as x ->
                     sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
                     print_union_cases (print_case_union x) (Set.toList tys)
-                | VVT tys as x ->
-                    if is_unit_tuple tys = false then
-                        let tuple_name = print_tag_tuple x
-                        let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-                        let iter f l = List.iteri (fun i x -> f (string i) x) l
-                        print_x_definition true iter fold tuple_name tys
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
