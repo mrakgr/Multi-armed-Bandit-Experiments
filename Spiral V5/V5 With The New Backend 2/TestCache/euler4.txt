@@ -6,20 +6,20 @@ extern "C" {
 
 type Env0 =
     struct
-    val mem_highest_palindrome: int64
-    new(arg_mem_highest_palindrome) = {mem_highest_palindrome = arg_mem_highest_palindrome}
+    val mem_0: int64
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
 and Env1 =
     struct
-    val mem_x: int64
-    val mem_x': int64
-    new(arg_mem_x, arg_mem_x') = {mem_x = arg_mem_x; mem_x' = arg_mem_x'}
+    val mem_0: int64
+    val mem_1: int64
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
     end
 let rec method_0((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
     if (var_1 <= var_0) then
         let (var_3: int64) = 999L
         let (var_4: Env0) = method_1((var_1: int64), (var_3: int64), (var_2: int64))
-        let (var_5: int64) = var_4.mem_highest_palindrome
+        let (var_5: int64) = var_4.mem_0
         let (var_6: int64) = (var_1 + 1L)
         method_0((var_0: int64), (var_6: int64), (var_5: int64))
     else
@@ -29,8 +29,8 @@ and method_1((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
         let (var_3: int64) = (var_0 * var_0)
         let (var_4: int64) = 0L
         let (var_5: Env1) = method_2((var_3: int64), (var_4: int64))
-        let (var_6: int64) = var_5.mem_x
-        let (var_7: int64) = var_5.mem_x'
+        let (var_6: int64) = var_5.mem_0
+        let (var_7: int64) = var_5.mem_1
         let (var_8: bool) =
             if (var_3 = var_7) then
                 (var_2 < var_3)
@@ -41,7 +41,7 @@ and method_1((var_0: int64), (var_1: int64), (var_2: int64)): Env0 =
                 (Env0(var_3))
             else
                 (Env0(var_2))
-        let (var_10: int64) = var_9.mem_highest_palindrome
+        let (var_10: int64) = var_9.mem_0
         let (var_11: int64) = (var_0 + 1L)
         method_3((var_0: int64), (var_1: int64), (var_11: int64), (var_10: int64))
     else
@@ -60,8 +60,8 @@ and method_3((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): En
         let (var_4: int64) = (var_0 * var_2)
         let (var_5: int64) = 0L
         let (var_6: Env1) = method_2((var_4: int64), (var_5: int64))
-        let (var_7: int64) = var_6.mem_x
-        let (var_8: int64) = var_6.mem_x'
+        let (var_7: int64) = var_6.mem_0
+        let (var_8: int64) = var_6.mem_1
         let (var_9: bool) =
             if (var_4 = var_8) then
                 (var_3 < var_4)
@@ -72,7 +72,7 @@ and method_3((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): En
                 (Env0(var_4))
             else
                 (Env0(var_3))
-        let (var_11: int64) = var_10.mem_highest_palindrome
+        let (var_11: int64) = var_10.mem_0
         let (var_12: int64) = (var_2 + 1L)
         method_3((var_0: int64), (var_1: int64), (var_12: int64), (var_11: int64))
     else
@@ -82,6 +82,6 @@ let (var_1: int64) = 100L
 let (var_2: int64) = 999L
 let (var_3: int64) = 0L
 let (var_4: Env0) = method_0((var_2: int64), (var_1: int64), (var_3: int64))
-let (var_5: int64) = var_4.mem_highest_palindrome
+let (var_5: int64) = var_4.mem_0
 System.Console.WriteLine(var_5)
 

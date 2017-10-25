@@ -6,16 +6,16 @@ extern "C" {
 
 type Env0 =
     struct
-    val mem_ar: (int64 [])
-    val mem_from: int64
-    val mem_to: int64
-    new(arg_mem_ar, arg_mem_from, arg_mem_to) = {mem_ar = arg_mem_ar; mem_from = arg_mem_from; mem_to = arg_mem_to}
+    val mem_0: (int64 [])
+    val mem_1: int64
+    val mem_2: int64
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
     end
 let rec method_0((var_0: (Env0 ref)), (var_1: int64)): unit =
     let (var_2: Env0) = (!var_0)
-    let (var_3: (int64 [])) = var_2.mem_ar
-    let (var_4: int64) = var_2.mem_from
-    let (var_5: int64) = var_2.mem_to
+    let (var_3: (int64 [])) = var_2.mem_0
+    let (var_4: int64) = var_2.mem_1
+    let (var_5: int64) = var_2.mem_2
     var_3.[int32 var_5] <- var_1
     let (var_6: int64) = var_3.LongLength
     let (var_7: int64) = (var_5 + 1L)
@@ -39,9 +39,9 @@ let rec method_0((var_0: (Env0 ref)), (var_1: int64)): unit =
     var_0 := var_14
 and method_4((var_0: (Env0 ref))): int64 =
     let (var_1: Env0) = (!var_0)
-    let (var_2: (int64 [])) = var_1.mem_ar
-    let (var_3: int64) = var_1.mem_from
-    let (var_4: int64) = var_1.mem_to
+    let (var_2: (int64 [])) = var_1.mem_0
+    let (var_3: int64) = var_1.mem_1
+    let (var_4: int64) = var_1.mem_2
     let (var_5: bool) = (var_3 <> var_4)
     if (var_5 = false) then
         (failwith "Cannot dequeue past the end of the queue.")

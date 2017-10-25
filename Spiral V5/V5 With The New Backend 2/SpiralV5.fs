@@ -14,7 +14,6 @@ open System.Text
 
 // Language types
 type LayoutType =
-    | LayoutNone // The TyVs are tracked on an individual basis.
     | LayoutStack
     | LayoutHeap
 
@@ -238,10 +237,10 @@ type Op =
 
 type FunctionCore = string * Expr
 
-and FunType =
-    | FunTypeFunction of FunctionCore // Type level function. Can also be though of as a procedural macro.
-    | FunTypeRecFunction of FunctionCore * string
-    | FunTypeModule
+and MapType =
+    | MapTypeFunction of FunctionCore // Type level function. Can also be though of as a procedural macro.
+    | MapTypeRecFunction of FunctionCore * string
+    | MapTypeModule
 
 and Pattern =
     | E
@@ -285,11 +284,10 @@ and Expr =
 
 and Ty =
     | PrimT of PrimitiveType
-    | VVT of Ty list
+    | ListT of Ty list
     | LitT of Value
-    | FunT of EnvTy * FunType
-    | FunStackT of ConsedNode<EnvTerm> * FunType
-    | FunHeapT of ConsedNode<EnvTerm> * FunType
+    | MapT of EnvTy * MapType
+    | LayoutT of LayoutType * ConsedNode<EnvTerm> * MapType
     | ClosureT of Ty * Ty
     | UnionT of Set<Ty>
     | RecT of int
@@ -302,7 +300,7 @@ and TypedExpr =
     | TyT of Ty
     | TyV of TyTag
     | TyList of TypedExpr list
-    | TyMap of ConsedNode<EnvTerm> * FunType
+    | TyMap of ConsedNode<EnvTerm> * MapType
     | TyBox of TypedExpr * Ty
     | TyLit of Value
 
@@ -319,7 +317,7 @@ and JoinPointType =
     | JoinPointCuda
 
 and JoinPointKey = MemoKey * Tag
-and JoinPointValue = JoinPointType * Arguments * Renamer
+and JoinPointValue = JoinPointType * Arguments
 
 and MemoCases =
     | MemoMethodInEvaluation
@@ -406,7 +404,6 @@ and ProgramNode =
 type Renamables = {
     memo : Dictionary<TypedExpr,TypedExpr>
     renamer : Dictionary<Tag,Tag>
-    renamer_reversed : Dictionary<Tag,Tag>
     fv : LinkedHashSet<Tag * Ty>
     renamed_fv : LinkedHashSet<Tag * Ty>
     }
@@ -461,9 +458,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let nodify_dotnet_type_instancet = nodify <| d0()
     let nodify_dotnet_assemblyt = nodify <| d0()
 
-    let vvt x = VVT x
+    let vvt x = ListT x
     let litt x = LitT x
-    let funt (x, core) = FunT (x, core)
+    let funt (x, core) = MapT (x, core)
     let uniont x = UnionT x
     let closuret x = ClosureT x
     let arrayt x = ArrayT x
@@ -500,7 +497,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let inl' args body = List.foldBack inl args body
 
     let B = vv []
-    let BVVT = vvt []
+    let BListT = vvt []
     let TyB = tyvv []
     
     let join_point_entry_method y = (JoinPointEntryMethod,[y]) |> op
@@ -600,9 +597,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | LitT _ | DotNetAssemblyT _ -> true
         | UnionT _ | RecT _ | DotNetTypeT _ | ClosureT _ | PrimT _ -> false
         | ArrayT (_,t) -> is_unit t
-        | FunT (env,_) -> is_unit_env env
-        | FunStackT (C x, _) | FunHeapT (C x, _) -> typed_expr_env_free_var_exists x = false
-        | VVT t -> is_unit_tuple t
+        | MapT (env,_) -> is_unit_env env
+        | LayoutT (_, C x, _) -> typed_expr_env_free_var_exists x = false
+        | ListT t -> is_unit_tuple t
 
     /// Wraps the argument in a list if not a tuple.
     let tuple_field = function 
@@ -620,7 +617,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     /// Wraps the argument in a list if not a tuple type.
     let tuple_field_ty = function 
-        | VVT x -> x
+        | ListT x -> x
         | x -> [x]
 
     let (|TyType|) x = get_type x
@@ -858,9 +855,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             s'.Add(r.[tag],ty) |> ignore)
         s' 
 
-    let inline renamables0() = {memo=d0(); renamer=d0(); renamer_reversed=d0(); fv=lh0(); renamed_fv=lh0()}
+    let inline renamables0() = {memo=d0(); renamer=d0(); fv=lh0(); renamed_fv=lh0()}
     let rec renamer_apply_env r = Map.map (fun k v -> renamer_apply_typedexpr r v)
-    and renamer_apply_typedexpr ({memo=memo; renamer=renamer; renamer_reversed=renamer_reversed; fv=fv; renamed_fv=renamed_fv} as r) e =
+    and renamer_apply_typedexpr ({memo=memo; renamer=renamer; fv=fv; renamed_fv=renamed_fv} as r) e =
         let inline f e = renamer_apply_typedexpr r e
         let inline rename (n,t as k) =
             match renamer.TryGetValue n with
@@ -868,7 +865,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | false, _ ->
                 let n' = renamer.Count
                 renamer.Add(n,n')
-                renamer_reversed.Add(n',n)
                 fv.Add k |> ignore
                 let k' = n', t
                 renamed_fv.Add (n',t) |> ignore
@@ -897,18 +893,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let env_free_variables env = renamer_free_variables_template renamer_apply_env env
     let typed_expr_free_variables exp = renamer_free_variables_template renamer_apply_typedexpr exp
 
-    // #Layoutify
-    let rec layout_map_env g = Map.map (fun _ -> layout_map_typed_expr g)
-    and layout_map_typed_expr g e =
-        let inline f e = layout_map_typed_expr g e
-        match e with
-        | TyT _ -> e
-        | TyBox (n,t) -> tybox(f n,t)
-        | TyList l -> tyvv(List.map f l)
-        | TyMap(C l,t) as x -> g x
-        | TyV _ | TyLit _ -> e
-        | TyJoinPoint _ | TyOp _ | TyState _ | TyLet _ -> failwithf "Only data structures in the env can be mapped over. Got: %A" e
-
     // #Conversion
     let rec dotnet_type_to_ty (x: System.Type) =
         if x = typeof<bool> then PrimT BoolT
@@ -926,7 +910,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         elif x = typeof<float> then PrimT Float64T
         elif x = typeof<string> then PrimT StringT
         elif x = typeof<char> then PrimT CharT
-        elif x = typeof<unit> || x = typeof<System.Void> then BVVT
+        elif x = typeof<unit> || x = typeof<System.Void> then BListT
         elif x.IsArray then arrayt(DotNetHeap,dotnet_type_to_ty (x.GetElementType()))
         // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
         elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
@@ -1049,8 +1033,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let inline destructure_var r map_vvt map_funt =
                 match get_type r with
-                | VVT tuple_types -> tyvv(map_vvt tuple_types)
-                | FunT (env,t) -> tyfun(map_funt env, t)
+                | ListT tuple_types -> tyvv(map_vvt tuple_types)
+                | MapT (env,t) -> tyfun(map_funt env, t)
                 | _ -> chase_recurse r
             
             match r with
@@ -1099,24 +1083,22 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
-        let inline layoutify is_stack d = function
+        let inline layoutify layout d x = 
+            let layout_to_op = function
+                | LayoutStack -> LayoutToStack
+                | LayoutHeap -> LayoutToHeap
+            match x with
             | TyMap(C env,t) as a ->
                 let {fv = fv} as r = renamables0()
                 let env' = renamer_apply_env r env |> consify_env_term
-                if fv.Count >= 1 then
-                    if is_stack then TyOp(LayoutToStack,[a],FunStackT(env',t))
-                    else TyOp(LayoutToHeap,[a],FunHeapT(env',t))
-                else
-                    if is_stack then tyt (FunStackT(env',t))
-                    else tyt (FunHeapT(env',t))
-                |> destructure d
-            | TyType (FunStackT _ | FunHeapT _) as a -> a
+                if fv.Count >= 1 then TyOp(layout_to_op layout,[a],LayoutT(layout,env',t)) |> destructure d
+                else LayoutT(layout,env',t) |> tyt
             | x -> on_type_er (trace d) <| sprintf "Cannot turn the seleted type into a layout. Got: %A" x
 
-        let inline layoutify_env is_stack d = layout_map_env (layoutify is_stack d)
+//        let inline layoutify_env is_stack d = layout_map_env (layoutify is_stack d)
 
-        let layout_stack d a = layoutify true d (tev d a)
-        let layout_heap d a = layoutify false d (tev d a)
+        let layout_stack d a = layoutify LayoutStack d (tev d a)
+        let layout_heap d a = layoutify LayoutHeap d (tev d a)
 
         let join_point_memoize memo_type used_vars d expr =
             let key_args = nodify_memo_key (expr, d.env) 
@@ -1137,7 +1119,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let inline join_point_rename memo_type d expr =
             let env = d.env
             let stopwatch = Diagnostics.Stopwatch.StartNew()
-            let {renamer=renamer; renamer_reversed=renamer_reversed; fv=fv; renamed_fv=renamed_fv} as k = renamables0()
+            let {renamer=renamer; fv=fv; renamed_fv=renamed_fv} as k = renamables0()
             let renamed_env = renamer_apply_env k env
             renaming_time <- renaming_time + stopwatch.Elapsed
 
@@ -1145,33 +1127,33 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let typed_expr, memo_key = join_point_memoize memo_type renamed_fv {d with env=renamed_env; ltag=ref renamer.Count} expr
             let typed_expr_ty = get_type typed_expr
             if is_returnable' typed_expr_ty = false then on_type_er (trace d) <| sprintf "The following is not a type that can be returned from a method. Consider using Inlineable instead. Got: %A" typed_expr
-            else memo_key, fv, renamer_reversed, typed_expr_ty
+            else memo_key, fv, typed_expr_ty
 
         let inline join_point_helper memo_type k d x = join_point_rename memo_type d x |> k |> make_tyv_and_push_typed_expr_even_if_unit d
         let join_point_method d x = 
             let memo_type = JoinPointMethod
-            join_point_helper (fun _ -> memo_type) (fun (memo_key,args,rev_renamer,ret_ty) -> 
-                ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty) d x
+            join_point_helper (fun _ -> memo_type) (fun (memo_key,args,ret_ty) -> 
+                ty_join_point memo_key (memo_type,args) ret_ty) d x
 
         let join_point_closure arg d x =
             let fv = typed_expr_free_variables arg
             let arg_ty = get_type arg
             let memo_type renamer = JoinPointClosure <| renamer_apply_pool renamer fv
-            join_point_helper memo_type (fun (memo_key,args,rev_renamer,ret_ty) -> 
-                ty_join_point memo_key (JoinPointClosure fv,args,rev_renamer) (closuret(arg_ty,ret_ty))) d x
+            join_point_helper memo_type (fun (memo_key,args,ret_ty) -> 
+                ty_join_point memo_key (JoinPointClosure fv,args) (closuret(arg_ty,ret_ty))) d x
 
         let join_point_type d x = 
             let memo_type _ = JoinPointType
             let env = d.env |> Map.map (fun _ -> get_type >> tyt)
-            let _,_,_,ret_ty = join_point_rename memo_type {d with env = env} x 
+            let _,_,ret_ty = join_point_rename memo_type {d with env = env} x 
             tyt ret_ty
 
         let join_point_cuda d x =
             let memo_type = JoinPointCuda
-            let memo_key,args,rev_renamer,ret_ty = join_point_rename (fun _ -> memo_type) d x
+            let memo_key,args,ret_ty = join_point_rename (fun _ -> memo_type) d x
             if is_unit ret_ty = false then on_type_er d.trace "The return type of Cuda join point must be unit."
 
-            ty_join_point memo_key (memo_type,args,rev_renamer) ret_ty 
+            ty_join_point memo_key (memo_type,args) ret_ty 
             |> make_tyv_and_push_typed_expr_even_if_unit d |> ignore
 
             let method_name = print_method memo_key.Symbol |> LitString |> TyLit
@@ -1263,7 +1245,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | TyType handler_type & handler ->
                         match system_type.GetEvent(event_name) with
                         | null -> on_type_er d.trace <| sprintf "Event %s not found in the type." event_name
-                        | event when event.EventHandlerType = dotnet_ty_to_type handler_type -> TyOp(DotNetEventAddHandler,[dotnet_type;event_name';handler],BVVT)
+                        | event when event.EventHandlerType = dotnet_ty_to_type handler_type -> TyOp(DotNetEventAddHandler,[dotnet_type;event_name';handler],BListT)
                         | _ -> on_type_er d.trace "Invalid handler type in event AddHandler."
                 | _ -> on_type_er d.trace "Expected a type level string in AddHandler."
             | _ -> on_type_er d.trace "Expected a .NET type instance in AddHandler."
@@ -1289,21 +1271,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyV _ as v -> TyOp(MapGetField,[recf;v],get_type v) |> destructure d
             | TyList l -> tyvv (List.map f l)
             | TyBox(a,b) -> tybox (f a, b)
-            | TyMap(C env, b) -> tyfun (Map.map (fun _ -> f) env, b)
+            | TyMap(C env, b) -> tyfun (layout_env_term_unseal d recf env, b)
             | x -> x
                
-        let layout_env_term_unseal d recf env = Map.map (fun _ -> layout_boxed_unseal d recf) env
+        and layout_env_term_unseal d recf env = Map.map (fun _ -> layout_boxed_unseal d recf) env
 
-        let (|Func|_|) = function
-            | TyMap(C env,t) -> Some (LayoutNone,env,t)
-            | TyType(FunStackT(C env,t)) -> Some (LayoutStack,env,t)
-            | TyType(FunHeapT(C env,t)) -> Some (LayoutHeap,env,t)
+        let (|M|_|) = function
+            | TyMap(C env,t) -> Some (None,env,t)
+            | TyType(LayoutT(layout, C env,t)) -> Some (Some layout,env,t)
             | _ -> None
 
-        let inline apply_func is_term_cast d recf r env_term fun_type args =
+        let inline apply_func is_term_cast d recf layout env_term fun_type args =
             let unpack () =
-                match r with
-                | LayoutNone -> env_term
+                match layout with
+                | None -> env_term
                 | _ -> layout_env_term_unseal d recf env_term
 
             let inline tev x =
@@ -1311,35 +1292,35 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 else tev x
 
             match fun_type with
-            | FunTypeRecFunction ((pat,body),name) ->
+            | MapTypeRecFunction ((pat,body),name) ->
                 let env_term = unpack()
                 let env = if pat <> "" then Map.add pat args env_term else env_term
                 tev {d with env = Map.add name recf env} body
-            | FunTypeFunction (pat,body) -> 
+            | MapTypeFunction (pat,body) -> 
                 let env_term = unpack()
                 tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
             // apply_module
-            | FunTypeModule when is_term_cast -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" fun_type
-            | FunTypeModule ->
+            | MapTypeModule when is_term_cast -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" fun_type
+            | MapTypeModule ->
                 match args with
                 | TypeString n ->
                     let unpack () = v_find env_term n (fun () -> on_type_er (trace d) <| sprintf "Cannot find a member named %s inside the module." n)
-                    match r with
-                    | LayoutNone -> unpack()
-                    | LayoutStack | LayoutHeap -> unpack() |> layout_boxed_unseal d recf
+                    match layout with
+                    | None -> unpack()
+                    | _ -> unpack() |> layout_boxed_unseal d recf
                 | x -> on_type_er (trace d) "Expected a type level string in module application." 
 
         let term_cast d a b =
             match tev d a, tev d b with
-            | recf & Func(r,env_term,fun_type), args -> 
+            | recf & M(layout,env_term,fun_type), args -> 
                 let instantiate_type_as_variable d args_ty =
                     let f x = make_up_vars_for_ty d x
                     match args_ty with
-                    | VVT l -> tyvv(List.map f l)
+                    | ListT l -> tyvv(List.map f l)
                     | x -> f x
             
                 let args = instantiate_type_as_variable d (get_type args)
-                apply_func true d recf r env_term fun_type args
+                apply_func true d recf layout env_term fun_type args
             | x -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" x
 
         let type_lit_create' d x = litt x |> tyt
@@ -1353,7 +1334,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             match destructure d a, destructure d b with
             // apply_function
-            | recf & Func(r,env_term,fun_type), args -> apply_func false d recf r env_term fun_type args
+            | recf & M(layout,env_term,fun_type), args -> apply_func false d recf layout env_term fun_type args
             // apply_string_static
             | TyLit (LitString str), TyList [TyLitIndex a; TyLitIndex b] -> 
                 let f x = x >= 0 && x < str.Length
@@ -1541,7 +1522,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match f i l with
                 | Some v -> v
                 | None -> on_type_er (trace d) "Tuple index not within bounds."
-            | v & TyType (VVT ts), TyLitIndex i -> failwith "The tuple should always be destructured."
+            | v & TyType (ListT ts), TyLitIndex i -> failwith "The tuple should always be destructured."
             | v, TyLitIndex i -> on_type_er (trace d) <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
             | v, i -> on_type_er (trace d) <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
@@ -1558,7 +1539,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let inline vv_unop_template on_succ on_fail d v =
             match tev d v with
             | TyList l -> on_succ l
-            | v & TyType (VVT ts) -> failwith "The tuple should always be destructured."
+            | v & TyType (ListT ts) -> failwith "The tuple should always be destructured."
             | v -> on_fail()
 
         let vv_length x = 
@@ -1580,13 +1561,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let module_open d a b =
             let a = tev d a
             match a with
-            | Func(r,env_term, FunTypeModule) as recf -> 
+            | M(layout,env_term, MapTypeModule) as recf -> 
                 let inline opt f env =
                     let env = Map.fold (fun s k v -> Map.add k (f v) s) d.env env
                     tev {d with env = env} b
-                match r with
-                | LayoutNone -> opt id env_term
-                | LayoutStack | LayoutHeap -> opt (layout_boxed_unseal d recf) env_term
+                match layout with
+                | None -> opt id env_term
+                | _ -> opt (layout_boxed_unseal d recf) env_term
             | x -> on_type_er (trace d) <| sprintf "The open expected a module type as input. Got: %A" x
 
         let type_annot d a b =
@@ -1775,7 +1756,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let error_non_unit d a =
             let x = tev d a 
-            if get_type x <> BVVT then on_type_er (trace d) "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
+            if get_type x <> BListT then on_type_er (trace d) "Only the last expression of a block is allowed to be unit. Use `ignore` if it intended to be such."
             else x
 
         let type_lit_create d a =
@@ -1819,7 +1800,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | x -> on_type_er (trace d) <| sprintf "Only variable names are allowed in module create. Got: %A" x
             let er n _ = on_type_er (trace d) <| sprintf "In module create, the variable %s was not found." n
             let env = List.fold (fun s n -> Map.add n (v_find d.env n (er n)) s) Map.empty (loop [] l)
-            tyfun(env, FunTypeModule)
+            tyfun(env, MapTypeModule)
 
         let array_create d size typ =
             let typ = tev_seq d typ |> get_type
@@ -1840,10 +1821,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match tev3 d ar idx r with
             | ar & TyType (ArrayT(DotNetHeap,t)), idx, r when is_int idx && t = get_type r ->
                 if is_unit t then TyB
-                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BVVT))
+                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BListT))
             | ar & TyType (ArrayT(DotNetReference,t)), idx & TyList [], r when t = get_type r -> 
                 if is_unit t then TyB
-                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BVVT))
+                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BListT))
             | x -> on_type_er (trace d) <| sprintf "The two sides in array set have different types. %A" x
 
         let array_length d ar =
@@ -1854,20 +1835,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let module_is d a =
             match tev d a with
-            | Func(_,_,FunTypeModule) -> TyLit (LitBool true)
+            | M(_,_,MapTypeModule) -> TyLit (LitBool true)
             | _ -> TyLit (LitBool false)
 
-        let boxed_variable_is d a =
+        let uncased_variable_is d a =
             match tev d a with
-            | TyType (UnionT _ | RecT _) -> TyLit (LitBool true)
+            | (TyV _ | TyT _) & TyType (UnionT _ | RecT _) -> TyLit (LitBool true)
             | _ -> TyLit (LitBool false)
 
         let module_values d a =
             match tev d a with
-            | Func(r,env,FunTypeModule) as recf ->
+            | M(layout,env,MapTypeModule) as recf ->
                 let inline toList f = Map.foldBack (fun _ x s -> f x :: s) env []
-                match r with
-                | LayoutNone -> toList id
+                match layout with
+                | None -> toList id
                 | _ -> toList (layout_boxed_unseal d recf)
                 |> tyvv
             | x ->
@@ -1875,7 +1856,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let module_has_member d a b =
             match tev2 d a b with
-            | Func(_,env,FunTypeModule), b -> 
+            | M(_,env,MapTypeModule), b -> 
                 match b with
                 | TypeString b -> TyLit (LitBool <| Map.containsKey b env)
                 | _ -> on_type_er (trace d) "Expecting a type literals as the second argument to ModuleHasMember."
@@ -1886,7 +1867,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
                 ) Map.empty l
-            |> fun x -> tyfun(x, FunTypeModule)
+            |> fun x -> tyfun(x, MapTypeModule)
 
         let module_with (d: LangEnv) l =
             let names, bindings =
@@ -1895,26 +1876,30 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | V _ as x :: bindings -> [x], bindings
                 | x -> failwithf "Malformed ModuleWith. %A" x
 
-            let rec module_with_alt_loop cur_env names = 
-                let inline unseal_layout name =
+            let rec module_with_loop cur_env names = 
+                let inline layout_unseal name =
                     match Map.tryFind name cur_env with
-                    | Some (Func(r,env,FunTypeModule) as recf) -> 
-                        match r with
-                        | LayoutNone -> r, env
-                        | _ -> r, layout_env_term_unseal d recf env
+                    | Some (M(layout,env,MapTypeModule) as recf) -> 
+                        match layout with
+                        | None -> layout, env
+                        | _ -> layout, layout_env_term_unseal d recf env
                     | Some _ -> on_type_er (trace d) <| sprintf "Variable %s is not a module." name
                     | _ -> on_type_er (trace d) <| sprintf "Module %s is not bound in the environment." name
 
-                let inline re_layout name f =
-                    let r,env = unseal_layout name
-                    match r with
-                    | LayoutNone -> f env
-                    | LayoutStack -> layoutify true d (f env)
-                    | LayoutHeap -> layoutify false d (f env)
+                let inline layout_reseal layout env =
+                    match layout with
+                    | None -> env
+                    | Some layout -> layoutify layout d env
+
+                let inline layout_map f name =
+                    let layout,env = layout_unseal name
+                    layout_reseal layout (f env)
+
+                let inline next names env = module_with_loop env names
 
                 match names with
-                | V(N name) :: names -> re_layout name <| fun env -> module_with_alt_loop env names
-                | Lit(N(LitString name)) :: names -> tyfun (Map.add name (re_layout name <| fun env -> module_with_alt_loop env names) cur_env, FunTypeModule)
+                | V(N name) :: names -> layout_map (next names) name
+                | Lit(N(LitString name)) :: names -> tyfun (Map.add name (layout_map (next names) name) cur_env, MapTypeModule)
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString name)); e]) ->
@@ -1926,13 +1911,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             Map.remove name env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
-                    |> fun env -> tyfun(env, FunTypeModule)
+                    |> fun env -> tyfun(env, MapTypeModule)
                 | x -> failwithf "Malformed ModuleWith. %A" x
-            module_with_alt_loop d.env names
+            module_with_loop d.env names
 
         let failwith_ d a =
             match tev d a with
-            | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BVVT) |> make_tyv_and_push_typed_expr_even_if_unit d
+            | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BListT) |> make_tyv_and_push_typed_expr_even_if_unit d
             | _ -> on_type_er (trace d) "Expected a string as input to failwith."
 
         let unsafe_convert d a b =
@@ -1992,7 +1977,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | FunctionFilt(N (vars,N (pat, body))) -> 
             let env = Map.filter (fun k _ -> Set.contains k vars) d.env
             let pat = if vars.Contains pat then pat else ""
-            tyfun(env, FunTypeFunction (pat, body))
+            tyfun(env, MapTypeFunction (pat, body))
         | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
         | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
         | ExprPos p -> tev (add_trace d p.Pos) p.Expression
@@ -2006,7 +1991,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | DotNetEventAddHandler,[a;b;c] -> dotnet_event_add_handler d a b c
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
-                | TyMap(C env_term,FunTypeFunction core) -> tyfun(env_term,FunTypeRecFunction(core,name))
+                | TyMap(C env_term,MapTypeFunction core) -> tyfun(env_term,MapTypeRecFunction(core,name))
                 | x -> x
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -2035,7 +2020,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ModuleValues, [a] -> module_values d a
             | ModuleIs,[a] -> module_is d a
             | ModuleHasMember,[a;b] -> module_has_member d a b
-            | BoxedVariableIs,[a] -> boxed_variable_is d a
+            | BoxedVariableIs,[a] -> uncased_variable_is d a
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
@@ -2786,13 +2771,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let rec print_type trace = function
             | Unit -> "void"
-            | FunT _ as x -> print_tag_env x
-            | FunStackT _ as x -> print_tag_env_stack x
-            | VVT _ as x -> print_tag_tuple x
+            | MapT _ as x -> print_tag_env x
+            | LayoutT (LayoutStack, _, _) as x -> print_tag_env_stack x
+            | ListT _ as x -> print_tag_tuple x
             | UnionT _ as x -> print_tag_union x
             | ArrayT((CudaLocal | CudaShared | CudaGlobal),t) -> sprintf "%s *" (print_type trace t)
             | ArrayT _ -> failwith "Not implemented."
-            | FunHeapT _ | RecT _ | DotNetTypeT _ as x -> on_type_er trace <| sprintf "%A is not supported on the Cuda side." x
+            | LayoutT (LayoutHeap, _, _) | RecT _ | DotNetTypeT _ as x -> on_type_er trace <| sprintf "%A is not supported on the Cuda side." x
             | ClosureT _ as t -> print_tag_closure t
             | PrimT x ->
                 match x with
@@ -2905,9 +2890,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 let method_name = print_method method_tag
                 match join_point_dict.[join_point_key] with
-                | JoinPointType, _, _ -> failwith "Should never be printed."
-                | (JoinPointMethod | JoinPointCuda _), fv, _ -> sprintf "%s(%s)" method_name (print_join_point_args fv) |> branch_return
-                | JoinPointClosure args, fv, rev_renamer ->
+                | JoinPointType, _ -> failwith "Should never be printed."
+                | (JoinPointMethod | JoinPointCuda _), fv -> sprintf "%s(%s)" method_name (print_join_point_args fv) |> branch_return
+                | JoinPointClosure args, fv ->
                     let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
                     if Seq.isEmpty fv then method_name else on_type_er trace "The closure should not have free variables on the Cuda side."
                     |> branch_return
@@ -2919,10 +2904,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 //                    | UnionT s -> print_case_union t (union_idx s)
 //                    | RecT tag -> 
 //                        match rect_dict.[tag] with
-//                        | VVT _ -> print_tag_rec t
+//                        | ListT _ -> print_tag_rec t
 //                        | UnionT s -> print_case_rec t (union_idx s)
-//                        | _ -> failwith "Only VVT and UnionT can be recursive types."
-//                    | _ -> failwith "Only VVT and UnionT can be boxed types."
+//                        | _ -> failwith "Only ListT and UnionT can be recursive types."
+//                    | _ -> failwith "Only ListT and UnionT can be boxed types."
 //                if is_unit (get_type x) then case_name else sprintf "(%s(%s))" case_name (codegen x)
             | TyMap(C env_term, _) ->
                 let t = get_type expr
@@ -3067,15 +3052,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
             | TomType ty ->
                 match ty with
-                | FunT(tys, _) as x ->
+                | MapT(tys, _) as x ->
                     if is_unit_env tys = false then
                         let tuple_name = print_tag_env x
                         print_struct_definition Map.iter Map.fold tuple_name tys
-                | FunStackT(C env, _) as x -> print_fun env x
+                | LayoutT (LayoutStack, C env, _) as x -> print_fun env x
 //                | UnionT tys as x ->
 //                    sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
 //                    print_union_cases (print_case_union x) (Set.toList tys)
-                | VVT tys as x ->
+                | ListT tys as x ->
                     if is_unit_tuple tys = false then
                         let tuple_name = print_tag_tuple x
                         let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
@@ -3118,16 +3103,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let print_tag_tuple t = def_enqueue print_tag_tuple' t
         let print_tag_union t = def_enqueue print_tag_union' t
         let print_tag_rec t = def_enqueue print_tag_rec' t
-        let print_tag_env t = def_enqueue print_tag_env' t
-        let print_tag_env_stack t = def_enqueue print_tag_env_stack' t
-        let print_tag_env_heap t = def_enqueue print_tag_env_heap' t
+        let print_tag_env layout t = 
+            match layout with
+            | None -> def_enqueue print_tag_env' t
+            | Some LayoutStack -> def_enqueue print_tag_env_stack' t
+            | Some LayoutHeap -> def_enqueue print_tag_env_heap' t
 
         let rec print_type = function
             | Unit -> "unit"
-            | FunT _ as x -> print_tag_env x
-            | FunStackT _ as x -> print_tag_env_stack x
-            | FunHeapT _ as x -> print_tag_env_heap x
-            | VVT _ as x -> print_tag_tuple x
+            | MapT _ as x -> print_tag_env None x
+            | LayoutT (layout, _, _) as x -> print_tag_env (Some layout) x
+            | ListT _ as x -> print_tag_tuple x
             | UnionT _ as x -> print_tag_union x
             | RecT _ as x -> print_tag_rec x
             | ArrayT(DotNetReference,t) -> sprintf "(%s ref)" (print_type t)
@@ -3324,12 +3310,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 let method_name = print_method method_tag
                 match join_point_dict.[join_point_key] with
-                | JoinPointType, _, _ -> failwith "Should never be printed."
-                | JoinPointMethod, fv, _ -> sprintf "%s(%s)" method_name (print_args fv)
-                | JoinPointCuda _, fv, _ -> 
+                | JoinPointType, _ -> failwith "Should never be printed."
+                | JoinPointMethod, fv -> sprintf "%s(%s)" method_name (print_args fv)
+                | JoinPointCuda _, fv -> 
                     @"// Cuda method call" |> state
                     sprintf "// %s(%s)" method_name (print_args fv)
-                | JoinPointClosure args, fv, rev_renamer ->
+                | JoinPointClosure args, fv ->
                     let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
                     if Seq.isEmpty fv then method_name
                     else sprintf "%s(%s)" method_name (print_args fv)
@@ -3340,16 +3326,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | UnionT s -> print_case_union t (union_idx s)
                     | RecT tag -> 
                         match rect_dict.[tag] with
-                        | VVT _ -> print_tag_rec t
+                        | ListT _ -> print_tag_rec t
                         | UnionT s -> print_case_rec t (union_idx s)
-                        | _ -> failwith "Only VVT and UnionT can be recursive types."
-                    | _ -> failwith "Only VVT and UnionT can be boxed types."
+                        | _ -> failwith "Only ListT and UnionT can be recursive types."
+                    | _ -> failwith "Only ListT and UnionT can be boxed types."
                 if is_unit (get_type x) then case_name else sprintf "(%s(%s))" case_name (codegen x)
             | TyMap(C env_term, _) ->
                 let t = get_type expr
                 Map.toArray env_term
                 |> Array.map snd
-                |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env t) args)
+                |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env None t) args)
             | TyList l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
             | TyOp(op,args,t) ->
                 match op, args with
@@ -3401,10 +3387,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match op with
                     | LayoutToStack ->
                         let args = Seq.map print_tyv_with_type fv |> String.concat ", "
-                        sprintf "%s(%s)" (print_tag_env_stack t) args
+                        sprintf "%s(%s)" (print_tag_env (Some LayoutStack) t) args
                     | LayoutToHeap ->
                         let args = Seq.mapi (fun i x -> sprintf "mem_%i = %s" i (print_tyv_with_type x)) fv |> String.concat "; "
-                        sprintf "({%s} : %s)" args (print_tag_env_heap t)
+                        sprintf "({%s} : %s)" args (print_tag_env (Some LayoutHeap) t)
                     | _ -> failwith "impossible"
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
                 | Exp,[x] -> sprintf "exp(%s)" (codegen x)
@@ -3441,8 +3427,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | Unit -> "| " + print_case i |> state
                     | x -> sprintf "| %s of %s" (print_case i) (print_type x) |> state) tys
 
-        let print_type_definition is_struct name tys =
-            if is_struct then
+        let print_type_definition layout name tys =
+            match layout with
+            | None | Some LayoutStack ->
                 sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "struct" |> state
@@ -3459,7 +3446,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                     sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
                     "end" |> state
-            else
+            | Some LayoutHeap ->
                 sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "{" |> state
@@ -3507,26 +3494,32 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let inline rename_map state k t = rename_list state t
                 let inline rename_keys fold tys = fold ([],0) tys |> fst |> List.rev
                 match ty with
-                | VVT tys as x ->
+                | ListT tys ->
                     if is_unit_tuple tys = false then
-                        let tuple_name = print_tag_tuple x
+                        let tuple_name = print_tag_tuple ty
                         let tys = rename_keys (List.fold rename_list) tys
-                        print_type_definition true tuple_name tys
-                | FunT(tys, _) as x ->
+                        print_type_definition None tuple_name tys
+                | MapT(tys, _) ->
                     if is_unit_env tys = false then
-                        let tuple_name = print_tag_env x
+                        let tuple_name = print_tag_env None ty
                         let tys = rename_keys (Map.fold rename_map) tys
-                        print_type_definition true tuple_name tys
-//                | FunStackT(C env, _) as x -> print_fun_x true env x
-//                | FunHeapT(C env, _) as x -> print_fun_x false env x
+                        print_type_definition None tuple_name tys
+                | LayoutT(layout, C env, _) ->
+                    let tys = Map.map (fun _ -> get_type) env
+                    if is_unit_env tys = false then
+                        let tuple_name = print_tag_env (Some layout) ty
+                        let tys = 
+                            env_free_variables env
+                            |> Seq.toList |> List.mapi (fun i (_,t) -> sprintf "mem_%i" i, t)
+                        print_type_definition (Some layout) tuple_name tys
                 | RecT tag as x ->
                     let tys = rect_dict.[tag]
                     sprintf "%s %s =" (type_prefix()) (print_tag_rec x) |> state
                     match tys with
                     | Unit -> "| " + print_tag_rec' tag |> state
-                    | VVT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
+                    | ListT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
                     | UnionT tys -> print_union_cases (print_case_rec x) (Set.toList tys)
-                    | x -> failwithf "Only VVT and UnionT are recursive types. Got: %A" x
+                    | x -> failwithf "Only ListT and UnionT are recursive types. Got: %A" x
                 | UnionT tys as x ->
                     sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
                     print_union_cases (print_case_union x) (Set.toList tys)
@@ -3650,7 +3643,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "min" (p2 <| fun a b -> if_static (lt a b) a b)
             b "eq_type" EqType
             l "module_values" (p <| fun x -> op(ModuleValues,[x]))
-            l "boxed_variable_is" (p <| fun x -> op(BoxedVariableIs,[x]))
+            l "uncased_variable_is" (p <| fun x -> op(BoxedVariableIs,[x]))
             l "event_add_handler" (p3 <| fun a b c -> op(DotNetEventAddHandler,[a;b;c]))
             l "cuda_kernels" (op(CudaKernels,[]))
             l "unsafe_upcast_to" (p2 <| fun a b -> op(UnsafeUpcastTo,[a;b]))

@@ -21,10 +21,10 @@ and Tuple2 =
     end
 and Env3 =
     struct
-    val mem_ar: (Tuple2 [])
-    val mem_from: int64
-    val mem_to: int64
-    new(arg_mem_ar, arg_mem_from, arg_mem_to) = {mem_ar = arg_mem_ar; mem_from = arg_mem_from; mem_to = arg_mem_to}
+    val mem_0: (Tuple2 [])
+    val mem_1: int64
+    val mem_2: int64
+    new(arg_mem_0, arg_mem_1, arg_mem_2) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2}
     end
 and Rec4 =
     | Rec4Case0
@@ -46,8 +46,8 @@ and Union7 =
     | Union7Case1
 and Tuple8 =
     struct
-    val mem_1: string
-    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    val mem_0: string
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
 let rec method_5((var_0: bool), (var_1: string), (var_2: int64)): unit =
     let (var_4: bool) =
@@ -716,9 +716,9 @@ and method_23((var_0: int64), (var_1: int64), (var_2: (bool [])), (var_3: int64)
         var_4
 and method_29((var_0: (Env3 ref)), (var_1: int64), (var_2: int64), (var_3: Rec4)): unit =
     let (var_4: Env3) = (!var_0)
-    let (var_5: (Tuple2 [])) = var_4.mem_ar
-    let (var_6: int64) = var_4.mem_from
-    let (var_7: int64) = var_4.mem_to
+    let (var_5: (Tuple2 [])) = var_4.mem_0
+    let (var_6: int64) = var_4.mem_1
+    let (var_7: int64) = var_4.mem_2
     var_5.[int32 var_7] <- Tuple2(Tuple5(var_1, var_2), var_3)
     let (var_8: int64) = var_5.LongLength
     let (var_9: int64) = (var_7 + 1L)
@@ -804,9 +804,9 @@ and method_32((var_0: (Tuple2 [])), (var_1: (Tuple2 [])), (var_2: int64), (var_3
         ()
 and method_34((var_0: (Env3 ref))): Tuple2 =
     let (var_1: Env3) = (!var_0)
-    let (var_2: (Tuple2 [])) = var_1.mem_ar
-    let (var_3: int64) = var_1.mem_from
-    let (var_4: int64) = var_1.mem_to
+    let (var_2: (Tuple2 [])) = var_1.mem_0
+    let (var_3: int64) = var_1.mem_1
+    let (var_4: int64) = var_1.mem_2
     let (var_5: bool) = (var_3 <> var_4)
     if (var_5 = false) then
         (failwith "Cannot dequeue past the end of the queue.")
@@ -984,7 +984,7 @@ and method_36((var_0: string), (var_1: Rec4)): unit =
     let (var_2: Union7) = method_37((var_0: string), (var_1: Rec4))
     match var_2 with
     | Union7Case0(var_3) ->
-        let (var_4: string) = var_3.mem_1
+        let (var_4: string) = var_3.mem_0
         System.Console.WriteLine(var_4)
     | Union7Case1 ->
         (failwith "Error: No moves taken.")

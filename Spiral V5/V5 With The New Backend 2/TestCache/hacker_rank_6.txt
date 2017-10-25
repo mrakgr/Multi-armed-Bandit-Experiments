@@ -5,12 +5,16 @@ extern "C" {
 """
 
 type Union0 =
-    | Union0Case0 of Tuple1
+    | Union0Case0 of Tuple2
     | Union0Case1
-and Tuple1 =
+and EnvHeap1 =
+    {
+    mem_0: (Union0 [])
+    }
+and Tuple2 =
     struct
-    val mem_1: int64
-    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    val mem_0: int64
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
 let rec method_0((var_0: (Union0 [])), (var_1: int64), (var_2: int64)): int64 =
     if (var_1 <= 14L) then
@@ -21,7 +25,7 @@ let rec method_0((var_0: (Union0 [])), (var_1: int64), (var_2: int64)): int64 =
         method_0((var_0: (Union0 [])), (var_6: int64), (var_5: int64))
     else
         var_2
-and method_3((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_3: int64)): unit =
+and method_3((var_0: bool), (var_1: EnvHeap1), (var_2: string), (var_3: int64)): unit =
     let (var_5: bool) =
         if (var_3 >= 0L) then
             let (var_4: int64) = (int64 var_2.Length)
@@ -40,7 +44,7 @@ and method_3((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_3: int64
             let (var_9: int64) = System.Convert.ToInt64(var_6)
             let (var_10: int64) = System.Convert.ToInt64('0')
             let (var_11: int64) = (var_9 - var_10)
-            method_4((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_11: int64), (var_8: int64))
+            method_4((var_0: bool), (var_1: EnvHeap1), (var_2: string), (var_11: int64), (var_8: int64))
         else
             (failwith "pint64")
     else
@@ -54,7 +58,7 @@ and method_1((var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64
         method_1((var_0: int64), (var_1: (Union0 [])), (var_7: int64), (var_6: int64))
     else
         var_3
-and method_4((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_3: int64), (var_4: int64)): unit =
+and method_4((var_0: bool), (var_1: EnvHeap1), (var_2: string), (var_3: int64), (var_4: int64)): unit =
     let (var_6: bool) =
         if (var_4 >= 0L) then
             let (var_5: int64) = (int64 var_2.Length)
@@ -86,7 +90,7 @@ and method_4((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_3: int64
             if var_14 then
                 let (var_15: int64) = (var_3 * 10L)
                 let (var_16: int64) = (var_15 + var_12)
-                method_4((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_16: int64), (var_9: int64))
+                method_4((var_0: bool), (var_1: EnvHeap1), (var_2: string), (var_16: int64), (var_9: int64))
             else
                 (failwith "integer overflow")
         else
@@ -96,7 +100,7 @@ and method_4((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_3: int64
                 else
                     (-var_3)
             let (var_18: int64) = 0L
-            method_5((var_17: int64), (var_1: (Union0 [])), (var_2: string), (var_18: int64), (var_4: int64))
+            method_5((var_17: int64), (var_1: EnvHeap1), (var_2: string), (var_18: int64), (var_4: int64))
     else
         let (var_19: int64) =
             if var_0 then
@@ -104,7 +108,7 @@ and method_4((var_0: bool), (var_1: (Union0 [])), (var_2: string), (var_3: int64
             else
                 (-var_3)
         let (var_20: int64) = 0L
-        method_5((var_19: int64), (var_1: (Union0 [])), (var_2: string), (var_20: int64), (var_4: int64))
+        method_5((var_19: int64), (var_1: EnvHeap1), (var_2: string), (var_20: int64), (var_4: int64))
 and method_2((var_0: int64), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64)): int64 =
     if (var_3 <= 1L) then
         var_2.[int32 var_4] <- Union0Case1
@@ -113,7 +117,7 @@ and method_2((var_0: int64), (var_1: int64), (var_2: (Union0 [])), (var_3: int64
         method_2((var_0: int64), (var_1: int64), (var_2: (Union0 [])), (var_6: int64), (var_5: int64))
     else
         var_4
-and method_5((var_0: int64), (var_1: (Union0 [])), (var_2: string), (var_3: int64), (var_4: int64)): unit =
+and method_5((var_0: int64), (var_1: EnvHeap1), (var_2: string), (var_3: int64), (var_4: int64)): unit =
     let (var_5: int64) = (var_3 + 1L)
     let (var_7: bool) =
         if (var_4 >= 0L) then
@@ -133,14 +137,14 @@ and method_5((var_0: int64), (var_1: (Union0 [])), (var_2: string), (var_3: int6
                     (var_8 = '\r')
         let (var_11: int64) = (var_4 + 1L)
         if var_10 then
-            method_5((var_0: int64), (var_1: (Union0 [])), (var_2: string), (var_5: int64), (var_11: int64))
+            method_5((var_0: int64), (var_1: EnvHeap1), (var_2: string), (var_5: int64), (var_11: int64))
         else
             let (var_12: int64) = 0L
-            method_6((var_2: string), (var_12: int64), (var_0: int64), (var_1: (Union0 [])), (var_4: int64))
+            method_6((var_2: string), (var_12: int64), (var_0: int64), (var_1: EnvHeap1), (var_4: int64))
     else
         let (var_13: int64) = 0L
-        method_6((var_2: string), (var_13: int64), (var_0: int64), (var_1: (Union0 [])), (var_4: int64))
-and method_6((var_0: string), (var_1: int64), (var_2: int64), (var_3: (Union0 [])), (var_4: int64)): unit =
+        method_6((var_2: string), (var_13: int64), (var_0: int64), (var_1: EnvHeap1), (var_4: int64))
+and method_6((var_0: string), (var_1: int64), (var_2: int64), (var_3: EnvHeap1), (var_4: int64)): unit =
     let (var_5: bool) = (var_1 < var_2)
     if var_5 then
         let (var_6: int64) = (var_1 + 1L)
@@ -156,16 +160,16 @@ and method_6((var_0: string), (var_1: int64), (var_2: int64), (var_3: (Union0 []
             let (var_11: int64) = (var_4 + 1L)
             if var_10 then
                 let (var_12: bool) = false
-                method_7((var_12: bool), (var_3: (Union0 [])), (var_6: int64), (var_2: int64), (var_0: string), (var_11: int64))
+                method_7((var_12: bool), (var_3: EnvHeap1), (var_6: int64), (var_2: int64), (var_0: string), (var_11: int64))
             else
                 let (var_13: bool) = true
-                method_7((var_13: bool), (var_3: (Union0 [])), (var_6: int64), (var_2: int64), (var_0: string), (var_4: int64))
+                method_7((var_13: bool), (var_3: EnvHeap1), (var_6: int64), (var_2: int64), (var_0: string), (var_4: int64))
         else
             let (var_14: bool) = true
-            method_7((var_14: bool), (var_3: (Union0 [])), (var_6: int64), (var_2: int64), (var_0: string), (var_4: int64))
+            method_7((var_14: bool), (var_3: EnvHeap1), (var_6: int64), (var_2: int64), (var_0: string), (var_4: int64))
     else
         ()
-and method_7((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64)): unit =
+and method_7((var_0: bool), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64)): unit =
     let (var_7: bool) =
         if (var_5 >= 0L) then
             let (var_6: int64) = (int64 var_4.Length)
@@ -184,12 +188,12 @@ and method_7((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64)
             let (var_11: int64) = System.Convert.ToInt64(var_8)
             let (var_12: int64) = System.Convert.ToInt64('0')
             let (var_13: int64) = (var_11 - var_12)
-            method_8((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_13: int64), (var_10: int64))
+            method_8((var_0: bool), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_13: int64), (var_10: int64))
         else
             (failwith "pint64")
     else
         (failwith "pint64")
-and method_8((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
+and method_8((var_0: bool), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
     let (var_8: bool) =
         if (var_6 >= 0L) then
             let (var_7: int64) = (int64 var_4.Length)
@@ -221,7 +225,7 @@ and method_8((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64)
             if var_16 then
                 let (var_17: int64) = (var_5 * 10L)
                 let (var_18: int64) = (var_17 + var_14)
-                method_8((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_18: int64), (var_11: int64))
+                method_8((var_0: bool), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_18: int64), (var_11: int64))
             else
                 (failwith "integer overflow")
         else
@@ -231,7 +235,7 @@ and method_8((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64)
                 else
                     (-var_5)
             let (var_20: int64) = 0L
-            method_9((var_19: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_20: int64), (var_6: int64))
+            method_9((var_19: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_20: int64), (var_6: int64))
     else
         let (var_21: int64) =
             if var_0 then
@@ -239,8 +243,8 @@ and method_8((var_0: bool), (var_1: (Union0 [])), (var_2: int64), (var_3: int64)
             else
                 (-var_5)
         let (var_22: int64) = 0L
-        method_9((var_21: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_22: int64), (var_6: int64))
-and method_9((var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
+        method_9((var_21: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_22: int64), (var_6: int64))
+and method_9((var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64), (var_6: int64)): unit =
     let (var_7: int64) = (var_5 + 1L)
     let (var_9: bool) =
         if (var_6 >= 0L) then
@@ -260,7 +264,7 @@ and method_9((var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64
                     (var_10 = '\r')
         let (var_13: int64) = (var_6 + 1L)
         if var_12 then
-            method_9((var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_7: int64), (var_13: int64))
+            method_9((var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_7: int64), (var_13: int64))
         else
             let (var_15: bool) =
                 if (var_6 >= 0L) then
@@ -272,13 +276,13 @@ and method_9((var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64
                 let (var_16: bool) = ('-' = var_10)
                 if var_16 then
                     let (var_17: bool) = false
-                    method_10((var_17: bool), (var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_13: int64))
+                    method_10((var_17: bool), (var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_13: int64))
                 else
                     let (var_18: bool) = true
-                    method_10((var_18: bool), (var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
+                    method_10((var_18: bool), (var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
             else
                 let (var_19: bool) = true
-                method_10((var_19: bool), (var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
+                method_10((var_19: bool), (var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
     else
         let (var_21: bool) =
             if (var_6 >= 0L) then
@@ -292,14 +296,14 @@ and method_9((var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64
             let (var_24: int64) = (var_6 + 1L)
             if var_23 then
                 let (var_25: bool) = false
-                method_10((var_25: bool), (var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_24: int64))
+                method_10((var_25: bool), (var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_24: int64))
             else
                 let (var_26: bool) = true
-                method_10((var_26: bool), (var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
+                method_10((var_26: bool), (var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
         else
             let (var_27: bool) = true
-            method_10((var_27: bool), (var_0: int64), (var_1: (Union0 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
-and method_10((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_6: int64)): unit =
+            method_10((var_27: bool), (var_0: int64), (var_1: EnvHeap1), (var_2: int64), (var_3: int64), (var_4: string), (var_6: int64))
+and method_10((var_0: bool), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_6: int64)): unit =
     let (var_8: bool) =
         if (var_6 >= 0L) then
             let (var_7: int64) = (int64 var_5.Length)
@@ -318,12 +322,12 @@ and method_10((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64
             let (var_12: int64) = System.Convert.ToInt64(var_9)
             let (var_13: int64) = System.Convert.ToInt64('0')
             let (var_14: int64) = (var_12 - var_13)
-            method_11((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_14: int64), (var_11: int64))
+            method_11((var_0: bool), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_14: int64), (var_11: int64))
         else
             (failwith "pint64")
     else
         (failwith "pint64")
-and method_11((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_6: int64), (var_7: int64)): unit =
+and method_11((var_0: bool), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_6: int64), (var_7: int64)): unit =
     let (var_9: bool) =
         if (var_7 >= 0L) then
             let (var_8: int64) = (int64 var_5.Length)
@@ -355,7 +359,7 @@ and method_11((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64
             if var_17 then
                 let (var_18: int64) = (var_6 * 10L)
                 let (var_19: int64) = (var_18 + var_15)
-                method_11((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_19: int64), (var_12: int64))
+                method_11((var_0: bool), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_19: int64), (var_12: int64))
             else
                 (failwith "integer overflow")
         else
@@ -365,7 +369,7 @@ and method_11((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64
                 else
                     (-var_6)
             let (var_21: int64) = 0L
-            method_12((var_20: int64), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_21: int64), (var_7: int64))
+            method_12((var_20: int64), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_21: int64), (var_7: int64))
     else
         let (var_22: int64) =
             if var_0 then
@@ -373,8 +377,8 @@ and method_11((var_0: bool), (var_1: int64), (var_2: (Union0 [])), (var_3: int64
             else
                 (-var_6)
         let (var_23: int64) = 0L
-        method_12((var_22: int64), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_23: int64), (var_7: int64))
-and method_12((var_0: int64), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_6: int64), (var_7: int64)): unit =
+        method_12((var_22: int64), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_23: int64), (var_7: int64))
+and method_12((var_0: int64), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_6: int64), (var_7: int64)): unit =
     let (var_8: int64) = (var_6 + 1L)
     let (var_10: bool) =
         if (var_7 >= 0L) then
@@ -394,170 +398,162 @@ and method_12((var_0: int64), (var_1: int64), (var_2: (Union0 [])), (var_3: int6
                     (var_11 = '\r')
         let (var_14: int64) = (var_7 + 1L)
         if var_13 then
-            method_12((var_0: int64), (var_1: int64), (var_2: (Union0 [])), (var_3: int64), (var_4: int64), (var_5: string), (var_8: int64), (var_14: int64))
+            method_12((var_0: int64), (var_1: int64), (var_2: EnvHeap1), (var_3: int64), (var_4: int64), (var_5: string), (var_8: int64), (var_14: int64))
         else
             let (var_15: int64) = 0L
             let (var_16: int64) = 1L
-            let (var_17: int64) = method_13((var_2: (Union0 [])), (var_1: int64), (var_0: int64), (var_15: int64), (var_16: int64))
+            let (var_17: int64) = method_13((var_2: EnvHeap1), (var_1: int64), (var_0: int64), (var_15: int64), (var_16: int64))
             if (var_17 = 0L) then
                 System.Console.WriteLine("First")
             else
                 System.Console.WriteLine("Second")
-            method_6((var_5: string), (var_3: int64), (var_4: int64), (var_2: (Union0 [])), (var_7: int64))
+            method_6((var_5: string), (var_3: int64), (var_4: int64), (var_2: EnvHeap1), (var_7: int64))
     else
         let (var_18: int64) = 0L
         let (var_19: int64) = 1L
-        let (var_20: int64) = method_13((var_2: (Union0 [])), (var_1: int64), (var_0: int64), (var_18: int64), (var_19: int64))
+        let (var_20: int64) = method_13((var_2: EnvHeap1), (var_1: int64), (var_0: int64), (var_18: int64), (var_19: int64))
         if (var_20 = 0L) then
             System.Console.WriteLine("First")
         else
             System.Console.WriteLine("Second")
-        method_6((var_5: string), (var_3: int64), (var_4: int64), (var_2: (Union0 [])), (var_7: int64))
-and method_13((var_0: (Union0 [])), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): int64 =
+        method_6((var_5: string), (var_3: int64), (var_4: int64), (var_2: EnvHeap1), (var_7: int64))
+and method_13((var_0: EnvHeap1), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64)): int64 =
     let (var_5: int64) = (var_1 - 2L)
     let (var_6: int64) = (var_2 + 1L)
     let (var_7: int64) = (var_2 - 1L)
     let (var_8: int64) = (var_1 + 1L)
     let (var_9: int64) = (var_2 - 2L)
     let (var_10: int64) = (var_1 - 1L)
-    let (var_11: bool) =
+    let (var_11: (Union0 [])) = var_0.mem_0
+    let (var_12: bool) =
         if (var_3 >= 0L) then
             (var_3 <= 1L)
-        else
-            false
-    if (var_11 = false) then
-        (failwith "Argument out of bounds.")
-    else
-        ()
-    let (var_12: bool) =
-        if (var_7 >= 0L) then
-            (var_7 <= 14L)
         else
             false
     if (var_12 = false) then
         (failwith "Argument out of bounds.")
     else
         ()
-    let (var_13: int64) = (2L * var_7)
-    let (var_14: int64) = (var_3 + var_13)
-    let (var_15: bool) =
+    let (var_13: bool) =
+        if (var_7 >= 0L) then
+            (var_7 <= 14L)
+        else
+            false
+    if (var_13 = false) then
+        (failwith "Argument out of bounds.")
+    else
+        ()
+    let (var_14: int64) = (2L * var_7)
+    let (var_15: int64) = (var_3 + var_14)
+    let (var_16: bool) =
         if (var_10 >= 0L) then
             (var_10 <= 14L)
         else
             false
-    if (var_15 = false) then
+    if (var_16 = false) then
         (failwith "Argument out of bounds.")
     else
         ()
-    let (var_16: int64) = (30L * var_10)
-    let (var_17: int64) = (var_14 + var_16)
-    let (var_18: Union0) = var_0.[int32 var_17]
-    match var_18 with
-    | Union0Case0(var_19) ->
-        var_19.mem_1
+    let (var_17: int64) = (30L * var_10)
+    let (var_18: int64) = (var_15 + var_17)
+    let (var_19: Union0) = var_11.[int32 var_18]
+    match var_19 with
+    | Union0Case0(var_20) ->
+        var_20.mem_0
     | Union0Case1 ->
-        let (var_21: bool) =
+        let (var_22: bool) =
             if (var_5 >= 1L) then
                 (var_5 <= 15L)
             else
                 false
-        let (var_25: bool) =
-            if var_21 then
-                let (var_22: bool) =
+        let (var_26: bool) =
+            if var_22 then
+                let (var_23: bool) =
                     if (var_6 >= 1L) then
                         (var_6 <= 15L)
                     else
                         false
-                if var_22 then
-                    let (var_23: int64) = method_13((var_0: (Union0 [])), (var_5: int64), (var_6: int64), (var_4: int64), (var_3: int64))
-                    (var_23 = var_3)
+                if var_23 then
+                    let (var_24: int64) = method_13((var_0: EnvHeap1), (var_5: int64), (var_6: int64), (var_4: int64), (var_3: int64))
+                    (var_24 = var_3)
                 else
                     false
             else
                 false
-        let (var_44: int64) =
-            if var_25 then
+        let (var_45: int64) =
+            if var_26 then
                 var_3
             else
-                let (var_26: bool) =
+                let (var_27: bool) =
                     if (var_5 >= 1L) then
                         (var_5 <= 15L)
                     else
                         false
-                let (var_30: bool) =
-                    if var_26 then
-                        let (var_27: bool) =
+                let (var_31: bool) =
+                    if var_27 then
+                        let (var_28: bool) =
                             if (var_7 >= 1L) then
                                 (var_7 <= 15L)
                             else
                                 false
-                        if var_27 then
-                            let (var_28: int64) = method_13((var_0: (Union0 [])), (var_5: int64), (var_7: int64), (var_4: int64), (var_3: int64))
-                            (var_28 = var_3)
+                        if var_28 then
+                            let (var_29: int64) = method_13((var_0: EnvHeap1), (var_5: int64), (var_7: int64), (var_4: int64), (var_3: int64))
+                            (var_29 = var_3)
                         else
                             false
                     else
                         false
-                if var_30 then
+                if var_31 then
                     var_3
                 else
-                    let (var_31: bool) =
+                    let (var_32: bool) =
                         if (var_8 >= 1L) then
                             (var_8 <= 15L)
                         else
                             false
-                    let (var_35: bool) =
-                        if var_31 then
-                            let (var_32: bool) =
+                    let (var_36: bool) =
+                        if var_32 then
+                            let (var_33: bool) =
                                 if (var_9 >= 1L) then
                                     (var_9 <= 15L)
                                 else
                                     false
-                            if var_32 then
-                                let (var_33: int64) = method_13((var_0: (Union0 [])), (var_8: int64), (var_9: int64), (var_4: int64), (var_3: int64))
-                                (var_33 = var_3)
+                            if var_33 then
+                                let (var_34: int64) = method_13((var_0: EnvHeap1), (var_8: int64), (var_9: int64), (var_4: int64), (var_3: int64))
+                                (var_34 = var_3)
                             else
                                 false
                         else
                             false
-                    if var_35 then
+                    if var_36 then
                         var_3
                     else
-                        let (var_36: bool) =
+                        let (var_37: bool) =
                             if (var_10 >= 1L) then
                                 (var_10 <= 15L)
                             else
                                 false
-                        let (var_40: bool) =
-                            if var_36 then
-                                let (var_37: bool) =
+                        let (var_41: bool) =
+                            if var_37 then
+                                let (var_38: bool) =
                                     if (var_9 >= 1L) then
                                         (var_9 <= 15L)
                                     else
                                         false
-                                if var_37 then
-                                    let (var_38: int64) = method_13((var_0: (Union0 [])), (var_10: int64), (var_9: int64), (var_4: int64), (var_3: int64))
-                                    (var_38 = var_3)
+                                if var_38 then
+                                    let (var_39: int64) = method_13((var_0: EnvHeap1), (var_10: int64), (var_9: int64), (var_4: int64), (var_3: int64))
+                                    (var_39 = var_3)
                                 else
                                     false
                             else
                                 false
-                        if var_40 then
+                        if var_41 then
                             var_3
                         else
                             var_4
-        let (var_45: bool) =
+        let (var_46: bool) =
             if (var_3 >= 0L) then
                 (var_3 <= 1L)
-            else
-                false
-        if (var_45 = false) then
-            (failwith "Argument out of bounds.")
-        else
-            ()
-        let (var_46: bool) =
-            if (var_7 >= 0L) then
-                (var_7 <= 14L)
             else
                 false
         if (var_46 = false) then
@@ -565,42 +561,52 @@ and method_13((var_0: (Union0 [])), (var_1: int64), (var_2: int64), (var_3: int6
         else
             ()
         let (var_47: bool) =
-            if (var_10 >= 0L) then
-                (var_10 <= 14L)
+            if (var_7 >= 0L) then
+                (var_7 <= 14L)
             else
                 false
         if (var_47 = false) then
             (failwith "Argument out of bounds.")
         else
             ()
-        var_0.[int32 var_17] <- (Union0Case0(Tuple1(var_44)))
-        var_44
+        let (var_48: bool) =
+            if (var_10 >= 0L) then
+                (var_10 <= 14L)
+            else
+                false
+        if (var_48 = false) then
+            (failwith "Argument out of bounds.")
+        else
+            ()
+        var_11.[int32 var_18] <- (Union0Case0(Tuple2(var_45)))
+        var_45
 let (var_0: string) = cuda_kernels
 let (var_1: (Union0 [])) = Array.zeroCreate<Union0> (System.Convert.ToInt32(450L))
 let (var_2: int64) = 0L
 let (var_3: int64) = 0L
 let (var_4: int64) = method_0((var_1: (Union0 [])), (var_3: int64), (var_2: int64))
-let (var_5: System.IO.Stream) = System.Console.OpenStandardInput()
-let (var_6: System.IO.StreamReader) = System.IO.StreamReader(var_5)
-let (var_7: string) = var_6.ReadToEnd()
-let (var_8: int64) = 0L
-let (var_10: bool) =
-    if (var_8 >= 0L) then
-        let (var_9: int64) = (int64 var_7.Length)
-        (var_8 < var_9)
+let (var_5: EnvHeap1) = ({mem_0 = (var_1: (Union0 []))} : EnvHeap1)
+let (var_6: System.IO.Stream) = System.Console.OpenStandardInput()
+let (var_7: System.IO.StreamReader) = System.IO.StreamReader(var_6)
+let (var_8: string) = var_7.ReadToEnd()
+let (var_9: int64) = 0L
+let (var_11: bool) =
+    if (var_9 >= 0L) then
+        let (var_10: int64) = (int64 var_8.Length)
+        (var_9 < var_10)
     else
         false
-if var_10 then
-    let (var_11: char) = var_7.[int32 var_8]
-    let (var_12: bool) = ('-' = var_11)
-    let (var_13: int64) = (var_8 + 1L)
-    if var_12 then
-        let (var_14: bool) = false
-        method_3((var_14: bool), (var_1: (Union0 [])), (var_7: string), (var_13: int64))
+if var_11 then
+    let (var_12: char) = var_8.[int32 var_9]
+    let (var_13: bool) = ('-' = var_12)
+    let (var_14: int64) = (var_9 + 1L)
+    if var_13 then
+        let (var_15: bool) = false
+        method_3((var_15: bool), (var_5: EnvHeap1), (var_8: string), (var_14: int64))
     else
-        let (var_15: bool) = true
-        method_3((var_15: bool), (var_1: (Union0 [])), (var_7: string), (var_8: int64))
+        let (var_16: bool) = true
+        method_3((var_16: bool), (var_5: EnvHeap1), (var_8: string), (var_9: int64))
 else
-    let (var_16: bool) = true
-    method_3((var_16: bool), (var_1: (Union0 [])), (var_7: string), (var_8: int64))
+    let (var_17: bool) = true
+    method_3((var_17: bool), (var_5: EnvHeap1), (var_8: string), (var_9: int64))
 

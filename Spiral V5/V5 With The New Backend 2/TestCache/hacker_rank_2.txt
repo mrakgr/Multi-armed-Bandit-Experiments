@@ -10,9 +10,9 @@ type Union0 =
     | Union0Case2
 and Env1 =
     struct
-    val mem_mario: Union2
-    val mem_princess: Union2
-    new(arg_mem_mario, arg_mem_princess) = {mem_mario = arg_mem_mario; mem_princess = arg_mem_princess}
+    val mem_0: Union2
+    val mem_1: Union2
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
     end
 and Union2 =
     | Union2Case0 of Tuple8
@@ -42,8 +42,8 @@ and Union7 =
     | Union7Case1
 and Tuple8 =
     struct
-    val mem_1: Tuple3
-    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    val mem_0: Tuple3
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
 and Tuple9 =
     struct
@@ -53,8 +53,8 @@ and Tuple9 =
     end
 and Tuple10 =
     struct
-    val mem_1: Tuple5
-    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    val mem_0: Tuple5
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
 let rec method_5((var_0: bool), (var_1: string), (var_2: int64)): unit =
     let (var_4: bool) =
@@ -181,16 +181,16 @@ and method_8((var_0: ((Union0 []) [])), (var_1: int64), (var_2: string), (var_3:
     else
         let (var_10: int64) = 0L
         let (var_11: Env1) = method_11((var_0: ((Union0 []) [])), (var_1: int64), (var_10: int64))
-        let (var_12: Union2) = var_11.mem_mario
-        let (var_13: Union2) = var_11.mem_princess
+        let (var_12: Union2) = var_11.mem_0
+        let (var_13: Union2) = var_11.mem_1
         match var_12 with
         | Union2Case0(var_14) ->
-            let (var_15: Tuple3) = var_14.mem_1
+            let (var_15: Tuple3) = var_14.mem_0
             let (var_16: int64) = var_15.mem_0
             let (var_17: int64) = var_15.mem_1
             match var_13 with
             | Union2Case0(var_18) ->
-                let (var_19: Tuple3) = var_18.mem_1
+                let (var_19: Tuple3) = var_18.mem_0
                 let (var_20: int64) = var_19.mem_0
                 let (var_21: int64) = var_19.mem_1
                 let (var_22: int64) = (var_1 - 1L)
@@ -401,7 +401,7 @@ and method_25((var_0: EnvHeap4), (var_1: int64), (var_2: int64), (var_3: int64),
     let (var_136: Union7) = (!var_8)
     match var_136 with
     | Union7Case0(var_137) ->
-        let (var_138: Tuple5) = var_137.mem_1
+        let (var_138: Tuple5) = var_137.mem_0
         let (var_139: Tuple3) = var_138.mem_0
         let (var_140: Rec6) = var_138.mem_1
         method_30((var_140: Rec6))
