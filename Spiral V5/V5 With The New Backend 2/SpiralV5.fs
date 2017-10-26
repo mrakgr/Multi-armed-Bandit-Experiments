@@ -920,6 +920,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         elif x.IsArray then arrayt(DotNetHeap,dotnet_type_to_ty (x.GetElementType()))
         // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
         elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
+        elif FSharp.Reflection.FSharpType.IsFunction x then 
+            let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
+            closuret(dotnet_type_to_ty a, dotnet_type_to_ty b)
         else dotnet_typet x
 
     let rec dotnet_ty_to_type (x: Ty) =
@@ -942,6 +945,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | ArrayT(DotNetHeap,t) -> (dotnet_ty_to_type t).MakeArrayType()
         | ArrayT(DotNetReference,t) -> (dotnet_ty_to_type t).MakeByRefType() // Incorrect, but useful
         | DotNetTypeT (N x) -> x
+        | ClosureT(a,b) -> FSharp.Reflection.FSharpType.MakeFunctionType(dotnet_ty_to_type a, dotnet_ty_to_type b)
         | _ -> failwithf "Type %A not supported for conversion into .NET SystemType." x
 
     let on_type_er trace message = TypeError(trace,message) |> raise
