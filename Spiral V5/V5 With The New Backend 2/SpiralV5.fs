@@ -15,6 +15,7 @@ open System.Text
 // Language types
 type LayoutType =
     | LayoutStack
+    | LayoutPackedStack
     | LayoutHeap
 
 type Node<'a>(expr:'a, symbol:int) = 
@@ -192,6 +193,7 @@ type Op =
     | TypeAnnot
     | MapGetField
     | LayoutToStack
+    | LayoutToPackedStack
     | LayoutToHeap
     | TypeCreate
     | TypeGet
@@ -478,8 +480,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let lit_int i = LitInt64 i |> lit
     let lit_string x = LitString x |> lit
 
-    let layout_stackify a = op(LayoutToStack,[a])
-    let layout_heapify a = op(LayoutToHeap,[a])
+    let layout_to_stack a = op(LayoutToStack,[a])
+    let layout_to_packed_stack a = op(LayoutToPackedStack,[a])
+    let layout_to_heap a = op(LayoutToHeap,[a])
 
     let fix name x =
         match name with
@@ -941,6 +944,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let on_type_er trace message = TypeError(trace,message) |> raise
     let print_method tag = sprintf "method_%i" tag
 
+    let layout_to_op = function
+        | LayoutStack -> LayoutToStack
+        | LayoutPackedStack -> LayoutToPackedStack
+        | LayoutHeap -> LayoutToHeap
+
+    let layout_from_op = function
+        | LayoutToStack -> LayoutStack
+        | LayoutToPackedStack -> LayoutPackedStack
+        | LayoutToHeap -> LayoutHeap
+        | _ -> failwith "Not a layout."
+
     // #Type directed partial evaluation
     let rec expr_peval (d: LangEnv) (expr: Expr) =
         let inline tev d expr = expr_peval d expr
@@ -1084,9 +1098,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
         let inline layoutify layout d x = 
-            let layout_to_op = function
-                | LayoutStack -> LayoutToStack
-                | LayoutHeap -> LayoutToHeap
             match x with
             | TyMap(C env,t) as a ->
                 let {fv = fv} as r = renamables0()
@@ -1095,9 +1106,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 else LayoutT(layout,env',t) |> tyt
             | x -> on_type_er (trace d) <| sprintf "Cannot turn the seleted type into a layout. Got: %A" x
 
-//        let inline layoutify_env is_stack d = layout_map_env (layoutify is_stack d)
-
         let layout_stack d a = layoutify LayoutStack d (tev d a)
+        let layout_packed_stack d a = layoutify LayoutPackedStack d (tev d a)
         let layout_heap d a = layoutify LayoutHeap d (tev d a)
 
         let join_point_memoize memo_type used_vars d expr =
@@ -2007,6 +2017,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | LayoutToStack,[a] -> layout_stack d a
+            | LayoutToPackedStack,[a] -> layout_packed_stack d a
             | LayoutToHeap,[a] -> layout_heap d a
             | TypeLitCreate,[a] -> type_lit_create d a
             | TypeLitCast,[a] -> type_lit_cast d a
@@ -2715,6 +2726,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let print_tag_union' t = sprintf "Union%i" t
     let print_tag_env' t = sprintf "Env%i" t
     let print_tag_env_stack' t = sprintf "EnvStack%i" t
+    let print_tag_env_packed_stack' t = sprintf "EnvPackedStack%i" t
 
     let inline print_args print_tyv args = 
         Seq.choose (fun (_,ty as x) ->
@@ -2763,16 +2775,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let print_tag_tuple t = def_enqueue print_tag_tuple' t
         let print_tag_union t = def_enqueue print_tag_union' t
-        let print_tag_env t = def_enqueue print_tag_env' t
-        let print_tag_env_stack t = def_enqueue print_tag_env_stack' t
+        let print_tag_env layout t =
+            match layout with
+            | None -> def_enqueue print_tag_env' t
+            | Some LayoutStack -> def_enqueue print_tag_env_stack' t
+            | Some LayoutPackedStack -> def_enqueue print_tag_env_packed_stack' t
+            | _ -> failwith "impossible"
 
         let print_tag_closure' t = sprintf "FunPointer%i" t // Not actual closures. They are only function pointers on the Cuda side.
         let print_tag_closure t = def_enqueue print_tag_closure' t
 
         let rec print_type trace = function
             | Unit -> "void"
-            | MapT _ as x -> print_tag_env x
-            | LayoutT (LayoutStack, _, _) as x -> print_tag_env_stack x
+            | MapT _ as x -> print_tag_env None x
+            | LayoutT ((LayoutStack | LayoutPackedStack) as layout, _, _) as x -> print_tag_env (Some layout) x
             | ListT _ as x -> print_tag_tuple x
             | UnionT _ as x -> print_tag_union x
             | ArrayT((CudaLocal | CudaShared | CudaGlobal),t) -> sprintf "%s *" (print_type trace t)
@@ -2913,7 +2929,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let t = get_type expr
                 Map.toArray env_term
                 |> Array.map snd
-                |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env t) args)
+                |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env None t) args)
                 |> branch_return
             | TyList l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "make_%s(%s)" (print_tag_tuple t) args) |> branch_return
             | TyOp(op,args,t) ->
@@ -2955,12 +2971,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Neg,[a] -> sprintf "(-%s)" (codegen a)
                 | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
-                | (LayoutToStack | LayoutToHeap),[a] ->
+                | (LayoutToStack | LayoutToHeap | LayoutToPackedStack),[a] ->
                     let fv = typed_expr_free_variables a
                     match op with
-                    | LayoutToStack ->
+                    | LayoutToStack | LayoutToPackedStack ->
                         let args = Seq.map print_tyv_with_type fv |> String.concat ", "
-                        sprintf "make_%s(%s)" (print_tag_env_stack t) args
+                        sprintf "make_%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
                     | LayoutToHeap -> on_type_er trace "Heapify is unsupported on the Cuda side."
                     | _ -> failwith "impossible"
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
@@ -3038,7 +3054,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let inline print_fun env x =
                 let fv = env_free_variables env
                 if Map.forall (fun _ -> get_type >> is_unit) env = false then
-                    let tuple_name = print_tag_env_stack x
+                    let tuple_name = print_tag_env (Some LayoutStack) x // TODO: Do this propely.
                     let iter f = Seq.iter (fun (k,ty )-> f (string k) ty)
                     let fold f = Seq.fold (fun s (k,ty) -> f s (string k) ty)
                     print_struct_definition iter fold tuple_name fv
@@ -3054,7 +3070,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match ty with
                 | MapT(tys, _) as x ->
                     if is_unit_env tys = false then
-                        let tuple_name = print_tag_env x
+                        let tuple_name = print_tag_env None x
                         print_struct_definition Map.iter Map.fold tuple_name tys
                 | LayoutT (LayoutStack, C env, _) as x -> print_fun env x
 //                | UnionT tys as x ->
@@ -3107,6 +3123,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match layout with
             | None -> def_enqueue print_tag_env' t
             | Some LayoutStack -> def_enqueue print_tag_env_stack' t
+            | Some LayoutPackedStack -> def_enqueue print_tag_env_packed_stack' t
             | Some LayoutHeap -> def_enqueue print_tag_env_heap' t
 
         let rec print_type = function
@@ -3381,13 +3398,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Neg,[a] -> sprintf "(-%s)" (codegen a)
                 | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
-                | (LayoutToStack | LayoutToHeap),[a] ->
+                | (LayoutToStack | LayoutToHeap | LayoutToPackedStack),[a] ->
                     let {fv=fv} as r = renamables0()
                     renamer_apply_typedexpr r a |> ignore
                     match op with
-                    | LayoutToStack ->
+                    | LayoutToStack | LayoutToPackedStack ->
                         let args = Seq.map print_tyv_with_type fv |> String.concat ", "
-                        sprintf "%s(%s)" (print_tag_env (Some LayoutStack) t) args
+                        sprintf "%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
                     | LayoutToHeap ->
                         let args = Seq.mapi (fun i x -> sprintf "mem_%i = %s" i (print_tyv_with_type x)) fv |> String.concat "; "
                         sprintf "({%s} : %s)" args (print_tag_env (Some LayoutHeap) t)
@@ -3429,7 +3446,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let print_type_definition layout name tys =
             match layout with
-            | None | Some LayoutStack ->
+            | None | Some (LayoutStack | LayoutPackedStack) ->
+                match layout with
+                | Some LayoutPackedStack -> "[<System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential,Pack=1)>]" |> state
+                | _ -> ()
                 sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "struct" |> state
@@ -3585,8 +3605,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "split" (p type_split)
             l "box" (p2 type_box)
             l "type_error" (type_lit_lift <| LitString "TypeConstructorError")
-            l "stack" (p layout_stackify)
-            l "heap" (p layout_heapify)
+            l "stack" (p layout_to_stack)
+            l "packed_stack" (p layout_to_packed_stack)
+            l "heap" (p layout_to_heap)
 
             l "bool" (op(TypeGet,[lit <| LitBool true]))
             l "int64" (op(TypeGet,[lit <| LitInt64 0L]))
