@@ -1015,6 +1015,16 @@ met f g c d = g c d
 f (packed_stack add) (dyn 3) (dyn 4)
     """
 
+let test88 =
+    "test88",[queue],"Does the new queue made from mutable heap module work?",
+    """
+inl x = Queue.create 1 int64
+x.enqueue 1
+x.enqueue 2
+x.dequeue() |> ignore
+x.dequeue() |> ignore
+    """
+
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
     """
@@ -1818,7 +1828,7 @@ Cuda.run {
     stream = Cuda.ManagedCuda.CudaStream()
     blockDim = 64
     gridDim = 32
-    kernel = cuda add (dyn <| blockDim.x) (dyn gridDim.y)
+    kernel = cuda add (dyn <| blockDim.x) (dyn <| gridDim.y)
     }
     """
 
@@ -1896,7 +1906,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache None //(Some(32,40))
+rewrite_test_cache None //(Some(32,40))
 
 output_test_to_temp cuda1
 |> printfn "%s"

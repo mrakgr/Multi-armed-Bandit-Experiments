@@ -17,6 +17,7 @@ type LayoutType =
     | LayoutStack
     | LayoutPackedStack
     | LayoutHeap
+    | LayoutHeapMutable
 
 type Node<'a>(expr:'a, symbol:int) = 
     member x.Expression = expr
@@ -195,6 +196,7 @@ type Op =
     | LayoutToStack
     | LayoutToPackedStack
     | LayoutToHeap
+    | LayoutToHeapMutable
     | TypeCreate
     | TypeGet
     | TypeUnion
@@ -206,7 +208,7 @@ type Op =
     | ArrayCreate
     | ReferenceCreate
     | ArrayIndex
-    | ArraySet
+    | MutableSet
     | ArrayLength
    
     | ShiftLeft
@@ -474,7 +476,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     let tyv x = TyV x
     let tyvv x = TyList x
-    let tyfun (a,t) = (consify_env_term a,t) |> TyMap
+    let tymap (a,t) = (consify_env_term a,t) |> TyMap
     let tybox x = TyBox x
 
     let lit_int i = LitInt64 i |> lit
@@ -483,6 +485,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let layout_to_stack a = op(LayoutToStack,[a])
     let layout_to_packed_stack a = op(LayoutToPackedStack,[a])
     let layout_to_heap a = op(LayoutToHeap,[a])
+    let layout_to_heap_mutable a = op(LayoutToHeapMutable,[a])
 
     let fix name x =
         match name with
@@ -880,7 +883,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyT _ -> e
             | TyBox (n,t) -> tybox(f n,t)
             | TyList l -> tyvv(List.map f l)
-            | TyMap(C l,t) -> tyfun(renamer_apply_env r l, t)
+            | TyMap(C l,t) -> tymap(renamer_apply_env r l, t)
             | TyV (n,t as k) ->
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
@@ -948,12 +951,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | LayoutStack -> LayoutToStack
         | LayoutPackedStack -> LayoutToPackedStack
         | LayoutHeap -> LayoutToHeap
+        | LayoutHeapMutable -> LayoutToHeapMutable
 
     let layout_from_op = function
         | LayoutToStack -> LayoutStack
         | LayoutToPackedStack -> LayoutPackedStack
         | LayoutToHeap -> LayoutHeap
-        | _ -> failwith "Not a layout."
+        | LayoutToHeapMutable -> LayoutHeapMutable
+        | _ -> failwith "Not a layout op."
 
     // #Type directed partial evaluation
     let rec expr_peval (d: LangEnv) (expr: Expr) =
@@ -1048,7 +1053,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let inline destructure_var r map_vvt map_funt =
                 match get_type r with
                 | ListT tuple_types -> tyvv(map_vvt tuple_types)
-                | MapT (env,t) -> tyfun(map_funt env, t)
+                | MapT (env,t) -> tymap(map_funt env, t)
                 | _ -> chase_recurse r
             
             match r with
@@ -1106,9 +1111,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 else LayoutT(layout,env',t) |> tyt
             | x -> on_type_er (trace d) <| sprintf "Cannot turn the seleted type into a layout. Got: %A" x
 
-        let layout_stack d a = layoutify LayoutStack d (tev d a)
-        let layout_packed_stack d a = layoutify LayoutPackedStack d (tev d a)
-        let layout_heap d a = layoutify LayoutHeap d (tev d a)
+        let layout_to layout d a = layoutify layout d (tev d a)
 
         let join_point_memoize memo_type used_vars d expr =
             let key_args = nodify_memo_key (expr, d.env) 
@@ -1281,7 +1284,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyV _ as v -> TyOp(MapGetField,[recf;v],get_type v) |> destructure d
             | TyList l -> tyvv (List.map f l)
             | TyBox(a,b) -> tybox (f a, b)
-            | TyMap(C env, b) -> tyfun (layout_env_term_unseal d recf env, b)
+            | TyMap(C env, b) -> tymap (layout_env_term_unseal d recf env, b)
             | x -> x
                
         and layout_env_term_unseal d recf env = Map.map (fun _ -> layout_boxed_unseal d recf) env
@@ -1794,10 +1797,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyBox _ -> TyLit <| LitBool true
             | _ -> TyLit <| LitBool false
 
+        // Is intended to be equal to push -> destructure.
         let dynamize d a =
             let rec loop = function
-                | TyBox(_, (UnionT _ | RecT _)) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
+                | TyBox(_, _) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
                 | TyList l -> tyvv (List.map loop l)
+                | TyMap(C env, t) -> tymap (Map.map (fun _ -> loop) env, t)
                 | a -> a
             
             loop (tev d a)
@@ -1810,7 +1815,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | x -> on_type_er (trace d) <| sprintf "Only variable names are allowed in module create. Got: %A" x
             let er n _ = on_type_er (trace d) <| sprintf "In module create, the variable %s was not found." n
             let env = List.fold (fun s n -> Map.add n (v_find d.env n (er n)) s) Map.empty (loop [] l)
-            tyfun(env, MapTypeModule)
+            tymap(env, MapTypeModule)
 
         let array_create d size typ =
             let typ = tev_seq d typ |> get_type
@@ -1827,15 +1832,42 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let array_type = arrayt(DotNetReference, get_type x)
             TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
 
-        let array_set d ar idx r =
+        let mutable_set d ar idx r =
+            let ret t ar idx r =
+                if is_unit t then TyB
+                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(MutableSet,[ar;idx;r],BListT))
             match tev3 d ar idx r with
-            | ar & TyType (ArrayT(DotNetHeap,t)), idx, r when is_int idx && t = get_type r ->
-                if is_unit t then TyB
-                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BListT))
-            | ar & TyType (ArrayT(DotNetReference,t)), idx & TyList [], r when t = get_type r -> 
-                if is_unit t then TyB
-                else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(ArraySet,[ar;idx;r],BListT))
-            | x -> on_type_er (trace d) <| sprintf "The two sides in array set have different types. %A" x
+            | ar & TyType (ArrayT(DotNetHeap,ar_ty)), idx, r ->
+                if is_int idx then
+                    let r_ty = get_type r
+                    if ar_ty = r_ty then ret ar_ty ar idx r
+                    else on_type_er (trace d) <| sprintf "The two sides in array set have different types.\nGot: %A and %A" ar_ty r_ty
+                else on_type_er (trace d) <| sprintf "Expected the array index to be an integer.\nGot: %A" idx
+            | ar & TyType (ArrayT(DotNetReference,ar_ty)), idx, r ->
+                match idx with
+                | TyList [] ->
+                    let r_ty = get_type r
+                    if ar_ty = r_ty then ret ar_ty ar idx r
+                    else on_type_er (trace d) <| sprintf "The two sides in reference set have different types.\nGot: %A and %A" ar_ty r_ty
+                | _ -> on_type_er (trace d) <| sprintf "The input to reference set should be ().\nGot: %A" idx
+            | module_ & TyType (LayoutT(LayoutHeapMutable,C env,_)), field, r ->
+                match field with
+                | TypeString field' ->
+                    let r_ty = get_type r
+                    let mutable s = 0
+                    let br =
+                        Map.exists (fun k v -> 
+                            if k = field' then 
+                                let v_ty = get_type v
+                                if v_ty = r_ty then true 
+                                else on_type_er (trace d) <| sprintf "The two sides in the module set have different types.\nExpected: %A\n Got:%A" v_ty r_ty
+                            else 
+                                s <- s+1
+                                false) env
+                    if br then ret r_ty module_ (sprintf "mem_%i" s |> LitString |> type_lit_create' d) r
+                    else on_type_er (trace d) <| sprintf "The field %s is missing in the module." field'
+                | x -> on_type_er (trace d) <| sprintf "Expected a type string as the input to a mutable heap module.\nGot: %A" x
+            | x,_,_ -> on_type_er (trace d) <| sprintf "Expected a heap mutable module, reference or an array the input to mutable set.\nGot: %A" x
 
         let array_length d ar =
             match tev d ar with
@@ -1877,7 +1909,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
                 ) Map.empty l
-            |> fun x -> tyfun(x, MapTypeModule)
+            |> fun x -> tymap(x, MapTypeModule)
 
         let module_with (d: LangEnv) l =
             let names, bindings =
@@ -1909,7 +1941,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 match names with
                 | V(N name) :: names -> layout_map (next names) name
-                | Lit(N(LitString name)) :: names -> tyfun (Map.add name (layout_map (next names) name) cur_env, MapTypeModule)
+                | Lit(N(LitString name)) :: names -> tymap (Map.add name (layout_map (next names) name) cur_env, MapTypeModule)
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString name)); e]) ->
@@ -1921,7 +1953,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             Map.remove name env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
-                    |> fun env -> tyfun(env, MapTypeModule)
+                    |> fun env -> tymap(env, MapTypeModule)
                 | x -> failwithf "Malformed ModuleWith. %A" x
             module_with_loop d.env names
 
@@ -1987,7 +2019,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | FunctionFilt(N (vars,N (pat, body))) -> 
             let env = Map.filter (fun k _ -> Set.contains k vars) d.env
             let pat = if vars.Contains pat then pat else ""
-            tyfun(env, MapTypeFunction (pat, body))
+            tymap(env, MapTypeFunction (pat, body))
         | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
         | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
         | ExprPos p -> tev (add_trace d p.Pos) p.Expression
@@ -2001,7 +2033,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | DotNetEventAddHandler,[a;b;c] -> dotnet_event_add_handler d a b c
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
-                | TyMap(C env_term,MapTypeFunction core) -> tyfun(env_term,MapTypeRecFunction(core,name))
+                | TyMap(C env_term,MapTypeFunction core) -> tymap(env_term,MapTypeRecFunction(core,name))
                 | x -> x
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -2016,9 +2048,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 Map.iter (fun k v -> printfn "%s" k) d.env
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
-            | LayoutToStack,[a] -> layout_stack d a
-            | LayoutToPackedStack,[a] -> layout_packed_stack d a
-            | LayoutToHeap,[a] -> layout_heap d a
+            | LayoutToStack,[a] -> layout_to LayoutStack d a
+            | LayoutToPackedStack,[a] -> layout_to LayoutPackedStack d a
+            | LayoutToHeap,[a] -> layout_to LayoutHeap d a
+            | LayoutToHeapMutable,[a] -> layout_to LayoutHeapMutable d a
             | TypeLitCreate,[a] -> type_lit_create d a
             | TypeLitCast,[a] -> type_lit_cast d a
             | TypeLitIs,[a] -> type_lit_is d a
@@ -2035,7 +2068,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a
-            | ArraySet,[a;b;c] -> array_set d a b c
+            | MutableSet,[a;b;c] -> mutable_set d a b c
             | ArrayLength,[a] -> array_length d a
 
             // Primitive operations on expressions.
@@ -2607,11 +2640,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let line = s.Line
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<) expr s
             let op =
-                (set_ref >>% fun l r -> op(ArraySet,[l;B;r]) |> preturn)
+                (set_ref >>% fun l r -> op(MutableSet,[l;B;r]) |> preturn)
                 <|> (set_array >>% fun l r -> 
                         let rec loop = function
                             | ExprPos p -> loop p.Expression
-                            | Op(N(Apply,[a;b])) -> op(ArraySet,[a;b;r]) |> preturn
+                            | Op(N(Apply,[a;b])) -> op(MutableSet,[a;b;r]) |> preturn
                             | _ -> fail "Expected two arguments on the left of <-."
                         loop l)
 
@@ -2797,7 +2830,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | UnionT _ as x -> print_tag_union x
             | ArrayT((CudaLocal | CudaShared | CudaGlobal),t) -> sprintf "%s *" (print_type trace t)
             | ArrayT _ -> failwith "Not implemented."
-            | LayoutT (LayoutHeap, _, _) | RecT _ | DotNetTypeT _ as x -> on_type_er trace <| sprintf "%A is not supported on the Cuda side." x
+            | LayoutT (_, _, _) | RecT _ | DotNetTypeT _ as x -> on_type_er trace <| sprintf "%A is not supported on the Cuda side." x
             | ClosureT _ as t -> print_tag_closure t
             | PrimT x ->
                 match x with
@@ -2885,7 +2918,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyState(b,rest,_,trace) ->
                 let d' = {d with branch_return=id; trace=trace}
                 match b with
-                | TyOp(ArraySet,[ar;idx;b],_) ->
+                | TyOp(MutableSet,[ar;idx;b],_) ->
                     match get_type ar with
                     | ArrayT((CudaLocal | CudaShared | CudaGlobal),_) -> 
                         sprintf "%s[%s] = %s" (codegen' d' ar) (codegen' d' idx) (codegen' d' b) |> state
@@ -2975,13 +3008,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Neg,[a] -> sprintf "(-%s)" (codegen a)
                 | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
-                | (LayoutToStack | LayoutToHeap | LayoutToPackedStack),[a] ->
+                | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
                     let fv = typed_expr_free_variables a
                     match op with
                     | LayoutToStack | LayoutToPackedStack ->
-                        let args = Seq.map print_tyv_with_type fv |> String.concat ", "
+                        let args = Seq.map print_tyv fv |> String.concat ", "
                         sprintf "make_%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
-                    | LayoutToHeap -> on_type_er trace "Heapify is unsupported on the Cuda side."
+                    | LayoutToHeap | LayoutToHeapMutable -> on_type_er trace "Heapify is unsupported on the Cuda side."
                     | _ -> failwith "impossible"
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
                 | Exp,[x] -> sprintf "exp(%s)" (codegen x)
@@ -3118,6 +3151,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let print_tag_rec' t = sprintf "Rec%i" t
         let print_tag_env_heap' t = sprintf "EnvHeap%i" t
+        let print_tag_env_heap_mutable' t = sprintf "EnvHeapMutable%i" t
 
         let inline def_enqueue x = def_enqueue definitions_set definitions_queue sym_dict x
 
@@ -3130,6 +3164,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Some LayoutStack -> def_enqueue print_tag_env_stack' t
             | Some LayoutPackedStack -> def_enqueue print_tag_env_packed_stack' t
             | Some LayoutHeap -> def_enqueue print_tag_env_heap' t
+            | Some LayoutHeapMutable -> def_enqueue print_tag_env_heap_mutable' t
 
         let rec print_type = function
             | Unit -> "unit"
@@ -3261,6 +3296,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let array_length ar = sprintf "%s.LongLength" (codegen ar)
             let reference_index x = sprintf "(!%s)" (codegen x)
 
+            let layout_heap_mutable_set module_ field r = sprintf "%s.%s <- %s" (codegen module_) field (codegen r) |> state
             let array_set ar idx r = sprintf "%s <- %s" (array_index ar idx) (codegen r) |> state
             let reference_set l r = sprintf "%s := %s" (codegen l) (codegen r) |> state
 
@@ -3314,10 +3350,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' trace b
             | TyState(b,rest,_,trace) ->
                 match b with
-                | TyOp(ArraySet,[ar;idx;b],_) ->
+                | TyOp(MutableSet,[ar;idx;b],_) ->
                     match get_type ar with
                     | ArrayT(DotNetReference,_) -> reference_set ar b
                     | ArrayT(DotNetHeap,_) -> array_set ar idx b
+                    | LayoutT(LayoutHeapMutable,_,_) -> 
+                        match idx with
+                        | TypeString field -> layout_heap_mutable_set ar field b
+                        | _ -> failwith "impossible"
                     | _ -> failwith "impossible"
                 | _ ->
                     let b = codegen' trace b
@@ -3403,16 +3443,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Neg,[a] -> sprintf "(-%s)" (codegen a)
                 | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
-                | (LayoutToStack | LayoutToHeap | LayoutToPackedStack),[a] ->
+                | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
                     let {fv=fv} as r = renamables0()
                     renamer_apply_typedexpr r a |> ignore
                     match op with
                     | LayoutToStack | LayoutToPackedStack ->
                         let args = Seq.map print_tyv_with_type fv |> String.concat ", "
                         sprintf "%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
-                    | LayoutToHeap ->
+                    | LayoutToHeap | LayoutToHeapMutable ->
                         let args = Seq.mapi (fun i x -> sprintf "mem_%i = %s" i (print_tyv_with_type x)) fv |> String.concat "; "
-                        sprintf "({%s} : %s)" args (print_tag_env (Some LayoutHeap) t)
+                        sprintf "({%s} : %s)" args (print_tag_env (layout_from_op op |> Some) t)
                     | _ -> failwith "impossible"
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
                 | Exp,[x] -> sprintf "exp(%s)" (codegen x)
@@ -3471,13 +3511,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                     sprintf "new(%s) = {%s}" args_declaration args_mapping |> state
                     "end" |> state
-            | Some LayoutHeap ->
+            | Some ((LayoutHeap | LayoutHeapMutable) as layout) ->
                 sprintf "%s %s =" (type_prefix()) name |> state
                 enter' <| fun _ -> 
                     "{" |> state
-                    List.iter (fun (name,typ) ->
-                        sprintf "%s: %s" name (print_type typ) |> state
-                        ) tys
+                    let inline layout_mem_heap a b = sprintf "%s: %s" a b
+                    let inline layout_mem_heap_mutable a b = sprintf "mutable %s: %s" a b
+                    let inline layout_mems layout_mem tys = 
+                        List.iter (fun (name,typ) ->
+                            layout_mem name (print_type typ) |> state
+                            ) tys
+                    match layout with
+                    | LayoutHeap -> layout_mems layout_mem_heap tys
+                    | LayoutHeapMutable -> layout_mems layout_mem_heap_mutable tys
+                    | _ -> failwith "impossible"
                     "}" |> state
 
         let print_method_definition tag (join_point_type, fv, body) = 
@@ -3605,6 +3652,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             l "stack" (p layout_to_stack)
             l "packed_stack" (p layout_to_packed_stack)
             l "heap" (p layout_to_heap)
+            l "heapm" (p layout_to_heap_mutable)
 
             l "bool" (op(TypeGet,[lit <| LitBool true]))
             l "int64" (op(TypeGet,[lit <| LitInt64 0L]))

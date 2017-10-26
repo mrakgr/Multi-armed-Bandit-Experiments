@@ -17,8 +17,9 @@ extern "C" {
         long long int var_4 = blockIdx.y;
         long long int var_5 = blockIdx.z;
         long long int var_6 = 64;
-        long long int var_7 = (var_6 + 1);
-        EnvStack0 var_8 = make_EnvStack0(long long int var_7);
+        long long int var_7 = 1;
+        long long int var_8 = (var_6 + var_7);
+        EnvStack0 var_9 = make_EnvStack0(var_8);
     }
 }
 """

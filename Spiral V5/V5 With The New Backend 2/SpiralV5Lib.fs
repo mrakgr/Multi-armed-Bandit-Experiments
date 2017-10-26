@@ -701,22 +701,27 @@ inl resize {len from to ar} =
     for {from=0; near_to=from; body=inl {i} -> ar' (len - from + i) <- ar i}
     {from=0; to=len; ar=ar'}
 
-met enqueue {state} (!dyn v) =
-    inl {from to ar} = state()
+met enqueue queue (!dyn v) =
+    inl {from to ar} = queue
     ar to <- v
     inl len = array_length ar
     inl to = add_one len to
-    state := if from = to then resize {len from to ar} else {from to ar}
+    if from = to then 
+        inl {from to ar} = resize {len from to ar}
+        queue.from <- from
+        queue.to <- to
+        queue.ar <- ar
+    else queue.to <- to
 
-met dequeue {state} () =
-    inl {from to ar} = state()
+met dequeue queue () =
+    inl {from to ar} = queue
     assert (from <> to) "Cannot dequeue past the end of the queue."
-    state := {from=add_one (array_length ar) from; to ar}
+    queue.from <- add_one (array_length ar) from
     ar from
 
 inl create n typ =
     inl n = match n with | () -> 16 | n -> max 1 n
-    inl queue = {state=ref {from=0; to=0; ar=array_create n typ}}
+    inl queue = heapm {from=dyn 0; to=dyn 0; ar=array_create n typ}
     {internal = queue; enqueue = enqueue queue; dequeue = dequeue queue}
 
 {create}
