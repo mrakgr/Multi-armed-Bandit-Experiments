@@ -2699,7 +2699,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             annotations ^<| indentations statements expressions <| s
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code
 
-    // #Codegen
+    // Codegen
     let process_statements statements =
         let process_statement (code: StringBuilder,ind as state) statement =
             match statement with
@@ -2756,7 +2756,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         |> f
 
     let move_to (buffer: ResizeArray<_>) (temp: ResizeArray<_>) = buffer.AddRange(temp); temp.Clear()
+    let layout_mem (l,i as s) t =
+        if is_unit t then s
+        else (sprintf "mem_%i" i, t) :: l, i+1
 
+    // #Cuda
     let spiral_cuda_codegen (definitions_queue: Queue<TypeOrMethod>) = 
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
@@ -3001,36 +3005,32 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | x -> failwithf "Missing TyOp case. %A" x
                 |> branch_return
 
-        let print_closure_a a = tuple_field_ty a |> List.map (print_type []) |> String.concat ", "
-
         let print_closure_type_definition (a,r) tag =
-            sprintf "typedef %s(*%s)(%s);" (print_type [] r) (print_tag_closure' tag) (print_closure_a a) |> state
+            let ret_ty = print_type [] r
+            let name = print_tag_closure' tag
+            let ty = tuple_field_ty a |> List.map (print_type []) |> String.concat ", "
+            sprintf "typedef %s(*%s)(%s);" ret_ty name ty |> state
 
-        let print_struct_definition iter fold name tys =
-            sprintf "struct %s {" name |> state
-            enter <| fun _ -> iter (fun k ty -> 
-                match ty with
-                | Unit -> ()
-                | _ -> sprintf "%s mem_%s;" (print_type [] ty) k |> state) tys; ""
-            "};" |> state
+        let print_type_definition layout name tys =
+            match layout with
+            | Some LayoutPackedStack -> "#pragma pack(1)" |> state
+            | _ -> ()
 
-            let print_args =
-                let args =
-                    fold (fun s k ty -> 
-                        match ty with
-                        | Unit -> s
-                        | _ -> sprintf "%s mem_%s" (print_type [] ty) k :: s) [] tys
-                    |> List.rev
-                    |> String.concat ", "
-                sprintf "__device__ __forceinline__ %s make_%s(%s){" name name args |> state
-            
-            enter' <| fun _ ->
-                sprintf "%s tmp;" name |> state
-                iter (fun k -> function
-                    | Unit -> ()
-                    | _ -> sprintf "tmp.mem_%s = mem_%s;" k k |> state) tys
-                "return tmp;" |> state
+            let args =
+                List.map (fun (name,ty) ->
+                    sprintf "%s %s" (print_type [] ty) name
+                    ) tys
+
+            sprintf "struct %s {" name |> state_new
+            enter' <| fun _ -> List.iter state args
             "}" |> state
+
+            sprintf "__device__ __forceinline__ %s make_%s(%s){" name name (String.concat ", " args) |> state_new
+            enter' <| fun _ ->
+                sprintf "%s tmp" name |> state
+                List.iter (fun (x,_) -> sprintf "tmp.%s = %s" x x |> state) tys
+                "return tmp" |> state
+            "}" |> state_new
 
         let print_method_definition tag (join_point_type, fv, body) =
             let method_name = print_method tag
@@ -3051,13 +3051,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | JoinPointType -> ()
             
         while definitions_queue.Count > 0 do
-            let inline print_fun env x =
-                let fv = env_free_variables env
-                if Map.forall (fun _ -> get_type >> is_unit) env = false then
-                    let tuple_name = print_tag_env (Some LayoutStack) x // TODO: Do this propely.
-                    let iter f = Seq.iter (fun (k,ty )-> f (string k) ty)
-                    let fold f = Seq.fold (fun s (k,ty) -> f s (string k) ty)
-                    print_struct_definition iter fold tuple_name fv
+//            let inline print_fun env x =
+//                let fv = env_free_variables env
+//                if Map.forall (fun _ -> get_type >> is_unit) env = false then
+//                    let tuple_name = print_tag_env (Some LayoutStack) x // TODO: Do this propely.
+//                    let iter f = Seq.iter (fun (k,ty )-> f (string k) ty)
+//                    let fold f = Seq.fold (fun s (k,ty) -> f s (string k) ty)
+//                    print_struct_definition iter fold tuple_name fv
 
             match definitions_queue.Dequeue() with
             | TomMethod key ->
@@ -3068,20 +3068,25 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
             | TomType ty ->
                 match ty with
-                | MapT(tys, _) as x ->
+                | ListT tys ->
+                    if is_unit_tuple tys = false then
+                        let name = print_tag_tuple ty
+                        let tys = List.fold layout_mem ([],0) tys |> fst |> List.rev
+                        print_type_definition None name tys
+                | MapT(tys, _) ->
                     if is_unit_env tys = false then
-                        let tuple_name = print_tag_env None x
-                        print_struct_definition Map.iter Map.fold tuple_name tys
-                | LayoutT (LayoutStack, C env, _) as x -> print_fun env x
+                        let name = print_tag_env None ty
+                        let tys = Map.fold (fun s _ t -> layout_mem s t) ([],0) tys |> fst |> List.rev
+                        print_type_definition None name tys
+                | LayoutT ((LayoutStack | LayoutPackedStack) as layout, C env, _) ->
+                    if Map.forall (fun _ -> get_type >> is_unit) env = false then
+                        let name = print_tag_env (Some layout) ty
+                        let fv = env_free_variables env
+                        let tys = Seq.toList fv |> List.fold (fun s (_,x) -> layout_mem s x) ([],0) |> fst |> List.rev
+                        print_type_definition (Some layout) name tys
 //                | UnionT tys as x ->
 //                    sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
 //                    print_union_cases (print_case_union x) (Set.toList tys)
-                | ListT tys as x ->
-                    if is_unit_tuple tys = false then
-                        let tuple_name = print_tag_tuple x
-                        let fold f s l = List.fold (fun (i,s) ty -> i+1, f s (string i) ty) (0,s) l |> snd
-                        let iter f l = List.iteri (fun i x -> f (string i) x) l
-                        print_struct_definition iter fold tuple_name tys
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
@@ -3096,7 +3101,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         buffer_temp |> process_statements
 
-
+    // #Fs
     let spiral_fsharp_codegen main =
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
@@ -3508,30 +3513,22 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     move_to buffer_method buffer_temp
                 | _ -> failwith "impossible"
             | TomType ty ->
-                let inline rename_list (s,i as state) t =
-                    if is_unit t then state
-                    else (sprintf "mem_%i" i, t) :: s, i+1
-                let inline rename_map state k t = rename_list state t
-                let inline rename_keys fold tys = fold ([],0) tys |> fst |> List.rev
                 match ty with
                 | ListT tys ->
                     if is_unit_tuple tys = false then
-                        let tuple_name = print_tag_tuple ty
-                        let tys = rename_keys (List.fold rename_list) tys
-                        print_type_definition None tuple_name tys
+                        let name = print_tag_tuple ty
+                        let tys = List.fold layout_mem ([],0) tys |> fst |> List.rev
+                        print_type_definition None name tys
                 | MapT(tys, _) ->
-                    if is_unit_env tys = false then
-                        let tuple_name = print_tag_env None ty
-                        let tys = rename_keys (Map.fold rename_map) tys
-                        print_type_definition None tuple_name tys
+                        let name = print_tag_env None ty
+                        let tys = Map.fold (fun s _ t -> layout_mem s t) ([],0) tys |> fst |> List.rev
+                        print_type_definition None name tys
                 | LayoutT(layout, C env, _) ->
-                    let tys = Map.map (fun _ -> get_type) env
-                    if is_unit_env tys = false then
-                        let tuple_name = print_tag_env (Some layout) ty
-                        let tys = 
-                            env_free_variables env
-                            |> Seq.toList |> List.mapi (fun i (_,t) -> sprintf "mem_%i" i, t)
-                        print_type_definition (Some layout) tuple_name tys
+                    if Map.forall (fun _ -> get_type >> is_unit) env = false then
+                        let name = print_tag_env (Some layout) ty
+                        let fv = env_free_variables env
+                        let tys = Seq.toList fv |> List.fold (fun s (_,x) -> layout_mem s x) ([],0) |> fst |> List.rev
+                        print_type_definition (Some layout) name tys
                 | RecT tag as x ->
                     let tys = rect_dict.[tag]
                     sprintf "%s %s =" (type_prefix()) (print_tag_rec x) |> state

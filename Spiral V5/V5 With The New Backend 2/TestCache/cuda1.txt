@@ -1,6 +1,14 @@
 module SpiralExample
 let cuda_kernels = """
 extern "C" {
+    struct EnvStack0 {
+        long long int mem_0;
+    };
+    __device__ __forceinline__ EnvStack0 make_EnvStack0(long long int mem_0){
+        EnvStack0 tmp;
+        tmp.mem_0 = mem_0;
+        return tmp;
+    }
     __global__ void method_2() {
         long long int var_0 = threadIdx.x;
         long long int var_1 = threadIdx.y;
@@ -10,6 +18,7 @@ extern "C" {
         long long int var_5 = blockIdx.z;
         long long int var_6 = 64;
         long long int var_7 = (var_6 + 1);
+        EnvStack0 var_8 = make_EnvStack0(long long int var_7);
     }
 }
 """

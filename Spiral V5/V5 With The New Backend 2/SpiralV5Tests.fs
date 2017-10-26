@@ -1810,7 +1810,9 @@ let hacker_rank_10 =
 let cuda1 = 
     "cuda1",[tuple;array;cuda],"Does the Cuda call work?",
     """
-inl add a b = a + b |> dyn |> ignore
+inl add a b = 
+    stack {result=dyn (a+b)}
+    |> dyn |> ignore
    
 Cuda.run {
     stream = Cuda.ManagedCuda.CudaStream()
@@ -1894,9 +1896,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache None //(Some(32,40))
+//rewrite_test_cache None //(Some(32,40))
 
-output_test_to_temp test87
+output_test_to_temp cuda1
 |> printfn "%s"
 |> ignore
 
