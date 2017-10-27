@@ -691,8 +691,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         fun () -> i <- i+1; i
 
     let rec pattern_compile arg pat =
-        let rec pattern_compile arg pat on_succ on_fail =
-            let inline cp arg pat on_succ on_fail = pattern_compile arg pat on_succ on_fail
+        let rec pattern_compile pat on_succ on_fail =
+            let inline cp pat on_succ on_fail = pattern_compile pat on_succ on_fail
+            let new_arg () = sprintf " pat_var_%i" (get_pattern_tag())
+            let case arg f = 
+                let var' = new_arg()
+                let arg' = v var'
+                case arg (inl var' (f arg'))
 
             let inline pat_foldbacki f s l =
                 let mutable len = 0L
@@ -702,32 +707,33 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | [] -> len <- i; s
                 loop 0L l, len
             
-            let pat_tuple l' =
-                pat_foldbacki
-                    (fun (pat,i) on_succ ->
-                        let arg = tuple_index arg i
-                        cp arg pat on_succ on_fail)
-                    on_succ
-                    l'
-                |> fun (on_succ,len) -> 
-                    if_static (eq (tuple_length arg) (lit_int len)) on_succ on_fail
-                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail
-                    |> case arg
+            let pat_tuple l' arg =
+                case arg <| fun arg ->
+                    pat_foldbacki
+                        (fun (pat,i) on_succ ->
+                            let arg = tuple_index arg i
+                            cp pat on_succ on_fail)
+                        on_succ
+                        l'
+                    |> fun (on_succ,len) ->
+                        let on_succ, on_fail = on_succ arg, on_fail arg
+                        if_static (eq (tuple_length arg) (lit_int len)) on_succ on_fail
+                        |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail
 
             let pat_cons l = 
-                pat_foldbacki
-                    (fun (pat,i) (on_succ, tuple_index') ->
-                        let arg = tuple_index' arg i
-                        cp arg pat on_succ on_fail, tuple_index)
-                    (on_succ, tuple_slice_from)
-                    l
-                |> fun ((on_succ,_),len) -> 
-                    if_static (gte (tuple_length arg) (lit_int (len-1L))) on_succ on_fail
-                    |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail
-                    |> case arg
+                case arg <| fun arg ->
+                    pat_foldbacki
+                        (fun (pat,i) (on_succ, tuple_index') ->
+                            let arg = tuple_index' arg i
+                            cp arg pat on_succ on_fail, tuple_index)
+                        (on_succ, tuple_slice_from)
+                        l
+                    |> fun ((on_succ,_),len) -> 
+                        if_static (gte (tuple_length arg) (lit_int (len-1L))) on_succ on_fail
+                        |> fun on_succ -> if_static (tuple_is arg) on_succ on_fail
 
             let pat_part_active a pat on_fail arg =
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var = new_arg()
                 let on_succ = inl pat_var (cp (v pat_var) pat on_succ on_fail)
                 let on_fail = inl "" on_fail
                 ap' (v a) [arg; on_fail; on_succ]
@@ -748,7 +754,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | PatMName name ->
                     pat_bind name <| fun memb -> l name (ap arg memb) on_succ
                 | PatMRebind(name,pat) ->
-                    let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                    let pat_var = new_arg()
                     pat_bind name <| fun memb -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
                 | PatMPattern pat -> cp arg pat on_succ on_fail
                 | PatMAnd l -> pat_and pattern_module_compile arg l on_succ on_fail
@@ -765,7 +771,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     ap (just_one l) (bool false)
                 | PatMNot x -> pattern_module_compile arg x on_fail on_succ
                 | PatMInnerModule(name,pat) ->
-                    let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                    let pat_var = new_arg()
                     let pat_var' = v pat_var
                     let memb = type_lit_lift (LitString name)
                 
@@ -779,13 +785,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | E -> on_succ
             | PatVar x -> l x arg on_succ
             | PatTypeEq (exp,typ) ->
-                let on_succ = cp arg exp on_succ on_fail
-                if_static (eq_type arg typ) on_succ on_fail
-                |> case arg
+                case arg <| fun arg ->
+                    let on_succ = cp arg exp on_succ on_fail
+                    if_static (eq_type arg typ) on_succ on_fail
             | PatTuple l -> pat_tuple l
             | PatCons l -> pat_cons l
             | PatActive (a,b) ->
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var = new_arg()
                 l pat_var (ap (v a) arg) (cp (v pat_var) b on_succ on_fail)
             | PatPartActive (a,pat) -> pat_part_active a pat on_fail arg
             | PatExtActive (a,pat) ->
@@ -803,18 +809,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | PatAnd l -> pat_and cp arg l on_succ on_fail
             | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp arg pat (expr_prepass exp |> snd) on_fail) l on_fail
             | PatTypeLit x -> 
-                if_static (eq_type arg (type_lit_lift x)) on_succ on_fail 
-                |> case arg
+                case arg <| fun arg ->
+                    if_static (eq_type arg (type_lit_lift x)) on_succ on_fail 
             | PatTypeLitBind x -> 
-                if_static (type_lit_is arg) (l x (type_lit_cast arg) on_succ) on_fail 
-                |> case arg
+                case arg <| fun arg ->
+                    if_static (type_lit_is arg) (l x (type_lit_cast arg) on_succ) on_fail 
             | PatLit x -> 
-                let x = lit x
-                let on_succ = if_static (eq arg x) on_succ on_fail
-                if_static (eq_type arg x) on_succ on_fail |> case arg
+                case arg <| fun arg ->
+                    let x = lit x
+                    let on_succ = if_static (eq arg x) on_succ on_fail
+                    if_static (eq_type arg x) on_succ on_fail
             | PatWhen (p, e) -> cp arg p (if_static e on_succ on_fail) on_fail
             | PatModule(name,pat) ->
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var = new_arg()
                 let pat_var' = v pat_var
                 pattern_module_compile pat_var' pat on_succ on_fail
                 |> fun x -> 
@@ -1192,27 +1199,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             |> List.map tyt
             |> tyvv
 
-        let case_ d v case =
-            let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
-            match tev d v with
-            | a & TyBox(b,_) -> tev {d with cse_env = ref (cse_add' d a b)} case
-            | TyType(t & (UnionT _ | RecT _)) as v ->
-                let rec map_cases l =
-                    match l with
-                    | x :: xs -> (x, assume d v x case) :: map_cases xs
-                    | _ -> []
-                            
-                match map_cases (case_type d t |> List.map (make_up_vars_for_ty d)) with
-                | (_, TyType p) :: _ as cases -> 
-                    if List.forall (fun (_, TyType x) -> x = p) cases then 
-                        TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) 
-                        |> make_tyv_and_push_typed_expr_even_if_unit d
-                    else 
-                        let l = List.map (snd >> get_type) cases
-                        on_type_er (trace d) <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
-                | _ -> failwith "There should always be at least one clause here."
-            | _ -> tev d case
-           
         let type_union d a b =
             let a, b = tev2 d a b
             let f x = set_field (get_type x)
@@ -1524,15 +1510,39 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match ty, args with
             | x, TyType r when x = r -> args
             | TyRecUnion ty', TyType (UnionT ty_args) when Set.isSubset ty_args ty' ->
-                let lam = inl' ["typec"; "args"] (op(Case,[v "args"; type_box (v "typec") (v "args")])) |> inner_compile
+                let lam = inl' ["typec"; "args"] (op(Case,[v "args"; inl "args" (type_box (v "typec") (v "args"))])) |> inner_compile
                 apply d (apply d lam typec) args
             | TyRecUnion ty', TyType x when Set.contains x ty' -> substitute_ty args
             | _ -> on_type_er (trace d) <| sprintf "Type constructor application failed. %A does not intersect %A." ty (get_type args)
 
-
         let apply_tev d expr args = apply d (tev d expr) (tev d args)
 
-        let inline vv_index_template f d v i =
+        let case_ d v case =
+            let apply_case_core d case b = apply d (tev d case) b
+            let apply_case case b = 
+                let d = {d with seq=ref id; cse_env=ref !d.cse_env}
+                apply_case_core d case b |> apply_seq d
+            match tev d v with
+            | TyBox(x,_) -> apply_case_core d case x
+            | TyType(t & (UnionT _ | RecT _)) as v ->
+                let rec map_cases l =
+                    match l with
+                    | x :: xs -> (x, apply_case case x) :: map_cases xs
+                    | _ -> []
+                            
+                match map_cases (case_type d t |> List.map (make_up_vars_for_ty d)) with
+                | (_, TyType p) :: _ as cases -> 
+                    if List.forall (fun (_, TyType x) -> x = p) cases then 
+                        TyOp(Case,v :: List.collect (fun (a,b) -> [a;b]) cases, p) 
+                        |> make_tyv_and_push_typed_expr_even_if_unit d
+                    else 
+                        let l = List.map (snd >> get_type) cases
+                        on_type_er (trace d) <| sprintf "All the cases in pattern matching clause with dynamic data must have the same type.\n%A" l
+                | _ -> failwith "There should always be at least one clause here."
+            | x -> apply_case_core d case x
+
+
+        let inline list_index_template f d v i =
             let v,i = tev2 d v i
             match v, i with
             | TyList l, TyLitIndex i ->
@@ -1543,33 +1553,33 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | v, TyLitIndex i -> on_type_er (trace d) <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v
             | v, i -> on_type_er (trace d) <| sprintf "Index into a tuple must be an at least a i32 less than the size of the tuple.\nGot: %A" i
 
-        let vv_index d v i = vv_index_template List.tryItem d v i |> destructure d
-        let vv_slice_from d v i = 
+        let list_index d v i = list_index_template List.tryItem d v i |> destructure d
+        let list_slice_from d v i = 
             let rec loop i l = 
                 if i = 0 then tyvv l |> Some
                 else
                     match l with
                     | x :: xs -> loop (i-1) xs
                     | [] -> None
-            vv_index_template loop d v i
+            list_index_template loop d v i
 
-        let inline vv_unop_template on_succ on_fail d v =
+        let inline list_unop_template on_succ on_fail d v =
             match tev d v with
             | TyList l -> on_succ l
             | v & TyType (ListT ts) -> failwith "The tuple should always be destructured."
             | v -> on_fail()
 
-        let vv_length x = 
-            vv_unop_template (fun l -> l.Length |> int64 |> LitInt64 |> TyLit) 
+        let list_length x = 
+            list_unop_template (fun l -> l.Length |> int64 |> LitInt64 |> TyLit) 
                 (fun _ -> on_type_er (trace d) <| sprintf "Type of an evaluated expression in tuple index is not a tuple.\nGot: %A" v) x
                 
-        let vv_is x = vv_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false)) x
+        let list_is x = list_unop_template (fun _ -> TyLit (LitBool true)) (fun _ -> TyLit (LitBool false)) x
 
         let eq_type d a b =
             let a, b = tev2 d a b 
             LitBool (get_type a = get_type b) |> TyLit
     
-        let vv_cons d a b =
+        let list_cons d a b =
             let a, b = tev2 d a b
             match b with
             | TyList b -> tyvv(a::b)
@@ -2104,11 +2114,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ShuffleDown,[a;b] -> prim_shuffle_op d a b ShuffleDown
             | ShuffleIndex,[a;b] -> prim_shuffle_op d a b ShuffleIndex
 
-            | ListIndex,[a;b] -> vv_index d a b
-            | ListLength,[a] -> vv_length d a
-            | ListIs,[a] -> vv_is d a
-            | ListSliceFrom,[a;b] -> vv_slice_from d a b
-            | ListCons,[a;b] -> vv_cons d a b
+            | ListIndex,[a;b] -> list_index d a b
+            | ListLength,[a] -> list_length d a
+            | ListIs,[a] -> list_is d a
+            | ListSliceFrom,[a;b] -> list_slice_from d a b
+            | ListCons,[a;b] -> list_cons d a b
 
             | TypeAnnot,[a;b] -> type_annot d a b
             | TypeUnion,[a;b] -> type_union d a b

@@ -1,8 +1,14 @@
-module SpiralExample
-let cuda_kernels = """
-extern "C" {
-}
-"""
-
-let (var_0: string) = cuda_kernels
-7.000000
+`is_numeric a && get_type a = get_type b` is false.
+a=TyBox (TyLit (LitFloat64 3.5),UnionT (set [PrimT Int64T; PrimT Float64T])), b=TyBox (TyLit (LitFloat64 3.5),UnionT (set [PrimT Int64T; PrimT Float64T]))
+Error trace on line: 2, column: 1 in file "test20".
+type t = 
+^
+Error trace on line: 5, column: 1 in file "test20".
+inl x = box t 3.5
+^
+Error trace on line: 6, column: 1 in file "test20".
+match x with
+^
+Error trace on line: 8, column: 18 in file "test20".
+| q : float64 -> x + x
+                 ^
