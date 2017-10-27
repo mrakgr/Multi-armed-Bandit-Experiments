@@ -297,7 +297,6 @@ and Ty =
     | RecT of int
     | ArrayT of ArrayType * Ty
     | DotNetTypeT of Node<Type> 
-    | DotNetAssemblyT of Node<System.Reflection.Assembly>
 
 and TypedExpr =
     // Data structures
@@ -469,7 +468,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let closuret x = ClosureT x
     let arrayt x = ArrayT x
     let dotnet_typet x = nodify_dotnet_type_runtimet x |> DotNetTypeT
-    let dotnet_assemblyt x = nodify_dotnet_assemblyt x |> DotNetAssemblyT
 
     let nodify_memo_key = nodify <| d0()
     let consify_env_term = hashcons_add <| hashcons_create 0
@@ -600,7 +598,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let rec is_unit_tuple t = List.forall is_unit t
     and is_unit_env x = Map.forall (fun _ -> is_unit) x
     and is_unit = function
-        | LitT _ | DotNetAssemblyT _ -> true
+        | LitT _ -> true
         | UnionT _ | RecT _ | DotNetTypeT _ | ClosureT _ | PrimT _ -> false
         | ArrayT (_,t) -> is_unit t
         | MapT (env,_) -> is_unit_env env
@@ -1245,12 +1243,37 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | :? TypeError as e -> reraise()
             | e -> on_type_er (trace d) (".NET exception:\n"+e.Message)
 
+        let assembly_compile (x: Reflection.Assembly) =
+            x.GetTypes()
+            |> Array.fold (fun (map: Map<string,_>) (typ: Type) ->
+                if typ.IsPublic then
+                    let namesp = typ.FullName.Split '.'
+                    let typ = dotnet_typet typ |> tyt
+                    let rec loop i map =
+                        if i < namesp.Length then
+                            let name = namesp.[i]
+                            let env =
+                                match Map.tryFind name map with
+                                | Some(TyMap(C env,MapTypeModule)) -> env
+                                | None -> Map.empty
+                                | _ -> failwith "impossible"
+                            tymap (Map.add name (loop (i+1) map) env, MapTypeModule)
+                        else
+                            typ
+                    match loop 0 map with
+                    | TyMap(C env, _) -> env
+                    | _ -> failwith "impossible"
+                else
+                    map
+                    ) Map.empty
+            |> fun map -> tymap(map,MapTypeModule)
+
         let dotnet_assembly_load is_load_file d x =
             match tev d x with
             | TypeString x ->
                 wrap_exception d <| fun _ ->
                     if is_load_file then System.Reflection.Assembly.LoadFile(x) else System.Reflection.Assembly.Load(x)
-                    |> dotnet_assemblyt |> tyt
+                    |> assembly_compile
             | _ -> on_type_er (trace d) "Expected a type level string."
 
         let dotnet_event_add_handler d dotnet_type event handler =
@@ -1372,33 +1395,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | DotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type
-            | TyType (DotNetAssemblyT (N a)) & assembly, args -> 
-                // TODO: Replace the Assembly with a `AssemblyDict = AssemblyDict of Dictionary<string, AssemblyDict> | AssemblyType of Type`.
-                let inline get_type name' on_maybe =
-                    let mutable r = None
-                    a.GetTypes()
-                    |> Array.exists (fun x -> 
-                        if x.FullName = name' then r <- Some x; true
-                        elif x.FullName.StartsWith name' then r <- Some null; false
-                        else false)
-                    |> ignore
-
-                    match r with
-                    | None -> on_type_er (trace d) "A type cannot be found inside the assembly."
-                    | Some null -> on_maybe ()
-                    | Some x ->
-                        if x.IsPublic then dotnet_typet x |> tyt
-                        else on_type_er (trace d) "Cannot load a private type from an assembly."
-
-                match args with
-                | TypeString name' & name ->
-                    wrap_exception d <| fun _ ->
-                        get_type name' (fun _ -> lambdify assembly name)
-                | TyTuple [TypeString namespace_name; TypeString type_name] ->
-                    wrap_exception d <| fun _ ->
-                        let name' = String.concat "." [|namespace_name;type_name|]
-                        get_type name' (fun _ -> LitString name' |> type_lit_create' d |> lambdify assembly)
-                | _ -> on_type_er (trace d) "Expected a type level string as the second argument."
             | dotnet_type & TyType (DotNetTypeT (N t)), method_name & TypeString name ->
                 match t.GetField name with
                 | null -> lambdify dotnet_type method_name
@@ -2851,7 +2847,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | BoolT -> "int"
                 | CharT -> on_type_er trace "The char type is not supported on the Cuda side."
                 | StringT -> on_type_er trace "The string type is not supported on the Cuda side."
-            | LitT _ | DotNetAssemblyT _ -> 
+            | LitT _ -> 
                 failwith "Should be covered in Unit."
 
         and print_tyv_with_type trace (tag,ty as v) = sprintf "%s %s" (print_type trace ty) (print_tyv v)
@@ -3199,7 +3195,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | BoolT -> "bool"
                 | StringT -> "string"
                 | CharT -> "char"
-            | LitT _ | DotNetAssemblyT _ -> 
+            | LitT _ -> 
                 failwith "Should be covered in Unit."
                 
 

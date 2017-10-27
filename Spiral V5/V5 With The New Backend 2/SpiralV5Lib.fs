@@ -180,7 +180,7 @@ inl term_cast_curry f tys =
 /// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
 /// It is a decent bit more flexible that it too.
 inl rec string_concat sep l =
-    inl StringBuilder = mscorlib."System.Text.StringBuilder"
+    inl StringBuilder = mscorlib.System.Text.StringBuilder
     inl ap s = function
         | x : string when lit_is x && x = "" -> s
         | _ :: _ as l -> string_concat sep l
@@ -498,7 +498,7 @@ inl choice = function
     | () -> error_type "choice require at lease one parser as input"
 
 // CharParsers
-inl convert = mscorlib ."System.Convert"
+inl convert = mscorlib.System.Convert
 inl to_int64 = convert .ToInt64
 
 inl is_digit x = x >= '0' && x <= '9'
@@ -648,7 +648,7 @@ inl sprintf_template append ret format =
     run format (sprintf_parser append) ret
 
 inl sprintf format = 
-    inl strb = mscorlib."System.Text.StringBuilder"(64i32)
+    inl strb = mscorlib.System.Text.StringBuilder(64i32)
     inl append x = strb.Append x |> ignore
     sprintf_template append {
         on_succ = inl x _ -> x
@@ -664,8 +664,8 @@ let console =
     (
     "Console",[parsing],"IO printing functions.",
     """
-inl console = mscorlib."System.Console"
-inl readall () = console.OpenStandardInput() |> mscorlib ."System.IO.StreamReader" |> inl x -> x.ReadToEnd()
+inl console = mscorlib.System.Console
+inl readall () = console.OpenStandardInput() |> mscorlib .System.IO.StreamReader |> inl x -> x.ReadToEnd()
 inl readline () = console.ReadLine()
 
 inl write = console.Write
@@ -785,8 +785,8 @@ let cuda =
 open Core
 open Console
 
-inl ops = fsharp_core."Microsoft.FSharp.Core.Operators"
-inl Environment = mscorlib."System.Environment"
+inl ops = fsharp_core.Microsoft.FSharp.Core.Operators
+inl Environment = mscorlib.System.Environment
 
 inl cuda_toolkit_path = 
     inl x = Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
@@ -796,7 +796,7 @@ inl cuda_toolkit_path =
 inl visual_studio_path =
     inl x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")
     if ops.IsNull x then failwith "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
-    mscorlib."System.IO.Directory".GetParent(x).get_Parent().get_Parent().get_FullName()
+    mscorlib.System.IO.Directory.GetParent(x).get_Parent().get_Parent().get_FullName()
 
 inl cub_path = // The path for the Cuda Unbound library.
     inl x = Environment.GetEnvironmentVariable("CUB_PATH")
@@ -814,10 +814,10 @@ inl ManagedCuda = assembly_load ."ManagedCuda, Version=7.5.7.0, Culture=neutral,
 inl context = ManagedCuda.CudaContext false
 
 inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
-    inl Path = mscorlib ."System.IO.Path"
-    inl File = mscorlib ."System.IO.File"
-    inl StreamWriter = mscorlib ."System.IO.StreamWriter"
-    inl ProcessStartInfo = system ."System.Diagnostics.ProcessStartInfo"
+    inl Path = mscorlib .System.IO.Path
+    inl File = mscorlib .System.IO.File
+    inl StreamWriter = mscorlib .System.IO.StreamWriter
+    inl ProcessStartInfo = system .System.Diagnostics.ProcessStartInfo
 
     inl nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
     inl procStartInfo = ProcessStartInfo()
@@ -825,11 +825,11 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     procStartInfo.set_RedirectStandardError true
     procStartInfo.set_UseShellExecute false
     procStartInfo.set_FileName nvcc_router_path
-    inl process = system ."System.Diagnostics.Process"()
+    inl process = system .System.Diagnostics.Process()
     process.set_StartInfo procStartInfo
     inl print_to_standard_output = term_cast_curry (inl _ args -> args.get_Data() |> writeline)
     inl add_handler event =
-        system ."System.Diagnostics.DataReceivedEventHandler" print_to_standard_output
+        system .System.Diagnostics.DataReceivedEventHandler print_to_standard_output
         |> event_add_handler process event
 
     add_handler .ErrorDataReceived
@@ -894,7 +894,7 @@ inl dim3 = function
 inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
     inl to_obj_ar args =
         inl len = tuple_length args
-        inl typ = mscorlib ."System.Object"
+        inl typ = mscorlib .System.Object
         if len > 0 then Array.init.static len (tuple_index args >> unsafe_upcast_to typ)
         else Array.empty typ
 

@@ -1,14 +1,4 @@
-module SpiralExample
-let cuda_kernels = """
-extern "C" {
-}
-"""
-
-let (var_0: string) = cuda_kernels
-let (var_1: string) = System.Console.ReadLine()
-let (var_2: int32) = System.Int32.Parse(var_1)
-let (var_3: string) = System.Console.ReadLine()
-let (var_4: int32) = System.Int32.Parse(var_3)
-let (var_5: int32) = (var_2 + var_4)
-System.Console.Write(var_5)
-
+Invalid use of apply. TyT (LitT (LitString "System")) and TyT (LitT (LitString "Console"))
+Error trace on line: 2, column: 15 in file "hacker_rank_1".
+inl console = .System.Console |> mscorlib
+              ^

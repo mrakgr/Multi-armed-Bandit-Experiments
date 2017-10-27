@@ -1,26 +1,70 @@
-module SpiralExample
-let cuda_kernels = """
-extern "C" {
-}
-"""
-
-let (var_0: string) = cuda_kernels
-let (var_1: int64) = 1L
-let (var_2: int64) = 2L
-let (var_3: int64) = 3L
-let (var_4: System.Text.StringBuilder) = System.Text.StringBuilder(64)
-let (var_5: System.Text.StringBuilder) = var_4.Append(var_1)
-let (var_6: System.Text.StringBuilder) = var_4.Append(" + ")
-let (var_7: System.Text.StringBuilder) = var_4.Append(var_2)
-let (var_8: System.Text.StringBuilder) = var_4.Append(" = ")
-let (var_9: System.Text.StringBuilder) = var_4.Append(var_3)
-let (var_10: string) = var_4.ToString()
-System.Console.Write("(")
-System.Console.Write(var_1)
-System.Console.Write(",")
-System.Console.Write(var_2)
-System.Console.Write(",")
-System.Console.Write(var_3)
-System.Console.Write(")")
-System.Console.WriteLine()
-
+Cannot find a member named Convert inside the module.
+Error trace on line: 3, column: 1 in file "Parsing".
+inl m x = { 
+^
+Error trace on line: 10, column: 1 in file "Parsing".
+inl term_cast p typ = m {
+^
+Error trace on line: 18, column: 1 in file "Parsing".
+inl goto point x = m {
+^
+Error trace on line: 21, column: 1 in file "Parsing".
+inl succ x = m {
+^
+Error trace on line: 24, column: 1 in file "Parsing".
+inl fail x = m {
+^
+Error trace on line: 27, column: 1 in file "Parsing".
+inl fatal_fail x = m {
+^
+Error trace on line: 30, column: 1 in file "Parsing".
+inl type_ = m {
+^
+Error trace on line: 33, column: 1 in file "Parsing".
+inl state = m {
+^
+Error trace on line: 36, column: 1 in file "Parsing".
+inl set_state state = m {
+^
+Error trace on line: 39, column: 1 in file "Parsing".
+inl (>>=) a b = m {
+^
+Error trace on line: 42, column: 1 in file "Parsing".
+inl try_with handle handler = m {
+^
+Error trace on line: 45, column: 1 in file "Parsing".
+inl guard cond handler = m {
+^
+Error trace on line: 50, column: 1 in file "Parsing".
+inl ifm cond tr fl = m {
+^
+Error trace on line: 53, column: 1 in file "Parsing".
+inl attempt a = m {
+^
+Error trace on line: 57, column: 1 in file "Parsing".
+inl rec tuple = function
+^
+Error trace on line: 64, column: 1 in file "Parsing".
+inl (|>>) a f = a >>= inl x -> succ (f x)
+^
+Error trace on line: 65, column: 1 in file "Parsing".
+inl (.>>.) a b = tuple (a,b)
+^
+Error trace on line: 66, column: 1 in file "Parsing".
+inl (.>>) a b = tuple (a,b) |>> fst
+^
+Error trace on line: 67, column: 1 in file "Parsing".
+inl (>>.) a b = a >>= inl _ -> b // The way bind is used here in on purpose. `spaces` diverges otherwise due to loop not being evaled in tail position.
+^
+Error trace on line: 68, column: 1 in file "Parsing".
+inl (>>%) a b = a |>> inl _ -> b
+^
+Error trace on line: 76, column: 1 in file "Parsing".
+inl (<|>) a b = try_with (attempt a) b
+^
+Error trace on line: 77, column: 1 in file "Parsing".
+inl choice = function
+^
+Error trace on line: 82, column: 15 in file "Parsing".
+inl convert = mscorlib.System.Convert
+              ^

@@ -200,7 +200,6 @@ let test15 =
     """
 inl system = assembly_load .mscorlib .System
 inl builder_type = system.Text.StringBuilder
-print_static builder_type
 inl b = builder_type ("Qwe", 128i32)
 inl a x =
     b .Append x |> ignore
@@ -212,7 +211,7 @@ inl str = b.ToString()
 inl console = system.Console
 console .Write str |> ignore
 
-inl dictionary_type = system ."Collections.Generic.Dictionary`2"
+inl dictionary_type = system.Collections.Generic."Dictionary`2"
 inl dict = dictionary_type(int64, int64)(128i32)
 dict.Add(1,2)
 dict.get_Item 1
@@ -221,9 +220,9 @@ dict.get_Item 1
 let hacker_rank_1 =
     "hacker_rank_1",[],"The very first warmup exercise : https://www.hackerrank.com/challenges/solve-me-first",
     """
-inl console = ."System.Console" |> mscorlib
+inl console = .System.Console |> mscorlib
 inl parse_int32 = 
-    inl f = ."System.Int32" |> mscorlib
+    inl f = .System.Int32 |> mscorlib
     inl str -> f .Parse str
 inl read_line () = console.ReadLine()
 inl write x = console.Write x
@@ -372,7 +371,7 @@ Tuple.zip ((j,k),(l,m),n) |> Tuple.unzip
 let test28 = // 
     "test28",[],"Does string indexing work?",
     """
-inl console = mscorlib ."System.Console"
+inl console = mscorlib .System.Console
 inl a = "qwe"
 inl b = console.ReadLine()
 a(0),b(0)
@@ -427,7 +426,7 @@ type b =
 let test32 = // 
     "test32",[],"Do the .NET methods work inside methods?",
     """
-inl to_int64 = mscorlib ."System.Convert" .ToInt64
+inl to_int64 = mscorlib .System.Convert .ToInt64
 met f = to_int64 (dyn 'a')
 f
     """
@@ -998,10 +997,10 @@ let test86 =
 open Console
 open Core
 inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
-inl process = system ."System.Diagnostics.Process"()
+inl process = system .System.Diagnostics.Process()
 
 term_cast_curry (inl _ x -> writeline (x.get_Data()))
-|> system ."System.Diagnostics.DataReceivedEventHandler"
+|> system .System.Diagnostics.DataReceivedEventHandler
 |> event_add_handler process .ErrorDataReceived
     """
 
@@ -1115,7 +1114,7 @@ inl p =
         if x > score then (1,x)
         elif x = score then (min+1,score)
         else s
-        ) (dyn (0,mscorlib ."System.Int64" .MinValue)) ar
+        ) (dyn (0,mscorlib .System.Int64 .MinValue)) ar
     |> fst
     |> writeline
     |> succ
@@ -1346,7 +1345,7 @@ open Option
 // The prime factors of 13195 are 5, 7, 13 and 29.
 // What is the largest prime factor of the number 600851475143 ?
 
-inl math = mscorlib ."System.Math"
+inl math = mscorlib .System.Math
 
 inl target = dyn 600851475143
 
@@ -1409,7 +1408,7 @@ open Console
 inl primes = 2,3,5,11,13,17,19
 inl non_primes = Tuple.range (2,20) |> Tuple.filter (Tuple.contains primes >> not)
 inl step = Tuple.foldl (*) 1 primes
-for' {from=step; to=mscorlib."System.Int64".MaxValue; by=step; state= -1; body=inl {next state i} ->
+for' {from=step; to=mscorlib.System.Int64.MaxValue; by=step; state= -1; body=inl {next state i} ->
     if Tuple.forall (inl x -> i % x = 0) non_primes then i
     else next state
     }
@@ -1836,7 +1835,7 @@ let cuda2 =
     "cuda2",[tuple;cuda;core;console],"Does the new Cuda array work?",
     """
 open Cuda
-inl SizeT = ManagedCuda."BasicTypes.SizeT"
+inl SizeT = ManagedCuda.BasicTypes.SizeT
 inl cuda_array = ManagedCuda."CudaDeviceVariable`1"
 cuda_array int64 (SizeT 10)
     """
@@ -1906,8 +1905,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache None //(Some(32,40))
+//rewrite_test_cache None //(Some(32,40))
 
-output_test_to_temp cuda1
+output_test_to_temp test15
 |> printfn "%s"
 |> ignore

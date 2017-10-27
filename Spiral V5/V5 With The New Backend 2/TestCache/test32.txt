@@ -1,11 +1,4 @@
-module SpiralExample
-let cuda_kernels = """
-extern "C" {
-}
-"""
-
-let rec method_0(): int64 =
-    let (var_0: char) = 'a'
-    System.Convert.ToInt64(var_0)
-let (var_0: string) = cuda_kernels
-method_0()
+Cannot find a member named Convert inside the module.
+Error trace on line: 2, column: 16 in file "test32".
+inl to_int64 = mscorlib .System.Convert .ToInt64
+               ^
