@@ -94,12 +94,10 @@ type option_int =
 
 met x = box option_int .None
 match x with
-| .None -> 0
-| x -> 
+| .Some, x -> 
     print_static x
-    match x with
-    | .Some, x -> x
-
+    x
+| .None -> 2
     """
 
 let test9 = // 

@@ -12,6 +12,3 @@ met x = box option_int .None
 Error trace on line: 7, column: 1 in file "test8".
 match x with
 ^
-Error trace on line: 11, column: 5 in file "test8".
-    match x with
-    ^

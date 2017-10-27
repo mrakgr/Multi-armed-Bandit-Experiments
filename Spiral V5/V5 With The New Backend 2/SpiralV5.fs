@@ -708,12 +708,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             
             let pat_tuple l' =
                 case <| fun arg ->
+                    let on_succ' _ = on_succ arg
+                    let on_fail' _ = on_fail arg
                     pat_foldbacki
                         (fun (pat,i) on_succ ->
-                            let arg = tuple_index arg i
-                            cp pat on_succ on_fail)
-                        on_succ
-                        l'
+                            fun _ -> cp pat on_succ on_fail' (tuple_index arg i))
+                        on_succ' l'
                     |> fun (on_succ,len) ->
                         let on_succ, on_fail = on_succ arg, on_fail arg
                         if_static (eq (tuple_length arg) (lit_int len)) on_succ on_fail
@@ -721,11 +721,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let pat_cons l = 
                 case <| fun arg ->
+                    let on_succ' _ = on_succ arg
+                    let on_fail' _ = on_fail arg
                     pat_foldbacki
                         (fun (pat,i) (on_succ, tuple_index') ->
-                            let arg = tuple_index' arg i
-                            cp pat on_succ on_fail, tuple_index)
-                        (on_succ, tuple_slice_from)
+                            (fun _ -> cp pat on_succ on_fail' (tuple_index' arg i)), tuple_index)
+                        (on_succ', tuple_slice_from)
                         l
                     |> fun ((on_succ,_),len) -> 
                         let on_succ, on_fail = on_succ arg, on_fail arg
@@ -736,51 +737,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let pat_var = new_arg()
                 let arg' = v pat_var
                 let on_succ = inl pat_var (cp pat on_succ on_fail arg')
-                let on_fail = inl "" (on_fail arg')
+                let on_fail = inl "" (on_fail arg)
                 ap' (v a) [arg; on_fail; on_succ]
 
             
             let pat_module_is_module on_succ arg = if_static (module_is arg) (on_succ arg) (on_fail arg)
 
-            let inline pat_or cp l on_succ on_fail = List.foldBack (fun pat on_fail -> cp pat on_succ on_fail) l on_fail
-            let inline pat_and cp l on_succ on_fail = List.foldBack (fun pat on_succ -> cp pat on_succ on_fail) l on_succ
-
-//            let rec pattern_module_compile arg pat on_succ on_fail =
-//                let inline pat_bind name f =
-//                    let memb = type_lit_lift (LitString name)
-//                    let on_succ = f memb
-//                    if_static (module_has_member arg memb) on_succ on_fail
-//
-//                match pat with
-//                | PatMName name ->
-//                    pat_bind name <| fun memb -> l name (ap arg memb) on_succ
-//                | PatMRebind(name,pat) ->
-//                    let pat_var = new_arg()
-//                    pat_bind name <| fun memb -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
-//                | PatMPattern pat -> cp arg pat on_succ on_fail
-//                | PatMAnd l -> pat_and pattern_module_compile arg l on_succ on_fail
-//                | PatMOr l -> pat_or pattern_module_compile arg l on_succ on_fail
-//                | PatMXor l ->
-//                    let state_var = sprintf " state_var_%i" (get_pattern_tag())
-//                    let state_var' = v state_var
-//                    let bool x = lit <| LitBool x
-//                    let rec just_one = function
-//                        | x :: xs -> 
-//                            let xs = just_one xs
-//                            inl state_var (pattern_module_compile arg x (if_static state_var' on_fail (ap xs (bool true))) (ap xs state_var'))
-//                        | [] -> inl state_var on_succ
-//                    ap (just_one l) (bool false)
-//                | PatMNot x -> pattern_module_compile arg x on_fail on_succ
-//                | PatMInnerModule(name,pat) ->
-//                    let pat_var = new_arg()
-//                    let pat_var' = v pat_var
-//                    let memb = type_lit_lift (LitString name)
-//                
-//                    pattern_module_compile pat_var' pat on_succ on_fail
-//                    |> l name pat_var'
-//                    |> l pat_var (ap arg memb)
-//                    |> fun on_succ -> if_static (module_has_member arg memb) on_succ on_fail
-//                    |> pat_module_is_module
+            let inline pat_or cp l on_succ on_fail arg = 
+                let on_succ' _ = on_succ arg
+                let on_fail' _ = on_fail arg
+                List.foldBack (fun pat on_fail _ -> cp pat on_succ' on_fail arg) l on_fail' arg
+            let inline pat_and cp l on_succ on_fail arg = 
+                let on_succ' _ = on_succ arg
+                let on_fail' _ = on_fail arg
+                List.foldBack (fun pat on_succ _ -> cp pat on_succ on_fail' arg) l on_succ' arg
 
             match pat with
             | E -> on_succ
@@ -799,7 +769,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | PatExtActive (a,pat) -> failwith "TODO"
             | PatOr l -> pat_or cp l on_succ on_fail
             | PatAnd l -> pat_and cp l on_succ on_fail
-            | PatClauses l -> List.foldBack (fun (pat, exp) on_fail -> cp pat (fun _ -> expr_prepass exp |> snd) on_fail) l on_fail
+            | PatClauses l -> 
+                fun arg ->
+                    let on_fail' _ = on_fail arg
+                    List.foldBack (fun (pat, exp) on_fail _ -> cp pat (fun _ -> expr_prepass exp |> snd) on_fail arg) l on_fail' arg
             | PatTypeLit x -> 
                 case <| fun arg ->
                     if_static (eq_type arg (type_lit_lift x)) (on_succ arg) (on_fail arg)
@@ -813,16 +786,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     let on_succ = if_static (eq arg x) on_succ on_fail
                     if_static (eq_type arg x) on_succ on_fail
             | PatWhen (p, e) -> cp p (fun arg -> if_static e (on_succ arg) (on_fail arg)) on_fail
-//            | PatModule(name,pat) ->
-//                let pat_var = new_arg()
-//                let pat_var' = v pat_var
-//                pattern_module_compile pat_var' pat on_succ on_fail
-//                |> fun x -> 
-//                    match name with
-//                    | Some name -> l name pat_var' x
-//                    | None -> x
-//                |> l pat_var arg
-//                |> pat_module_is_module
             | PatPos p -> fun arg -> expr_pos p.Pos (cp p.Expression on_succ on_fail arg)
 
         let pattern_compile_def_on_succ arg = failwith "Compiler error: The pattern matching clauses are malformed. PatClause is missing."

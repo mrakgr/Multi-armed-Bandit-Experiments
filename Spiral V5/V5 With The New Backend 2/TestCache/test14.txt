@@ -1,40 +1,55 @@
-Pattern miss error. The argument is TyV (0, RecT 1)
-Error trace on line: 2, column: 1 in file "test14".
-type expr x = 
-^
-Error trace on line: 6, column: 1 in file "test14".
-inl int_expr = box (expr int64)
-^
-Error trace on line: 7, column: 1 in file "test14".
-inl v x = int_expr (.V, x)
-^
-Error trace on line: 8, column: 1 in file "test14".
-inl add a b = int_expr (.Add, a, b)
-^
-Error trace on line: 9, column: 1 in file "test14".
-inl mult a b = int_expr (.Mult, a, b)
-^
-Error trace on line: 10, column: 1 in file "test14".
-met a = add (v 1) (v 2)
-^
-Error trace on line: 11, column: 1 in file "test14".
-met b = add (v 3) (v 4)
-^
-Error trace on line: 12, column: 1 in file "test14".
-inl c = mult a b
-^
-Error trace on line: 13, column: 1 in file "test14".
-met rec inter x = 
-^
-Error trace on line: 19, column: 1 in file "test14".
-inter c
-^
-Error trace on line: 14, column: 5 in file "test14".
-    match x with
-    ^
-Error trace on line: 17, column: 22 in file "test14".
-    | .Mult, a, b -> inter a * inter b
-                     ^
-Error trace on line: 14, column: 5 in file "test14".
-    match x with
-    ^
+module SpiralExample
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
+type Rec0 =
+    | Rec0Case0 of Tuple1
+    | Rec0Case1 of Tuple2
+    | Rec0Case2 of Tuple3
+and Tuple1 =
+    struct
+    val mem_0: Rec0
+    val mem_1: Rec0
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
+    end
+and Tuple2 =
+    struct
+    val mem_0: Rec0
+    val mem_1: Rec0
+    new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
+    end
+and Tuple3 =
+    struct
+    val mem_0: int64
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
+    end
+let rec method_5(): Rec0 =
+    (Rec0Case0(Tuple1((Rec0Case2(Tuple3(1L))), (Rec0Case2(Tuple3(2L))))))
+and method_6(): Rec0 =
+    (Rec0Case0(Tuple1((Rec0Case2(Tuple3(3L))), (Rec0Case2(Tuple3(4L))))))
+and method_7((var_0: Rec0), (var_1: Rec0)): int64 =
+    let (var_2: int64) = method_8((var_0: Rec0))
+    let (var_3: int64) = method_8((var_1: Rec0))
+    (var_2 * var_3)
+and method_8((var_0: Rec0)): int64 =
+    match var_0 with
+    | Rec0Case0(var_1) ->
+        let (var_4: Rec0) = var_1.mem_0
+        let (var_5: Rec0) = var_1.mem_1
+        let (var_6: int64) = method_8((var_4: Rec0))
+        let (var_7: int64) = method_8((var_5: Rec0))
+        (var_6 + var_7)
+    | Rec0Case1(var_2) ->
+        let (var_8: Rec0) = var_2.mem_0
+        let (var_9: Rec0) = var_2.mem_1
+        let (var_10: int64) = method_8((var_8: Rec0))
+        let (var_11: int64) = method_8((var_9: Rec0))
+        (var_10 * var_11)
+    | Rec0Case2(var_3) ->
+        var_3.mem_0
+let (var_0: string) = cuda_kernels
+let (var_1: Rec0) = method_5()
+let (var_2: Rec0) = method_6()
+method_7((var_1: Rec0), (var_2: Rec0))
