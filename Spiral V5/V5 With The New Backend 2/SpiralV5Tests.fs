@@ -1911,5 +1911,3 @@ rewrite_test_cache None //(Some(32,40))
 output_test_to_temp cuda1
 |> printfn "%s"
 |> ignore
-
-
