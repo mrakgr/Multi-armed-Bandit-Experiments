@@ -1,70 +1,138 @@
-Cannot find a member named Convert inside the module.
-Error trace on line: 3, column: 1 in file "Parsing".
-inl m x = { 
-^
-Error trace on line: 10, column: 1 in file "Parsing".
-inl term_cast p typ = m {
-^
-Error trace on line: 18, column: 1 in file "Parsing".
-inl goto point x = m {
-^
-Error trace on line: 21, column: 1 in file "Parsing".
-inl succ x = m {
-^
-Error trace on line: 24, column: 1 in file "Parsing".
-inl fail x = m {
-^
-Error trace on line: 27, column: 1 in file "Parsing".
-inl fatal_fail x = m {
-^
-Error trace on line: 30, column: 1 in file "Parsing".
-inl type_ = m {
-^
-Error trace on line: 33, column: 1 in file "Parsing".
-inl state = m {
-^
-Error trace on line: 36, column: 1 in file "Parsing".
-inl set_state state = m {
-^
-Error trace on line: 39, column: 1 in file "Parsing".
-inl (>>=) a b = m {
-^
-Error trace on line: 42, column: 1 in file "Parsing".
-inl try_with handle handler = m {
-^
-Error trace on line: 45, column: 1 in file "Parsing".
-inl guard cond handler = m {
-^
-Error trace on line: 50, column: 1 in file "Parsing".
-inl ifm cond tr fl = m {
-^
-Error trace on line: 53, column: 1 in file "Parsing".
-inl attempt a = m {
-^
-Error trace on line: 57, column: 1 in file "Parsing".
-inl rec tuple = function
-^
-Error trace on line: 64, column: 1 in file "Parsing".
-inl (|>>) a f = a >>= inl x -> succ (f x)
-^
-Error trace on line: 65, column: 1 in file "Parsing".
-inl (.>>.) a b = tuple (a,b)
-^
-Error trace on line: 66, column: 1 in file "Parsing".
-inl (.>>) a b = tuple (a,b) |>> fst
-^
-Error trace on line: 67, column: 1 in file "Parsing".
-inl (>>.) a b = a >>= inl _ -> b // The way bind is used here in on purpose. `spaces` diverges otherwise due to loop not being evaled in tail position.
-^
-Error trace on line: 68, column: 1 in file "Parsing".
-inl (>>%) a b = a |>> inl _ -> b
-^
-Error trace on line: 76, column: 1 in file "Parsing".
-inl (<|>) a b = try_with (attempt a) b
-^
-Error trace on line: 77, column: 1 in file "Parsing".
-inl choice = function
-^
-Error trace on line: 82, column: 15 in file "Parsing".
-inl convert = mscorlib.System.Convert
-              ^
+module SpiralExample
+let cuda_kernels = """
+extern "C" {
+}
+"""
+
+let rec method_0((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64)): unit =
+    if (var_5 < var_2) then
+        let (var_6: int64) = 0L
+        method_1((var_0: int64), (var_1: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_2: int64), (var_6: int64))
+    else
+        (failwith "Failure.")
+and method_1((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: int64)): unit =
+    if (var_6 < var_5) then
+        System.Console.Write("I am at (")
+        System.Console.Write(var_4)
+        System.Console.Write(",")
+        System.Console.Write(var_6)
+        System.Console.Write(")")
+        System.Console.WriteLine()
+        let (var_7: bool) =
+            if (var_4 = var_0) then
+                (var_6 = var_1)
+            else
+                false
+        if var_7 then
+            System.Console.Write("I've found Mario.")
+            System.Console.WriteLine()
+            let (var_8: int64) = (var_6 + 1L)
+            method_2((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_8: int64))
+        else
+            let (var_9: bool) =
+                if (var_4 = var_2) then
+                    (var_6 = var_3)
+                else
+                    false
+            if var_9 then
+                System.Console.Write("I've found Princess.")
+                System.Console.WriteLine()
+                let (var_10: int64) = (var_6 + 1L)
+                method_4((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_10: int64))
+            else
+                let (var_11: int64) = (var_6 + 1L)
+                method_1((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_11: int64))
+    else
+        let (var_12: int64) = (var_4 + 1L)
+        method_0((var_0: int64), (var_1: int64), (var_5: int64), (var_2: int64), (var_3: int64), (var_12: int64))
+and method_2((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: int64)): unit =
+    if (var_6 < var_5) then
+        System.Console.Write("I am at (")
+        System.Console.Write(var_4)
+        System.Console.Write(",")
+        System.Console.Write(var_6)
+        System.Console.Write(")")
+        System.Console.WriteLine()
+        let (var_7: bool) =
+            if (var_4 = var_0) then
+                (var_6 = var_1)
+            else
+                false
+        if var_7 then
+            System.Console.Write("I've found Mario.")
+            System.Console.WriteLine()
+            let (var_8: int64) = (var_6 + 1L)
+            method_2((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_8: int64))
+        else
+            let (var_9: bool) =
+                if (var_4 = var_2) then
+                    (var_6 = var_3)
+                else
+                    false
+            if var_9 then
+                System.Console.Write("I've found Princess.")
+                System.Console.WriteLine()
+                System.Console.Write("Success.")
+                System.Console.WriteLine()
+            else
+                let (var_10: int64) = (var_6 + 1L)
+                method_2((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_10: int64))
+    else
+        let (var_11: int64) = (var_4 + 1L)
+        method_3((var_0: int64), (var_1: int64), (var_5: int64), (var_2: int64), (var_3: int64), (var_11: int64))
+and method_4((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_6: int64)): unit =
+    if (var_6 < var_5) then
+        System.Console.Write("I am at (")
+        System.Console.Write(var_4)
+        System.Console.Write(",")
+        System.Console.Write(var_6)
+        System.Console.Write(")")
+        System.Console.WriteLine()
+        let (var_7: bool) =
+            if (var_4 = var_0) then
+                (var_6 = var_1)
+            else
+                false
+        if var_7 then
+            System.Console.Write("I've found Mario.")
+            System.Console.WriteLine()
+            System.Console.Write("Success.")
+            System.Console.WriteLine()
+        else
+            let (var_8: bool) =
+                if (var_4 = var_2) then
+                    (var_6 = var_3)
+                else
+                    false
+            if var_8 then
+                System.Console.Write("I've found Princess.")
+                System.Console.WriteLine()
+                let (var_9: int64) = (var_6 + 1L)
+                method_4((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_9: int64))
+            else
+                let (var_10: int64) = (var_6 + 1L)
+                method_4((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_10: int64))
+    else
+        let (var_11: int64) = (var_4 + 1L)
+        method_5((var_0: int64), (var_1: int64), (var_5: int64), (var_2: int64), (var_3: int64), (var_11: int64))
+and method_3((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64)): unit =
+    if (var_5 < var_2) then
+        let (var_6: int64) = 0L
+        method_2((var_0: int64), (var_1: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_2: int64), (var_6: int64))
+    else
+        (failwith "Failure.")
+and method_5((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: int64), (var_5: int64)): unit =
+    if (var_5 < var_2) then
+        let (var_6: int64) = 0L
+        method_4((var_0: int64), (var_1: int64), (var_3: int64), (var_4: int64), (var_5: int64), (var_2: int64), (var_6: int64))
+    else
+        (failwith "Failure.")
+let (var_0: string) = cuda_kernels
+let (var_1: int64) = 0L
+let (var_2: int64) = 0L
+let (var_3: int64) = 1L
+let (var_4: int64) = 1L
+let (var_5: int64) = 5L
+let (var_6: int64) = 0L
+method_0((var_3: int64), (var_4: int64), (var_5: int64), (var_1: int64), (var_2: int64), (var_6: int64))
+

@@ -413,6 +413,10 @@ type Renamables = {
 
 let cuda_kernels_name = "cuda_kernels"
 
+type AssemblyLoadType =
+    | LoadType of Type
+    | LoadMap of Map<string,AssemblyLoadType>
+
 // #Main
 let spiral_peval (Module(N(module_name,_,_,_)) as module_main) = 
     let mutable renaming_time = TimeSpan()
@@ -1244,29 +1248,34 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | e -> on_type_er (trace d) (".NET exception:\n"+e.Message)
 
         let assembly_compile (x: Reflection.Assembly) =
+            let rec to_typedexpr = function
+                | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule)
+                | LoadType typ -> dotnet_typet typ |> tyt
+
             x.GetTypes()
-            |> Array.fold (fun (map: Map<string,_>) (typ: Type) ->
+            |> Array.fold (fun map (typ: Type) ->
                 if typ.IsPublic then
                     let namesp = typ.FullName.Split '.'
-                    let typ = dotnet_typet typ |> tyt
+                    let typ = typ
                     let rec loop i map =
                         if i < namesp.Length then
                             let name = namesp.[i]
-                            let env =
-                                match Map.tryFind name map with
-                                | Some(TyMap(C env,MapTypeModule)) -> env
-                                | None -> Map.empty
-                                | _ -> failwith "impossible"
-                            tymap (Map.add name (loop (i+1) map) env, MapTypeModule)
+                            match map with
+                            | LoadMap map ->
+                                let env =
+                                    match Map.tryFind name map with
+                                    | Some(LoadMap _ & env) -> env
+                                    | None -> LoadMap Map.empty
+                                    | _ -> failwith "impossible"
+                                LoadMap (Map.add name (loop (i+1) env) map)
+                            | _ -> failwith "impossible"
                         else
-                            typ
-                    match loop 0 map with
-                    | TyMap(C env, _) -> env
-                    | _ -> failwith "impossible"
+                            LoadType typ
+                    loop 0 map
                 else
                     map
-                    ) Map.empty
-            |> fun map -> tymap(map,MapTypeModule)
+                    ) (LoadMap Map.empty)
+            |> to_typedexpr
 
         let dotnet_assembly_load is_load_file d x =
             match tev d x with
