@@ -1015,14 +1015,18 @@ f (packed_stack add) (dyn 3) (dyn 4)
     """
 
 let test88 =
-    "test88",[queue],"Does the new queue made from mutable heap module work?",
+    "test88",[],"Does the => related stuff work?",
     """
-inl x = Queue.create 1 int64
-x.enqueue 1
-x.enqueue 2
-x.dequeue() |> ignore
-x.dequeue() |> ignore
+inl closure_type = (1 => 2)
+()
+//inl add a b = a + b
+//inl clo_add = closure_of add closure_type
+//match clo_add with
+//| a => b ->
+//    print_static (a,b)
+//    clo_add 1 2
     """
+
 
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
@@ -1841,7 +1845,7 @@ cuda_array int64 (SizeT 10)
     """
 
 let extern1 =
-    "extern1",[tuple;cuda;core;console],"Do the new Extern Ops work?",
+    "extern1",[tuple;cuda;core;console;extern_],"Do the new Extern Ops work?",
     """
 open Cuda
 
@@ -1935,6 +1939,6 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache None //(Some(32,40))
 
-output_test_to_temp cuda1
+output_test_to_temp test88
 |> printfn "%s"
 |> ignore

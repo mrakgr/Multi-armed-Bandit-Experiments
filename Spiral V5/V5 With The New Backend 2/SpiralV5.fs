@@ -121,10 +121,12 @@ type Op =
     | ClosureDomain
     | ClosureRange
 
+    // Cast
+    | UnsafeUpcastTo // TODO: Implement downcast as well.
+
     // Cuda
     | Syncthreads
     | CudaKernels
-    | UnsafeUpcastTo
 
     | ThreadIdxX | ThreadIdxY | ThreadIdxZ
     | BlockIdxX | BlockIdxY | BlockIdxZ
@@ -2475,8 +2477,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         and patterns_template expr s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr s
-            pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr 
-            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_closure recurse
+            pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr ^<| pat_closure
+            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit 
                          pat_rounds recurse; pat_named_tuple recurse; pat_module_outer expr|] <| s
 
         let inline patterns expr s = patterns_template expr s
@@ -2765,6 +2767,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 (poperator >>=? function
                     | "->" | ":=" | "<-" -> fail "forbidden operator"
                     | orig_op -> 
+                        printfn "orig_op=%s" orig_op
                         let rec calculate on_fail op' = 
                             match dict_operator.TryGetValue op' with
                             | true, (prec,asoc) -> preturn (prec,asoc,fun a b -> 
