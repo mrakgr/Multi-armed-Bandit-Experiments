@@ -1247,9 +1247,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | :? TypeError as e -> reraise()
             | e -> on_type_er (trace d) (".NET exception:\n"+e.Message)
 
-        let assembly_compile (x: Reflection.Assembly) =
+        let assembly_compile d (x: Reflection.Assembly) =
             let rec to_typedexpr = function
-                | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule)
+                | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule) |> layoutify LayoutStack d
                 | LoadType typ -> dotnet_typet typ |> tyt
 
             x.GetTypes()
@@ -1282,7 +1282,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeString x ->
                 wrap_exception d <| fun _ ->
                     if is_load_file then System.Reflection.Assembly.LoadFile(x) else System.Reflection.Assembly.Load(x)
-                    |> assembly_compile
+                    |> assembly_compile d
             | _ -> on_type_er (trace d) "Expected a type level string."
 
         let dotnet_event_add_handler d dotnet_type event handler =
@@ -2798,9 +2798,28 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         |> f
 
     let move_to (buffer: ResizeArray<_>) (temp: ResizeArray<_>) = buffer.AddRange(temp); temp.Clear()
-    let layout_mem (l,i as s) t =
+    let define_mem (l,i as s) t =
         if is_unit t then s
         else (sprintf "mem_%i" i, t) :: l, i+1
+
+    let inline define_listt ty print_tag_tuple print_type_definition tys =
+        if is_unit_tuple tys = false then
+            let name = print_tag_tuple ty
+            let tys = List.fold define_mem ([],0) tys |> fst |> List.rev
+            print_type_definition None name tys
+
+    let inline define_mapt ty print_tag_env print_type_definition tys =
+        if Map.forall (fun _ -> is_unit) tys = false then
+            let name = print_tag_env None ty
+            let tys = Map.fold (fun s _ t -> define_mem s t) ([],0) tys |> fst |> List.rev
+            print_type_definition None name tys
+
+    let inline define_layoutt ty print_tag_env print_type_definition layout env =
+        if Map.forall (fun _ -> get_type >> is_unit) env = false then
+            let name = print_tag_env (Some layout) ty
+            let fv = env_free_variables env
+            let tys = Seq.toList fv |> List.fold (fun s (_,x) -> define_mem s x) ([],0) |> fst |> List.rev
+            print_type_definition (Some layout) name tys
 
     // #Cuda
     let spiral_cuda_codegen (definitions_queue: Queue<TypeOrMethod>) = 
@@ -3110,22 +3129,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
             | TomType ty ->
                 match ty with
-                | ListT tys ->
-                    if is_unit_tuple tys = false then
-                        let name = print_tag_tuple ty
-                        let tys = List.fold layout_mem ([],0) tys |> fst |> List.rev
-                        print_type_definition None name tys
-                | MapT(tys, _) ->
-                    if is_unit_env tys = false then
-                        let name = print_tag_env None ty
-                        let tys = Map.fold (fun s _ t -> layout_mem s t) ([],0) tys |> fst |> List.rev
-                        print_type_definition None name tys
+                | ListT tys -> define_listt ty print_tag_tuple print_type_definition tys
+                | MapT(tys, _) -> define_mapt ty print_tag_env print_type_definition tys
                 | LayoutT ((LayoutStack | LayoutPackedStack) as layout, C env, _) ->
-                    if Map.forall (fun _ -> get_type >> is_unit) env = false then
-                        let name = print_tag_env (Some layout) ty
-                        let fv = env_free_variables env
-                        let tys = Seq.toList fv |> List.fold (fun s (_,x) -> layout_mem s x) ([],0) |> fst |> List.rev
-                        print_type_definition (Some layout) name tys
+                    define_layoutt ty print_tag_env print_type_definition layout env
 //                | UnionT tys as x ->
 //                    sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
 //                    print_union_cases (print_case_union x) (Set.toList tys)
@@ -3570,21 +3577,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
             | TomType ty ->
                 match ty with
-                | ListT tys ->
-                    if is_unit_tuple tys = false then
-                        let name = print_tag_tuple ty
-                        let tys = List.fold layout_mem ([],0) tys |> fst |> List.rev
-                        print_type_definition None name tys
-                | MapT(tys, _) ->
-                        let name = print_tag_env None ty
-                        let tys = Map.fold (fun s _ t -> layout_mem s t) ([],0) tys |> fst |> List.rev
-                        print_type_definition None name tys
-                | LayoutT(layout, C env, _) ->
-                    if Map.forall (fun _ -> get_type >> is_unit) env = false then
-                        let name = print_tag_env (Some layout) ty
-                        let fv = env_free_variables env
-                        let tys = Seq.toList fv |> List.fold (fun s (_,x) -> layout_mem s x) ([],0) |> fst |> List.rev
-                        print_type_definition (Some layout) name tys
+                | ListT tys -> define_listt ty print_tag_tuple print_type_definition tys
+                | MapT(tys, _) -> define_mapt ty print_tag_env print_type_definition tys
+                | LayoutT(layout, C env, _) -> define_layoutt ty print_tag_env print_type_definition layout env
                 | RecT tag as x ->
                     let tys = rect_dict.[tag]
                     sprintf "%s %s =" (type_prefix()) (print_tag_rec x) |> state
@@ -3592,7 +3587,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | Unit -> "| " + print_tag_rec' tag |> state
                     | ListT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
                     | UnionT tys -> print_union_cases (print_case_rec x) (Set.toList tys)
-                    | x -> failwithf "Only ListT and UnionT are recursive types. Got: %A" x
+                    | x -> failwithf "Only ListT and UnionT can be recursive types. Got: %A" x
                 | UnionT tys as x ->
                     sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
                     print_union_cases (print_case_union x) (Set.toList tys)
