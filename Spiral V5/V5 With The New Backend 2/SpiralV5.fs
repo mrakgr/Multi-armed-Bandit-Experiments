@@ -115,6 +115,12 @@ type Value =
     | LitChar of char
 
 type Op =
+    // Closure
+    | ClosureTypeCreate
+    | ClosureIs
+    | ClosureDomain
+    | ClosureRange
+
     // Cuda
     | Syncthreads
     | CudaKernels
@@ -264,6 +270,7 @@ and Pattern =
     | PatWhen of Pattern * Expr
     | PatModule of string option * PatternModule
     | PatPos of Pos<Pattern>
+    | PatTypeClosure of Pattern * Pattern
 
 and PatternModule =
     | PatMAnd of PatternModule list
@@ -423,6 +430,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     // #Smart constructors
     let memoized_methods: MemoDict = d0()
     let join_point_dict: Dictionary<JoinPointKey,JoinPointValue> = d0()
+    let trace (d: LangEnv) = d.trace
 
     let ty_join_point memo_key value t =
         let new_subtag = join_point_dict.Count
@@ -544,6 +552,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let eq a b = binop EQ a b
     let lt a b = binop LT a b
     let gte a b = binop GTE a b
+
+    let closure_type_create a b = op(ClosureTypeCreate,[a;b])
+    let closure_is x = op(ClosureIs,[x])
+    let closure_dom x = op(ClosureDomain,[x])
+    let closure_range x = op(ClosureRange,[x])
 
     let error_non_unit x = (ErrorNonUnit, [x]) |> op
     let type_lit_lift' x = (TypeLitCreate,[x]) |> op
@@ -826,6 +839,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 |> l pat_var arg
                 |> pat_module_is_module
             | PatPos p -> expr_pos p.Pos (cp arg p.Expression on_succ on_fail)
+            | PatTypeClosure(a,b) ->
+                let range = cp (closure_range arg) b on_succ on_fail
+                let closure = cp (closure_dom arg) a range on_fail
+                if_static (closure_is arg) closure on_fail
+                    
+                    
+
 
         let pattern_compile_def_on_succ = op(ErrorPatClause,[])
         let pattern_compile_def_on_fail = op(ErrorPatMiss,[arg])
@@ -997,8 +1017,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let make_up_vars_for_ty d ty = 
             if is_unit ty then tyt ty
             else TyV <| make_tyv_ty d ty
-
-        let trace (d: LangEnv) = d.trace
 
         let inline make_tyv_and_push_typed_expr_template even_if_unit d ty_exp =
             let ty = get_type ty_exp
@@ -1193,6 +1211,25 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             tev d x |> get_type |> case_type d
             |> List.map tyt
             |> tyvv
+
+        let inline closure_f on_fail on_succ d x =
+            match tev d x with
+            | TyType(ClosureT (a,b)) -> on_succ (a,b)
+            | x -> on_fail x
+
+        let closure_is d x =
+            let on_x x _ = LitBool x |> TyLit
+            closure_f (on_x false) (on_x true) d x
+
+        let inline closure_dr is_domain d x =
+            let on_fail x = on_type_er (trace d) <| sprintf "Expected a closure (or its type).\nGot: %A" x
+            let on_succ (dom,range) = if is_domain then tyt dom else tyt range
+            closure_f on_fail on_succ d x
+
+        let closure_type_create d a b =
+            let a = tev_seq d a
+            let b = tev_seq d b
+            closuret (get_type a, get_type b) |> tyt
 
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
@@ -2121,6 +2158,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeCreate,[a] -> type_create d a
             | TypeGet,[a] -> type_get d a
             | TypeSplit,[a] -> type_split d a
+
+            | ClosureTypeCreate,[a;b] -> closure_type_create d a b
+            | ClosureIs,[a] -> closure_is d a
+            | ClosureDomain,[a] -> closure_dr true d a
+            | ClosureRange,[a] -> closure_dr false d a 
+
             | EqType,[a;b] -> eq_type d a b
             | Neg,[a] -> prim_un_numeric d a Neg
             | ErrorType,[a] -> tev d a |> fun a -> on_type_er (trace d) <| sprintf "%A" a
@@ -2141,6 +2184,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             | x -> failwithf "Missing Op case. %A" x
 
+    let string_to_op =
+        let cases = Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<Op>)
+        let dict = d0()
+        cases |> Array.iter (fun x ->
+            dict.[x.Name] <- Microsoft.FSharp.Reflection.FSharpValue.MakeUnion(x,[||]) :?> Op
+            )
+        fun x -> dict.TryGetValue x
 
     // #Parsing
     let spiral_parse (Module(N(module_name,_,_,module_code)) & module_) = 
@@ -2200,6 +2250,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let caret = operatorChar '^'
         let barbar = operatorString "||" 
         let lam = operatorString "->"
+        let arr = operatorString "=>"
+        let union = operatorString "\/"
         let set_ref = operatorString ":="
         let set_array = operatorString "<-"
         let inl_ = keywordString "inl"
@@ -2369,6 +2421,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | None -> lit)
             squares (many pat) |>> function [x] -> x | x -> PatTuple x
 
+        let pat_closure pattern = 
+            pipe2 pattern (opt (arr >>. pattern))
+                (fun a -> function
+                    | Some b -> PatTypeClosure(a,b)
+                    | None -> a)
+
         let (^<|) a b = a b // High precedence, right associative <| operator
 
         let rec pat_module_helper (names,bindings) = 
@@ -2418,7 +2476,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         and patterns_template expr s = // The order in which the pattern parsers are chained in determines their precedence.
             let inline recurse s = patterns_template expr s
             pat_or ^<| pat_when expr ^<| pat_as ^<| pat_tuple ^<| pat_cons ^<| pat_and ^<| pat_type expr 
-            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_rounds recurse; pat_named_tuple recurse; pat_module_outer expr|] <| s
+            ^<| choice [|pat_active recurse; pat_e; pat_var; pat_type_lit; pat_lit; pat_closure recurse
+                         pat_rounds recurse; pat_named_tuple recurse; pat_module_outer expr|] <| s
 
         let inline patterns expr s = patterns_template expr s
     
@@ -2600,13 +2659,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let case_join_point expr = keywordString "join" >>. expr |>> join_point_entry_method
         let case_cuda expr = keywordString "cuda" >>. expr |>> inl' ["threadIdx"; "blockIdx"; "blockDim";"gridDim"]
 
+        let case_inbuilt_op expr =
+            (operatorChar '!' >>. var_name) .>>. (rounds expr)
+            >>= fun (a, b) ->
+                let l = match b with | VV (N l) -> l | x -> [x]
+                match string_to_op a with
+                | true, op' -> op(op',l) |> preturn
+                | false, _ -> failFatally <| sprintf "%s not found among the inbuilt Ops." a
+
         let rec expressions expr s =
             let unary_ops = 
                 [case_lit_lift; case_negate]
                 |> List.map (fun x -> x (expressions expr) |> attempt)
                 |> choice
             let expressions = 
-                [case_print_env; case_print_expr; case_type; case_join_point; case_cuda
+                [case_print_env; case_print_expr; case_type; case_join_point; case_cuda; case_inbuilt_op
                  case_inl_pat_list_expr; case_met_pat_list_expr; case_lit; case_if_then_else
                  case_rounds; case_typecase; case_typeinl; case_var; case_module; case_named_tuple]
                 |> List.map (fun x -> x expr |> attempt)
@@ -2687,6 +2754,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let right_associative_ops =
                 let f str prec = add_infix_operator Associativity.Right str prec
                 f "||" 20; f "&&" 30; f "::" 50; f "^^^" 45
+                f "=>" 0; f "\/" -10
          
             dict_operator
 
@@ -3649,7 +3717,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         s  [l "error_type" (p error_type)
             l "print_static" (p print_static)
             l "dyn" (p dynamize)
-            l "union" (p2 type_union)
+            l "\/" (p2 type_union)
+            l "=>" (p2 closure_type_create)
             l "split" (p type_split)
             l "box" (p2 type_box)
             l "type_error" (type_lit_lift <| LitString "TypeConstructorError")

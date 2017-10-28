@@ -5,7 +5,7 @@ let option =
     (
     "Option",[],"The Option module.",
     """
-inl Option x = union (type ([Some: x])) (type ([None]))
+inl Option x = (type ([Some: x])) \/ (type ([None]))
 
 inl some x = box (Option x) [Some: x]
 inl none x = box (Option x) [None]
@@ -153,6 +153,15 @@ let core =
     """
 inl fsharp_core = assembly_load."FSharp.Core"
 inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+
+/// Generalizes term casting for curried functions. Used for F# interop involving delegates.
+inl term_cast_curry f tys =
+    inl rec loop vars tys =
+        match tys with
+        | x :: xs -> term_cast (inl x -> loop (x :: vars) xs) x
+        | () -> Tuple.foldr (inl var f -> f var) vars f
+    loop () tys
+
 inl prim_eq = (=)
 // Structural polymorphic equality for every type in the language (apart from functions).
 inl (=) a b =
@@ -168,14 +177,6 @@ inl (=) a b =
         else body (a, b)
     if eq_type a b then a = b
     else error_type ("Trying to compare variables of two different types. Got:",a,b)
-
-/// Generalizes term casting for curried functions. Used for F# interop involving delegates.
-inl term_cast_curry f tys =
-    inl rec loop vars tys =
-        match tys with
-        | x :: xs -> term_cast (inl x -> loop (x :: vars) xs) x
-        | () -> Tuple.foldr (inl var f -> f var) vars f
-    loop () tys
 
 /// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
 /// It is a decent bit more flexible that it too.
@@ -778,6 +779,27 @@ inl init !map_dims dim_ranges f =
 {init}
     """) |> module_
 
+let extern_ =
+    (
+    "Extern",[tuple],"The Extern module.",
+    """
+/// An improvement on the term_cast_curry using the => pattern.
+inl closure_of_template check_range f tys = 
+    inl rec loop vars tys =
+        match tys with
+        | x => xs -> term_cast (inl x -> loop (x :: vars) xs) x
+        | x -> 
+            inl r = Tuple.foldr (inl var f -> f var) vars f 
+            if check_range && eq_type r x then r 
+            else error_type "The tail of the closure does not correspond to the one being casted to."
+    loop () tys
+
+inl closure_of' = closure_of_template false
+inl closure_of = closure_of_template true
+
+{closure_of closure_of'}
+    """) |> module_
+
 let cuda =
     (
     "Cuda",[core;console],"The Cuda module.",
@@ -924,3 +946,4 @@ inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
 
 {ManagedCuda context dim3 run}
     """) |> module_
+
