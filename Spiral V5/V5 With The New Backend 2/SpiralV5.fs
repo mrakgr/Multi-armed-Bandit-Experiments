@@ -1584,8 +1584,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let a = tev d a
             match a with
             | M(layout,env_term, MapTypeModule) as recf -> 
-                let inline opt f env =
-                    let env = Map.fold (fun s k v -> Map.add k (f v) s) d.env env
+                let inline opt open_ env =
+                    let env = Map.fold (fun s k v -> Map.add k (open_ v) s) d.env env
                     tev {d with env = env} b
                 match layout with
                 | None -> opt id env_term
