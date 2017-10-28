@@ -2767,7 +2767,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 (poperator >>=? function
                     | "->" | ":=" | "<-" -> fail "forbidden operator"
                     | orig_op -> 
-                        printfn "orig_op=%s" orig_op
                         let rec calculate on_fail op' = 
                             match dict_operator.TryGetValue op' with
                             | true, (prec,asoc) -> preturn (prec,asoc,fun a b -> 
@@ -2804,7 +2803,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
             let op s = expr_indent poperator s
             let term s = expr_indent expr s
-            tdop op term 0 s
+            tdop op term Int32.MinValue s
 
         let rec expr s = 
             let expressions s = mset expr ^<| tuple ^<| operators ^<| application ^<| expressions expr <| s
