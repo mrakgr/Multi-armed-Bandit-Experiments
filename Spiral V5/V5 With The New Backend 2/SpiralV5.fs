@@ -426,6 +426,14 @@ type AssemblyLoadType =
     | LoadType of Type
     | LoadMap of Map<string,AssemblyLoadType>
 
+let string_to_op =
+    let cases = Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<Op>)
+    let dict = d0()
+    cases |> Array.iter (fun x ->
+        dict.[x.Name] <- Microsoft.FSharp.Reflection.FSharpValue.MakeUnion(x,[||]) :?> Op
+        )
+    dict.TryGetValue
+
 // #Main
 let spiral_peval (Module(N(module_name,_,_,_)) as module_main) = 
     let mutable renaming_time = TimeSpan()
@@ -2185,14 +2193,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | (ThreadIdxX | ThreadIdxY | ThreadIdxZ | BlockIdxX | BlockIdxY | BlockIdxZ | BlockDimX | BlockDimY | BlockDimZ | GridDimX | GridDimY | GridDimZ),[] -> TyOp(op,[],PrimT Int64T)
 
             | x -> failwithf "Missing Op case. %A" x
-
-    let string_to_op =
-        let cases = Microsoft.FSharp.Reflection.FSharpType.GetUnionCases(typeof<Op>)
-        let dict = d0()
-        cases |> Array.iter (fun x ->
-            dict.[x.Name] <- Microsoft.FSharp.Reflection.FSharpValue.MakeUnion(x,[||]) :?> Op
-            )
-        fun x -> dict.TryGetValue x
 
     // #Parsing
     let spiral_parse (Module(N(module_name,_,_,module_code)) & module_) = 

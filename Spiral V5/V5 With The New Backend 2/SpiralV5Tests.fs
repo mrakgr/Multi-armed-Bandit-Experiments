@@ -1015,16 +1015,14 @@ f (packed_stack add) (dyn 3) (dyn 4)
     """
 
 let test88 =
-    "test88",[],"Does the => related stuff work?",
+    "test88",[extern_],"Does the => related stuff work?",
     """
-inl closure_type = (1 => 2)
-()
-//inl add a b = a + b
-//inl clo_add = closure_of add closure_type
-//match clo_add with
-//| a => b ->
-//    print_static (a,b)
-//    clo_add 1 2
+open Extern
+inl closure_type = (int64 => int64 => int64)
+inl add a b = a + b
+inl clo_add = closure_of add closure_type
+match clo_add with
+| (a: int64) => (b: (int64 => int64)) -> clo_add 1 2
     """
 
 
@@ -1882,7 +1880,7 @@ let tests =
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
-    test80;test81;test82;test83;test84;test85;test86;test87
+    test80;test81;test82;test83;test84;test85;test86;test87;test88
     hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7;hacker_rank_8;hacker_rank_9
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
