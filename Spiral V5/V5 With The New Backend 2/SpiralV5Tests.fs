@@ -1913,9 +1913,12 @@ let make_test_path_from_name name =
     Path.Combine(dir,name+".txt")
 
 let cache_test (name,aux,desc,body as m) = File.WriteAllText(make_test_path_from_name name, output_test_to_string m)
-let rewrite_test_cache = function
+let rewrite_test_cache x = 
+    let timer = System.Diagnostics.Stopwatch.StartNew()
+    match x with
     | Some (min, max) -> Array.iter cache_test tests.[min..max]
     | None -> Array.iter cache_test tests
+    printfn "The time it took to run all the tests is: %A" timer.Elapsed
 
 let speed1 =
     "speed1",[parsing;console],"Does the Parsing module work?",
