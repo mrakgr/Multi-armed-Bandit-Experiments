@@ -360,6 +360,7 @@
     <Content Include="V5 With The New Backend 2\TestCache\test82.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test9.txt" />
     <None Include="V5 With The New Backend 2\reflection_v4.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v5.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
