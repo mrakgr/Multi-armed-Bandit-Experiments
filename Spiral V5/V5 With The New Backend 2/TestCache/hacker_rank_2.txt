@@ -196,15 +196,15 @@ and method_8((var_0: ((Union0 []) [])), (var_1: int64), (var_2: string), (var_3:
                 let (var_22: int64) = (var_1 - 1L)
                 let (var_23: int64) = (var_22 + 1L)
                 let (var_24: int64) =
-                    if (0L < var_23) then
-                        var_23
-                    else
+                    if (0L > var_23) then
                         0L
+                    else
+                        var_23
                 let (var_25: int64) =
-                    if (0L < var_23) then
-                        var_23
-                    else
+                    if (0L > var_23) then
                         0L
+                    else
+                        var_23
                 let (var_26: int64) = (var_25 * var_24)
                 let (var_27: (bool [])) = Array.zeroCreate<bool> (System.Convert.ToInt32(var_26))
                 let (var_28: int64) = 0L
@@ -218,25 +218,25 @@ and method_8((var_0: ((Union0 []) [])), (var_1: int64), (var_2: string), (var_3:
                         (var_17 <= var_33)
                     else
                         false
-                if (var_34 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_34 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_35: int64) = (var_33 + 1L)
                 let (var_36: int64) =
-                    if (0L < var_35) then
-                        var_35
-                    else
+                    if (0L > var_35) then
                         0L
+                    else
+                        var_35
                 let (var_37: bool) =
                     if (var_16 >= 0L) then
                         (var_16 <= var_33)
                     else
                         false
-                if (var_37 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_37 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_38: int64) = (var_36 * var_16)
                 let (var_39: int64) = (var_17 + var_38)
                 var_32.[int32 var_39] <- true
@@ -382,10 +382,10 @@ and method_19((var_0: int64), (var_1: int64), (var_2: (bool [])), (var_3: int64)
 and method_25((var_0: EnvHeap4), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: string), (var_6: string), (var_7: string), (var_8: (Union7 ref)), (var_9: (Tuple5 []))): unit =
     let (var_10: int64) = var_9.LongLength
     let (var_11: bool) = (var_10 >= 0L)
-    if (var_11 = false) then
-        (failwith "The input to init needs to be greater or equal than 0.")
-    else
+    if var_11 then
         ()
+    else
+        (failwith "The input to init needs to be greater or equal than 0.")
     let (var_125: ((Tuple5 []) [])) = Array.zeroCreate<(Tuple5 [])> (System.Convert.ToInt32(var_10))
     let (var_126: int64) = 0L
     method_26((var_125: ((Tuple5 []) [])), (var_9: (Tuple5 [])), (var_0: EnvHeap4), (var_1: int64), (var_2: int64), (var_3: int64), (var_4: string), (var_5: string), (var_6: string), (var_7: string), (var_8: (Union7 ref)), (var_10: int64), (var_126: int64))
@@ -489,25 +489,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_17 <= var_23)
                     else
                         false
-                if (var_24 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_24 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_25: int64) = (var_23 + 1L)
                 let (var_26: int64) =
-                    if (0L < var_25) then
-                        var_25
-                    else
+                    if (0L > var_25) then
                         0L
+                    else
+                        var_25
                 let (var_27: bool) =
                     if (var_18 >= 0L) then
                         (var_18 <= var_23)
                     else
                         false
-                if (var_27 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_27 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_28: int64) = (var_26 * var_18)
                 let (var_29: int64) = (var_17 + var_28)
                 let (var_30: bool) = var_22.[int32 var_29]
@@ -532,25 +532,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_17 <= var_34)
                     else
                         false
-                if (var_35 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_35 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_36: int64) = (var_34 + 1L)
                 let (var_37: int64) =
-                    if (0L < var_36) then
-                        var_36
-                    else
+                    if (0L > var_36) then
                         0L
+                    else
+                        var_36
                 let (var_38: bool) =
                     if (var_18 >= 0L) then
                         (var_18 <= var_34)
                     else
                         false
-                if (var_38 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_38 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_39: int64) = (var_37 * var_18)
                 let (var_40: int64) = (var_17 + var_39)
                 var_33.[int32 var_40] <- true
@@ -580,25 +580,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_17 <= var_47)
                     else
                         false
-                if (var_48 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_48 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_49: int64) = (var_47 + 1L)
                 let (var_50: int64) =
-                    if (0L < var_49) then
-                        var_49
-                    else
+                    if (0L > var_49) then
                         0L
+                    else
+                        var_49
                 let (var_51: bool) =
                     if (var_42 >= 0L) then
                         (var_42 <= var_47)
                     else
                         false
-                if (var_51 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_51 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_52: int64) = (var_50 * var_42)
                 let (var_53: int64) = (var_17 + var_52)
                 let (var_54: bool) = var_46.[int32 var_53]
@@ -623,25 +623,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_17 <= var_58)
                     else
                         false
-                if (var_59 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_59 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_60: int64) = (var_58 + 1L)
                 let (var_61: int64) =
-                    if (0L < var_60) then
-                        var_60
-                    else
+                    if (0L > var_60) then
                         0L
+                    else
+                        var_60
                 let (var_62: bool) =
                     if (var_42 >= 0L) then
                         (var_42 <= var_58)
                     else
                         false
-                if (var_62 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_62 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_63: int64) = (var_61 * var_42)
                 let (var_64: int64) = (var_17 + var_63)
                 var_57.[int32 var_64] <- true
@@ -671,25 +671,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_66 <= var_71)
                     else
                         false
-                if (var_72 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_72 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_73: int64) = (var_71 + 1L)
                 let (var_74: int64) =
-                    if (0L < var_73) then
-                        var_73
-                    else
+                    if (0L > var_73) then
                         0L
+                    else
+                        var_73
                 let (var_75: bool) =
                     if (var_16 >= 0L) then
                         (var_16 <= var_71)
                     else
                         false
-                if (var_75 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_75 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_76: int64) = (var_74 * var_16)
                 let (var_77: int64) = (var_66 + var_76)
                 let (var_78: bool) = var_70.[int32 var_77]
@@ -714,25 +714,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_66 <= var_82)
                     else
                         false
-                if (var_83 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_83 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_84: int64) = (var_82 + 1L)
                 let (var_85: int64) =
-                    if (0L < var_84) then
-                        var_84
-                    else
+                    if (0L > var_84) then
                         0L
+                    else
+                        var_84
                 let (var_86: bool) =
                     if (var_16 >= 0L) then
                         (var_16 <= var_82)
                     else
                         false
-                if (var_86 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_86 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_87: int64) = (var_85 * var_16)
                 let (var_88: int64) = (var_66 + var_87)
                 var_81.[int32 var_88] <- true
@@ -762,25 +762,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_90 <= var_95)
                     else
                         false
-                if (var_96 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_96 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_97: int64) = (var_95 + 1L)
                 let (var_98: int64) =
-                    if (0L < var_97) then
-                        var_97
-                    else
+                    if (0L > var_97) then
                         0L
+                    else
+                        var_97
                 let (var_99: bool) =
                     if (var_16 >= 0L) then
                         (var_16 <= var_95)
                     else
                         false
-                if (var_99 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_99 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_100: int64) = (var_98 * var_16)
                 let (var_101: int64) = (var_90 + var_100)
                 let (var_102: bool) = var_94.[int32 var_101]
@@ -805,25 +805,25 @@ and method_26((var_0: ((Tuple5 []) [])), (var_1: (Tuple5 [])), (var_2: EnvHeap4)
                         (var_90 <= var_106)
                     else
                         false
-                if (var_107 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_107 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_108: int64) = (var_106 + 1L)
                 let (var_109: int64) =
-                    if (0L < var_108) then
-                        var_108
-                    else
+                    if (0L > var_108) then
                         0L
+                    else
+                        var_108
                 let (var_110: bool) =
                     if (var_16 >= 0L) then
                         (var_16 <= var_106)
                     else
                         false
-                if (var_110 = false) then
-                    (failwith "Argument out of bounds.")
-                else
+                if var_110 then
                     ()
+                else
+                    (failwith "Argument out of bounds.")
                 let (var_111: int64) = (var_109 * var_16)
                 let (var_112: int64) = (var_90 + var_111)
                 var_105.[int32 var_112] <- true
@@ -998,28 +998,27 @@ and method_18((var_0: ((Union0 []) [])), (var_1: int64), (var_2: int64), (var_3:
     else
         let (var_13: int64) = (var_1 + 1L)
         method_17((var_0: ((Union0 []) [])), (var_2: int64), (var_13: int64), (var_4: int64), (var_5: int64))
-let (var_0: string) = cuda_kernels
-let (var_1: System.IO.Stream) = System.Console.OpenStandardInput()
-let (var_2: System.IO.StreamReader) = System.IO.StreamReader(var_1)
-let (var_3: string) = var_2.ReadToEnd()
-let (var_4: int64) = 0L
-let (var_6: bool) =
-    if (var_4 >= 0L) then
-        let (var_5: int64) = (int64 var_3.Length)
-        (var_4 < var_5)
+let (var_0: System.IO.Stream) = System.Console.OpenStandardInput()
+let (var_1: System.IO.StreamReader) = System.IO.StreamReader(var_0)
+let (var_2: string) = var_1.ReadToEnd()
+let (var_3: int64) = 0L
+let (var_5: bool) =
+    if (var_3 >= 0L) then
+        let (var_4: int64) = (int64 var_2.Length)
+        (var_3 < var_4)
     else
         false
-if var_6 then
-    let (var_7: char) = var_3.[int32 var_4]
-    let (var_8: bool) = ('-' = var_7)
-    let (var_9: int64) = (var_4 + 1L)
-    if var_8 then
-        let (var_10: bool) = false
-        method_5((var_10: bool), (var_3: string), (var_9: int64))
+if var_5 then
+    let (var_6: char) = var_2.[int32 var_3]
+    let (var_7: bool) = ('-' = var_6)
+    let (var_8: int64) = (var_3 + 1L)
+    if var_7 then
+        let (var_9: bool) = false
+        method_5((var_9: bool), (var_2: string), (var_8: int64))
     else
-        let (var_11: bool) = true
-        method_5((var_11: bool), (var_3: string), (var_4: int64))
+        let (var_10: bool) = true
+        method_5((var_10: bool), (var_2: string), (var_3: int64))
 else
-    let (var_12: bool) = true
-    method_5((var_12: bool), (var_3: string), (var_4: int64))
+    let (var_11: bool) = true
+    method_5((var_11: bool), (var_2: string), (var_3: int64))
 

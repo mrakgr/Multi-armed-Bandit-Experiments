@@ -60,9 +60,8 @@ let rec method_0((var_0: int64), (var_1: int64)): int64 =
             method_0((var_0: int64), (var_25: int64))
     else
         -1L
-let (var_0: string) = cuda_kernels
-let (var_1: int64) = System.Int64.MaxValue
-let (var_2: int64) = 1385670L
-let (var_3: int64) = method_0((var_1: int64), (var_2: int64))
-System.Console.WriteLine(var_3)
+let (var_0: int64) = System.Int64.MaxValue
+let (var_1: int64) = 1385670L
+let (var_2: int64) = method_0((var_0: int64), (var_1: int64))
+System.Console.WriteLine(var_2)
 

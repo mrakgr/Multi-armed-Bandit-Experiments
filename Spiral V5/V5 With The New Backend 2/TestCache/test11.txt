@@ -19,13 +19,12 @@ and Tuple1 =
     end
 let rec method_6(): Tuple0 =
     Tuple0(1L, Tuple1(2L, 3L), Tuple1(4L, 5L))
-let (var_0: string) = cuda_kernels
-let (var_1: Tuple0) = method_6()
-let (var_2: int64) = var_1.mem_0
-let (var_3: Tuple1) = var_1.mem_1
-let (var_4: Tuple1) = var_1.mem_2
-let (var_5: int64) = var_3.mem_0
-let (var_6: int64) = var_3.mem_1
-let (var_7: int64) = var_4.mem_0
-let (var_8: int64) = var_4.mem_1
-(var_5 + var_8)
+let (var_0: Tuple0) = method_6()
+let (var_1: int64) = var_0.mem_0
+let (var_2: Tuple1) = var_0.mem_1
+let (var_3: Tuple1) = var_0.mem_2
+let (var_4: int64) = var_2.mem_0
+let (var_5: int64) = var_2.mem_1
+let (var_6: int64) = var_3.mem_0
+let (var_7: int64) = var_3.mem_1
+(var_4 + var_7)

@@ -10,7 +10,6 @@ let rec method_0((var_0: int64), (var_1: int64)): int64 =
         method_0((var_1: int64), (var_0: int64))
     else
         (var_0 + var_1)
-let (var_0: string) = cuda_kernels
-let (var_1: int64) = 1L
-let (var_2: int64) = 2L
-method_0((var_1: int64), (var_2: int64))
+let (var_0: int64) = 1L
+let (var_1: int64) = 2L
+method_0((var_0: int64), (var_1: int64))

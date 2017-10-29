@@ -36,7 +36,6 @@ let rec method_4((var_0: Rec0), (var_1: Rec0)): bool =
                 method_4((var_8: Rec0), (var_11: Rec0))
             else
                 false
-let (var_0: string) = cuda_kernels
+let (var_0: Rec0) = Rec0Case0
 let (var_1: Rec0) = Rec0Case0
-let (var_2: Rec0) = Rec0Case0
-method_4((var_1: Rec0), (var_2: Rec0))
+method_4((var_0: Rec0), (var_1: Rec0))

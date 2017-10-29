@@ -9,6 +9,5 @@ type Tuple0 =
     val mem_0: float
     new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
-let (var_0: string) = cuda_kernels
-let (var_1: float) = -2.200000
-Tuple0(var_1)
+let (var_0: float) = -2.200000
+Tuple0(var_0)

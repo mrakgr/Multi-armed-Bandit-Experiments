@@ -951,16 +951,14 @@ dequeue 4
     """
 
 let test81 =
-    "test81",[core],"Does structural polymorphic equality work?",
+    "test81",[],"Does structural polymorphic equality work?",
     """
-open Core
 {a=1;b=dyn 2;c=dyn 3;d=.qwe} = {a=1;b=2;c=3;d=.qwe}
     """
 
 let test82 =
-    "test82",[core;list],"Does structural polymorphic equality work on recursive datatypes?",
+    "test82",[list],"Does structural polymorphic equality work on recursive datatypes?",
     """
-open Core
 inl a = List.empty int64 |> dyn
 inl b = List.empty int64 |> dyn
 a = b
@@ -992,11 +990,9 @@ else 3
     """
 
 let test86 =
-    "test86",[console;tuple;core],"Does compiling multicast delegates work? Does adding them to a handler work?",
+    "test86",[console;tuple],"Does compiling multicast delegates work? Does adding them to a handler work?",
     """
 open Console
-open Core
-inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
 inl process = system .System.Diagnostics.Process()
 
 term_cast_curry (inl _ x -> writeline (x.get_Data()))
@@ -1551,7 +1547,7 @@ inl mario = pchar 'm' >>% box Cell .Mario
 inl cell = empty <|> princess <|> mario
 
 inl parse_cols n = parse_array {parser=cell; typ=Cell; n} .>> spaces
-inl parse_field n = parse_array {parser=parse_cols n; typ=type (Array.create 0 Cell); n}
+inl parse_field n = parse_array {parser=parse_cols n; typ=type (Array.create Cell 0); n}
 inl parser ret = 
     inm n = parse_int .>> parse_int .>> parse_int
     inm field = parse_field n
@@ -1626,10 +1622,9 @@ run_with_unit_ret (readall()) (parser main)
     """
 
 let hacker_rank_4 =
-    "hacker_rank_4",[core;tuple;array;parsing;console;option],"Game of Stones",
+    "hacker_rank_4",[tuple;array;parsing;console;option],"Game of Stones",
     """
 // https://www.hackerrank.com/challenges/game-of-stones-1
-open Core
 open Parsing
 open Console
 open Loops
@@ -1935,8 +1930,8 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache None //(Some(32,40))
+rewrite_test_cache None //(Some(0,20))
 
-output_test_to_temp test88
-|> printfn "%s"
-|> ignore
+//output_test_to_temp cuda1
+//|> printfn "%s"
+//|> ignore

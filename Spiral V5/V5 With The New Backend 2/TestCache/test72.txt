@@ -12,5 +12,4 @@ type Tuple0 =
     val mem_3: float
     new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
     end
-let (var_0: string) = cuda_kernels
 Tuple0(1L, 2L, 3L, 6.600000)

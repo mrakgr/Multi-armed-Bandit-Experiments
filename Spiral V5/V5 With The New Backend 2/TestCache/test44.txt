@@ -32,5 +32,4 @@ and Tuple3 =
     val mem_3: Tuple2
     new(arg_mem_0, arg_mem_1, arg_mem_2, arg_mem_3) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1; mem_2 = arg_mem_2; mem_3 = arg_mem_3}
     end
-let (var_0: string) = cuda_kernels
 Tuple3(Tuple0("is_var", true), 2.200000, "a", Tuple2("is_var", Tuple1(1L, 2L, 3L, 4L)))

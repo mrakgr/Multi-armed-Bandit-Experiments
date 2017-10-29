@@ -10,7 +10,6 @@ type Tuple0 =
     val mem_1: char
     new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
     end
-let (var_0: string) = cuda_kernels
-let (var_1: string) = System.Console.ReadLine()
-let (var_2: char) = var_1.[int32 0L]
-Tuple0('q', var_2)
+let (var_0: string) = System.Console.ReadLine()
+let (var_1: char) = var_0.[int32 0L]
+Tuple0('q', var_1)

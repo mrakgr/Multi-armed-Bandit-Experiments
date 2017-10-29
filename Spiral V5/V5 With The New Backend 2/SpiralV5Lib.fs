@@ -255,7 +255,7 @@ inl concat ar =
 inl forall f ar = for' {from=0; near_to=Array.length ar; state=true; body = inl {next state i} -> f (ar i) && next state}
 inl exists f ar = for' {from=0; near_to=Array.length ar; state=false; body = inl {next state i} -> f (ar i) || next state}
 
-{create=Array.create; length=Array.length; length empty singleton foldl foldr init map filter append concat forall exists}
+{create=Array.create; length=Array.length; empty singleton foldl foldr init map filter append concat forall exists}
     """) |> module_
 
 let list =
@@ -726,18 +726,58 @@ let extern_ =
     (
     "Extern",[tuple],"The Extern module.",
     """
+/// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
+/// It is a decent bit more flexible that it too.
+/// TODO: Move this somewhere better. There needs will be a String module at some point.
+inl rec string_concat sep l =
+    inl StringBuilder = mscorlib.System.Text.StringBuilder
+    inl ap s = function
+        | x : string when lit_is x && x = "" -> s
+        | _ :: _ as l -> string_concat sep l
+        | x -> s.Append x
+    inl ap_sep s x = ap (ap s sep) x
 
-{closure_of closure_of'}
+    inl len =
+        inl rec len = 
+            inl f (static_len, dyn_len, num_sep as s) = function
+                | x : string ->
+                    if lit_is x then (static_len + string_length x, dyn_len, num_sep+1)
+                    else (static_len, dyn_len + string_length x, num_sep+1)
+                | _ :: _ as l -> len s l
+                | x -> (static_len+6, dyn_len, num_sep+1)
+            Tuple.foldl f
+        inl static_len, dyn_len, num_sep = len (0,0,-1) l
+        static_len + num_sep * string_length sep + dyn_len
+        |> unsafe_convert int32
+
+    Tuple.foldl ap_sep (ap (StringBuilder len) (Tuple.head l)) (Tuple.tail l)
+    <| .ToString <| ()
+
+inl closure_of_template check_range f tys = 
+    inl rec loop vars tys =
+        match tys with
+        | x => xs -> term_cast (inl x -> loop (x :: vars) xs) x
+        | x -> 
+            inl r = Tuple.foldr (inl var f -> f var) vars f 
+            if check_range && eq_type r x = false then error_type "The tail of the closure does not correspond to the one being casted to."
+            r
+    loop () tys
+
+inl closure_of' = closure_of_template false
+inl closure_of = closure_of_template true
+
+{string_concat closure_of closure_of'}
     """) |> module_
 
 let cuda =
     (
-    "Cuda",[console],"The Cuda module.",
+    "Cuda",[console;extern_],"The Cuda module.",
     """
+open Extern
 open Console
 
 inl cuda_kernels = !CudaKernels()
-inl join_point_entry_cuda x = !JoinPointEntryCuda(x()))
+inl join_point_entry_cuda x = !JoinPointEntryCuda(x())
 
 inl __threadIdxX() = !ThreadIdxX()
 inl __threadIdxY() = !ThreadIdxY()
@@ -795,7 +835,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     procStartInfo.set_FileName nvcc_router_path
     inl process = system .System.Diagnostics.Process()
     process.set_StartInfo procStartInfo
-    inl print_to_standard_output = term_cast_curry (inl _ args -> args.get_Data() |> writeline)
+    inl print_to_standard_output = closure_of (inl _ args -> args.get_Data() |> writeline)
     inl add_handler event =
         system .System.Diagnostics.DataReceivedEventHandler print_to_standard_output
         |> event_add_handler process event
@@ -851,7 +891,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
 
 inl current_directory = Environment.get_CurrentDirectory()
 inl modules = compile_kernel_using_nvcc_bat_router current_directory
-writeline (Core.string_concat "" ("Compiled the kernels into the following directory: ", current_directory))
+writeline (string_concat "" ("Compiled the kernels into the following directory: ", current_directory))
 
 inl dim3 = function
     | {x y z} as m -> m

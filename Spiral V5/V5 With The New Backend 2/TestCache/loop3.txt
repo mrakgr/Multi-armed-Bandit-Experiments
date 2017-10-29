@@ -4,6 +4,5 @@ extern "C" {
 }
 """
 
-let (var_0: string) = cuda_kernels
 System.Console.WriteLine(14L)
 

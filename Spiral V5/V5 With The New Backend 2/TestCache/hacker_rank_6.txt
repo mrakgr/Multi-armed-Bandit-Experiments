@@ -430,19 +430,19 @@ and method_13((var_0: EnvHeap1), (var_1: int64), (var_2: int64), (var_3: int64),
             (var_3 <= 1L)
         else
             false
-    if (var_12 = false) then
-        (failwith "Argument out of bounds.")
-    else
+    if var_12 then
         ()
+    else
+        (failwith "Argument out of bounds.")
     let (var_13: bool) =
         if (var_7 >= 0L) then
             (var_7 <= 14L)
         else
             false
-    if (var_13 = false) then
-        (failwith "Argument out of bounds.")
-    else
+    if var_13 then
         ()
+    else
+        (failwith "Argument out of bounds.")
     let (var_14: int64) = (2L * var_7)
     let (var_15: int64) = (var_3 + var_14)
     let (var_16: bool) =
@@ -450,10 +450,10 @@ and method_13((var_0: EnvHeap1), (var_1: int64), (var_2: int64), (var_3: int64),
             (var_10 <= 14L)
         else
             false
-    if (var_16 = false) then
-        (failwith "Argument out of bounds.")
-    else
+    if var_16 then
         ()
+    else
+        (failwith "Argument out of bounds.")
     let (var_17: int64) = (30L * var_10)
     let (var_18: int64) = (var_15 + var_17)
     let (var_19: Union0) = var_11.[int32 var_18]
@@ -556,57 +556,56 @@ and method_13((var_0: EnvHeap1), (var_1: int64), (var_2: int64), (var_3: int64),
                 (var_3 <= 1L)
             else
                 false
-        if (var_46 = false) then
-            (failwith "Argument out of bounds.")
-        else
+        if var_46 then
             ()
+        else
+            (failwith "Argument out of bounds.")
         let (var_47: bool) =
             if (var_7 >= 0L) then
                 (var_7 <= 14L)
             else
                 false
-        if (var_47 = false) then
-            (failwith "Argument out of bounds.")
-        else
+        if var_47 then
             ()
+        else
+            (failwith "Argument out of bounds.")
         let (var_48: bool) =
             if (var_10 >= 0L) then
                 (var_10 <= 14L)
             else
                 false
-        if (var_48 = false) then
-            (failwith "Argument out of bounds.")
-        else
+        if var_48 then
             ()
+        else
+            (failwith "Argument out of bounds.")
         var_11.[int32 var_18] <- (Union0Case0(Tuple2(var_45)))
         var_45
-let (var_0: string) = cuda_kernels
-let (var_1: (Union0 [])) = Array.zeroCreate<Union0> (System.Convert.ToInt32(450L))
+let (var_0: (Union0 [])) = Array.zeroCreate<Union0> (System.Convert.ToInt32(450L))
+let (var_1: int64) = 0L
 let (var_2: int64) = 0L
-let (var_3: int64) = 0L
-let (var_4: int64) = method_0((var_1: (Union0 [])), (var_3: int64), (var_2: int64))
-let (var_5: EnvHeap1) = ({mem_0 = (var_1: (Union0 []))} : EnvHeap1)
-let (var_6: System.IO.Stream) = System.Console.OpenStandardInput()
-let (var_7: System.IO.StreamReader) = System.IO.StreamReader(var_6)
-let (var_8: string) = var_7.ReadToEnd()
-let (var_9: int64) = 0L
-let (var_11: bool) =
-    if (var_9 >= 0L) then
-        let (var_10: int64) = (int64 var_8.Length)
-        (var_9 < var_10)
+let (var_3: int64) = method_0((var_0: (Union0 [])), (var_2: int64), (var_1: int64))
+let (var_4: EnvHeap1) = ({mem_0 = (var_0: (Union0 []))} : EnvHeap1)
+let (var_5: System.IO.Stream) = System.Console.OpenStandardInput()
+let (var_6: System.IO.StreamReader) = System.IO.StreamReader(var_5)
+let (var_7: string) = var_6.ReadToEnd()
+let (var_8: int64) = 0L
+let (var_10: bool) =
+    if (var_8 >= 0L) then
+        let (var_9: int64) = (int64 var_7.Length)
+        (var_8 < var_9)
     else
         false
-if var_11 then
-    let (var_12: char) = var_8.[int32 var_9]
-    let (var_13: bool) = ('-' = var_12)
-    let (var_14: int64) = (var_9 + 1L)
-    if var_13 then
-        let (var_15: bool) = false
-        method_3((var_15: bool), (var_5: EnvHeap1), (var_8: string), (var_14: int64))
+if var_10 then
+    let (var_11: char) = var_7.[int32 var_8]
+    let (var_12: bool) = ('-' = var_11)
+    let (var_13: int64) = (var_8 + 1L)
+    if var_12 then
+        let (var_14: bool) = false
+        method_3((var_14: bool), (var_4: EnvHeap1), (var_7: string), (var_13: int64))
     else
-        let (var_16: bool) = true
-        method_3((var_16: bool), (var_5: EnvHeap1), (var_8: string), (var_9: int64))
+        let (var_15: bool) = true
+        method_3((var_15: bool), (var_4: EnvHeap1), (var_7: string), (var_8: int64))
 else
-    let (var_17: bool) = true
-    method_3((var_17: bool), (var_5: EnvHeap1), (var_8: string), (var_9: int64))
+    let (var_16: bool) = true
+    method_3((var_16: bool), (var_4: EnvHeap1), (var_7: string), (var_8: int64))
 

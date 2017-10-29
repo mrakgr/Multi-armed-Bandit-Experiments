@@ -521,8 +521,8 @@ inl (||) a b = !Or(a,b)
 inl (<<<) a b = !ShiftLeft(a,b)
 inl (>>>) a b = !ShiftRight(a,b)
 inl Tuple = {
-    length = !ListLength(x)
-    index = !ListIndex(v,i)
+    length = inl x -> !ListLength(x)
+    index = inl v i -> !ListIndex(v,i)
     }
 
 inl fst x :: _ = x
@@ -531,7 +531,7 @@ inl snd _ :: x :: _ = x
 inl not x = x = false
 inl string_length x = !StringLength(x)
 inl lit_is x = !LitIs(x)
-let box_is x = !BoxIs(x)
+inl box_is x = !BoxIs(x)
 inl failwith typ msg = !FailWith(typ,msg)
 inl assert c msg = if c then () else failwith unit msg
 inl max a b = if a > b then a else b
@@ -559,52 +559,12 @@ inl (=) a b =
     if eq_type a b then a = b
     else error_type ("Trying to compare variables of two different types. Got:",a,b)
 
-/// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
-/// It is a decent bit more flexible that it too.
-/// TODO: Move this somewhere better. There needs will be a String module at some point.
-inl rec string_concat sep l =
-    inl StringBuilder = mscorlib.System.Text.StringBuilder
-    inl ap s = function
-        | x : string when lit_is x && x = "" -> s
-        | _ :: _ as l -> string_concat sep l
-        | x -> s.Append x
-    inl ap_sep s x = ap (ap s sep) x
-
-    inl len = ()
-//        inl rec len = 
-//            inl f (static_len, dyn_len, num_sep as s) = function
-//                | x : string ->
-//                    if lit_is x then (static_len + string_length x, dyn_len, num_sep+1)
-//                    else (static_len, dyn_len + string_length x, num_sep+1)
-//                | _ :: _ as l -> len s l
-//                | x -> (static_len+6, dyn_len, num_sep+1)
-//            Tuple.foldl f
-//        inl static_len, dyn_len, num_sep = len (0,0,-1) l
-//        static_len + num_sep * string_length sep + dyn_len
-//        |> unsafe_convert int32
-
-    Tuple.foldl ap_sep (ap (StringBuilder len) (Tuple.head l)) (Tuple.tail l)
-    <| .ToString <| ()
-
-inl closure_of_template check_range f tys = 
-    inl rec loop vars tys =
-        match tys with
-        | x => xs -> term_cast (inl x -> loop (x :: vars) xs) x
-        | x -> 
-            inl r = Tuple.foldr (inl var f -> f var) vars f 
-            if check_range && eq_type r x = false then error_type "The tail of the closure does not correspond to the one being casted to."
-            r
-    loop () tys
-
-inl closure_of' = closure_of_template false
-inl closure_of = closure_of_template true
-
 {type_lit_lift assembly_load assembly_load_file mscorlib fsharp_core system error_type print_static dyn (\/) (=>)
  split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
  string_length lit_is box_is failwith assert max min eq_type module_values uncased_variable_is event_add_handler (:>)
- (:?>) (=) closure_of' closure_of string_concat}
+ (:?>) (=)}
     """) |> module_
 
 // #Main
@@ -660,7 +620,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let litt x = LitT x
     let funt (x, core) = MapT (x, core)
     let uniont x = UnionT x
-    let closuret x = ClosureT x
+    let closuret a b = ClosureT (a,b)
     let arrayt x = ArrayT x
     let dotnet_typet x = nodify_dotnet_type_runtimet x |> DotNetTypeT
 
@@ -1126,7 +1086,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         elif x.IsByRef then arrayt(DotNetReference, dotnet_type_to_ty (x.GetElementType())) // Incorrect, but useful
         elif FSharp.Reflection.FSharpType.IsFunction x then 
             let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
-            closuret(dotnet_type_to_ty a, dotnet_type_to_ty b)
+            closuret(dotnet_type_to_ty a) (dotnet_type_to_ty b)
         else dotnet_typet x
 
     let rec dotnet_ty_to_type (x: Ty) =
@@ -1359,7 +1319,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let arg_ty = get_type arg
             let memo_type renamer = JoinPointClosure <| renamer_apply_pool renamer fv
             join_point_helper memo_type (fun (memo_key,args,ret_ty) -> 
-                ty_join_point memo_key (JoinPointClosure fv,args) (closuret(arg_ty,ret_ty))) d x
+                ty_join_point memo_key (JoinPointClosure fv,args) (closuret arg_ty ret_ty)) d x
 
         let join_point_type d x = 
             let memo_type _ = JoinPointType
@@ -1411,7 +1371,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let closure_type_create d a b =
             let a = tev_seq d a
             let b = tev_seq d b
-            closuret (get_type a, get_type b) |> tyt
+            closuret (get_type a) (get_type b) |> tyt
 
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
@@ -1638,24 +1598,22 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | _ when system_type.BaseType = typeof<System.MulticastDelegate> -> // special case for delegate construction
                         match dotnet_type with
                         | TyT _  ->
-                            let delegate_constructor_arguments =
-                                system_type.GetMethod("Invoke").GetParameters()
-                                |> Array.map (fun x -> x.ParameterType |> dotnet_type_to_ty)
-                                |> Array.toList
-                            let rec check = function
-                                | arg :: args, ClosureT(x,xs) ->
-                                    if arg = x then check (args,xs)
-                                    else false
-                                | [], t ->
-                                    if is_unit t = false then on_type_er d.trace "Expected unit to be the return type of a delegate."
-                                    true
-                                | _ -> false
-                            let dcon_args = List.map tyt delegate_constructor_arguments |> tyvv
-                            match apply d args dcon_args with
-                            | TyType(ClosureT _ & clo_ty) & clo ->
-                                if check (delegate_constructor_arguments,clo_ty) then TyOp(DotNetTypeConstruct,[clo],spiral_ty)
-                                else on_type_er d.trace <| sprintf "The arguments for delegate construction do not match. Need: %A\n Got: %A" dcon_args clo
-                            | _ -> on_type_er d.trace "Expected a closure to be passed into the delegate constructor."
+                            let handler_types =
+                                let meth = system_type.GetMethod("Invoke")
+                                let return_type = 
+                                    meth.ReturnType
+                                    |> dotnet_type_to_ty
+                                let pars =
+                                    meth.GetParameters()
+                                    |> Array.toList
+                                    |> List.map (fun x -> x.ParameterType |> dotnet_type_to_ty)
+                                pars @ [return_type]
+                                |> List.reduceBack closuret
+                                |> tyt
+
+                            let clo = apply d args handler_types
+                            TyOp(DotNetTypeConstruct,[clo],spiral_ty)
+
                         | _ -> on_type_er d.trace "Expected a .NET runtime type instead of an instance."
                     | TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
                         let method_find (ty: Type) method_name (args: Type[]) = 
@@ -2839,11 +2797,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let case_cuda expr = keywordString "cuda" >>. expr |>> inl' ["threadIdx"; "blockIdx"; "blockDim";"gridDim"]
 
         let case_inbuilt_op expr =
-            (operatorChar '!' >>. var_name) .>>. (rounds expr)
+            (operatorChar '!' >>. var_name) .>>. (rounds (expr <|>% B))
             >>= fun (a, b) ->
-                let l = match b with | VV (N l) -> l | x -> [x]
+                let rec loop = function
+                    | ExprPos x -> loop x.Expression
+                    | VV (N l) -> l 
+                    | x -> [x]
                 match string_to_op a with
-                | true, op' -> op(op',l) |> preturn
+                | true, op' -> op(op',loop b) |> preturn
                 | false, _ -> failFatally <| sprintf "%s not found among the inbuilt Ops." a
 
         let rec expressions expr s =
@@ -3914,7 +3875,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         printfn "Time for parse: %A" watch.Elapsed
         watch.Restart()
         let d = data_empty()
-        let input = module_open (v "Core") body |> expr_prepass |> snd
+        let input = body |> expr_prepass |> snd
         printfn "Time for prepass: %A" watch.Elapsed
         watch.Restart()
         try

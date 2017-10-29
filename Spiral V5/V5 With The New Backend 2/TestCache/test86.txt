@@ -1,16 +1,16 @@
-module SpiralExample
-let cuda_kernels = """
-extern "C" {
-}
-"""
-
-let rec method_0 ((var_0: System.Object)): (System.Diagnostics.DataReceivedEventArgs -> unit) =
-    method_1((var_0: System.Object))
-and method_1 ((var_1: System.Object)) ((var_0: System.Diagnostics.DataReceivedEventArgs)): unit =
-    let (var_2: string) = var_0.get_Data()
-    System.Console.WriteLine(var_2)
-let (var_0: string) = cuda_kernels
-let (var_1: System.Diagnostics.Process) = System.Diagnostics.Process()
-let (var_3: (System.Object -> (System.Diagnostics.DataReceivedEventArgs -> unit))) = method_0
-let (var_4: System.Diagnostics.DataReceivedEventHandler) = System.Diagnostics.DataReceivedEventHandler(var_3)
-var_1.ErrorDataReceived.AddHandler(var_4)
+Variable "term_cast_curry" not bound.
+Error trace on line: 2, column: 1 in file "test86".
+open Console
+^
+Error trace on line: 3, column: 1 in file "test86".
+inl process = system .System.Diagnostics.Process()
+^
+Error trace on line: 5, column: 1 in file "test86".
+term_cast_curry (inl _ x -> writeline (x.get_Data()))
+^
+Error trace on line: 7, column: 1 in file "test86".
+|> event_add_handler process .ErrorDataReceived
+^
+Error trace on line: 6, column: 1 in file "test86".
+|> system .System.Diagnostics.DataReceivedEventHandler
+^

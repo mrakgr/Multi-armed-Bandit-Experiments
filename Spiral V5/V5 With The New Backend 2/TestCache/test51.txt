@@ -40,31 +40,30 @@ and method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_3: i
         method_3((var_0: (int64 [])), (var_1: (int64 [])), (var_2: int64), (var_5: int64))
     else
         ()
-let (var_0: string) = cuda_kernels
-let (var_1: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(16L))
-let (var_2: int64) = 0L
-method_0((var_1: (int64 [])), (var_2: int64))
-let (var_3: int64) = var_1.LongLength
-let (var_4: bool) = (var_3 >= 0L)
-if (var_4 = false) then
-    (failwith "The input to init needs to be greater or equal than 0.")
-else
+let (var_0: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(16L))
+let (var_1: int64) = 0L
+method_0((var_0: (int64 [])), (var_1: int64))
+let (var_2: int64) = var_0.LongLength
+let (var_3: bool) = (var_2 >= 0L)
+if var_3 then
     ()
-let (var_6: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_3))
-let (var_7: int64) = 0L
-method_1((var_6: (int64 [])), (var_1: (int64 [])), (var_3: int64), (var_7: int64))
-let (var_8: int64) = var_6.LongLength
-let (var_9: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_8))
-let (var_10: int64) = 0L
-let (var_11: int64) = var_6.LongLength
-let (var_12: int64) = 0L
-let (var_13: int64) = method_2((var_6: (int64 [])), (var_9: (int64 [])), (var_11: int64), (var_12: int64), (var_10: int64))
-let (var_14: bool) = (var_13 >= 0L)
-if (var_14 = false) then
-    (failwith "The input to init needs to be greater or equal than 0.")
 else
+    (failwith "The input to init needs to be greater or equal than 0.")
+let (var_5: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_2))
+let (var_6: int64) = 0L
+method_1((var_5: (int64 [])), (var_0: (int64 [])), (var_2: int64), (var_6: int64))
+let (var_7: int64) = var_5.LongLength
+let (var_8: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_7))
+let (var_9: int64) = 0L
+let (var_10: int64) = var_5.LongLength
+let (var_11: int64) = 0L
+let (var_12: int64) = method_2((var_5: (int64 [])), (var_8: (int64 [])), (var_10: int64), (var_11: int64), (var_9: int64))
+let (var_13: bool) = (var_12 >= 0L)
+if var_13 then
     ()
-let (var_16: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_13))
-let (var_17: int64) = 0L
-method_3((var_16: (int64 [])), (var_9: (int64 [])), (var_13: int64), (var_17: int64))
-var_16
+else
+    (failwith "The input to init needs to be greater or equal than 0.")
+let (var_15: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_12))
+let (var_16: int64) = 0L
+method_3((var_15: (int64 [])), (var_8: (int64 [])), (var_12: int64), (var_16: int64))
+var_15

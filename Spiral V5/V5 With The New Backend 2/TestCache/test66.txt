@@ -40,8 +40,7 @@ and method_9((var_0: Rec0), (var_1: Rec0)): Rec0 =
         let (var_4: Rec0) = var_2.mem_1
         let (var_5: Rec0) = method_9((var_4: Rec0), (var_1: Rec0))
         (Rec0Case1(Tuple1(var_3, var_5)))
-let (var_0: string) = cuda_kernels
-let (var_1: Rec0) = (Rec0Case1(Tuple1(1L, (Rec0Case1(Tuple1(2L, (Rec0Case1(Tuple1(3L, Rec0Case0)))))))))
-let (var_2: Rec0) = (Rec0Case1(Tuple1(4L, (Rec0Case1(Tuple1(5L, (Rec0Case1(Tuple1(6L, Rec0Case0)))))))))
-let (var_3: Rec2) = (Rec2Case1(Tuple3(var_1, (Rec2Case1(Tuple3(var_2, Rec2Case0))))))
-method_8((var_3: Rec2))
+let (var_0: Rec0) = (Rec0Case1(Tuple1(1L, (Rec0Case1(Tuple1(2L, (Rec0Case1(Tuple1(3L, Rec0Case0)))))))))
+let (var_1: Rec0) = (Rec0Case1(Tuple1(4L, (Rec0Case1(Tuple1(5L, (Rec0Case1(Tuple1(6L, Rec0Case0)))))))))
+let (var_2: Rec2) = (Rec2Case1(Tuple3(var_0, (Rec2Case1(Tuple3(var_1, Rec2Case0))))))
+method_8((var_2: Rec2))

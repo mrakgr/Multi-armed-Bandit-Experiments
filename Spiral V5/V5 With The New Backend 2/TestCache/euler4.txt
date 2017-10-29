@@ -77,11 +77,10 @@ and method_3((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): En
         method_3((var_0: int64), (var_1: int64), (var_12: int64), (var_11: int64))
     else
         (Env0(var_3))
-let (var_0: string) = cuda_kernels
-let (var_1: int64) = 100L
-let (var_2: int64) = 999L
-let (var_3: int64) = 0L
-let (var_4: Env0) = method_0((var_2: int64), (var_1: int64), (var_3: int64))
-let (var_5: int64) = var_4.mem_0
-System.Console.WriteLine(var_5)
+let (var_0: int64) = 100L
+let (var_1: int64) = 999L
+let (var_2: int64) = 0L
+let (var_3: Env0) = method_0((var_1: int64), (var_0: int64), (var_2: int64))
+let (var_4: int64) = var_3.mem_0
+System.Console.WriteLine(var_4)
 
