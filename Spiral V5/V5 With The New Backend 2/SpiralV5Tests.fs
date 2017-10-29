@@ -1933,7 +1933,7 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache None //(Some(0,20))
+//rewrite_test_cache None //(Some(0,20))
 
 //output_test_to_temp cuda1
 //|> printfn "%s"
