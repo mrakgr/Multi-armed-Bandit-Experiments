@@ -8,6 +8,6 @@ inl b = dyn 2
 Error trace on line: 4, column: 9 in file "test60".
 inl c = dyn 3
         ^
-Error trace on line: 12, column: 13 in file "Core".
+Error trace on line: 10, column: 13 in file "Core".
 inl dyn x = !Dynamize(x)
             ^

@@ -444,8 +444,6 @@ inl assembly_load x = !DotNetAssemblyLoad(x)
 inl assembly_load_file x = !DotNetAssemblyLoadFile(x)
 
 inl mscorlib = assembly_load."mscorlib"
-inl fsharp_core = assembly_load."FSharp.Core"
-inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
 
 inl error_type x = !ErrorType(x)
 inl print_static x = !PrintStatic(x)
@@ -559,7 +557,7 @@ inl (=) a b =
     if eq_type a b then a = b
     else error_type ("Trying to compare variables of two different types. Got:",a,b)
 
-{type_lit_lift assembly_load assembly_load_file mscorlib fsharp_core system error_type print_static dyn (\/) (=>)
+{type_lit_lift assembly_load assembly_load_file mscorlib error_type print_static dyn (\/) (=>)
  split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
@@ -613,8 +611,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | RecT x -> Some rect_dict.[x]
         | _ -> None
     let nodify_dotnet_type_runtimet = nodify <| d0()
-    let nodify_dotnet_type_instancet = nodify <| d0()
-    let nodify_dotnet_assemblyt = nodify <| d0()
 
     let vvt x = ListT x
     let litt x = LitT x
@@ -647,7 +643,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let inl x y = (x,y) |> func
     let inl_pat x y = (PatClauses([x,y])) |> pattern
     let ap x y = (Apply,[x;y]) |> op
-    let term_cast a b = (TermCast,[a;b]) |> op
     let lp v b e = ap (inl_pat v e) b
     let inmp v' b e = ap (ap (v ">>=") b) (inl_pat v' e)
     let l v b e = ap (inl v e) b
@@ -661,14 +656,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     
     let join_point_entry_method y = (JoinPointEntryMethod,[y]) |> op
     let join_point_entry_type y = (JoinPointEntryType,[y]) |> op
-    let meth x y = inl x (join_point_entry_method y)
 
-    let module_create l = (ModuleCreate,[l]) |> op
     let module_open a b = (ModuleOpen,[a;b]) |> op
-
-    let cons a b = (ListCons,[a;b]) |> op
-
-    let s l fin = List.foldBack (fun x rest -> x rest) l fin
 
     let rec ap' f l = List.fold ap f l
 
@@ -678,11 +667,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let tuple_slice_from v i = (ListSliceFrom,[v; lit_int i]) |> op
     let tuple_is v = (ListIs,[v]) |> op
 
-    let error_type x = (ErrorType,[x]) |> op
-    let print_static x = (PrintStatic,[x]) |> op
     let print_env x = (PrintEnv,[x]) |> op
     let print_expr x = (PrintExpr,[x]) |> op
-    let dynamize x = (Dynamize,[x]) |> op
 
     let module_is x = op (ModuleIs,[x])
     let module_has_member a b = op (ModuleHasMember,[a;b])
@@ -695,7 +681,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let lt a b = binop LT a b
     let gte a b = binop GTE a b
 
-    let closure_type_create a b = op(ClosureTypeCreate,[a;b])
     let closure_is x = op(ClosureIs,[x])
     let closure_dom x = op(ClosureDomain,[x])
     let closure_range x = op(ClosureRange,[x])
@@ -711,7 +696,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let type_create a = op(TypeCreate,[a])
     let type_get a = op(TypeGet,[a])
     let type_union a b = op(TypeUnion,[a;b])
-    let type_split a = op(TypeSplit,[a])
     let type_box a b = op(TypeBox,[a;b])
 
     // Aux outer functions
@@ -986,9 +970,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let closure = cp (closure_dom arg) a range on_fail
                 if_static (closure_is arg) closure on_fail
                     
-                    
-
-
         let pattern_compile_def_on_succ = op(ErrorPatClause,[])
         let pattern_compile_def_on_fail = op(ErrorPatMiss,[arg])
         pattern_compile arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail

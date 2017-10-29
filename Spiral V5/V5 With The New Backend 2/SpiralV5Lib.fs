@@ -793,6 +793,9 @@ inl __gridDimX() = !GridDimX()
 inl __gridDimY() = !GridDimY()
 inl __gridDimZ() = !GridDimZ()
 
+inl fsharp_core = assembly_load."FSharp.Core"
+inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+
 inl ops = fsharp_core.Microsoft.FSharp.Core.Operators
 inl Environment = mscorlib.System.Environment
 
