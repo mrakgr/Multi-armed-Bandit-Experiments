@@ -1,16 +1,1 @@
-module SpiralExample
-let cuda_kernels = """
-extern "C" {
-}
-"""
-
-type Union0 =
-    | Union0Case0 of int64
-    | Union0Case1 of float
-let (var_0: string) = cuda_kernels
-let (var_1: bool) = true
-if var_1 then
-    (Union0Case0(0L))
-else
-    (Union0Case1(0.000000))
-
+Variable "Core" not bound.

@@ -43,7 +43,11 @@ let (|S|) (x: Node<_>) = x.Symbol
 type ModuleName = string
 type ModuleCode = string
 type ModuleDescription = string
-type Module = Module of Node<ModuleName * Module list * ModuleDescription * ModuleCode>
+type Macro = string
+type Module = ModuleName * ModularType list * ModuleDescription * ModuleCode
+and ModularType =
+    | ModularModule of Node<Module>
+    | ModularMacro of string * Macro
 
 type PosKey = Module * int64 * int64
 
@@ -58,7 +62,7 @@ let inline memoize (memo_dict: Dictionary<_,_>) k f =
 
 let nodify (dict: Dictionary<_,_>) x = memoize dict x (fun () -> Node(x,dict.Count))
 let nodify_module = nodify <| d0()
-let module_ x = nodify_module x |> Module
+let module_ x = nodify_module x |> ModularModule
 
 type Pos<'a when 'a: equality and 'a: comparison>(pos:PosKey, expr:'a) = 
     member x.Expression = expr
@@ -436,7 +440,7 @@ let string_to_op =
     dict.TryGetValue
 
 // #Main
-let spiral_peval (Module(N(module_name,_,_,_)) as module_main) = 
+let spiral_peval ((module_name,_,_,_) as module_main) = 
     let mutable renaming_time = TimeSpan()
     // #Smart constructors
     let memoized_methods: MemoDict = d0()
@@ -2200,7 +2204,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | x -> failwithf "Missing Op case. %A" x
 
     // #Parsing
-    let spiral_parse (Module(N(module_name,_,_,module_code)) & module_) = 
+    let spiral_parse (module_name,module_code) = 
         let pos' (s: CharStream<_>) = module_, s.Line, s.Column
         let pos expr (s: CharStream<_>) = (expr |>> expr_pos (pos' s)) s
 
@@ -3711,26 +3715,28 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         cse_env = ref Map.empty
         }
 
-    let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =
+    let rec parse_modules ((main_name,main_auxes,_,main_code) as module_main) on_fail ret =
         let h = h0()
 
-        let inline p x ret =
+        let inline spiral_parse (module_name,module_code as x) ret =
             match spiral_parse x with
             | Success(r,_,_) -> ret r
             | Failure(er,_,_) -> on_fail er
 
         let rec loop xs ret =
             match xs with
-            | (x & Module(N(name,auxes,_,_))) :: xs ->
+            | (x & ModularModule(N(name,auxes,_,code))) :: xs ->
                 if h.Add x then
                     loop auxes <| fun auxes ->
-                        p x <| fun x ->
+                        spiral_parse (name,code) <| fun x ->
                             loop xs <| fun xs ->
                                 ret (auxes << l name x << xs)
                 else loop xs ret
+            | ModularMacro(name,code) ->
+                
             | [] -> ret id
 
-        loop module_auxes (fun r -> p module_main (r >> ret))
+        loop main_auxes (fun r -> spiral_parse (main_name,main_code) (r >> ret))
 
     let watch = System.Diagnostics.Stopwatch.StartNew()
     parse_modules module_main Fail <| fun body -> 
@@ -3738,7 +3744,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         printfn "Time for parse: %A" watch.Elapsed
         watch.Restart()
         let d = data_empty()
-        let input = module_open (v "Core") body |> expr_prepass |> snd
+        let input = body |> expr_prepass |> snd
         printfn "Time for prepass: %A" watch.Elapsed
         watch.Restart()
         try

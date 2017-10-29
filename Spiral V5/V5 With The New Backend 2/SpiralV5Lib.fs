@@ -1,9 +1,7 @@
 ﻿module Spiral.Lib
 open Main
 
-let core =
-    (
-    "Core",[],"The Core module.",
+let core x =
     """
 inl type_lit_lift x = !TypeLitCreate(x)
 inl assembly_load x = !DotNetAssemblyLoad(x)
@@ -164,16 +162,7 @@ inl closure_of_template check_range f tys =
 
 inl closure_of' = closure_of_template false
 inl closure_of = closure_of_template true
-
-{type_lit_lift assembly_load assembly_load_file mscorlib fsharp_core system error_type print_static dyn (\/) (=>)
- split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
- string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
- (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
- string_length lit_is box_is failwith assert max min eq_type module_values uncased_variable_is event_add_handler (:>)
- (:?>) (=) closure_of' closure_of string_concat}
-    """) |> module_
-
-let module_ (a,l,b,c) = module_ (a,core::l,b,c)
+""" + x
 
 let option =
     (
