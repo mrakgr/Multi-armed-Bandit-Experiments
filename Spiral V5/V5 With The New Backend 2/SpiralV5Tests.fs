@@ -1,6 +1,6 @@
 ﻿module Spiral.Tests
-open Lib
 open Main
+open Lib
 
 let test1 = 
     "test1",[],"Does it run?",
@@ -267,11 +267,11 @@ inl a = ref <| term_cast (inl a, b -> a + b) (int64,int64)
 a := term_cast (inl a, b -> a * b) (int64,int64)
 a() |> ignore
 
-inl a = array_create 10 int64
+inl a = Array.create int64 10
 a 3 <- 2
 a 3 |> ignore
 
-inl a = array_create 3 id // Is supposed to be unit and not printed.
+inl a = Array.create id 3 // Is supposed to be unit and not printed.
 a 1 <- id
 a 1 |> ignore
     """
@@ -727,7 +727,7 @@ inl d = 4
 let test58 =
     "test58",[array],"Does the fold function get duplicated?",
     """
-inl ar = array_create 128 (int64,int64)
+inl ar = Array.create (int64,int64) 128
 Array.foldl (inl a,b c,d -> a+c,b+d) (dyn (1,2)) ar
 |> inl a,b -> a*b
     """
@@ -1222,7 +1222,7 @@ open Console
 inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
 inl ret = {
     some = inl state -> printfn "Success."
-    none = inl state -> failwith "Failure."
+    none = inl state -> failwith unit "Failure."
     }
 inl princess_pos = dyn (0,0)
 inl mario_pos = dyn (1,1)
@@ -1252,7 +1252,7 @@ open Console
 inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
 inl ret = {
     some = inl state -> printfn "Success."
-    none = inl state -> failwith "Failure."
+    none = inl state -> failwith unit "Failure."
     }
 inl princess_pos = dyn (0,0)
 inl mario_pos = dyn (1,1)
@@ -1295,7 +1295,7 @@ met rec for {from=(!dyn from) near_to state body finally} =
 inl compare_pos (a_row,a_col) (b_row,b_col) = a_row = b_row && a_col = b_col
 inl ret = {
     some = inl state -> printfn "Success."
-    none = inl state -> failwith "Failure."
+    none = inl state -> failwith unit "Failure."
     }
 inl princess_pos = dyn (0,0)
 inl mario_pos = dyn (1,1)
@@ -1369,7 +1369,7 @@ for' {from=sieve_length; to=2; by= -1; state=none int64; body = inl {next state 
     }
 |>  function
     | [Some: result] -> writeline result // 6857
-    | [None] -> failwith "No prime factor found!"
+    | [None] -> failwith unit "No prime factor found!"
     """
 
 let euler4 = 
@@ -1441,7 +1441,7 @@ inl mario = pchar 'm' >>% box Cell .Mario
 inl cell = empty <|> princess <|> mario
 
 inl parse_cols n = parse_array {parser=cell; typ=Cell; n} .>> spaces
-inl parse_field n = parse_array {parser=parse_cols n; typ=type (array_create 0 Cell); n}
+inl parse_field n = parse_array {parser=parse_cols n; typ=type (Array.create Cell 0); n}
 inl parser = 
     inm n = parse_int 
     inm field = parse_field n
@@ -1505,7 +1505,7 @@ inl parser =
                                 ) next_moves
                         inl bool_to_int x = if x then 1 else 0
                         inl number_of_valid_states = Tuple.foldl (inl s (_,!bool_to_int x) -> s + x) 0 potential_new_states
-                        inl new_states = array_create number_of_valid_states state_type
+                        inl new_states = Array.create state_type number_of_valid_states
                         Tuple.foldl (inl i (state,is_valid) -> 
                             if is_valid then new_states i <- state; i+1
                             else i
@@ -1518,7 +1518,7 @@ inl parser =
                 | [Some: _,path] -> List.foldr (inl x _ -> Console.writeline x) path ()
                 : ()
             loop start_queue
-        | _ -> failwith "Current position not found."
+        | _ -> failwith unit "Current position not found."
     |> succ
 
 //inl str = dyn "3
@@ -1551,7 +1551,7 @@ inl mario = pchar 'm' >>% box Cell .Mario
 inl cell = empty <|> princess <|> mario
 
 inl parse_cols n = parse_array {parser=cell; typ=Cell; n} .>> spaces
-inl parse_field n = parse_array {parser=parse_cols n; typ=type (array_create 0 Cell); n}
+inl parse_field n = parse_array {parser=parse_cols n; typ=type (Array.create 0 Cell); n}
 inl parser ret = 
     inm n = parse_int .>> parse_int .>> parse_int
     inm field = parse_field n
@@ -1600,7 +1600,7 @@ inl main = {
         met print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
             match List.last path with
             | [Some: x] -> Console.writeline x
-            | [None] -> failwith "Error: No moves taken."
+            | [None] -> failwith unit "Error: No moves taken."
 
         met evaluate_move state move on_fail =
             inl new_pos,_ as new_state = move state
@@ -1619,7 +1619,7 @@ inl main = {
             : ()
 
         loop ()
-    none = inl _ -> failwith "Current position not found."
+    none = inl _ -> failwith unit "Current position not found."
     }
 
 run_with_unit_ret (readall()) (parser main)

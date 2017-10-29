@@ -1,6 +1,180 @@
 ﻿module Spiral.Lib
 open Main
 
+let core =
+    (
+    "Core",[],"The Core module.",
+    """
+inl type_lit_lift x = !TypeLitCreate(x)
+inl assembly_load x = !DotNetAssemblyLoad(x)
+inl assembly_load_file x = !DotNetAssemblyLoadFile(x)
+
+inl mscorlib = assembly_load."mscorlib"
+inl fsharp_core = assembly_load."FSharp.Core"
+inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+
+inl error_type x = !ErrorType(x)
+inl print_static x = !PrintStatic(x)
+inl dyn x = !Dynamize(x)
+inl (\/) a b = !TypeUnion(a,b)
+inl (=>) a b = !ClosureTypeCreate(a,b)
+inl split x = !TypeSplit(x)
+inl box a b = !TypeBox(a,b)
+inl stack x = !LayoutToStack(x)
+inl packed_stack x = !LayoutToPackedStack(x)
+inl heap x = !LayoutToHeap(x)
+inl heapm x = !LayoutToHeapMutable(x)
+
+inl bool = type(true)
+
+inl int64 = type(0i64)
+inl int32 = type(0i32)
+inl int16 = type(0i16)
+inl int8 = type(0i8)
+
+inl uint64 = type(0u64)
+inl uint32 = type(0u32)
+inl uint16 = type(0u16)
+inl uint8 = type(0u8)
+
+inl float64 = type(0f64)
+inl float32 = type(0f32)
+
+inl string = type("")
+inl char = type(' ')
+inl unit = type(())
+
+inl type_lit_cast x = !TypeLitCast(x)
+inl type_lit_is x = !TypeLitIs(x)
+inl term_cast to from = !TermCast(to,from)
+// TODO: This one might be better implemented directly in the language once the Extern module becomes operational.
+inl unsafe_convert to from = !UnsafeConvert(to,from) 
+inl negate x = !Neg(x)
+inl ignore x = ()
+inl id x = x
+inl const x _ = x
+inl ref x = !ReferenceCreate(x)
+inl Array = {
+    create = inl typ size -> !ArrayCreate(size,typ)
+    length = inl ar -> !ArrayLength(ar)
+    }
+
+inl (+) a b = !Add(a,b)
+inl (-) a b = !Sub(a,b)
+inl (*) a b = !Mult(a,b)
+inl (/) a b = !Div(a,b)
+inl (%) a b = !Mod(a,b)
+
+inl (|>) a b = b a
+inl (<|) a b = a b
+inl (>>) a b x = b (a x)
+inl (<<) a b x = a (b x)
+
+inl (<=) a b = !LTE(a,b)
+inl (<) a b = !LT(a,b)
+inl (=) a b = !EQ(a,b)
+inl (<>) a b = !NEQ(a,b)
+inl (>) a b = !GT(a,b)
+inl (>=) a b = !GTE(a,b)
+
+inl (&&&) a b = !BitwiseAnd(a,b)
+inl (|||) a b = !BitwiseOr(a,b)
+inl (^^^) a b = !BitwiseXor(a,b)
+
+inl (::) a b = !ListCons(a,b)
+inl (&&) a b = !And(a,b)
+inl (||) a b = !Or(a,b)
+inl (<<<) a b = !ShiftLeft(a,b)
+inl (>>>) a b = !ShiftRight(a,b)
+inl Tuple = {
+    length = !ListLength(x)
+    index = !ListIndex(v,i)
+    }
+
+inl fst x :: _ = x
+inl snd _ :: x :: _ = x
+
+inl not x = x = false
+inl string_length x = !StringLength(x)
+inl lit_is x = !LitIs(x)
+let box_is x = !BoxIs(x)
+inl failwith typ msg = !FailWith(typ,msg)
+inl assert c msg = if c then () else failwith unit msg
+inl max a b = if a > b then a else b
+inl min a b = if a > b then b else a
+inl eq_type a b = !EqType(a,b)
+inl module_values x = !ModuleValues(x)
+inl uncased_variable_is x = !BoxedVariableIs(x)
+inl event_add_handler a b c = !DotNetEventAddHandler(a,b,c)
+inl (:>) a b = !UnsafeUpcastTo(b,a)
+inl (:?>) a b = !UnsafeDowncastTo(b,a)
+
+inl prim_eq = (=)
+// Structural polymorphic equality for every type in the language (apart from functions).
+inl (=) a b =
+    inl rec (=) a b =
+        inl body = function
+            | .(a), .(b) -> a = b
+            | a :: as', b :: bs -> a = b && as' = bs
+            | {} & a, {} & b -> module_values a = module_values b
+            | (), () -> true
+            | a, b when eq_type a b -> prim_eq a b // This repeat eq_type check is because unboxed union types might lead to variables of different types to be compared.
+            | _ -> false
+        if uncased_variable_is a && uncased_variable_is b then (met _ -> body (a, b) : bool)()
+        else body (a, b)
+    if eq_type a b then a = b
+    else error_type ("Trying to compare variables of two different types. Got:",a,b)
+
+/// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
+/// It is a decent bit more flexible that it too.
+/// TODO: Move this somewhere better. There needs will be a String module at some point.
+inl rec string_concat sep l =
+    inl StringBuilder = mscorlib.System.Text.StringBuilder
+    inl ap s = function
+        | x : string when lit_is x && x = "" -> s
+        | _ :: _ as l -> string_concat sep l
+        | x -> s.Append x
+    inl ap_sep s x = ap (ap s sep) x
+
+    inl len = ()
+//        inl rec len = 
+//            inl f (static_len, dyn_len, num_sep as s) = function
+//                | x : string ->
+//                    if lit_is x then (static_len + string_length x, dyn_len, num_sep+1)
+//                    else (static_len, dyn_len + string_length x, num_sep+1)
+//                | _ :: _ as l -> len s l
+//                | x -> (static_len+6, dyn_len, num_sep+1)
+//            Tuple.foldl f
+//        inl static_len, dyn_len, num_sep = len (0,0,-1) l
+//        static_len + num_sep * string_length sep + dyn_len
+//        |> unsafe_convert int32
+
+    Tuple.foldl ap_sep (ap (StringBuilder len) (Tuple.head l)) (Tuple.tail l)
+    <| .ToString <| ()
+
+inl closure_of_template check_range f tys = 
+    inl rec loop vars tys =
+        match tys with
+        | x => xs -> term_cast (inl x -> loop (x :: vars) xs) x
+        | x -> 
+            inl r = Tuple.foldr (inl var f -> f var) vars f 
+            if check_range && eq_type r x = false then error_type "The tail of the closure does not correspond to the one being casted to."
+            r
+    loop () tys
+
+inl closure_of' = closure_of_template false
+inl closure_of = closure_of_template true
+
+{type_lit_lift assembly_load assembly_load_file mscorlib fsharp_core system error_type print_static dyn (\/) (=>)
+ split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
+ string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
+ (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
+ string_length lit_is box_is failwith assert max min eq_type module_values uncased_variable_is event_add_handler (:>)
+ (:?>) (=) closure_of' closure_of string_concat}
+    """) |> module_
+
+let module_ (a,l,b,c) = module_ (a,core::l,b,c)
+
 let option =
     (
     "Option",[],"The Option module.",
@@ -17,6 +191,8 @@ let tuple =
     (
     "Tuple",[],"Operations on tuples.",
     """
+inl index = Tuple.index // from Core
+inl length = Tuple.length
 inl singleton x = x :: ()
 inl head = function
     | x :: xs -> x
@@ -116,7 +292,7 @@ inl rec unzip_template on_irreg l =
 
 inl unzip = unzip_template regularity_guard
 inl unzip' = unzip_template id
-inl index = tuple_index
+inl index = Tuple.index
 
 inl init_template k n f =
     inl rec loop n = 
@@ -144,67 +320,8 @@ inl rec contains t x =
     | [Some: x] -> true
     | [None] -> false
 
-{head tail foldl foldr scanl scanr rev map iter iteri forall exists filter zip unzip index init repeat append singleton range tryFind contains}
-    """) |> module_
-
-let core =
-    (
-    "Core",[tuple],"The Core module.",
-    """
-inl fsharp_core = assembly_load."FSharp.Core"
-inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
-
-/// Generalizes term casting for curried functions. Used for F# interop involving delegates.
-inl term_cast_curry f tys =
-    inl rec loop vars tys =
-        match tys with
-        | x :: xs -> term_cast (inl x -> loop (x :: vars) xs) x
-        | () -> Tuple.foldr (inl var f -> f var) vars f
-    loop () tys
-
-inl prim_eq = (=)
-// Structural polymorphic equality for every type in the language (apart from functions).
-inl (=) a b =
-    inl rec (=) a b =
-        inl body = function
-            | .(a), .(b) -> a = b
-            | a :: as', b :: bs -> a = b && as' = bs
-            | {} & a, {} & b -> module_values a = module_values b
-            | (), () -> true
-            | a, b when eq_type a b -> prim_eq a b // This repeat eq_type check is because unboxed union types might lead to variables of different types to be compared.
-            | _ -> false
-        if uncased_variable_is a && uncased_variable_is b then (met _ -> body (a, b) : bool)()
-        else body (a, b)
-    if eq_type a b then a = b
-    else error_type ("Trying to compare variables of two different types. Got:",a,b)
-
-/// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
-/// It is a decent bit more flexible that it too.
-inl rec string_concat sep l =
-    inl StringBuilder = mscorlib.System.Text.StringBuilder
-    inl ap s = function
-        | x : string when lit_is x && x = "" -> s
-        | _ :: _ as l -> string_concat sep l
-        | x -> s.Append x
-    inl ap_sep s x = ap (ap s sep) x
-
-    inl len =
-        inl rec len = 
-            inl f (static_len, dyn_len, num_sep as s) = function
-                | x : string ->
-                    if lit_is x then (static_len + string_length x, dyn_len, num_sep+1)
-                    else (static_len, dyn_len + string_length x, num_sep+1)
-                | _ :: _ as l -> len s l
-                | x -> (static_len+6, dyn_len, num_sep+1)
-            Tuple.foldl f
-        inl static_len, dyn_len, num_sep = len (0,0,-1) l
-        static_len + num_sep * string_length sep + dyn_len
-        |> unsafe_convert int32
-
-    Tuple.foldl ap_sep (ap (StringBuilder len) (Tuple.head l)) (Tuple.tail l)
-    <| .ToString <| ()
-
-{(=) term_cast_curry fsharp_core system string_concat}
+{index length head tail foldl foldr scanl scanr rev map iter iteri forall exists filter zip unzip index 
+ init repeat append singleton range tryFind contains}
     """) |> module_
 
 let loops =
@@ -267,20 +384,20 @@ let array =
     """
 open Loops
 
-inl empty t = array_create 0 t
+inl empty t = Array.create t 0
 inl singleton x =
-    inl ar = array_create 1 x
+    inl ar = Array.create x 1
     ar 0 <- x
     ar
 
-inl foldl f state ar = for {from=0; near_to=array_length ar; state; body=inl {state i} -> f state (ar i)}
-inl foldr f ar state = for {to=0; from=array_length ar-1; by= -1; state; body=inl {state i} -> f (ar i) state}
+inl foldl f state ar = for {from=0; near_to=Array.length ar; state; body=inl {state i} -> f state (ar i)}
+inl foldr f ar state = for {to=0; from=Array.length ar-1; by= -1; state; body=inl {state i} -> f (ar i) state}
 
 inl init = 
     inl body is_static n f =
         assert (n >= 0) "The input to init needs to be greater or equal than 0."
         inl typ = type (f 0)
-        inl ar = array_create n typ
+        inl ar = Array.create typ n
         inl d = 
             inl d = {from=0; near_to=n; body=inl {i} -> ar i <- f i}
             if is_static then {d with static = ()} else d
@@ -291,28 +408,28 @@ inl init =
     | n f -> body false n f
 
 
-inl map f ar = init (array_length ar) (ar >> f)
+inl map f ar = init (Array.length ar) (ar >> f)
 inl filter f ar =
-    inl ar' = array_create (array_length ar) (ar.elem_type)
+    inl ar' = Array.create (ar.elem_type) (Array.length ar)
     inl count = foldl (inl s x -> if f x then ar' s <- x; s+1 else s) (dyn 0) ar
     init count ar'
 
 inl append l =
-    inl ar' = array_create (Tuple.foldl (inl s l -> s + array_length l) 0 l) ((fst l).elem_type)
+    inl ar' = Array.create ((fst l).elem_type) (Tuple.foldl (inl s l -> s + Array.length l) 0 l)
     inl ap s ar = foldl (inl i x -> ar' i <- x; i+1) s ar
     Tuple.foldl ap (dyn 0) l |> ignore
     ar'
 
 inl concat ar =
-    inl count = foldl (inl s ar -> s + array_length ar) (dyn 0) ar
-    inl ar' = array_create count (ar.elem_type.elem_type)
+    inl count = foldl (inl s ar -> s + Array.length ar) (dyn 0) ar
+    inl ar' = Array.create (ar.elem_type.elem_type) count
     (foldl << foldl) (inl i x -> ar' i <- x; i+1) (dyn 0) ar |> ignore
     ar'
 
-inl forall f ar = for' {from=0; near_to=array_length ar; state=true; body = inl {next state i} -> f (ar i) && next state}
-inl exists f ar = for' {from=0; near_to=array_length ar; state=false; body = inl {next state i} -> f (ar i) || next state}
+inl forall f ar = for' {from=0; near_to=Array.length ar; state=true; body = inl {next state i} -> f (ar i) && next state}
+inl exists f ar = for' {from=0; near_to=Array.length ar; state=false; body = inl {next state i} -> f (ar i) || next state}
 
-{empty singleton foldl foldr init map filter append concat forall exists}
+{create=Array.create; length=Array.length; length empty singleton foldl foldr init map filter append concat forall exists}
     """) |> module_
 
 let list =
@@ -529,8 +646,8 @@ inl run data parser ret =
 inl with_unit_ret = {
     on_type = ()
     on_succ = inl _ _ -> ()
-    on_fail = inl x _ -> failwith x
-    on_fatal_fail = inl x _ -> failwith x
+    on_fail = inl x _ -> failwith unit x
+    on_fatal_fail = inl x _ -> failwith unit x
     }
 
 inl run_with_unit_ret data parser = run data parser with_unit_ret
@@ -593,7 +710,7 @@ inl repeat n parser =
 inl parse_array {parser typ n} = m {
     parser_mon =
         inm _ = guard (n >= 0) (fatal_fail "n in parse array must be >= 0")
-        inl ar = array_create n typ
+        inl ar = Array.create typ n
         repeat n (inl i -> parser |>> inl x -> ar i <- x) >>. succ ar
     }
 
@@ -697,7 +814,7 @@ inl add_one len x =
     if x = len then 0 else x
 
 inl resize {len from to ar} =
-    inl ar' = array_create (len*3/2+3) (ar.elem_type)
+    inl ar' = Array.create (ar.elem_type) (len*3/2+3)
     for {from near_to=len; body=inl {i} -> ar' (i - from) <- ar i}
     for {from=0; near_to=from; body=inl {i} -> ar' (len - from + i) <- ar i}
     {from=0; to=len; ar=ar'}
@@ -705,7 +822,7 @@ inl resize {len from to ar} =
 met enqueue queue (!dyn v) =
     inl {from to ar} = queue
     ar to <- v
-    inl len = array_length ar
+    inl len = Array.length ar
     inl to = add_one len to
     if from = to then 
         inl {from to ar} = resize {len from to ar}
@@ -717,12 +834,12 @@ met enqueue queue (!dyn v) =
 met dequeue queue () =
     inl {from to ar} = queue
     assert (from <> to) "Cannot dequeue past the end of the queue."
-    queue.from <- add_one (array_length ar) from
+    queue.from <- add_one (Array.length ar) from
     ar from
 
 inl create n typ =
     inl n = match n with | () -> 16 | n -> max 1 n
-    inl queue = heapm {from=dyn 0; to=dyn 0; ar=array_create n typ}
+    inl queue = heapm {from=dyn 0; to=dyn 0; ar=Array.create typ n}
     {internal = queue; enqueue = enqueue queue; dequeue = dequeue queue}
 
 {create}
@@ -760,11 +877,11 @@ inl map_dims =
         | x -> {from=0; to=x-1})
 
 inl init !map_dims dim_ranges f =
-    match tuple_length dim_ranges with
+    match Tuple.length dim_ranges with
     | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
     | num_dims ->
         inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) dim_ranges 1
-        inl ar = array_create len (type (f (Tuple.repeat num_dims 0)))
+        inl ar = Array.create (type (f (Tuple.repeat num_dims 0))) len
         inl rec loop offset index = function
             | {from to} :: dim_ranges, dim_offset :: dim_offsets ->
                 for {from to state=offset; body=inl {state=offset i} ->
@@ -783,47 +900,50 @@ let extern_ =
     (
     "Extern",[tuple],"The Extern module.",
     """
-/// An improvement on the term_cast_curry using the => pattern.
-inl closure_of_template check_range f tys = 
-    inl rec loop vars tys =
-        match tys with
-        | x => xs -> term_cast (inl x -> loop (x :: vars) xs) x
-        | x -> 
-            inl r = Tuple.foldr (inl var f -> f var) vars f 
-            if check_range && eq_type r x = false then error_type "The tail of the closure does not correspond to the one being casted to."
-            r
-    loop () tys
-
-inl closure_of' = closure_of_template false
-inl closure_of = closure_of_template true
 
 {closure_of closure_of'}
     """) |> module_
 
 let cuda =
     (
-    "Cuda",[core;console],"The Cuda module.",
+    "Cuda",[console],"The Cuda module.",
     """
-open Core
 open Console
+
+inl cuda_kernels = !CudaKernels()
+inl join_point_entry_cuda x = !JoinPointEntryCuda(x()))
+
+inl __threadIdxX() = !ThreadIdxX()
+inl __threadIdxY() = !ThreadIdxY()
+inl __threadIdxZ() = !ThreadIdxZ()
+inl __blockIdxX() = !BlockIdxX()
+inl __blockIdxY() = !BlockIdxY()
+inl __blockIdxZ() = !BlockIdxZ()
+
+inl __blockDimX() = !BlockDimX()
+inl __blockDimY() = !BlockDimY()
+inl __blockDimZ() = !BlockDimZ()
+inl __gridDimX() = !GridDimX()
+inl __gridDimY() = !GridDimY()
+inl __gridDimZ() = !GridDimZ()
 
 inl ops = fsharp_core.Microsoft.FSharp.Core.Operators
 inl Environment = mscorlib.System.Environment
 
 inl cuda_toolkit_path = 
     inl x = Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
-    if ops.IsNull x then failwith "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
+    if ops.IsNull x then failwith unit "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
     x
 
 inl visual_studio_path =
     inl x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")
-    if ops.IsNull x then failwith "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
+    if ops.IsNull x then failwith unit "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
     mscorlib.System.IO.Directory.GetParent(x).get_Parent().get_Parent().get_FullName()
 
 inl cub_path = // The path for the Cuda Unbound library.
     inl x = Environment.GetEnvironmentVariable("CUB_PATH")
     if ops.IsNull x then 
-        failwith 
+        failwith unit 
             @"If you are getting this exception then that means that CUB_PATH environment variable is not defined.
 
 Go to: https://nvlabs.github.io/cub/index.html#sec6
@@ -890,13 +1010,13 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
         nvcc_router_file.Dispose()
         nvcc_router_stream.Dispose()
 
-    if process.Start() = false then failwith "NVCC failed to run."
+    if process.Start() = false then failwith unit "NVCC failed to run."
     process.BeginOutputReadLine()
     process.BeginErrorReadLine()
     process.WaitForExit()
 
     inl exit_code = process.get_ExitCode()
-    if exit_code <> 0i32 then failwith <| concat ("NVCC failed compilation with code ", exit_code)
+    if exit_code <> 0i32 then failwith unit <| concat ("NVCC failed compilation with code ", exit_code)
 
     // Free memory
     process.Dispose()
@@ -915,9 +1035,9 @@ inl dim3 = function
 
 inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
     inl to_obj_ar args =
-        inl len = tuple_length args
+        inl len = Tuple.length args
         inl typ = mscorlib .System.Object
-        if len > 0 then Array.init.static len (tuple_index args >> unsafe_upcast_to typ)
+        if len > 0 then Array.init.static len (Tuple.index args >> unsafe_upcast_to typ)
         else Array.empty typ
 
     inl kernel =

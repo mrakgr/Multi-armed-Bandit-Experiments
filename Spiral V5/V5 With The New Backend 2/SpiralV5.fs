@@ -122,7 +122,8 @@ type Op =
     | ClosureRange
 
     // Cast
-    | UnsafeUpcastTo // TODO: Implement downcast as well.
+    | UnsafeUpcastTo
+    | UnsafeDowncastTo
 
     // Cuda
     | Syncthreads
@@ -528,7 +529,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     
     let join_point_entry_method y = (JoinPointEntryMethod,[y]) |> op
     let join_point_entry_type y = (JoinPointEntryType,[y]) |> op
-    let join_point_entry_cuda expr = (JoinPointEntryCuda,[ap expr B]) |> op
     let meth x y = inl x (join_point_entry_method y)
 
     let module_create l = (ModuleCreate,[l]) |> op
@@ -2013,18 +2013,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | x -> failwithf "Malformed ModuleWith. %A" x
             module_with_loop d.env names
 
-        let failwith_ d a =
-            match tev d a with
-            | TyType (PrimT StringT) as a -> TyOp(FailWith,[a],BListT) |> make_tyv_and_push_typed_expr_even_if_unit d
+        let failwith_ d typ a =
+            match tev2 d typ a with
+            | typ, TyType (PrimT StringT) & a -> TyOp(FailWith,[a],get_type typ) |> make_tyv_and_push_typed_expr_even_if_unit d
             | _ -> on_type_er (trace d) "Expected a string as input to failwith."
 
-        let unsafe_convert d a b =
-            let a,b = tev2 d a b
-            let at,bt = get_type a, get_type b
-            if at = bt then a
+        let unsafe_convert d to_ from =
+            let to_,from = tev2 d to_ from
+            let tot,fromt = get_type to_, get_type from
+            if tot = fromt then from
             else
                 let inline conv_lit x =
-                    match bt with
+                    match tot with
                     | PrimT Int8T -> int8 x |> LitInt8
                     | PrimT Int16T -> int16 x |> LitInt16
                     | PrimT Int32T -> int32 x |> LitInt32
@@ -2036,9 +2036,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PrimT CharT -> char x |> LitChar
                     | PrimT Float32T -> float32 x |> LitFloat32
                     | PrimT Float64T -> float x |> LitFloat64
-                    | _ -> on_type_er (trace d) "Cannot convert the literal to the following type: %A" bt
+                    | _ -> on_type_er (trace d) "Cannot convert the literal to the following type: %A" tot
                     |> TyLit
-                match a with
+                match from with
                 | TyLit (LitInt8 a) -> conv_lit a
                 | TyLit (LitInt16 a) -> conv_lit a
                 | TyLit (LitInt32 a) -> conv_lit a
@@ -2050,22 +2050,26 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | TyLit (LitChar a) -> conv_lit a
                 | TyLit (LitFloat32 a) -> conv_lit a
                 | TyLit (LitFloat64 a) -> conv_lit a
-                | TyLit (LitBool _) -> on_type_er (trace d) "Cannot convert the a boolean literal to the following type: %A" bt
+                | TyLit (LitBool _) -> on_type_er (trace d) "Cannot convert the a boolean literal to the following type: %A" tot
                 // The string is not supported because it can't throw an exception if the conversion fails on the Cuda side.
-                | TyLit (LitString _) -> on_type_er (trace d) "Cannot convert the a string literal to the following type: %A" bt
+                | TyLit (LitString _) -> on_type_er (trace d) "Cannot convert the a string literal to the following type: %A" tot
                 | _ ->
                     let is_convertible_primt x =
                         match x with
                         | PrimT BoolT | PrimT StringT -> false
                         | PrimT _ -> true
                         | _ -> false
-                    if is_convertible_primt at && is_convertible_primt bt then TyOp(UnsafeConvert,[a;b],bt)
-                    else on_type_er (trace d) "Cannot convert %A to the following type: %A" a bt
+                    if is_convertible_primt fromt && is_convertible_primt tot then TyOp(UnsafeConvert,[to_;from],tot)
+                    else on_type_er (trace d) "Cannot convert %A to the following type: %A" from tot
 
         let cuda_kernels d = TyOp(CudaKernels,[],PrimT StringT)
         let unsafe_upcast_to d a b =
             let a, b = tev2 d a b
             TyOp(UnsafeUpcastTo,[a;b],get_type a)
+
+        let unsafe_downcast_to d a b =
+            let a, b = tev2 d a b
+            TyOp(UnsafeDowncastTo,[a;b],get_type a)
             
         let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
 
@@ -2098,7 +2102,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | JoinPointEntryType,[a] -> join_point_type d a
             | JoinPointEntryCuda,[a] -> join_point_cuda d a
             | TermCast,[a;b] -> term_cast d a b
-            | UnsafeConvert,[a;b] -> unsafe_convert d a b
+            | UnsafeConvert,[to_;from] -> unsafe_convert d to_ from
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
             | PrintEnv,[a] -> 
                 Map.iter (fun k v -> printfn "%s" k) d.env
@@ -2184,10 +2188,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Log,[a] -> prim_un_floating d a Log
             | Exp,[a] -> prim_un_floating d a Exp
             | Tanh,[a] -> prim_un_floating d a Tanh
-            | FailWith,[a] -> failwith_ d a
+            | FailWith,[typ;a] -> failwith_ d typ a
 
             | CudaKernels,[] -> cuda_kernels d
             | UnsafeUpcastTo,[a;b] -> unsafe_upcast_to d a b
+            | UnsafeDowncastTo,[a;b] -> unsafe_downcast_to d a b
 
             // Constants
             | (ThreadIdxX | ThreadIdxY | ThreadIdxZ | BlockIdxX | BlockIdxY | BlockIdxZ | BlockDimX | BlockDimY | BlockDimZ | GridDimX | GridDimY | GridDimZ),[] -> TyOp(op,[],PrimT Int64T)
@@ -2748,7 +2753,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 f "+" 60; f "-" 60; f "*" 70; f "/" 70; f "%" 70
                 f "<|" 10; f "|>" 10; f "<<" 10; f ">>" 10
 
-            let no_assoc_ops = // No associativity is really left associativity
                 let f str = add_infix_operator Associativity.None str 40
                 f "<="; f "<"; f "="; f ">"; f ">="; f "<>"
                 f "<<<"; f ">>>"; f "&&&"; f "|||"
@@ -2757,6 +2761,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let f str prec = add_infix_operator Associativity.Right str prec
                 f "||" 20; f "&&" 30; f "::" 50; f "^^^" 45
                 f "=>" 0; f "\/" -10
+                f ":>" 35; f ":?>" 35
          
             dict_operator
 
@@ -2991,9 +2996,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let make_struct x = make_struct codegen x
 
-            let unsafe_convert a t =
+            let unsafe_convert tot from =
                 let conv_func = 
-                    match t with
+                    match tot with
                     | PrimT UInt8T -> "unsigned char"
                     | PrimT UInt16T -> "unsigned short"
                     | PrimT UInt32T -> "unsigned int"
@@ -3006,7 +3011,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PrimT Float64T -> "double"
                     | PrimT CharT -> on_type_er trace "Conversion to char is not supported on the Cuda side."
                     | _ -> failwith "impossible"
-                sprintf "((%s) (%s))" conv_func (codegen a)
+                sprintf "((%s) (%s))" conv_func (codegen from)
 
             match expr with
             | TyT Unit | TyV (_, Unit) -> ""
@@ -3080,7 +3085,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | ArrayCreate,[a] -> failwith "ArrayCreate should be done in a let statement on the Cuda side."
                 | ArrayIndex,[ar & TyType(ArrayT((CudaLocal | CudaShared | CudaGlobal),_));idx] -> sprintf "%s[%s]" (codegen ar) (codegen idx)
                 | ArrayLength,[a] -> on_type_er trace "The ArrayLlength operation is invalid on the Cuda side as the array is just a pointer."
-                | UnsafeConvert,[a;b] -> unsafe_convert a t
+                | UnsafeConvert,[_;from] -> unsafe_convert t from
 
                 // Primitive operations on expressions.
                 | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -3412,9 +3417,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | _ -> failwith "The cases should always be in pairs."
                     loop 0 cases
 
-            let unsafe_convert a t =
+            let unsafe_convert tot from =
                 let conv_func = 
-                    match t with
+                    match tot with
                     | PrimT Int8T -> "int8"
                     | PrimT Int16T -> "int16"
                     | PrimT Int32T -> "int32"
@@ -3427,7 +3432,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | PrimT Float32T -> "float32"
                     | PrimT Float64T -> "float"
                     | _ -> failwith "impossible"
-                sprintf "(%s %s)" conv_func (codegen a)
+                sprintf "(%s %s)" conv_func (codegen from)
 
             match expr with
             | TyT Unit | TyV (_, Unit) -> ""
@@ -3503,7 +3508,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | StringIndex,[str;idx] -> string_index str idx
                 | StringSlice,[str;a;b] -> string_slice str a b
                 | StringLength,[str] -> string_length str
-                | UnsafeConvert,[a;b] -> unsafe_convert a t
+                | UnsafeConvert,[_;from] -> unsafe_convert t from
 
                 // Primitive operations on expressions.
                 | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
@@ -3560,6 +3565,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | _ -> sprintf "%s.%s" (codegen v) name
                 | CudaKernels,[] -> cuda_kernels_name
                 | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
+                | UnsafeDowncastTo,[a;b] -> sprintf "(%s :?> %s)" (codegen b) (print_type (get_type a))
                 | x -> failwithf "Missing TyOp case. %A" x
 
         let type_prefix =
@@ -3705,106 +3711,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         cse_env = ref Map.empty
         }
 
-    let core_functions =
-        let p f = inl "x" (f (v "x"))
-        let p2 f = inl' ["x"; "y"] (f (v "x") (v "y"))
-        let p3 f = inl' ["x"; "y"; "z"] (f (v "x") (v "y") (v "z"))
-        let p4 f = inl' ["1"; "2"; "3"; "4"] (f (v "1") (v "2") (v "3") (v "4"))
-        let p5 f = inl' ["1"; "2"; "3"; "4"; "5"] (f (v "1") (v "2") (v "3") (v "4") (v "5"))
-        let binop' op' a b = op(op',[a;b])
-        let binop op = p2 (binop' op)
-        let b str op = l str (binop op)
-        let apply a b = binop' Apply a b
-        let compose a b c = apply a (apply b c)
-        s  [l "error_type" (p error_type)
-            l "print_static" (p print_static)
-            l "dyn" (p dynamize)
-            l "\/" (p2 type_union)
-            l "=>" (p2 closure_type_create)
-            l "split" (p type_split)
-            l "box" (p2 type_box)
-            l "type_error" (type_lit_lift <| LitString "TypeConstructorError")
-            l "stack" (p layout_to_stack)
-            l "packed_stack" (p layout_to_packed_stack)
-            l "heap" (p layout_to_heap)
-            l "heapm" (p layout_to_heap_mutable)
-
-            l "bool" (op(TypeGet,[lit <| LitBool true]))
-            l "int64" (op(TypeGet,[lit <| LitInt64 0L]))
-            l "int32" (op(TypeGet,[lit <| LitInt32 0]))
-            l "int16" (op(TypeGet,[lit <| LitInt16 0s]))
-            l "int8" (op(TypeGet,[lit <| LitInt8 0y]))
-            l "uint64" (op(TypeGet,[lit <| LitUInt64 0UL]))
-            l "uint32" (op(TypeGet,[lit <| LitUInt32 0u]))
-            l "uint16" (op(TypeGet,[lit <| LitUInt16 0us]))
-            l "uint8" (op(TypeGet,[lit <| LitUInt8 0uy]))
-            l "float64" (op(TypeGet,[lit <| LitFloat64 0.0]))
-            l "float32" (op(TypeGet,[lit <| LitFloat32 0.0f]))
-            l "string" (op(TypeGet,[lit <| LitString ""]))
-            l "char" (op(TypeGet,[lit <| LitChar ' ']))
-            l "unit" (op(TypeGet,[B]))
-
-            l "type_lit_lift" (p <| fun x -> op(TypeLitCreate,[x]))
-            l "type_lit_cast" (p <| fun x -> op(TypeLitCast,[x]))
-            l "type_lit_is" (p <| fun x -> op(TypeLitIs,[x]))
-            l "term_cast" (p2 term_cast)
-            l "unsafe_convert" (p2 <| fun a b -> op(UnsafeConvert,[b;a])) // I made a mistake in argument ordering for this one.
-            l "negate" (p <| fun x -> op(Neg,[x]))
-        
-            l "assembly_load" (p <| fun x -> op(DotNetAssemblyLoad,[x]))
-            l "assembly_load_file" (p <| fun x -> op(DotNetAssemblyLoadFile,[x]))
-            l "mscorlib" (ap (v "assembly_load") (ap (v "type_lit_lift") (lit_string "mscorlib")))
-            l "ignore" (inl "" B)
-            l "id" (p <| id)
-            l "const" (p <| fun x -> inl "" x)
-            l "ref" (p <| fun x -> op(ReferenceCreate,[x]))
-            l "array_create" (p2 <| fun size typ -> op(ArrayCreate,[size;typ]))
-            l "array_length" (p <| fun ar -> op(ArrayLength,[ar]))
-
-            b "+" Add; b "-" Sub; b "*" Mult; b "/" Div; b "%" Mod
-            b "<|" Apply; l "|>" (p2 (flip apply)); l "<<" (p3 compose); l ">>" (p3 (flip compose))
-
-            b "<=" LTE; b "<" LT; b "=" EQ; b ">" GT; b ">=" GTE; b "<>" NEQ
-            b "&&&" BitwiseAnd; b "|||" BitwiseOr; b "^^^" BitwiseXor
-            b "::" ListCons; b "&&" And; b "||" Or
-            b "<<<" ShiftLeft; b ">>>" ShiftRight
-
-            l "fst" (p <| fun x -> tuple_index x 0L)
-            l "snd" (p <| fun x -> tuple_index x 1L)
-
-            l "tuple_length" (p <| fun x -> op(ListLength,[x]))
-            l "tuple_index" (p2 tuple_index')
-            l "not" (p <| fun x -> eq x (lit <| LitBool false))
-            l "string_length" (p <| fun x -> op(StringLength,[x]))
-            l "lit_is" (p <| fun x -> op(LitIs,[x]))
-            l "box_is" (p <| fun x -> op(BoxIs,[x]))
-            l "failwith" (p <| fun x -> op(FailWith,[x]))
-            l "assert" (p2 <| fun c x -> if_static (eq c (lit (LitBool false))) (op(FailWith,[x])) B)
-            l "max" (p2 <| fun a b -> if_static (lt a b) b a)
-            l "min" (p2 <| fun a b -> if_static (lt a b) a b)
-            b "eq_type" EqType
-            l "module_values" (p <| fun x -> op(ModuleValues,[x]))
-            l "uncased_variable_is" (p <| fun x -> op(BoxedVariableIs,[x]))
-            l "event_add_handler" (p3 <| fun a b c -> op(DotNetEventAddHandler,[a;b;c]))
-            l "cuda_kernels" (op(CudaKernels,[]))
-            l "unsafe_upcast_to" (p2 <| fun a b -> op(UnsafeUpcastTo,[a;b]))
-            l "join_point_entry_cuda" (p join_point_entry_cuda)
-
-            l "__threadIdxX" (p <| fun _ -> op(ThreadIdxX,[]))
-            l "__threadIdxY" (p <| fun _ -> op(ThreadIdxY,[]))
-            l "__threadIdxZ" (p <| fun _ -> op(ThreadIdxZ,[]))
-            l "__blockIdxX" (p <| fun _ -> op(BlockIdxX,[]))
-            l "__blockIdxY" (p <| fun _ -> op(BlockIdxY,[]))
-            l "__blockIdxZ" (p <| fun _ -> op(BlockIdxZ,[]))
-
-            l "__blockDimX" (p <| fun _ -> op(BlockDimX,[]))
-            l "__blockDimY" (p <| fun _ -> op(BlockDimY,[]))
-            l "__blockDimZ" (p <| fun _ -> op(BlockDimZ,[]))
-            l "__gridDimX" (p <| fun _ -> op(GridDimX,[]))
-            l "__gridDimY" (p <| fun _ -> op(GridDimY,[]))
-            l "__gridDimZ" (p <| fun _ -> op(GridDimZ,[]))
-            ]
-
     let rec parse_modules (Module(N(_,module_auxes,_,_)) as module_main) on_fail ret =
         let h = h0()
 
@@ -3832,7 +3738,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         printfn "Time for parse: %A" watch.Elapsed
         watch.Restart()
         let d = data_empty()
-        let input = core_functions body |> expr_prepass |> snd
+        let input = module_open (v "Core") body |> expr_prepass |> snd
         printfn "Time for prepass: %A" watch.Elapsed
         watch.Restart()
         try
