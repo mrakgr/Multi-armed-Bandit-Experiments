@@ -2656,6 +2656,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let i = col s
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
                 many1 (expr_indent expressions) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
+
             pipe3 (type_' >>. var_op_name) (pattern_list expr) (eq' >>. type_parse) <| fun name pattern body -> 
                 l_rec name (type_pat' pattern body)
 
