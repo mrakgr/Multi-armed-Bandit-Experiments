@@ -320,16 +320,13 @@ and TypedExpr =
     | TyLet of TyTag * TypedExpr * TypedExpr * Ty * Trace
     | TyState of TypedExpr * TypedExpr * Ty * Trace
     | TyOp of Op * TypedExpr list * Ty
-    | TyJoinPoint of JoinPointTermKey * Ty
+    | TyJoinPoint of JoinPointKey * JoinPointType * Arguments * Ty
 
 and JoinPointType =
-    | JoinPointClosure of Arguments
+    | JoinPointClosure
     | JoinPointMethod
     | JoinPointType
     | JoinPointCuda
-
-and JoinPointTermKey = JoinPointKey * Tag
-and JoinPointTermValue = JoinPointType * Arguments
 
 and JoinPointState<'a,'b> =
     | JoinPointInEvaluation of 'a
@@ -341,7 +338,7 @@ and EnvTy = Map<string, Ty>
 and EnvTerm = Map<string, TypedExpr>
 and JoinPointKey = Node<Expr * EnvTerm>
 
-and Arguments = LinkedHashSet<TyTag>
+and Arguments = TyTag list
 and Renamer = Dictionary<Tag,Tag>
 
 // This key is for functions without arguments. It is intended that the arguments be passed in through the Environment.
@@ -366,6 +363,10 @@ and TraceNode<'a when 'a:equality and 'a:comparison>(expr:'a, trace:Trace) =
             match y with
             | :? TraceNode<'a> as y -> compare expr y.Expression
             | _ -> failwith "Invalid comparison for TraceNode."
+
+type TypeOrMethod =
+    | TomType of Ty
+    | TomJP of JoinPointType * JoinPointKey
 
 let inline t (x: TraceNode<_>) = x.Expression
 let (|T|) x = t x
@@ -402,9 +403,7 @@ type CodegenEnv = {
     branch_return: string -> string
     trace: Trace
     }
-type TypeOrMethod =
-    | TomType of Ty
-    | TomMethod of JoinPointKey
+
 type Buf = ResizeArray<ProgramNode>
 and ProgramNode =
     | Statement of sep: string * code: string
@@ -414,8 +413,14 @@ and ProgramNode =
 type Renamables = {
     memo : Dictionary<TypedExpr,TypedExpr>
     renamer : Dictionary<Tag,Tag>
-    fv : LinkedHashSet<Tag * Ty>
-    renamed_fv : LinkedHashSet<Tag * Ty>
+    ref_call_args : TyTag list ref
+    ref_method_pars : TyTag list ref
+    }
+
+type Argumentables = {
+    length : int
+    call_args : TyTag list
+    method_pars : TyTag list
     }
 
 let cuda_kernels_name = "cuda_kernels"
@@ -571,16 +576,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let join_point_dict_type = d0()
     let join_point_dict_cuda = d0()
 
-    let join_point_term_dict_values: Dictionary<JoinPointTermKey,JoinPointTermValue> = d0() // This one is for join points directly in the AST.
-
     // #Smart constructors
     let trace (d: LangEnv) = d.trace
 
-    let ty_join_point memo_key value t =
-        let new_subtag = join_point_term_dict_values.Count
-        let key = memo_key,new_subtag
-        join_point_term_dict_values.Add(key,value)
-        TyJoinPoint(key,t)
+    let ty_join_point key jp_type args ret_type = TyJoinPoint(key,jp_type,args,ret_type)
 
     let nodify_expr (dict: Dictionary<_,_>) x =
         match dict.TryGetValue x with
@@ -726,7 +725,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | TyMap(C l, t) -> funt (env_to_ty l, t)
 
         | TyT t | TyV(_,t) | TyBox(_,t)
-        | TyLet(_,_,_,t,_) | TyJoinPoint(_,t)
+        | TyLet(_,_,_,t,_) | TyJoinPoint(_,_,_,t)
         | TyState(_,_,t,_) | TyOp(_,_,t) -> t
 
     let rec typed_expr_env_free_var_exists x = Map.exists (fun k v -> typed_expr_free_var_exists v) x
@@ -1006,9 +1005,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             s'.Add(r.[tag],ty) |> ignore)
         s' 
 
-    let inline renamables0() = {memo=d0(); renamer=d0(); fv=lh0(); renamed_fv=lh0()}
+    let inline renamables0() = {memo=d0(); renamer=d0(); ref_call_args=ref []; ref_method_pars=ref []} : Renamables
     let rec renamer_apply_env' r = Map.map (fun k v -> renamer_apply_typedexpr' r v)
-    and renamer_apply_typedexpr' ({memo=memo; renamer=renamer; fv=fv; renamed_fv=renamed_fv} as r) e =
+    and renamer_apply_typedexpr' ({memo=memo; renamer=renamer; ref_call_args=call_args; ref_method_pars=method_pars} as r) e =
         let inline f e = renamer_apply_typedexpr' r e
         let inline rename (n,t as k) =
             match renamer.TryGetValue n with
@@ -1016,9 +1015,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | false, _ ->
                 let n' = renamer.Count
                 renamer.Add(n,n')
-                fv.Add k |> ignore
+                call_args := k :: !call_args 
                 let k' = n', t
-                renamed_fv.Add (n',t) |> ignore
+                method_pars := k' :: !method_pars
                 k'
 
         match memo.TryGetValue e with
@@ -1037,8 +1036,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             |> fun x -> memo.[e] <- x; x
 
     let inline renamer_apply_template f x =
-        let r = renamables0()
-        r, f r x
+        let {ref_call_args=call_args; ref_method_pars=method_pars;renamer=renamer} as r = renamables0()
+        {call_args= !call_args; method_pars= !method_pars; length=renamer.Count}, f r x
 
     let inline renamer_apply_env x = renamer_apply_template renamer_apply_env' x
     let inline renamer_apply_typedexpr e = renamer_apply_template renamer_apply_typedexpr' e
@@ -1245,10 +1244,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let inline layoutify layout d x = 
             match x with
             | TyMap(C env,t) as a ->
-                let {fv = fv}, env' = renamer_apply_env env 
+                let {length=length}, env' = renamer_apply_env env 
                 let env' = consify_env_term env'
-                if fv.Count >= 1 then TyOp(layout_to_op layout,[a],LayoutT(layout,env',t)) |> destructure d
-                else LayoutT(layout,env',t) |> tyt
+                if length >= 0 then LayoutT(layout,env',t) |> tyt
+                else TyOp(layout_to_op layout,[a],LayoutT(layout,env',t)) |> destructure d
             | x -> on_type_er (trace d) <| sprintf "Cannot turn the seleted type into a layout. Got: %A" x
 
         let layout_to layout d a = layoutify layout d (tev d a)
@@ -1257,8 +1256,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let env = d.env
             let join_point_key = nodify_memo_key (expr, env) 
 
-            let {fv=call_arguments; renamed_fv=method_parameters}, renamed_env = renamer_apply_env env
-            let d = {d with env=renamed_env; ltag=ref call_arguments.Count}
+            let {call_args=call_arguments; method_pars=method_parameters; length=length}, renamed_env = renamer_apply_env env
+            let d = {d with env=renamed_env; ltag=ref length}
+
             let ret_ty = 
                 let join_point_dict = join_point_dict_method
                 match join_point_dict.TryGetValue join_point_key with
@@ -1274,16 +1274,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 |> make_tyv_and_push_typed_expr d
                 |> get_type
 
-            ty_join_point join_point_key (JoinPointMethod,call_arguments) ret_ty
+            ty_join_point join_point_key JoinPointMethod call_arguments ret_ty
 
         let join_point_closure arg d x = 
             let env = d.env
             let join_point_key = nodify_memo_key (expr, env)
 
-            let {fv=call_arguments; renamed_fv=method_parameters}, renamed_env = renamer_apply_env env
-            let d = {d with env=renamed_env; ltag=ref call_arguments.Count}
+            let {call_args=call_arguments; method_pars=method_parameters; length=length}, renamed_env = renamer_apply_env env
+            let d = {d with env=renamed_env; ltag=ref length}
 
-            let {fv=imaginary_arguments; renamed_fv=method_imaginary_parameters},_ = renamer_apply_typedexpr arg
+            let {call_args=imaginary_arguments; method_pars=method_imaginary_parameters},_ = renamer_apply_typedexpr arg
             let arg_ty = get_type arg
 
             let ret_ty = 
@@ -1292,7 +1292,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | false, _ ->
                     join_point_dict.[join_point_key] <- JoinPointInEvaluation()
                     let typed_expr = tev_method d expr
-                    join_point_dict.[join_point_key] <- JoinPointDone (method_parameters,method_imaginary_parameters, typed_expr)
+                    let captured_method_parameters =
+                        let method_imaginary_parameters = HashSet(method_imaginary_parameters)
+                        List.filter (method_imaginary_parameters.Contains >> not) method_parameters
+                    join_point_dict.[join_point_key] <- JoinPointDone (captured_method_parameters,method_imaginary_parameters,typed_expr)
                     typed_expr
                 | true, JoinPointInEvaluation _ -> 
                     tev_rec d expr
@@ -1301,14 +1304,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 |> make_tyv_and_push_typed_expr d
                 |> get_type
 
-            ty_join_point join_point_key (JoinPointClosure call_arguments,imaginary_arguments) (closuret arg_ty ret_ty)
+            let captured_arguments =
+                let imaginary_arguments = HashSet(imaginary_arguments)
+                List.filter (imaginary_arguments.Contains >> not) call_arguments
+            ty_join_point join_point_key JoinPointClosure captured_arguments (closuret arg_ty ret_ty)
 
         let join_point_cuda d x = 
             let env = d.env
             let join_point_key = nodify_memo_key (expr, env) 
 
-            let {fv=call_arguments; renamed_fv=method_parameters}, renamed_env = renamer_apply_env env
-            let d = {d with env=renamed_env; ltag=ref call_arguments.Count}
+            let {call_args=call_arguments; method_pars=method_parameters; length=length}, renamed_env = renamer_apply_env env
+            let d = {d with env=renamed_env; ltag=ref length}
+
             let ret_ty = 
                 match join_point_dict_method.TryGetValue join_point_key with
                 | false, _ ->
@@ -1326,6 +1333,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 |> get_type
 
             if is_unit ret_ty = false then on_type_er d.trace "The return type of Cuda join point must be unit."
+
+            // This line is so the method actually gets printed during codegen.
+            ty_join_point join_point_key JoinPointCuda call_arguments ret_ty |> make_tyv_and_push_typed_expr_even_if_unit d |> ignore
 
             let method_name = print_method join_point_key.Symbol |> LitString |> TyLit
             let args = Seq.toList call_arguments |> List.map tyv |> tyvv
@@ -2675,7 +2685,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let type_parse (s: CharStream<_>) = 
                 let i = col s
                 let expr_indent expr (s: CharStream<_>) = expr_indent i (=) expr s
-                many1 (expr_indent expressions) |>> (List.map type_create >> List.reduce type_union >> type_create) <| s
+                many1 (expr_indent expressions) |>> (List.reduce type_union) <| s
 
             pipe3 (type_' >>. var_op_name) (pattern_list expr) (eq' >>. type_parse) <| fun name pattern body -> 
                 l_rec name (type_pat' pattern body)
@@ -2979,12 +2989,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let print_tag_env' t = sprintf "Env%i" t
     let print_tag_env_stack' t = sprintf "EnvStack%i" t
     let print_tag_env_packed_stack' t = sprintf "EnvPackedStack%i" t
+    let sep_comma = ", "
 
     let inline print_args print_tyv args = 
-        Seq.choose (fun (_,ty as x) ->
-            if is_unit ty = false then print_tyv x |> Some
-            else None) args
-        |> String.concat ", "
+        (args, (StringBuilder(),null)) ||> List.foldBack (fun (_,ty as x) (bldr,sep as state) ->
+            if is_unit ty = false then 
+                let f (x: string) = bldr.Append x |> ignore
+                f sep; f (print_tyv x)
+                bldr,sep_comma
+            else state)
+        |> fun (a,_) -> a.ToString()
 
     let inline make_struct codegen l on_empty on_rest =
         Seq.choose (fun x -> let x = codegen x in if x = "" then None else Some x) l
@@ -3027,8 +3041,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let inline define_layoutt ty print_tag_env print_type_definition layout env =
         if Map.forall (fun _ -> get_type >> is_unit) env = false then
             let name = print_tag_env (Some layout) ty
-            let fv = env_free_variables env
-            let tys = Seq.toList fv |> List.fold (fun s (_,x) -> define_mem s x) ([],0) |> fst |> List.rev
+            let {call_args=fv},_ = renamer_apply_env env
+            let tys = List.fold (fun s (_,x) -> define_mem s x) ([],0) fv |> fst |> List.rev
             print_type_definition (Some layout) name tys
 
     // #Cuda
@@ -3176,30 +3190,22 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> state 
                 codegen' {d with trace=trace} rest
             | TyLit x -> print_value x |> branch_return
-            | TyJoinPoint((S method_tag & method_key,_ as join_point_key),_) ->
-                if definitions_set.Add (TomMethod method_key) then definitions_queue.Enqueue (TomMethod method_key)
-
-                let method_name = print_method method_tag
-                match join_point_dict.[join_point_key] with
-                | JoinPointType, _ -> failwith "Should never be printed."
-                | (JoinPointMethod | JoinPointCuda _), fv -> sprintf "%s(%s)" method_name (print_join_point_args fv) |> branch_return
-                | JoinPointClosure args, fv ->
-                    let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
-                    if Seq.isEmpty fv then method_name else on_type_er trace "The closure should not have free variables on the Cuda side."
-                    |> branch_return
+            | TyJoinPoint(S tag & key,join_point_type,call_args,_) ->
+                let method_name = print_method tag
+                let tomjp = TomJP (join_point_type,key)
+                if definitions_set.Add tomjp then definitions_queue.Enqueue tomjp
+                match join_point_type with
+                | JoinPointType -> failwith "Should never be printed."
+                | JoinPointCuda -> // This join point is just a placeholder.
+                    "// Cuda join point" |> state
+                    sprintf "// %s(%s)" method_name (print_join_point_args call_args) |> state
+                    ""
+                | JoinPointMethod -> 
+                    sprintf "%s(%s)" method_name (print_join_point_args call_args) |> branch_return
+                | JoinPointClosure ->
+                    if List.isEmpty call_args then branch_return method_name 
+                    else on_type_er trace "The closure should not have free variables on the Cuda side."
             | TyBox(x, t) -> failwith "TODO"
-//            | TyBox(x, t) ->
-//                let case_name =
-//                    let union_idx s = Seq.findIndex ((=) (get_type x)) s
-//                    match t with
-//                    | UnionT s -> print_case_union t (union_idx s)
-//                    | RecT tag -> 
-//                        match rect_dict.[tag] with
-//                        | ListT _ -> print_tag_rec t
-//                        | UnionT s -> print_case_rec t (union_idx s)
-//                        | _ -> failwith "Only ListT and UnionT can be recursive types."
-//                    | _ -> failwith "Only ListT and UnionT can be boxed types."
-//                if is_unit (get_type x) then case_name else sprintf "(%s(%s))" case_name (codegen x)
             | TyMap(C env_term, _) ->
                 let t = get_type expr
                 Map.toArray env_term
@@ -3247,7 +3253,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
                 | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
-                    let fv = typed_expr_free_variables a
+                    let {call_args=fv},_ = renamer_apply_typedexpr a
                     match op with
                     | LayoutToStack | LayoutToPackedStack ->
                         let args = Seq.map print_tyv fv |> String.concat ", "
@@ -3317,26 +3323,31 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 "}" |> state_new
 
             match join_point_type with
-            | JoinPointClosure _ | JoinPointMethod -> print_method "__device__"
-            | JoinPointCuda _ -> print_method "__global__"
+            | JoinPointClosure | JoinPointMethod -> print_method "__device__"
+            | JoinPointCuda -> print_method "__global__"
             | JoinPointType -> ()
             
         while definitions_queue.Count > 0 do
-//            let inline print_fun env x =
-//                let fv = env_free_variables env
-//                if Map.forall (fun _ -> get_type >> is_unit) env = false then
-//                    let tuple_name = print_tag_env (Some LayoutStack) x // TODO: Do this propely.
-//                    let iter f = Seq.iter (fun (k,ty )-> f (string k) ty)
-//                    let fold f = Seq.fold (fun s (k,ty) -> f s (string k) ty)
-//                    print_struct_definition iter fold tuple_name fv
-
             match definitions_queue.Dequeue() with
-            | TomMethod key ->
-                match memoized_methods.[key] with
-                | MemoMethod (join_point_type, fv, body) -> 
-                    print_method_definition key.Symbol (join_point_type, fv, body)
-                    move_to buffer_method buffer_temp
-                | _ -> failwith "impossible"
+            | TomJP (join_point_type,key) ->
+                let fv,body =
+                    match join_point_type with
+                    | JoinPointMethod -> 
+                        match join_point_dict_method.[key] with
+                        | JoinPointDone(a,b) -> a,b
+                        | _ -> failwith "impossible"
+                    | JoinPointClosure -> 
+                        match join_point_dict_closure.[key] with
+                        | JoinPointDone(_,a,b) -> a,b
+                        | _ -> failwith "impossible"
+                    | JoinPointCuda -> 
+                        match join_point_dict_cuda.[key] with
+                        | JoinPointDone(a,b) -> a,b
+                        | _ -> failwith "impossible"
+                    | JoinPointType -> failwith "impossible"
+
+                print_method_definition key.Symbol (join_point_type, fv, body)
+                move_to buffer_method buffer_temp
             | TomType ty ->
                 match ty with
                 | ListT tys -> define_listt ty print_tag_tuple print_type_definition tys
@@ -3593,19 +3604,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
             | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
             | TyLit x -> print_value x
-            | TyJoinPoint((S method_tag & method_key,_ as join_point_key),_) ->
-                if definitions_set.Add (TomMethod method_key) then definitions_queue.Enqueue (TomMethod method_key)
-
-                let method_name = print_method method_tag
-                match join_point_dict.[join_point_key] with
-                | JoinPointType, _ -> failwith "Should never be printed."
-                | JoinPointMethod, fv -> sprintf "%s(%s)" method_name (print_args fv)
-                | JoinPointCuda _, fv -> 
-                    @"// Cuda method call" |> state
+            | TyJoinPoint(S tag & key,join_point_type,fv,_) ->
+                let method_name = print_method tag
+                let tomjp = TomJP (join_point_type,key)
+                if definitions_set.Add tomjp then definitions_queue.Enqueue tomjp
+                
+                match join_point_type with
+                | JoinPointType -> failwith "Should never be printed."
+                | JoinPointMethod -> sprintf "%s(%s)" method_name (print_args fv)
+                | JoinPointCuda -> 
+                    "// Cuda join point" |> state
                     sprintf "// %s(%s)" method_name (print_args fv)
-                | JoinPointClosure args, fv ->
-                    let fv = Seq.filter (fun x -> args.Contains x = false) fv //(Set fv) - (Set args)
-                    if Seq.isEmpty fv then method_name
+                | JoinPointClosure ->
+                    if List.isEmpty fv then method_name
                     else sprintf "%s(%s)" method_name (print_args fv)
             | TyBox(x, t) ->
                 let case_name =
@@ -3613,11 +3624,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match t with
                     | UnionT s -> print_case_union t (union_idx s)
                     | RecT tag -> 
-                        match rect_dict.[tag] with
-                        | ListT _ -> print_tag_rec t
-                        | UnionT s -> print_case_rec t (union_idx s)
-                        | _ -> failwith "Only ListT and UnionT can be recursive types."
-                    | _ -> failwith "Only ListT and UnionT can be boxed types."
+                        match join_point_dict_type.[tag] with
+                        | JoinPointDone (UnionT s) -> print_case_rec t (union_idx s)
+                        | _ -> print_tag_rec t
+                    | _ -> failwith "Only RecT and UnionT can be boxed types."
                 if is_unit (get_type x) then case_name else sprintf "(%s(%s))" case_name (codegen x)
             | TyMap(C env_term, _) ->
                 let t = get_type expr
@@ -3670,14 +3680,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
                 | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
                 | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
-                    let {fv=fv} as r = renamables0()
-                    renamer_apply_typedexpr r a |> ignore
+                    let {call_args=fv},_ = renamer_apply_typedexpr a
                     match op with
                     | LayoutToStack | LayoutToPackedStack ->
-                        let args = Seq.map print_tyv_with_type fv |> String.concat ", "
+                        let args = List.rev fv |> List.map print_tyv_with_type |> String.concat ", "
                         sprintf "%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
                     | LayoutToHeap | LayoutToHeapMutable ->
-                        let args = Seq.mapi (fun i x -> sprintf "mem_%i = %s" i (print_tyv_with_type x)) fv |> String.concat "; "
+                        let args = List.rev fv |> List.mapi (fun i x -> sprintf "mem_%i = %s" i (print_tyv_with_type x)) |> String.concat "; "
                         sprintf "({%s} : %s)" args (print_tag_env (layout_from_op op |> Some) t)
                     | _ -> failwith "impossible"
                 | Log,[x] -> sprintf "log(%s)" (codegen x)
@@ -3754,24 +3763,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | _ -> failwith "impossible"
                     "}" |> state
 
-        let print_method_definition tag (join_point_type, fv, body) = 
-            let method_name = print_method tag
-
-            let print_body() = enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen' [] body)
-
-            match join_point_type with
-            | JoinPointClosure args ->
-                let printed_fv = 
-                    Seq.filter (fun x -> args.Contains x = false) fv
-                    |> fun fv -> if Seq.isEmpty fv then "" else sprintf "(%s) " (print_args fv)
-                sprintf "%s %s %s(%s): %s =" (method_prefix()) method_name printed_fv (print_args args) (print_type (get_type body)) |> state
-                print_body()
-            | JoinPointMethod ->
-                sprintf "%s %s(%s): %s =" (method_prefix()) method_name (print_args fv) (print_type (get_type body)) |> state
-                print_body()
-            | JoinPointType -> ()
-            | JoinPointCuda _ -> failwith "These should be printed in the Cuda codegen."
-
         codegen' [] main |> state
         move_to buffer_main buffer_temp
 
@@ -3779,26 +3770,43 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         while definitions_queue.Count > 0 do
             match definitions_queue.Dequeue() with
-            | TomMethod key as x ->
-                match memoized_methods.[key] with
-                | MemoMethod (JoinPointCuda _, fv, body) -> cuda_join_points.Enqueue x
-                | MemoMethod (join_point_type, fv, body) -> 
-                    print_method_definition key.Symbol (join_point_type, fv, body)
-                    move_to buffer_method buffer_temp
-                | _ -> failwith "impossible"
+            | TomJP (join_point_type,key) as tom ->
+                let method_name = print_method (key.Symbol)
+                let print_body body = enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen' [] body)
+
+                match join_point_type with
+                | JoinPointMethod -> 
+                    match join_point_dict_method.[key] with
+                    | JoinPointDone(fv,body) -> 
+                        sprintf "%s %s(%s): %s =" (method_prefix()) method_name (print_args fv) (print_type (get_type body)) |> state
+                        print_body body
+                        move_to buffer_method buffer_temp
+                    | _ -> failwith "impossible"
+                | JoinPointClosure -> 
+                    match join_point_dict_closure.[key] with
+                    | JoinPointDone(capt_pars,img_pars,body) ->
+                        sprintf "%s %s %s(%s): %s =" (method_prefix()) method_name (print_args capt_pars) (print_args img_pars) (print_type (get_type body)) |> state
+                        print_body body
+                        move_to buffer_method buffer_temp
+                    | _ -> failwith "impossible"
+                | JoinPointCuda -> cuda_join_points.Enqueue tom
+                | JoinPointType -> failwith "impossible"
             | TomType ty ->
                 match ty with
                 | ListT tys -> define_listt ty print_tag_tuple print_type_definition tys
                 | MapT(tys, _) -> define_mapt ty print_tag_env print_type_definition tys
                 | LayoutT(layout, C env, _) -> define_layoutt ty print_tag_env print_type_definition layout env
-                | RecT tag as x ->
-                    let tys = rect_dict.[tag]
+                | RecT key as x ->
+                    let tys = 
+                        match join_point_dict_type.[key] with
+                        | JoinPointDone tys -> tys
+                        | _ -> failwith "impossible"
+                    let tag = key.Symbol
                     sprintf "%s %s =" (type_prefix()) (print_tag_rec x) |> state
                     match tys with
                     | Unit -> "| " + print_tag_rec' tag |> state
-                    | ListT _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
                     | UnionT tys -> print_union_cases (print_case_rec x) (Set.toList tys)
-                    | x -> failwithf "Only ListT and UnionT can be recursive types. Got: %A" x
+                    | _ -> sprintf "| %s of %s" (print_tag_rec' tag) (print_type tys) |> state
                 | UnionT tys as x ->
                     sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
                     print_union_cases (print_case_union x) (Set.toList tys)
