@@ -361,6 +361,7 @@
     <Content Include="V5 With The New Backend 2\TestCache\test9.txt" />
     <None Include="V5 With The New Backend 2\reflection_v4.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v5.fsx" />
+    <None Include="V5 With The New Backend 2\spiral_system_type_v0.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
