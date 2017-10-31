@@ -1827,31 +1827,14 @@ cuda_array int64 (SizeT 10)
     """
 
 let extern1 =
-    "extern1",[tuple;cuda;core;console;extern_],"Do the new Extern Ops work?",
+    "extern1",[extern_],"Do the new Extern Ops work?",
     """
-open Cuda
-
-inl SizeT = ManagedCuda.BasicTypes.SizeT
-type CudaDeviceVariable t =
-    extern_dotnet_type {
-        fullname = "ManagedCuda.CudaDeviceVariable`1"
-        generic_params = t
-        constructor_type = int64
-        constructor_map = SizeT
-        methods = {
-            CopyToDevice = array t -> unit \/ CudaDeviceVariable t -> unit
-            CopyToHost = array t -> unit
-            }
-        static_methods = {
-            // This method does not actually exist, but it could be done.
-            // Methods with generic arguments require an extra step.
-            // The idea here is that the arguments would be passed to inl and then the resulting type would then be checked.
-            Add = inl t -> CudaDeviceVariable t -> CudaDeviceVariable t -> CudaDeviceVariable t
-            }
+type Dictionary = inl (key,value) as t -> {
+    fullname = ."System.Collections.Generic.Dictionary`2"
+    static_member = {
+        Add = Dictionary t => (key,value) => unit
         }
-
-//inl cuda_array = ManagedCuda."CudaDeviceVariable`1"
-//cuda_array int64 (SizeT 10)
+    }
     """
 
 let tests =
