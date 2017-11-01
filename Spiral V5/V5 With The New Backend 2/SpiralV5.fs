@@ -5,6 +5,7 @@ open System
 open System.Collections.Generic
 open HashConsing
 open Types
+open DotNetInterop
 
 // Parser open
 open FParsec
@@ -56,13 +57,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | RecT x -> boxed_type_dict.[x] |> boxed_type_open
         | x -> x
         
-    let vvt x = ListT x
-    let litt x = LitT x
-    let funt (x, core) = MapT (x, core)
-    let uniont x = UnionT x
-    let closuret a b = ClosureT (a,b)
-    let arrayt x = ArrayT x
-
     let nodify_memo_key = nodify <| d0()
     let consify_env_term = hashcons_add <| hashcons_create 0
 
@@ -94,7 +88,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let inl' args body = List.foldBack inl args body
 
     let B = vv []
-    let BListT = vvt []
+    let BListT = listt []
     let TyB = tyvv []
     
     let join_point_entry_method y = (JoinPointEntryMethod,[y]) |> op
@@ -161,7 +155,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let rec env_to_ty env = Map.map (fun _ -> get_type) env
     and get_type = function
         | TyLit x -> get_type_of_value x
-        | TyList l -> List.map get_type l |> vvt
+        | TyList l -> List.map get_type l |> listt
         | TyMap(C l, t) -> funt (env_to_ty l, t)
 
         | TyT t | TyV(_,t) | TyBox(_,t)
