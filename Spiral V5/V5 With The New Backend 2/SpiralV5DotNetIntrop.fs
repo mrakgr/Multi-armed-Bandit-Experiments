@@ -16,6 +16,7 @@ let ss_cache_assembly: Dictionary<Assembly,TypedExpr> = d0()
 let ss_cache_type = d0()
 let ss_cache_method = d0()
 let ss_cache_field = d0()
+let ss_cache_constructor = d0()
 
 ss_cache_type.Add(typeof<bool>,PrimT BoolT)
 ss_cache_type.Add(typeof<int8>,PrimT Int8T)
@@ -64,7 +65,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
                 let inline name x = (^a : (member Name: String) x)
 
                 let inline partition g x =
-                    let inline f x = Array.groupBy name x |> g |> Map
+                    let inline f x = g x |> Map
             
                     Array.filter is_public x
                     |> Array.partition is_static
@@ -72,7 +73,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
 
                 let static_methods, methods = 
                     x.GetMethods() 
-                    |> partition (Array.map (fun (k,v) -> 
+                    |> partition (Array.groupBy name >> Array.map (fun (k,v) -> 
                         let v =
                             v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
                             v |> Array.map (fun x ->
@@ -83,9 +84,15 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
     
                 let static_fields, fields = 
                     x.GetFields() 
-                    |> partition (Array.map (fun (k,v) ->
-                        k, Array.map (fun x -> SSTyLam(d, [||], SSCompileField x)) v
+                    |> partition (Array.map (fun x ->
+                        x.Name, SSTyLam(d, [||], SSCompileField x)
                         ))
+
+                let constructors =
+                    x.GetConstructors()
+                    |> Array.map (fun x ->
+                        SSTyLam(d, [||], SSCompileConstructor x)
+                        )
 
                 SSTyClass {
                     full_name = full_name
@@ -94,6 +101,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
                     static_methods = static_methods
                     fields = fields
                     static_fields = static_fields
+                    constructors = constructors
                     }
                 |> dotnet_typet
 
@@ -138,6 +146,12 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
     and ss_field (d: SSEnvTerm) (x: FieldInfo) = 
         memoize ss_cache_field x <| fun () ->
             ss_type d x.FieldType
+
+    and ss_constructor (d: SSEnvTerm) (x: ConstructorInfo) = 
+        memoize ss_cache_constructor x <| fun () ->
+            x.GetParameters()
+            |> Array.map (fun x -> ss_type d x.ParameterType)
+            |> SSTyArray
             
     and ss_apply' a b = 
         match a with
@@ -160,6 +174,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
     | SSCompileTypeDefinition a -> ss_type_definition d a
     | SSCompileMethod a -> ss_method d a 
     | SSCompileField a -> ss_field d a
+    | SSCompileConstructor a -> ss_constructor d a
 
 let ss_compile_if_empty = function
     | SSTyLam(e,[||],b) -> ss_eval e b

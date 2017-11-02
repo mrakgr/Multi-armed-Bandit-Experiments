@@ -927,7 +927,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 apply_func true d recf layout env_term fun_type args
             | x -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" x
 
-        let type_lit_create' d x = litt x |> tyt
+        let type_lit_create' x = litt x |> tyt
 
         let rec apply d a b =
             let lambdify a b =
@@ -959,39 +959,101 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | DotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type 
-            | TyT(DotNetTypeT(N t)), arg ->
-                let t = ss_compile_if_empty t
-
-                let ss_static_method_contains t name (TyTuple typ_arg) arg =
+            | TyType(DotNetTypeT(N t)) & dotnet_type, arg ->
+                let dotnet_type, t = 
                     match t with
-                    | SSTyClass {static_methods = static_methods} ->
-                        match Map.tryFind name static_methods with
-                        | None -> on_type_er (trace d) <| sprintf "Cannot find static method %s in the .NET type." name
-                        | Some v -> 
-                            let typ_arg_len, typ_arg = 
-                                List.toArray typ_arg 
-                                |> Array.map (get_type >> SSTyType)
-                                |> fun x -> x.Length, SSTyArray x
+                    | SSTyLam(e,[||],b) -> 
+                        let t = ss_eval e b
+                        t |> dotnet_typet |> tyt, t
+                    | x -> dotnet_type, t
 
-                            v |> Array.exists (function
-                                | SSTyLam(env,typ_arg',_) as lam -> 
-                                    if typ_arg_len = typ_arg'.Length then
-                                        match ss_apply lam typ_arg |> ss_get_type with
-                                        | ClosureT(a,_) -> a = get_type arg
-                                        | _ -> failwith "Methods need to return an arrow type."
-                                    else false
-                                | _ -> failwith "impossible"
-                                )
-                match arg with
-                | TyList [TypeString method_name; typ_arg; arg] -> ss_static_method d t method_name typ_arg arg
-                | TyList [TypeString method_name; arg] -> ss_static_method d t method_name TyB arg
-                | TypeString field_name -> ss_static_field t field_name arg
-                | TyType arg -> ss_constructor t arg
-            | TyV(_,DotNetTypeT(N t)), arg ->
-                match arg with
-                | TyList [TypeString method_name; typ_arg; arg] -> ss_method t method_name typ_arg arg
-                | TyList [TypeString method_name; arg] -> ss_method t method_name TyB arg
-                | TypeString field_name -> ss_field t field_name arg
+                let ss_overload_tryPick_method_return_type (TyTuple typ_arg) (TyType arg_ty) method_overloads =
+                    let typ_arg_len, typ_arg = 
+                        List.toArray typ_arg 
+                        |> Array.map (get_type >> SSTyType)
+                        |> fun x -> x.Length, SSTyArray x
+
+                    method_overloads |> Array.tryPick (function
+                        | SSTyLam(_,typ_arg',_) as lam -> 
+                            if typ_arg_len = typ_arg'.Length then
+                                match ss_apply lam typ_arg |> ss_get_type with
+                                | ClosureT(method_ty,method_ret) when method_ty = arg_ty -> Some method_ret
+                                | _ -> failwith "Methods need to return an arrow type."
+                            else None
+                        | _ -> failwith "Methods should always be staged."
+                        )
+
+                let ss_class_find kind f r name =
+                    match Map.tryFind name (f r) with
+                    | None -> on_type_er (trace d) <| sprintf "Cannot find %s %s in the .NET type." kind name
+                    | Some v -> v
+
+                let ss_method_template kind ss_tryPick t name typ_arg arg =
+                    match ss_tryPick t name typ_arg arg with
+                    | Some ret_ty -> 
+                        TyOp(DotNetTypeCallMethod,[dotnet_type;tyvv [name |> LitString |> type_lit_create'; arg]],ret_ty)
+                        |> make_tyv_and_push_typed_expr_even_if_unit d        
+                    | None ->
+                        on_type_er (trace d) <| sprintf "%s with the matching arguments not found." kind
+
+                let ss_static_method x = 
+                    let tryPick t name typ_arg arg = 
+                        ss_class_find "static method" (fun {static_methods=x} -> x) t name 
+                        |> ss_overload_tryPick_method_return_type typ_arg arg
+                    ss_method_template "Static method" tryPick x
+
+                let ss_method x = 
+                    let tryPick t name typ_arg arg = 
+                        ss_class_find "method" (fun {methods=x} -> x) t name
+                        |> ss_overload_tryPick_method_return_type typ_arg arg
+                    ss_method_template "Method" tryPick x
+
+                let ss_field_template f t name =
+                    let field = ss_class_find "field" f t name
+                    match field with
+                    | SSTyLam _ as lam -> 
+                        let typ = ss_apply lam (SSTyArray [||]) |> ss_get_type
+                        TyOp(DotNetTypeGetField,[dotnet_type;name |> LitString |> type_lit_create'],typ)
+                        |> make_tyv_and_push_typed_expr_even_if_unit d
+                    | _ -> failwith "Fields should always be staged."
+
+                let ss_field x = ss_field_template (fun {fields=x} -> x) x
+                let ss_static_field x = ss_field_template (fun {static_fields=x} -> x) x
+
+                let ss_constructor (t': SSTypedExprClass) (TyType args_ty & args) =
+                    t'.constructors
+                    |> Array.exists (fun x ->
+                        ss_apply x (SSTyArray [||]) |> ss_get_type = args_ty
+                        )
+                    |> function
+                        | false -> on_type_er (trace d) "No constructors with the matching arguments exist."
+                        | _ ->
+                            TyOp(DotNetTypeConstruct,[args],get_type dotnet_type) 
+                            |> make_tyv_and_push_typed_expr_even_if_unit d
+
+                let ss_type_apply t a = 
+                    let a = get_type a |> SSTyType
+                    ss_apply t a |> dotnet_typet |> tyt
+
+                match dotnet_type with
+                | TyT _ ->
+                    match t with 
+                    | SSTyClass t ->
+                        match arg with
+                        | TyList [TypeString method_name; typ_arg; arg] -> ss_static_method t method_name typ_arg arg
+                        | TyList [TypeString method_name; arg] -> ss_static_method t method_name TyB arg
+                        | TypeString field_name -> ss_static_field t field_name
+                        | arg -> ss_constructor t arg
+                    | _ -> ss_type_apply t arg
+                | TyV _ ->
+                    match t with 
+                    | SSTyClass t ->
+                        match arg with
+                        | TyList [TypeString method_name; typ_arg; arg] -> ss_method t method_name typ_arg arg
+                        | TyList [TypeString method_name; arg] -> ss_method t method_name TyB arg
+                        | TypeString field_name -> ss_field t field_name
+                    | _ -> failwith "Compiler error: An instance of a .NET type should always be a SSTyClass."
+                | _ -> failwith "impossible"
 
                 
 //            | dotnet_type & TyType (DotNetTypeT (N t)), method_name & TypeString name ->
@@ -1023,7 +1085,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 //                                |> tyt
 //
 //                            let clo = apply d args handler_types
-//                            TyOp(DotNetTypeConstruct,[clo],spiral_ty)
+//                            TyOp(DotNetTypeConstruct,[clo],spiral_ty) // TODO: Forgot the push here.
 //
 //                        | _ -> on_type_er d.trace "Expected a .NET runtime type instead of an instance."
 //                    | TyTuple [method_name' & TypeString method_name; method_args' & TySystemTypeArgs method_args] ->
@@ -1371,7 +1433,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let type_lit_create d a =
             match tev d a with
-            | TyLit a -> type_lit_create' d a
+            | TyLit a -> type_lit_create' a
             | _ -> on_type_er (trace d) "Expected a literal in type literal create."
 
         let type_lit_cast d a =
@@ -1461,7 +1523,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             else 
                                 s <- s+1
                                 false) env
-                    if br then ret r_ty module_ (sprintf "mem_%i" s |> LitString |> type_lit_create' d) r
+                    if br then ret r_ty module_ (sprintf "mem_%i" s |> LitString |> type_lit_create') r
                     else on_type_er (trace d) <| sprintf "The field %s is missing in the module." field'
                 | x -> on_type_er (trace d) <| sprintf "Expected a type string as the input to a mutable heap module.\nGot: %A" x
             | x,_,_ -> on_type_er (trace d) <| sprintf "Expected a heap mutable module, reference or an array the input to mutable set.\nGot: %A" x
