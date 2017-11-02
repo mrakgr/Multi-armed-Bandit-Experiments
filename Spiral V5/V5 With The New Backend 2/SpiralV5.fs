@@ -439,7 +439,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             s'.Add(r.[tag],ty) |> ignore)
         s' 
 
-    let inline renamables0() = {memo=d0(); renamer=d0(); ref_call_args=ref []; ref_method_pars=ref []} : Renamables
+    let inline renamables0() = {memo=d0(); renamer=d0(); ref_call_args=ref []; ref_method_pars=ref []} : EnvRenamer
     let rec renamer_apply_env' r = Map.map (fun k v -> renamer_apply_typedexpr' r v)
     and renamer_apply_typedexpr' ({memo=memo; renamer=renamer; ref_call_args=call_args; ref_method_pars=method_pars} as r) e =
         let inline f e = renamer_apply_typedexpr' r e

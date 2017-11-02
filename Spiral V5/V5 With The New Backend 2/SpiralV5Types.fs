@@ -241,7 +241,7 @@ type Op =
 
 type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 'S'ystem Type.
     | SSAp of SSExpr * SSExpr
-    | SSSubst of SSExpr * SSExpr
+//    | SSSubst of SSExpr * SSExpr
     | SSType of Ty
     | SSVar of string
     | SSArray of SSExpr []
@@ -432,14 +432,14 @@ and ProgramNode =
     | Indent
     | Dedent
 
-type Renamables = {
+type EnvRenamer = {
     memo : Dictionary<TypedExpr,TypedExpr>
     renamer : Dictionary<Tag,Tag>
     ref_call_args : TyTag list ref
     ref_method_pars : TyTag list ref
     }
 
-type Argumentables = {
+type RenamerResult = {
     renamer' : Dictionary<Tag,Tag>
     call_args : TyTag list
     method_pars : TyTag list
