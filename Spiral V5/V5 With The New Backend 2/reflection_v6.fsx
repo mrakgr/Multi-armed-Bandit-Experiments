@@ -9,7 +9,10 @@ let a = A ""
 a.GetHashCode()
 
 let b = A ""
+LanguagePrimitives.PhysicalHash b
 b.GetHashCode()
+
+
 
 let d = Dictionary(HashIdentity.Reference)
 d.Add(a,1)

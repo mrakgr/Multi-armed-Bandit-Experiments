@@ -36,6 +36,7 @@ ss_cache_type.Add(typeof<unit>,ListT [])
 ss_cache_type.Add(typeof<Void>,ListT [])
 
 let nodify_ssty = nodify <| d0()
+let dotnet_typet x = nodify_ssty x |> DotNetTypeT
 
 let ss_compile_type (x: Type) =
     let gen_pars = x.GetGenericArguments() |> Array.map (fun x -> x.Name)
@@ -47,14 +48,14 @@ let ss_get_type = function
 
 let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
     let rec type_to_ty (d: SSEnvTerm) (x: Type): Ty =
-        if x.IsArray then arrayt(DotNetHeap,type_to_ty d (x.GetElementType()))
-        // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
-        elif x.IsByRef then arrayt(DotNetReference, type_to_ty d (x.GetElementType())) // Incorrect, but useful
-        elif FSharp.Reflection.FSharpType.IsFunction x then 
-            let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
-            closuret (type_to_ty d a) (type_to_ty d b)
-        else
-            memoize ss_cache_type x <| fun () ->
+        memoize ss_cache_type x <| fun () ->
+            if x.IsArray then arrayt(DotNetHeap,type_to_ty d (x.GetElementType()))
+            // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
+            elif x.IsByRef then arrayt(DotNetReference, type_to_ty d (x.GetElementType())) // Incorrect, but useful
+            elif FSharp.Reflection.FSharpType.IsFunction x then 
+                let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
+                closuret (type_to_ty d a) (type_to_ty d b)
+            else
                 let full_name = String.concat "." [|x.Namespace;x.Name|]
                 let assembly_name = x.Assembly.FullName
 
@@ -94,8 +95,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
                     fields = fields
                     static_fields = static_fields
                     }
-                |> nodify_ssty
-                |> DotNetTypeT
+                |> dotnet_typet
 
 
     let ss_type_definition d x = type_to_ty d x |> SSTyType
@@ -160,3 +160,15 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
     | SSCompileTypeDefinition a -> ss_type_definition d a
     | SSCompileMethod a -> ss_method d a 
     | SSCompileField a -> ss_field d a
+
+let ss_compile_if_empty = function
+    | SSTyLam(e,[||],b) -> ss_eval e b
+    | x -> x
+
+let ss_apply a b = 
+    match a,b with
+    | SSTyLam(e,arg,body), SSTyArray b -> 
+        let e = Array.foldBack2 Map.add arg b e
+        ss_eval e body
+    | x -> failwith "Not applicable."
+
