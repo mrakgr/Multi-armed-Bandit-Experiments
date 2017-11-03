@@ -1,6 +1,7 @@
 ﻿module Spiral.Tests
-open Main
+open Types
 open Lib
+open Main
 
 let test1 = 
     "test1",[],"Does it run?",
@@ -201,20 +202,21 @@ let test15 =
 inl system = assembly_load .mscorlib .System
 inl builder_type = system.Text.StringBuilder
 inl b = builder_type ("Qwe", 128i32)
-inl a x =
-    b .Append x |> ignore
-    b .AppendLine () |> ignore
-a 123
-a 123i16
-a "qwe"
-inl str = b.ToString()
-inl console = system.Console
-console .Write str |> ignore
-
-inl dictionary_type = system.Collections.Generic."Dictionary`2"
-inl dict = dictionary_type(int64, int64)(128i32)
-dict.Add(1,2)
-dict.get_Item 1
+b
+//inl a x =
+//    b .Append x |> ignore
+//    b .AppendLine () |> ignore
+//a 123
+//a 123i16
+//a "qwe"
+//inl str = b.ToString()
+//inl console = system.Console
+//console .Write str |> ignore
+//
+//inl dictionary_type = system.Collections.Generic."Dictionary`2"
+//inl dict = dictionary_type(int64, int64)(128i32)
+//dict.Add(1,2)
+//dict.get_Item 1
     """
 
 let hacker_rank_1 =
@@ -1673,7 +1675,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_6 =
-    "hacker_rank_6",[core;tuple;array;arrayn;parsing;console;option],"A Chessboard Game",
+    "hacker_rank_6",[tuple;array;arrayn;parsing;console;option],"A Chessboard Game",
     """
 // https://www.hackerrank.com/challenges/a-chessboard-game-1
 open Parsing
@@ -1713,7 +1715,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_7 =
-    "hacker_rank_7",[core;tuple;array;arrayn;parsing;console;option],"Introduction to Nim Game",
+    "hacker_rank_7",[tuple;array;arrayn;parsing;console;option],"Introduction to Nim Game",
     """
 // https://www.hackerrank.com/challenges/nim-game-1/problem
 
@@ -1737,7 +1739,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_8 =
-    "hacker_rank_8",[core;tuple;array;arrayn;parsing;console;option],"Misere Nim",
+    "hacker_rank_8",[tuple;array;arrayn;parsing;console;option],"Misere Nim",
     """
 // https://www.hackerrank.com/challenges/misere-nim-1
 
@@ -1766,7 +1768,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_9 =
-    "hacker_rank_9",[core;tuple;array;arrayn;parsing;console;option],"The Power Sum",
+    "hacker_rank_9",[tuple;array;arrayn;parsing;console;option],"The Power Sum",
     """
 // https://www.hackerrank.com/challenges/the-power-sum
 
@@ -1798,7 +1800,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_10 =
-    "hacker_rank_10",[core;tuple;array;arrayn;list;parsing;console;option],"Crossword Puzzle",
+    "hacker_rank_10",[tuple;array;arrayn;list;parsing;console;option],"Crossword Puzzle",
     """
     """
 
@@ -1818,7 +1820,7 @@ Cuda.run {
     """
 
 let cuda2 =
-    "cuda2",[tuple;cuda;core;console],"Does the new Cuda array work?",
+    "cuda2",[tuple;cuda;console],"Does the new Cuda array work?",
     """
 open Cuda
 inl SizeT = ManagedCuda.BasicTypes.SizeT
@@ -1905,9 +1907,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache None //(Some(101,tests.Length-1))
+//rewrite_test_cache (Some(0,20))
 
-//output_test_to_temp test63
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp test15
+|> printfn "%s"
+|> ignore
 

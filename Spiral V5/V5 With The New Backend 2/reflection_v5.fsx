@@ -17,3 +17,6 @@ t.GetGenericTypeDefinition().GetGenericTypeDefinition()
 
 let con = dic'.GetConstructors()
 con.[1].GetParameters()
+
+let dic'' = dic'.MakeGenericType([|typeof<int>;typeof<int>|])
+dic''.GetGenericArguments()

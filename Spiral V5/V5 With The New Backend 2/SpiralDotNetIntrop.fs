@@ -57,7 +57,9 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
                 let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
                 closuret (type_to_ty d a) (type_to_ty d b)
             else
-                let full_name = String.concat "." [|x.Namespace;x.Name|]
+                let full_name = 
+                    let name = x.Name.Split '`' |> Array.head
+                    String.concat "." [|x.Namespace;name|]
                 let assembly_name = x.Assembly.FullName
 
                 let inline is_static x = (^a : (member IsStatic: bool) x)
@@ -94,9 +96,14 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
                         SSTyLam(d, [||], SSCompileConstructor x)
                         )
 
+                let generic_type_args = 
+                    x.GetGenericArguments()
+                    |> Array.map (fun x -> d.[name x])
+
                 SSTyClass {
                     full_name = full_name
                     assembly_name = assembly_name
+                    generic_type_args = generic_type_args
                     methods = methods
                     static_methods = static_methods
                     fields = fields
@@ -167,7 +174,6 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
 
     match x with
     | SSAp(a,b) -> ss_apply d a b
-    | SSType a -> SSTyType a
     | SSVar a -> d.[a]
     | SSArray a -> Array.map (ss_eval d) a |> SSTyArray
     | SSLam (a,b) -> SSTyLam(d,a,b)

@@ -244,12 +244,13 @@
     <None Include="V5 With The New Backend 2\reflection_v1.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v2.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v3.fsx" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5HashConsing.fs" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5Types.fs" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5DotNetIntrop.fs" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5.fs" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5Lib.fs" />
-    <Compile Include="V5 With The New Backend 2\SpiralV5Tests.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralHashConsing.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralTypes.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralDotNetIntrop.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralCoreLib.fs" />
+    <Compile Include="V5 With The New Backend 2\Spiral.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralLib.fs" />
+    <Compile Include="V5 With The New Backend 2\SpiralTests.fs" />
     <Content Include="V5 With The New Backend 2\TestCache\euler2.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\euler3.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\euler4.txt" />
@@ -364,6 +365,7 @@
     <None Include="V5 With The New Backend 2\reflection_v4.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v5.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v6.fsx" />
+    <Content Include="V5 With The New Backend 2\TextFile1.txt" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
