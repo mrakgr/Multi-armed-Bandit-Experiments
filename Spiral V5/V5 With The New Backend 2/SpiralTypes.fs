@@ -240,7 +240,7 @@ type Op =
     | FailWith
 
 type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 'S'ystem Type.
-    | SSAp of SSExpr * SSExpr
+//    | SSAp of SSExpr * SSExpr
 //    | SSSubst of SSExpr * SSExpr
     | SSVar of string
     | SSArray of SSExpr []
@@ -263,7 +263,7 @@ and SSConstructors = SSTypedExpr[]
 and SSTypedExprClass = {
     full_name : string
     assembly_name : string
-    generic_type_args : SSTypedExpr []
+    generic_type_args : Ty []
     methods : SSMethodMap
     static_methods : SSMethodMap
     fields : SSFieldMap
@@ -271,7 +271,7 @@ and SSTypedExprClass = {
     constructors : SSConstructors
     }
     
-and SSEnvTerm = Map<string,SSTypedExpr>
+and SSEnvTerm = Map<string,Ty>
 
 and FunctionCore = string * Expr
 

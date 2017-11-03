@@ -12,188 +12,151 @@ let uniont x = UnionT x
 let closuret a b = ClosureT (a,b)
 let arrayt x = ArrayT x
 
+/// Wraps the argument in a list if not a tuple type.
+let tuple_field_ty = function 
+    | ListT x -> x
+    | x -> [x]
+
 let ss_cache_assembly: Dictionary<Assembly,TypedExpr> = d0()
 let ss_cache_type = d0()
 let ss_cache_method = d0()
 let ss_cache_field = d0()
 let ss_cache_constructor = d0()
 
-ss_cache_type.Add(typeof<bool>,PrimT BoolT)
-ss_cache_type.Add(typeof<int8>,PrimT Int8T)
-ss_cache_type.Add(typeof<int16>,PrimT Int16T)
-ss_cache_type.Add(typeof<int32>,PrimT Int32T)
-ss_cache_type.Add(typeof<int64>,PrimT Int64T)
-
-ss_cache_type.Add(typeof<uint8>,PrimT UInt8T)
-ss_cache_type.Add(typeof<uint16>,PrimT UInt16T)
-ss_cache_type.Add(typeof<uint32>,PrimT UInt32T)
-ss_cache_type.Add(typeof<uint64>,PrimT UInt64T)
-
-ss_cache_type.Add(typeof<float32>,PrimT Float32T)
-ss_cache_type.Add(typeof<float>,PrimT Float64T)
-ss_cache_type.Add(typeof<string>,PrimT StringT)
-ss_cache_type.Add(typeof<char>,PrimT CharT)
-ss_cache_type.Add(typeof<unit>,ListT [])
-ss_cache_type.Add(typeof<Void>,ListT [])
+//ss_cache_type.Add(typeof<bool>,PrimT BoolT)
+//ss_cache_type.Add(typeof<int8>,PrimT Int8T)
+//ss_cache_type.Add(typeof<int16>,PrimT Int16T)
+//ss_cache_type.Add(typeof<int32>,PrimT Int32T)
+//ss_cache_type.Add(typeof<int64>,PrimT Int64T)
+//
+//ss_cache_type.Add(typeof<uint8>,PrimT UInt8T)
+//ss_cache_type.Add(typeof<uint16>,PrimT UInt16T)
+//ss_cache_type.Add(typeof<uint32>,PrimT UInt32T)
+//ss_cache_type.Add(typeof<uint64>,PrimT UInt64T)
+//
+//ss_cache_type.Add(typeof<float32>,PrimT Float32T)
+//ss_cache_type.Add(typeof<float>,PrimT Float64T)
+//ss_cache_type.Add(typeof<string>,PrimT StringT)
+//ss_cache_type.Add(typeof<char>,PrimT CharT)
+//ss_cache_type.Add(typeof<unit>,ListT [])
+//ss_cache_type.Add(typeof<Void>,ListT [])
 
 let nodify_ssty = nodify <| d0()
 let dotnet_typet x = nodify_ssty x |> DotNetTypeT
 
-let ss_compile_type (x: Type) =
+let ss_type_definition (x: Type) =
     let gen_pars = x.GetGenericArguments() |> Array.map (fun x -> x.Name)
     SSTyLam (Map.empty, gen_pars, SSCompileTypeDefinition x)
 
-let ss_get_type = function
-    | SSTyType x -> x
-    | SSTyArray [||] -> ListT []
-    | x -> failwithf "Not a type. %A" x
-
-let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
-    let rec type_to_ty (d: SSEnvTerm) (x: Type): Ty =
+let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
+    let rec ss_compile_type_definition (d: SSEnvTerm) (x: Type): Ty =
         memoize ss_cache_type x <| fun () ->
-            if x.IsArray then arrayt(DotNetHeap,type_to_ty d (x.GetElementType()))
-            // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
-            elif x.IsByRef then arrayt(DotNetReference, type_to_ty d (x.GetElementType())) // Incorrect, but useful
-            elif FSharp.Reflection.FSharpType.IsFunction x then 
-                let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
-                closuret (type_to_ty d a) (type_to_ty d b)
-            else
-                let full_name = 
-                    let name = x.Name.Split '`' |> Array.head
-                    String.concat "." [|x.Namespace;name|]
-                let assembly_name = x.Assembly.FullName
+            let gen_args = x.GetGenericArguments()
+                
+            let inline is_static x = (^a : (member IsStatic: bool) x)
+            let inline is_public x = (^a : (member IsPublic: bool) x)
+            let inline name x = (^a : (member Name: String) x)
 
-                let inline is_static x = (^a : (member IsStatic: bool) x)
-                let inline is_public x = (^a : (member IsPublic: bool) x)
-                let inline name x = (^a : (member Name: String) x)
-
-                let inline partition g x =
-                    let inline f x = g x |> Map
+            let inline partition g x =
+                let inline f x = g x |> Map
             
-                    Array.filter is_public x
-                    |> Array.partition is_static
-                    |> fun (a,b) -> f a, f b
+                Array.filter is_public x
+                |> Array.partition is_static
+                |> fun (a,b) -> f a, f b
 
-                let static_methods, methods = 
-                    x.GetMethods() 
-                    |> partition (Array.groupBy name >> Array.map (fun (k,v) -> 
-                        let v =
-                            v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
-                            v |> Array.map (fun x ->
-                                let gen = x.GetGenericArguments() |> Array.map name
-                                SSTyLam(d, gen, SSCompileMethod x)
-                                )
-                        k, v))
+            let static_methods, methods = 
+                x.GetMethods() 
+                |> partition (Array.groupBy name >> Array.map (fun (k,v) -> 
+                    let v =
+                        v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
+                        v |> Array.map (fun x ->
+                            let gen = Array.map name gen_args
+                            SSTyLam(d, gen, SSCompileMethod x)
+                            )
+                    k, v))
     
-                let static_fields, fields = 
-                    x.GetFields() 
-                    |> partition (Array.map (fun x ->
-                        x.Name, SSTyLam(d, [||], SSCompileField x)
-                        ))
+            let static_fields, fields = 
+                x.GetFields() 
+                |> partition (Array.map (fun x ->
+                    x.Name, SSTyLam(d, [||], SSCompileField x)
+                    ))
 
-                let constructors =
-                    x.GetConstructors()
-                    |> Array.map (fun x ->
-                        SSTyLam(d, [||], SSCompileConstructor x)
-                        )
+            let constructors =
+                x.GetConstructors()
+                |> Array.map (fun x ->
+                    SSTyLam(d, [||], SSCompileConstructor x)
+                    )
 
-                let generic_type_args = 
-                    x.GetGenericArguments()
-                    |> Array.map (fun x -> d.[name x])
+            SSTyClass {
+                full_name = let name = x.Name.Split '`' |> Array.head in String.concat "." [|x.Namespace;name|]
+                assembly_name = x.Assembly.FullName
+                generic_type_args = Array.map (fun x -> d.[name x]) gen_args
+                methods = methods
+                static_methods = static_methods
+                fields = fields
+                static_fields = static_fields
+                constructors = constructors
+                }
+            |> dotnet_typet
 
-                SSTyClass {
-                    full_name = full_name
-                    assembly_name = assembly_name
-                    generic_type_args = generic_type_args
-                    methods = methods
-                    static_methods = static_methods
-                    fields = fields
-                    static_fields = static_fields
-                    constructors = constructors
-                    }
-                |> dotnet_typet
-
-
-    let ss_type_definition d x = type_to_ty d x |> SSTyType
-
-    let rec ss_type (d: SSEnvTerm) (x: Type) =
+    and ss_type_apply (d: SSEnvTerm) (x: Type): Ty =
+        let gen_args = x.GetGenericArguments()
+        
         let ty = 
-            if x.IsGenericType then
-                x.GetGenericTypeDefinition()
-                |> ss_compile_type
-            else
-                ss_compile_type x
+            if x.IsGenericType then x.GetGenericTypeDefinition()
+            else x
+            |> ss_type_definition
 
         let gen = 
-            x.GetGenericArguments()
+            gen_args
             |> Array.map (function
                 | x when x.IsGenericParameter -> d.[x.Name]
-                | x -> ss_type d x
+                | x -> ss_type_apply d x
                 )
-            |> SSTyArray
+            |> Array.toList
 
-        ss_apply' ty gen
+        ss_apply ty gen
 
-    and ss_method (d: SSEnvTerm) (x: MethodInfo) = 
+    and ss_compile_method (d: SSEnvTerm) (x: MethodInfo): Ty = 
         memoize ss_cache_method x <| fun () ->
             let pars =
                 x.GetParameters()
                 |> Array.map (fun x ->
                     let t = x.ParameterType
-                    if t.IsGenericParameter then d.[t.Name] |> ss_get_type
-                    else ss_type d t |> ss_get_type
+                    if t.IsGenericParameter then d.[t.Name]
+                    else ss_type_apply d t
                     )
                 |> Array.toList
                 |> listt
 
-            let ret =
-                x.ReturnType
-                |> ss_type d
-                |> ss_get_type
+            let ret = ss_type_apply d x.ReturnType
 
             closuret pars ret
-            |> SSTyType
 
-    and ss_field (d: SSEnvTerm) (x: FieldInfo) = 
+    and ss_compile_field (d: SSEnvTerm) (x: FieldInfo): Ty = 
         memoize ss_cache_field x <| fun () ->
-            ss_type d x.FieldType
+            ss_type_apply d x.FieldType
 
-    and ss_constructor (d: SSEnvTerm) (x: ConstructorInfo) = 
+    and ss_compile_constructor (d: SSEnvTerm) (x: ConstructorInfo): Ty = 
         memoize ss_cache_constructor x <| fun () ->
             x.GetParameters()
-            |> Array.map (fun x -> ss_type d x.ParameterType)
-            |> SSTyArray
+            |> Array.map (fun x -> ss_type_apply d x.ParameterType)
+            |> Array.toList
+            |> listt
             
-    and ss_apply' a b = 
-        match a with
-        | SSTyLam(env,bnds,body) ->
-            match b with
-            | SSTyArray args -> 
-                let d = Array.foldBack2 Map.add bnds args env
-                ss_eval d body
-            | _ -> failwith "Expected an argument array as the second argument to apply"
-        | _ -> failwith "Expected a lambda as the first argument to apply."
-
-    let ss_apply d a b = ss_apply' (ss_eval d a) (ss_eval d b)
-
     match x with
-    | SSAp(a,b) -> ss_apply d a b
     | SSVar a -> d.[a]
-    | SSArray a -> Array.map (ss_eval d) a |> SSTyArray
-    | SSLam (a,b) -> SSTyLam(d,a,b)
-    | SSCompileTypeDefinition a -> ss_type_definition d a
-    | SSCompileMethod a -> ss_method d a 
-    | SSCompileField a -> ss_field d a
-    | SSCompileConstructor a -> ss_constructor d a
+    | SSArray a -> Array.map (ss_eval d) a |> Array.toList |> listt
+    | SSLam (a,b) -> SSTyLam(d,a,b) |> dotnet_typet
+    | SSCompileTypeDefinition a -> ss_compile_type_definition d a
+    | SSCompileMethod a -> ss_compile_method d a 
+    | SSCompileField a -> ss_compile_field d a
+    | SSCompileConstructor a -> ss_compile_constructor d a
 
-let ss_compile_if_empty = function
-    | SSTyLam(e,[||],b) -> ss_eval e b
-    | x -> x
-
-let ss_apply a b = 
-    match a,b with
-    | SSTyLam(e,arg,body), SSTyArray b -> 
-        let e = Array.foldBack2 Map.add arg b e
-        ss_eval e body
-    | x -> failwith "Not applicable."
+and ss_apply a args = 
+    match a with
+    | SSTyLam(env,bnds,body) ->
+        let d = Seq.foldBack2 Map.add bnds args env
+        ss_eval d body
+    | _ -> failwith "Expected a lambda as the first argument to apply."
 

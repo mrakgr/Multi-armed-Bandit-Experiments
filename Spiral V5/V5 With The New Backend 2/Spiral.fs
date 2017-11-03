@@ -198,11 +198,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     let (|TySet|) x = set_field x
 
-    /// Wraps the argument in a list if not a tuple type.
-    let tuple_field_ty = function 
-        | ListT x -> x
-        | x -> [x]
-
     let (|TyType|) x = get_type x
     let (|TypeLit|_|) = function
         | TyType (LitT x) -> Some x
@@ -816,12 +811,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | :? TypeError as e -> reraise()
             | e -> on_type_er (trace d) (".NET exception:\n"+e.Message)
 
-        let dotnet_type_to_ty typ = ss_compile_type typ |> dotnet_typet |> tyt
-
         let assembly_compile d (x: Reflection.Assembly) =
             let rec to_typedexpr = function
                 | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule) |> layoutify LayoutStack d
-                | LoadType typ -> dotnet_type_to_ty typ
+                | LoadType typ -> ss_type_definition typ |> dotnet_typet |> tyt
 
             x.GetTypes()
             |> Array.fold (fun map (typ: Type) ->
@@ -962,21 +955,22 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyType(DotNetTypeT(N t)) & dotnet_type, arg ->
                 let dotnet_type, t = 
                     match t with
-                    | SSTyLam(e,[||],b) -> 
+                    | SSTyLam(e,[||],b) -> // Appllies the empty type constructor.
                         let t = ss_eval e b
-                        t |> dotnet_typet |> tyt, t
-                    | x -> dotnet_type, t
+                        let t' = 
+                            match t with
+                            | DotNetTypeT(N t) -> t
+                            | _ -> failwith "impossible"
+                        t |> tyt, t'
+                    | x -> dotnet_type, t // Does nothing.
 
                 let ss_overload_tryPick_method_return_type (TyTuple typ_arg) (TyType arg_ty) method_overloads =
-                    let typ_arg_len, typ_arg = 
-                        List.toArray typ_arg 
-                        |> Array.map (get_type >> SSTyType)
-                        |> fun x -> x.Length, SSTyArray x
+                    let typ_arg_len, typ_arg = typ_arg.Length, List.map get_type typ_arg
 
                     method_overloads |> Array.tryPick (function
                         | SSTyLam(_,typ_arg',_) as lam -> 
                             if typ_arg_len = typ_arg'.Length then
-                                match ss_apply lam typ_arg |> ss_get_type with
+                                match ss_apply lam typ_arg with
                                 | ClosureT(method_ty,method_ret) when method_ty = arg_ty -> Some method_ret
                                 | _ -> failwith "Methods need to return an arrow type."
                             else None
@@ -1012,7 +1006,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     let field = ss_class_find "field" f t name
                     match field with
                     | SSTyLam _ as lam -> 
-                        let typ = ss_apply lam (SSTyArray [||]) |> ss_get_type
+                        let typ = ss_apply lam []
                         TyOp(DotNetTypeGetField,[dotnet_type;name |> LitString |> type_lit_create'],typ)
                         |> make_tyv_and_push_typed_expr_even_if_unit d
                     | _ -> failwith "Fields should always be staged."
@@ -1024,7 +1018,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     printfn "I am in ss_constructor."
                     t'.constructors
                     |> Array.exists (fun x ->
-                        ss_apply x (SSTyArray [||]) |> ss_get_type = args_ty
+                        ss_apply x [] = args_ty
                         )
                     |> function
                         | false -> on_type_er (trace d) "No constructors with the matching arguments exist."
@@ -1034,13 +1028,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 let ss_type_apply t a = 
                     printfn "I am in ss_type_apply."
-                    let a = get_type a |> SSTyType
-                    ss_apply t a |> dotnet_typet |> tyt
+                    let a = get_type a |> tuple_field_ty
+                    ss_apply t a |> tyt
 
                 match dotnet_type with
                 | TyT _ ->
                     match t with 
-                    | SSTyType(DotNetTypeT(N(SSTyClass t))) ->
+                    | SSTyClass t ->
                         match arg with
                         | TyList [TypeString method_name; typ_arg; arg] -> ss_static_method t method_name typ_arg arg
                         | TyList [TypeString method_name; arg] -> ss_static_method t method_name TyB arg
@@ -2806,7 +2800,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         and print_dotnet_type x =
             let print_class (x: SSTypedExprClass) =
                 if x.generic_type_args |> Array.isEmpty then x.full_name
-                else sprintf "%s<%s>" x.full_name (Array.map print_dotnet_type x.generic_type_args |> String.concat ", ")
+                else sprintf "%s<%s>" x.full_name (Array.map print_type x.generic_type_args |> String.concat ", ")
             match x with
             | SSTyClass x -> print_class x
             | SSTyType x -> print_type x
