@@ -802,17 +802,20 @@ inl Environment = mscorlib.System.Environment
 
 inl cuda_toolkit_path = 
     inl x = Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
-    if ops.IsNull x then failwith unit "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
+    inl x_ty = type(x)
+    if ops(.isNull, x_ty, x) then failwith unit "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
     x
 
 inl visual_studio_path =
     inl x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")
-    if ops.IsNull x then failwith unit "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
+    inl x_ty = type(x)
+    if ops(.isNull, x_ty, x) then failwith unit "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
     mscorlib.System.IO.Directory.GetParent(x).get_Parent().get_Parent().get_FullName()
 
 inl cub_path = // The path for the Cuda Unbound library.
     inl x = Environment.GetEnvironmentVariable("CUB_PATH")
-    if ops.IsNull x then 
+    inl x_ty = type(x)
+    if ops(.isNull, x_ty, x) then 
         failwith unit 
             @"If you are getting this exception then that means that CUB_PATH environment variable is not defined.
 
@@ -839,13 +842,14 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     procStartInfo.set_FileName nvcc_router_path
     inl process = system .System.Diagnostics.Process()
     process.set_StartInfo procStartInfo
-    inl print_to_standard_output = closure_of (inl _ args -> args.get_Data() |> writeline)
-    inl add_handler event =
-        system .System.Diagnostics.DataReceivedEventHandler print_to_standard_output
-        |> event_add_handler process event
+    inl print_to_standard_output = 
+        term_cast (inl args -> 
+            print_static args
+            args.get_Data() |> writeline) 
+            (system .System.Diagnostics.DataReceivedEventArgs)
 
-    add_handler .ErrorDataReceived
-//    add_handler .OutputDataReceived
+    process.ErrorDataReceived.Add print_to_standard_output
+//    process.OutputDataReceived.Add print_to_standard_output
     
     inl concat = string_concat ""
     inl (+) a b = concat (a, b)

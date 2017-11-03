@@ -49,7 +49,8 @@ let rec prim_dotnet_type_to_ty (x: System.Type) on_fail =
     elif FSharp.Reflection.FSharpType.IsFunction x then 
         let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
         closuret (prim_dotnet_type_to_ty a on_fail) (prim_dotnet_type_to_ty b on_fail)
-    else on_fail x
+    else 
+        memoize ss_cache_type x <| fun () -> on_fail x
 
 let nodify_ssty = nodify <| d0()
 let dotnet_typet x = nodify_ssty x |> DotNetTypeT
@@ -62,84 +63,83 @@ let rec ss_eval prim_dotnet_type_to_ty (d: SSEnvTerm) (x: SSExpr): Ty =
     let inline ss_eval d x = ss_eval prim_dotnet_type_to_ty d x
     let rec ss_compile_type_definition (d: SSEnvTerm) (x: Type): Ty =
         prim_dotnet_type_to_ty x <| fun (x: Type) ->
-            memoize ss_cache_type x <| fun () ->
-                let gen_args = x.GetGenericArguments()
+            let gen_args = x.GetGenericArguments()
                 
-                let inline is_static x = (^a : (member IsStatic: bool) x)
-                let inline is_public x = (^a : (member IsPublic: bool) x)
-                let inline name x = (^a : (member Name: String) x)
+            let inline is_static x = (^a : (member IsStatic: bool) x)
+            let inline is_public x = (^a : (member IsPublic: bool) x)
+            let inline name x = (^a : (member Name: String) x)
 
-                let inline partition g x =
-                    let inline f x = g x |> Map
+            let inline partition g x =
+                let inline f x = g x |> Map
             
-                    Array.filter is_public x
-                    |> Array.partition is_static
-                    |> fun (a,b) -> f a, f b
+                Array.filter is_public x
+                |> Array.partition is_static
+                |> fun (a,b) -> f a, f b
 
-                let static_methods, methods = 
-                    let name' (meth: MethodInfo) = // Special case because the F# has special compilation names for static methods.
-                        meth.CustomAttributes
-                        |> Seq.tryFind (fun x -> x.AttributeType = typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>)
-                        |> Option.map (fun atr -> 
-                            atr.ConstructorArguments |> Seq.head 
-                            |> fun x -> x.Value :?> string)
-                        |> Option.defaultValue meth.Name
+            let static_methods, methods = 
+                let name' (meth: MethodInfo) = // Special case because the F# has special compilation names for static methods.
+                    meth.CustomAttributes
+                    |> Seq.tryFind (fun x -> x.AttributeType = typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>)
+                    |> Option.map (fun atr -> 
+                        atr.ConstructorArguments |> Seq.head 
+                        |> fun x -> x.Value :?> string)
+                    |> Option.defaultValue meth.Name
 
-                    x.GetMethods() 
-                    |> partition (Array.groupBy name' >> Array.map (fun (k,v) -> 
-                        let v =
-                            v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
-                            v |> Array.map (fun x ->
-                                let gen = Array.map name (x.GetGenericArguments())
-                                SSTyLam(d, gen, SSCompileMethod x)
-                                )
-                        k, v))
-
-                let static_fields, fields = 
-                    x.GetFields() 
-                    |> partition (Array.map (fun x ->
-                        x.Name, SSTyLam(d, [||], SSCompileField x)
-                        ))
-
-                let constructors =
-                    if x.BaseType = typeof<System.MulticastDelegate> then // special case for delegate construction
-                        let handler_types =
-                            let meth = x.GetMethod("Invoke")
-                            let return_type = 
-                                meth.ReturnType
-                                |> ss_type_apply d
-                            let pars =
-                                meth.GetParameters()
-                                |> Array.toList
-                                |> List.map (fun x -> x.ParameterType |> ss_type_apply d)
-                            pars @ [return_type]
-                            |> List.reduceBack closuret
-                        [|SSTyLam(d,[||],SSType handler_types)|]
-                    else
-                        x.GetConstructors()
-                        |> Array.map (fun x ->
-                            SSTyLam(d, [||], SSCompileConstructor x)
+                x.GetMethods() 
+                |> partition (Array.groupBy name' >> Array.map (fun (k,v) -> 
+                    let v =
+                        v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
+                        v |> Array.map (fun x ->
+                            let gen = Array.map name (x.GetGenericArguments())
+                            SSTyLam(d, gen, SSCompileMethod x)
                             )
+                    k, v))
 
-                let events = 
-                    x.GetEvents()
+            let static_fields, fields = 
+                x.GetFields() 
+                |> partition (Array.map (fun x ->
+                    x.Name, SSTyLam(d, [||], SSCompileField x)
+                    ))
+
+            let constructors =
+                if x.BaseType = typeof<System.MulticastDelegate> then // special case for delegate construction
+                    let handler_types =
+                        let meth = x.GetMethod("Invoke")
+                        let return_type = 
+                            meth.ReturnType
+                            |> ss_type_apply d
+                        let pars =
+                            meth.GetParameters()
+                            |> Array.toList
+                            |> List.map (fun x -> x.ParameterType |> ss_type_apply d)
+                        pars @ [return_type]
+                        |> List.reduceBack closuret
+                    [|SSTyLam(d,[||],SSType handler_types)|]
+                else
+                    x.GetConstructors()
                     |> Array.map (fun x ->
-                        x.Name, SSTyLam(d, [||], SSCompileEvent x)
+                        SSTyLam(d, [||], SSCompileConstructor x)
                         )
-                    |> Map
 
-                SSTyClass {
-                    full_name = let name = x.Name.Split '`' |> Array.head in String.concat "." [|x.Namespace;name|]
-                    assembly_name = x.Assembly.FullName
-                    generic_type_args = Array.map (fun x -> d.[name x]) gen_args
-                    methods = methods
-                    static_methods = static_methods
-                    fields = fields
-                    static_fields = static_fields
-                    constructors = constructors
-                    events = events
-                    }
-                |> dotnet_typet
+            let events = 
+                x.GetEvents()
+                |> Array.map (fun x ->
+                    x.Name, SSTyLam(d, [||], SSCompileEvent x)
+                    )
+                |> Map
+
+            SSTyClass {
+                full_name = let name = x.Name.Split '`' |> Array.head in String.concat "." [|x.Namespace;name|]
+                assembly_name = x.Assembly.FullName
+                generic_type_args = Array.map (fun x -> d.[name x]) gen_args
+                methods = methods
+                static_methods = static_methods
+                fields = fields
+                static_fields = static_fields
+                constructors = constructors
+                events = events
+                }
+            |> dotnet_typet
 
     and ss_type_apply (d: SSEnvTerm) (x: Type): Ty =
         let gen_args = x.GetGenericArguments()
