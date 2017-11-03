@@ -242,6 +242,7 @@ type Op =
 type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 'S'ystem Type.
 //    | SSAp of SSExpr * SSExpr
 //    | SSSubst of SSExpr * SSExpr
+    | SSType of Ty
     | SSVar of string
     | SSArray of SSExpr []
     | SSLam of string [] * SSExpr
@@ -249,6 +250,7 @@ type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 
     | SSCompileMethod of Reflection.MethodInfo
     | SSCompileField of Reflection.FieldInfo
     | SSCompileConstructor of Reflection.ConstructorInfo
+    | SSCompileEvent of Reflection.EventInfo
 
 and SSTypedExpr =
     | SSTyType of Ty
@@ -259,6 +261,7 @@ and SSTypedExpr =
 and SSMethodMap = Map<string, SSTypedExpr[]>
 and SSFieldMap = Map<string, SSTypedExpr>
 and SSConstructors = SSTypedExpr[]
+and SSEvents = Map<string, SSTypedExpr>
 
 and SSTypedExprClass = {
     full_name : string
@@ -269,6 +272,7 @@ and SSTypedExprClass = {
     fields : SSFieldMap
     static_fields : SSFieldMap
     constructors : SSConstructors
+    events : SSEvents
     }
     
 and SSEnvTerm = Map<string,Ty>

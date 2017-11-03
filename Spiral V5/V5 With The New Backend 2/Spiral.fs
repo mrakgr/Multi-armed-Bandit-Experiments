@@ -88,7 +88,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let inl' args body = List.foldBack inl args body
 
     let B = vv []
-    let BListT = listt []
     let TyB = tyvv []
     
     let join_point_entry_method y = (JoinPointEntryMethod,[y]) |> op
@@ -1594,7 +1593,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | StringLength,[a] -> string_length d a
             | DotNetAssemblyLoad,[a] -> dotnet_assembly_load false d a
             | DotNetAssemblyLoadFile,[a] -> dotnet_assembly_load true d a
-//            | DotNetEventAddHandler,[a;b;c] -> dotnet_event_add_handler d a b c
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
                 | TyMap(C env_term,MapTypeFunction core) -> tymap(env_term,MapTypeRecFunction(core,name))

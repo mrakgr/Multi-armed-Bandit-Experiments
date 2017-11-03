@@ -12,6 +12,8 @@ let uniont x = UnionT x
 let closuret a b = ClosureT (a,b)
 let arrayt x = ArrayT x
 
+let BListT = listt []
+
 /// Wraps the argument in a list if not a tuple type.
 let tuple_field_ty = function 
     | ListT x -> x
@@ -22,6 +24,7 @@ let ss_cache_type = d0()
 let ss_cache_method = d0()
 let ss_cache_field = d0()
 let ss_cache_constructor = d0()
+let ss_cache_event = d0()
 
 ss_cache_type.Add(typeof<bool>,PrimT BoolT)
 ss_cache_type.Add(typeof<int8>,PrimT Int8T)
@@ -81,7 +84,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
                                 SSTyLam(d, gen, SSCompileMethod x)
                                 )
                         k, v))
-    
+
                 let static_fields, fields = 
                     x.GetFields() 
                     |> partition (Array.map (fun x ->
@@ -89,10 +92,31 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
                         ))
 
                 let constructors =
-                    x.GetConstructors()
+                    if x.BaseType = typeof<System.MulticastDelegate> then // special case for delegate construction
+                        let handler_types =
+                            let meth = x.GetMethod("Invoke")
+                            let return_type = 
+                                meth.ReturnType
+                                |> ss_type_apply d
+                            let pars =
+                                meth.GetParameters()
+                                |> Array.toList
+                                |> List.map (fun x -> x.ParameterType |> ss_type_apply d)
+                            pars @ [return_type]
+                            |> List.reduceBack closuret
+                        [|SSTyLam(d,[||],SSType handler_types)|]
+                    else
+                        x.GetConstructors()
+                        |> Array.map (fun x ->
+                            SSTyLam(d, [||], SSCompileConstructor x)
+                            )
+
+                let events = 
+                    x.GetEvents()
                     |> Array.map (fun x ->
-                        SSTyLam(d, [||], SSCompileConstructor x)
+                        x.Name, SSTyLam(d, [||], SSCompileEvent x)
                         )
+                    |> Map
 
                 SSTyClass {
                     full_name = let name = x.Name.Split '`' |> Array.head in String.concat "." [|x.Namespace;name|]
@@ -103,6 +127,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
                     fields = fields
                     static_fields = static_fields
                     constructors = constructors
+                    events = events
                     }
                 |> dotnet_typet
 
@@ -149,8 +174,24 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
             |> Array.map (fun x -> ss_type_apply d x.ParameterType)
             |> Array.toList
             |> listt
-            
+
+    let ss_compile_event (d: SSEnvTerm) (x: EventInfo): Ty =
+        memoize ss_cache_event x <| fun () ->
+            match ss_type_apply d x.EventHandlerType with
+            | DotNetTypeT(N(SSTyClass x)) as t ->
+                let ob = typeof<obj> |> ss_compile_type_definition Map.empty
+                {x with 
+                    methods =
+                        Map.add "Add" [|SSTyType (closuret t BListT)|] x.methods
+                        |> Map.add "AddHandler" [|SSTyType (closuret ob (closuret t BListT))|]
+                        |> Map.add "RemoveHandler" [|SSTyType (closuret t BListT)|]
+                    }
+                |> SSTyClass
+                |> dotnet_typet
+            | _ -> failwith "Applying a type here should always yield a class."
+
     match x with
+    | SSType a -> a
     | SSVar a -> d.[a]
     | SSArray a -> Array.map (ss_eval d) a |> Array.toList |> listt
     | SSLam (a,b) -> SSTyLam(d,a,b) |> dotnet_typet
@@ -158,6 +199,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
     | SSCompileMethod a -> ss_compile_method d a 
     | SSCompileField a -> ss_compile_field d a
     | SSCompileConstructor a -> ss_compile_constructor d a
+    | SSCompileEvent a -> ss_compile_event d a
 
 and ss_apply a args = 
     match a with
