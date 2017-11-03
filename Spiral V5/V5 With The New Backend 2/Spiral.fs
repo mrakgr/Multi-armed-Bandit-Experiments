@@ -923,12 +923,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let type_lit_create' x = litt x |> tyt
 
         let rec apply d a b =
-            let lambdify a b =
-                let lam = 
-                    inl' ["a";"b";"c"] (ap (v "a") (vv [v "b"; v "c"]))
-                    |> inner_compile
-                apply d (apply d lam a) b
-
             match destructure d a, destructure d b with
             // apply_function
             | recf & M(layout,env_term,fun_type), args -> apply_func false d recf layout env_term fun_type args
@@ -963,6 +957,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             | _ -> failwith "impossible"
                         t |> tyt, t'
                     | x -> dotnet_type, t // Does nothing.
+
+                let lambdify a b =
+                    let lam = 
+                        inl' ["a";"b";"c"] (ap (v "a") (vv [v "b"; v "c"]))
+                        |> inner_compile
+                    apply d (apply d lam a) b
 
                 let ss_overload_tryPick_method_return_type (TyTuple typ_arg) (TyType arg_ty) method_overloads =
                     let typ_arg_len, typ_arg = typ_arg.Length, List.map get_type typ_arg
@@ -1005,13 +1005,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     ss_method_template "Method" tryPick x
 
                 let ss_field_template f t name =
-                    let field = ss_class_find "field" f t name
-                    match field with
-                    | SSTyLam _ as lam -> 
-                        let typ = ss_apply lam []
-                        TyOp(DotNetTypeGetField,[dotnet_type;name |> LitString |> type_lit_create'],typ)
-                        |> make_tyv_and_push_typed_expr_even_if_unit d
-                    | _ -> failwith "Fields should always be staged."
+                    let name' = name |> LitString |> type_lit_create'
+                    match Map.tryFind name (f t) with
+                    | None -> lambdify dotnet_type name'
+                    | Some field ->
+                        match field with
+                        | SSTyLam _ as lam -> 
+                            let typ = ss_apply lam []
+                            TyOp(DotNetTypeGetField,[dotnet_type;name'],typ)
+                            |> make_tyv_and_push_typed_expr_even_if_unit d
+                        | _ -> failwith "Fields should always be staged."
 
                 let ss_field x = ss_field_template (fun {fields=x} -> x) x
                 let ss_static_field x = ss_field_template (fun {static_fields=x} -> x) x
