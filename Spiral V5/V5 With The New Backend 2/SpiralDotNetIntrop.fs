@@ -45,7 +45,8 @@ let ss_compile_type (x: Type) =
 
 let ss_get_type = function
     | SSTyType x -> x
-    | _ -> failwith "Not a type."
+    | SSTyArray [||] -> ListT []
+    | x -> failwithf "Not a type. %A" x
 
 let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
     let rec type_to_ty (d: SSEnvTerm) (x: Type): Ty =
@@ -117,8 +118,11 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): SSTypedExpr =
 
     let rec ss_type (d: SSEnvTerm) (x: Type) =
         let ty = 
-            x.GetGenericTypeDefinition()
-            |> ss_compile_type
+            if x.IsGenericType then
+                x.GetGenericTypeDefinition()
+                |> ss_compile_type
+            else
+                ss_compile_type x
 
         let gen = 
             x.GetGenericArguments()
