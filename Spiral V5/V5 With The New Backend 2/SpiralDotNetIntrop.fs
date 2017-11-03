@@ -75,8 +75,16 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
                     |> fun (a,b) -> f a, f b
 
                 let static_methods, methods = 
+                    let name' (meth: MethodInfo) = // Special case because the F# has special compilation names for static methods.
+                        meth.CustomAttributes
+                        |> Seq.tryFind (fun x -> x.AttributeType = typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>)
+                        |> Option.map (fun atr -> 
+                            atr.ConstructorArguments |> Seq.head 
+                            |> fun x -> x.Value :?> string)
+                        |> Option.defaultValue meth.Name
+
                     x.GetMethods() 
-                    |> partition (Array.groupBy name >> Array.map (fun (k,v) -> 
+                    |> partition (Array.groupBy name' >> Array.map (fun (k,v) -> 
                         let v =
                             v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
                             v |> Array.map (fun x ->
@@ -181,7 +189,7 @@ let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
             | DotNetTypeT(N(SSTyClass x)) as t ->
                 let ob = typeof<obj> |> ss_compile_type_definition Map.empty
                 {x with 
-                    methods =
+                    methods = // Special cases because either .NET or F# compiler has extension methods.
                         Map.add "Add" [|SSTyType (closuret t BListT)|] x.methods
                         |> Map.add "AddHandler" [|SSTyType (closuret ob (closuret t BListT))|]
                         |> Map.add "RemoveHandler" [|SSTyType (closuret t BListT)|]
