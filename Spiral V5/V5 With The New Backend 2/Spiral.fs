@@ -947,14 +947,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             // apply_dotnet_type 
             | TyType(DotNetTypeT(N t)) & dotnet_type, arg ->
                 let dotnet_type, t = 
+                    let f t t' = t |> tyt, t'
                     match t with
                     | SSTyLam(e,[||],b) -> // Appllies the empty type constructor.
-                        let t = ss_eval e b
-                        let t' = 
-                            match t with
-                            | DotNetTypeT(N t) -> t
+                        match ss_eval prim_dotnet_type_to_ty e b with
+                        | DotNetTypeT(N t') as t -> f t t'
+                        | _ -> // Primitive case
+                            match ss_eval (|>) e b with 
+                            | DotNetTypeT(N t') as t -> f t t'
                             | _ -> failwith "impossible"
-                        t |> tyt, t'
                     | x -> dotnet_type, t // Does nothing.
 
                 let lambdify a b =
