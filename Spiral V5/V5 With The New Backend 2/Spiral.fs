@@ -970,8 +970,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     method_overloads |> Array.tryPick (function
                         | SSTyLam(_,typ_arg',_) as lam -> 
                             if typ_arg_len = typ_arg'.Length then
-                                match ss_apply lam typ_arg with
-                                | ClosureT(method_ty,method_ret) when method_ty = arg_ty -> Some method_ret
+                                let r = ss_apply lam typ_arg
+                                match r with
+                                | ClosureT(method_ty,method_ret) -> 
+                                    if tuple_field_ty method_ty = tuple_field_ty arg_ty then Some method_ret else None
                                 | _ -> failwith "Methods need to return an arrow type."
                             else None
                         | _ -> failwith "Methods should always be staged."
@@ -1015,11 +1017,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let ss_static_field x = ss_field_template (fun {static_fields=x} -> x) x
 
                 let ss_constructor (t': SSTypedExprClass) (TyType args_ty & args) =
-                    printfn "I am in ss_constructor."
                     t'.constructors
-                    |> Array.exists (fun x ->
-                        ss_apply x [] = args_ty
-                        )
+                    |> Array.exists (fun x -> tuple_field_ty (ss_apply x []) = tuple_field_ty args_ty)
                     |> function
                         | false -> on_type_er (trace d) "No constructors with the matching arguments exist."
                         | _ ->
@@ -1027,7 +1026,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             |> make_tyv_and_push_typed_expr_even_if_unit d
 
                 let ss_type_apply t a = 
-                    printfn "I am in ss_type_apply."
                     let a = get_type a |> tuple_field_ty
                     ss_apply t a |> tyt
 

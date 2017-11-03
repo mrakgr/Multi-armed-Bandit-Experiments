@@ -20,3 +20,5 @@ con.[1].GetParameters()
 
 let dic'' = dic'.MakeGenericType([|typeof<int>;typeof<int>|])
 dic''.GetGenericArguments()
+
+dic'.GetMethod("Add").GetGenericArguments()

@@ -202,21 +202,22 @@ let test15 =
 inl system = assembly_load .mscorlib .System
 inl builder_type = system.Text.StringBuilder
 inl b = builder_type ("Qwe", 128i32)
-b
-//inl a x =
-//    b .Append x |> ignore
-//    b .AppendLine () |> ignore
-//a 123
-//a 123i16
-//a "qwe"
-//inl str = b.ToString()
-//inl console = system.Console
-//console .Write str |> ignore
-//
-//inl dictionary_type = system.Collections.Generic."Dictionary`2"
-//inl dict = dictionary_type(int64, int64)(128i32)
-//dict.Add(1,2)
-//dict.get_Item 1
+inl a x =
+    b (.Append, x) |> ignore
+    b (.AppendLine, ()) |> ignore
+a 123
+a 123i16
+a "qwe"
+inl str = b(.ToString,())
+inl console = system.Console
+console (.Write, str) |> ignore
+
+inl dictionary_type = system.Collections.Generic."Dictionary`2"
+inl key = 1, 1
+inl value = {a=1;b=2;c=3}
+inl dict = dictionary_type(key, value)(128i32)
+dict(.Add,(key,value))
+dict(.get_Item, key :: ())
     """
 
 let hacker_rank_1 =

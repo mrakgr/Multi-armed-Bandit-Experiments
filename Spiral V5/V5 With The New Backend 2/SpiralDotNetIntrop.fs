@@ -23,23 +23,23 @@ let ss_cache_method = d0()
 let ss_cache_field = d0()
 let ss_cache_constructor = d0()
 
-//ss_cache_type.Add(typeof<bool>,PrimT BoolT)
-//ss_cache_type.Add(typeof<int8>,PrimT Int8T)
-//ss_cache_type.Add(typeof<int16>,PrimT Int16T)
-//ss_cache_type.Add(typeof<int32>,PrimT Int32T)
-//ss_cache_type.Add(typeof<int64>,PrimT Int64T)
-//
-//ss_cache_type.Add(typeof<uint8>,PrimT UInt8T)
-//ss_cache_type.Add(typeof<uint16>,PrimT UInt16T)
-//ss_cache_type.Add(typeof<uint32>,PrimT UInt32T)
-//ss_cache_type.Add(typeof<uint64>,PrimT UInt64T)
-//
-//ss_cache_type.Add(typeof<float32>,PrimT Float32T)
-//ss_cache_type.Add(typeof<float>,PrimT Float64T)
-//ss_cache_type.Add(typeof<string>,PrimT StringT)
-//ss_cache_type.Add(typeof<char>,PrimT CharT)
-//ss_cache_type.Add(typeof<unit>,ListT [])
-//ss_cache_type.Add(typeof<Void>,ListT [])
+ss_cache_type.Add(typeof<bool>,PrimT BoolT)
+ss_cache_type.Add(typeof<int8>,PrimT Int8T)
+ss_cache_type.Add(typeof<int16>,PrimT Int16T)
+ss_cache_type.Add(typeof<int32>,PrimT Int32T)
+ss_cache_type.Add(typeof<int64>,PrimT Int64T)
+
+ss_cache_type.Add(typeof<uint8>,PrimT UInt8T)
+ss_cache_type.Add(typeof<uint16>,PrimT UInt16T)
+ss_cache_type.Add(typeof<uint32>,PrimT UInt32T)
+ss_cache_type.Add(typeof<uint64>,PrimT UInt64T)
+
+ss_cache_type.Add(typeof<float32>,PrimT Float32T)
+ss_cache_type.Add(typeof<float>,PrimT Float64T)
+ss_cache_type.Add(typeof<string>,PrimT StringT)
+ss_cache_type.Add(typeof<char>,PrimT CharT)
+ss_cache_type.Add(typeof<unit>,ListT [])
+ss_cache_type.Add(typeof<Void>,ListT [])
 
 let nodify_ssty = nodify <| d0()
 let dotnet_typet x = nodify_ssty x |> DotNetTypeT
@@ -50,61 +50,67 @@ let ss_type_definition (x: Type) =
 
 let rec ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
     let rec ss_compile_type_definition (d: SSEnvTerm) (x: Type): Ty =
-        memoize ss_cache_type x <| fun () ->
-            let gen_args = x.GetGenericArguments()
+        if x.IsArray then arrayt(DotNetHeap,ss_compile_type_definition d (x.GetElementType()))
+        // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
+        elif x.IsByRef then arrayt(DotNetReference, ss_compile_type_definition d (x.GetElementType())) // Incorrect, but useful
+        elif FSharp.Reflection.FSharpType.IsFunction x then 
+            let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
+            closuret (ss_compile_type_definition d a) (ss_compile_type_definition d b)
+        else
+            memoize ss_cache_type x <| fun () ->
+                let gen_args = x.GetGenericArguments()
                 
-            let inline is_static x = (^a : (member IsStatic: bool) x)
-            let inline is_public x = (^a : (member IsPublic: bool) x)
-            let inline name x = (^a : (member Name: String) x)
+                let inline is_static x = (^a : (member IsStatic: bool) x)
+                let inline is_public x = (^a : (member IsPublic: bool) x)
+                let inline name x = (^a : (member Name: String) x)
 
-            let inline partition g x =
-                let inline f x = g x |> Map
+                let inline partition g x =
+                    let inline f x = g x |> Map
             
-                Array.filter is_public x
-                |> Array.partition is_static
-                |> fun (a,b) -> f a, f b
+                    Array.filter is_public x
+                    |> Array.partition is_static
+                    |> fun (a,b) -> f a, f b
 
-            let static_methods, methods = 
-                x.GetMethods() 
-                |> partition (Array.groupBy name >> Array.map (fun (k,v) -> 
-                    let v =
-                        v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
-                        v |> Array.map (fun x ->
-                            let gen = Array.map name gen_args
-                            SSTyLam(d, gen, SSCompileMethod x)
-                            )
-                    k, v))
+                let static_methods, methods = 
+                    x.GetMethods() 
+                    |> partition (Array.groupBy name >> Array.map (fun (k,v) -> 
+                        let v =
+                            v |> Array.sortInPlaceBy (fun x -> x.GetParameters().Length)
+                            v |> Array.map (fun x ->
+                                let gen = Array.map name (x.GetGenericArguments())
+                                SSTyLam(d, gen, SSCompileMethod x)
+                                )
+                        k, v))
     
-            let static_fields, fields = 
-                x.GetFields() 
-                |> partition (Array.map (fun x ->
-                    x.Name, SSTyLam(d, [||], SSCompileField x)
-                    ))
+                let static_fields, fields = 
+                    x.GetFields() 
+                    |> partition (Array.map (fun x ->
+                        x.Name, SSTyLam(d, [||], SSCompileField x)
+                        ))
 
-            let constructors =
-                x.GetConstructors()
-                |> Array.map (fun x ->
-                    SSTyLam(d, [||], SSCompileConstructor x)
-                    )
+                let constructors =
+                    x.GetConstructors()
+                    |> Array.map (fun x ->
+                        SSTyLam(d, [||], SSCompileConstructor x)
+                        )
 
-            SSTyClass {
-                full_name = let name = x.Name.Split '`' |> Array.head in String.concat "." [|x.Namespace;name|]
-                assembly_name = x.Assembly.FullName
-                generic_type_args = Array.map (fun x -> d.[name x]) gen_args
-                methods = methods
-                static_methods = static_methods
-                fields = fields
-                static_fields = static_fields
-                constructors = constructors
-                }
-            |> dotnet_typet
+                SSTyClass {
+                    full_name = let name = x.Name.Split '`' |> Array.head in String.concat "." [|x.Namespace;name|]
+                    assembly_name = x.Assembly.FullName
+                    generic_type_args = Array.map (fun x -> d.[name x]) gen_args
+                    methods = methods
+                    static_methods = static_methods
+                    fields = fields
+                    static_fields = static_fields
+                    constructors = constructors
+                    }
+                |> dotnet_typet
 
     and ss_type_apply (d: SSEnvTerm) (x: Type): Ty =
         let gen_args = x.GetGenericArguments()
         
         let ty = 
-            if x.IsGenericType then x.GetGenericTypeDefinition()
-            else x
+            if x.IsGenericType then x.GetGenericTypeDefinition() else x
             |> ss_type_definition
 
         let gen = 
