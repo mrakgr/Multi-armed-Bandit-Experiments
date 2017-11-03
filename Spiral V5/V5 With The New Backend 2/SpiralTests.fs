@@ -1111,7 +1111,7 @@ inl p =
         
 run_with_unit_ret (readall()) p
     """
-
+    
 let parsing8 =
     "parsing8",[array;console;parsing],"Does the parsing library work? Diagonal Sum Difference problem.",
     """
@@ -1908,9 +1908,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache (Some(0,20))
+//rewrite_test_cache None //(Some(0,20))
 
-output_test_to_temp test15
+output_test_to_temp parsing7
 |> printfn "%s"
 |> ignore
 
