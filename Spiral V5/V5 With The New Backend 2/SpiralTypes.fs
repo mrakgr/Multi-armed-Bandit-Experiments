@@ -250,7 +250,6 @@ type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 
     | SSCompileMethod of Reflection.MethodInfo
     | SSCompileField of Reflection.FieldInfo
     | SSCompileConstructor of Reflection.ConstructorInfo
-    | SSCompileEvent of Reflection.EventInfo
 
 and SSTypedExpr =
     | SSTyType of Ty
@@ -272,7 +271,6 @@ and SSTypedExprClass = {
     fields : SSFieldMap
     static_fields : SSFieldMap
     constructors : SSConstructors
-    events : SSEvents
     }
     
 and SSEnvTerm = Map<string,Ty>
