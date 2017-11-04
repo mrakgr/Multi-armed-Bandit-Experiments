@@ -59,10 +59,10 @@ let rec ss_type_definition (x: Type) =
     let gen_pars = x.GetGenericArguments() |> Array.map (fun x -> x.Name)
     if gen_pars.Length > 0 then SSTyLam (Map.empty, gen_pars, SSCompileTypeDefinition x)
     else
-        ss_compile_type_definition prim_type_to_ty Map.empty x
+        ss_compile_type_definition Map.empty x
         |> SSTyType
 
-and ss_compile_type_definition prim_type_to_ty (d: SSEnvTerm) (x: Type): Ty =
+and ss_compile_type_definition (d: SSEnvTerm) (x: Type): Ty =
      prim_type_to_ty x <| fun (x: Type) ->
         let gen_args = x.GetGenericArguments()
                 
@@ -187,14 +187,12 @@ and ss_compile_constructor (d: SSEnvTerm) (x: ConstructorInfo): Ty =
 
 and ss_compile_event (d: SSEnvTerm) (x: EventInfo): Ty =
     memoize ss_cache_event x <| fun () ->
-        match ss_type_apply  d x.EventHandlerType with
+        match ss_type_apply d x.EventHandlerType with
         | DotNetTypeT(N(SSTyClass x)) as t ->
-            let ob = typeof<obj> |> ss_compile_type_definition prim_type_to_ty Map.empty
             {x with 
                 methods = // Special cases because either .NET or F# compiler has extension methods for events.
-                    Map.add "Add" [|SSTyType (closuret t BListT)|] x.methods
-                    |> Map.add "AddHandler" [|SSTyType (closuret ob (closuret t BListT))|]
-                    |> Map.add "RemoveHandler" [|SSTyType (closuret t BListT)|]
+                    Map.add "AddHandler" [|SSTyLam (d,[||], SSType (closuret t BListT))|] x.methods
+                    |> Map.add "RemoveHandler" [|SSTyLam (d,[||], SSType (closuret t BListT))|]
                 }
             |> SSTyClass
             |> dotnet_typet
@@ -208,7 +206,7 @@ and ss_eval (d: SSEnvTerm) (x: SSExpr): Ty =
     | SSVar a -> d.[a]
     | SSArray a -> Array.map (ss_eval d) a |> Array.toList |> listt
     | SSLam (a,b) -> SSTyLam(d,a,b) |> dotnet_typet
-    | SSCompileTypeDefinition a -> ss_compile_type_definition prim_type_to_ty d a
+    | SSCompileTypeDefinition a -> ss_compile_type_definition d a
     | SSCompileMethod a -> ss_compile_method d a 
     | SSCompileField a -> ss_compile_field d a
     | SSCompileConstructor a -> ss_compile_constructor d a

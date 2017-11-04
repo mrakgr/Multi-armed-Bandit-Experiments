@@ -1097,6 +1097,8 @@ let parsing7 =
 open Console
 open Parsing
 
+inl int64_minvalue = -9223372036854775808
+
 inl p = 
     inm n = parse_int
     inm ar = parse_array {parser=parse_int; typ=int64; n} 
@@ -1104,7 +1106,7 @@ inl p =
         if x > score then (1,x)
         elif x = score then (min+1,score)
         else s
-        ) (dyn (0,mscorlib .System.Int64 .MinValue)) ar
+        ) (dyn (0,int64_minvalue)) ar
     |> fst
     |> writeline
     |> succ
@@ -1398,7 +1400,8 @@ open Console
 inl primes = 2,3,5,11,13,17,19
 inl non_primes = Tuple.range (2,20) |> Tuple.filter (Tuple.contains primes >> not)
 inl step = Tuple.foldl (*) 1 primes
-for' {from=step; to=mscorlib.System.Int64.MaxValue; by=step; state= -1; body=inl {next state i} ->
+inl int64_maxvalue = 9223372036854775807
+for' {from=step; to=int64_maxvalue; by=step; state= -1; body=inl {next state i} ->
     if Tuple.forall (inl x -> i % x = 0) non_primes then i
     else next state
     }
@@ -1585,7 +1588,7 @@ inl main = {
         inl queue = Queue.create () state_type
         queue.enqueue init_state
 
-        met print_solution _,path = //List.foldr (inl x _ -> Console.writeline x) path ()
+        met print_solution _, path = //List.foldr (inl x _ -> Console.writeline x) path ()
             match List.last path with
             | [Some: x] -> Console.writeline x
             | [None] -> failwith unit "Error: No moves taken."
@@ -1910,7 +1913,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache None //(Some(0,20))
 
-output_test_to_temp test15
+output_test_to_temp cuda1
 |> printfn "%s"
 |> ignore
 

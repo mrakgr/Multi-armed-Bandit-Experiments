@@ -1,4 +1,4 @@
-Cannot find static method get_Data in the .NET type.
+Cannot find method ErrorDataReceived in the .NET type.
 Error trace on line: 2, column: 1 in file "Cuda".
 open Extern
 ^
@@ -104,12 +104,9 @@ Error trace on line: 63, column: 5 in file "Cuda".
 Error trace on line: 68, column: 5 in file "Cuda".
     inl process = system .System.Diagnostics.Process()
     ^
-Error trace on line: 71, column: 9 in file "Cuda".
-        term_cast (inl args -> 
-        ^
-Error trace on line: 41, column: 25 in file "Core".
-inl term_cast to from = !TermCast(to,from)
-                        ^
-Error trace on line: 73, column: 13 in file "Cuda".
-            args.get_Data() |> writeline) 
-            ^
+Error trace on line: 70, column: 5 in file "Cuda".
+    inl print_to_standard_output = 
+    ^
+Error trace on line: 76, column: 5 in file "Cuda".
+    process.ErrorDataReceived.Add print_to_standard_output
+    ^

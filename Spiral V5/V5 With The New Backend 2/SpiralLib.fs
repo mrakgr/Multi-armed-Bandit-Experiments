@@ -831,6 +831,7 @@ inl context = ManagedCuda.CudaContext false
 inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl Path = mscorlib .System.IO.Path
     inl File = mscorlib .System.IO.File
+    inl Stream = mscorlib .System.IO.Stream
     inl StreamWriter = mscorlib .System.IO.StreamWriter
     inl ProcessStartInfo = system .System.Diagnostics.ProcessStartInfo
 
@@ -843,14 +844,12 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl process = system .System.Diagnostics.Process()
     process.set_StartInfo procStartInfo
     inl print_to_standard_output = 
-        term_cast (inl args -> 
-            print_static args
-            args.get_Data() |> writeline) 
-            (system .System.Diagnostics.DataReceivedEventArgs)
+        closure_of (inl _ args -> args.get_Data() |> writeline) 
+            (mscorlib .System.Object => system .System.Diagnostics.DataReceivedEventArgs => ())
+        |> system .System.Diagnostics.DataReceivedEventHandler
 
-    process.ErrorDataReceived.Add print_to_standard_output
-//    process.OutputDataReceived.Add print_to_standard_output
-    
+    process.ErrorDataReceived.AddHandler print_to_standard_output
+
     inl concat = string_concat ""
     inl (+) a b = concat (a, b)
 
@@ -873,7 +872,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl _ = 
         if File.Exists nvcc_router_path then File.Delete nvcc_router_path
         inl nvcc_router_file = File.OpenWrite(nvcc_router_path)
-        inl nvcc_router_stream = StreamWriter(nvcc_router_file)
+        inl nvcc_router_stream = StreamWriter(nvcc_router_file :> Stream)
 
         nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
         concat (

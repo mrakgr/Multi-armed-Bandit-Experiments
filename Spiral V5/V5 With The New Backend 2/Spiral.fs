@@ -946,14 +946,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type 
             | TyType(DotNetTypeT(N t)) & dotnet_type, arg ->
-                let dotnet_type, t =
-                    match t with
-                    | SSTyType t -> 
-                        match prim_ty_to_type t |> ss_compile_type_definition (|>) Map.empty with
-                        | DotNetTypeT(N t) & dotnet_type -> tyt dotnet_type, t
-                        | _ -> failwith "impossible"
-                    | _ -> dotnet_type, t
-
                 let lambdify a b =
                     let lam = 
                         inl' ["a";"b";"c"] (ap (v "a") (vv [v "b"; v "c"]))
@@ -1012,7 +1004,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             |> make_tyv_and_push_typed_expr_even_if_unit d
                         | _ -> failwith "Fields should always be staged."
 
-                let ss_field x = ss_field_template (fun {fields=x} -> x) x
+                let ss_event_and_field x = ss_field_template (fun {fields=a; events=b} -> Map.foldBack Map.add a b) x
                 let ss_static_field x = ss_field_template (fun {static_fields=x} -> x) x
 
                 let ss_constructor (t': SSTypedExprClass) (TyType args_ty & args) =
@@ -1044,7 +1036,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         match arg with
                         | TyList [TypeString method_name; typ_arg; arg] -> ss_method t method_name typ_arg arg
                         | TyList [TypeString method_name; arg] -> ss_method t method_name TyB arg
-                        | TypeString field_name -> ss_field t field_name
+                        | TypeString field_name -> ss_event_and_field t field_name
                         | _ -> on_type_er (trace d) "Invalid input to a .NET type."
                     | _ -> failwith "Compiler error: An instance of a .NET type should always be a SSTyClass."
                 | _ -> failwith "impossible"
