@@ -107,6 +107,12 @@ type Value =
     | LitChar of char
 
 type Op =
+    // Extern
+    // FSU stands for F# Unchecked
+    | ExternFSUGlobalConstant
+    | ExternFSUMethod
+    | ExternFSUConstructor
+
     // Closure
     | ClosureTypeCreate
     | ClosureIs

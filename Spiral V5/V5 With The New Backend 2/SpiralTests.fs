@@ -1091,13 +1091,13 @@ printfn "(%i,%i,%i)" a b c
     """
 
 let parsing7 =
-    "parsing7",[array;console;parsing],"Does the parsing library work? Birthday Cake Candles problem.",
+    "parsing7",[array;console;parsing;extern_],"Does the parsing library work? Birthday Cake Candles problem.",
     """
 //https://www.hackerrank.com/challenges/birthday-cake-candles
 open Console
 open Parsing
 
-inl int64_minvalue = -9223372036854775808
+inl int64_minvalue = Extern.FSU.Global.Constant."System.Int64.MinValue" int64
 
 inl p = 
     inm n = parse_int
@@ -1913,7 +1913,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache None //(Some(0,20))
 
-output_test_to_temp test22
+output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
 

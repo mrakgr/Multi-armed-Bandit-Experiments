@@ -1562,6 +1562,21 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let unsafe_downcast_to d a b =
             let a, b = tev2 d a b
             TyOp(UnsafeDowncastTo,[a;b],get_type a)
+
+        let extern_fsu_global_constant d a b =
+            match tev2 d a b with
+            | TypeString _ & a, TyType t -> TyOp(ExternFSUGlobalConstant,[a],t) |> make_tyv_and_push_typed_expr_even_if_unit d
+            | a,_ -> on_type_er (trace d) "Expected a type string as the first argument to ExternFSUGlobalConstant.\nGot: %A" a
+
+        let extern_fsu_method d a b c d' =
+            match tev4 d a b c d' with
+            | TyType (DotNetTypeT _) & a, TypeString _ & b, c, TyType t -> TyOp(ExternFSUMethod,[a;b;c],t) |> make_tyv_and_push_typed_expr_even_if_unit d
+            | a,b,_,_ -> on_type_er (trace d) "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUMethod.\nGot: %A\n...and: %A" a b
+
+        let extern_fsu_constructor d a b =
+            match tev2 d a b with
+            | TyType (DotNetTypeT _ & t) & a, TypeString _ & b -> TyOp(ExternFSUConstructor,[a;b],t) |> make_tyv_and_push_typed_expr_even_if_unit d
+            | a,b -> on_type_er (trace d) "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUConstructor.\nGot: %A\n...and: %A" a b
             
         let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
 
@@ -1578,6 +1593,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | VV (N vars) -> List.map (tev d >> destructure d) vars |> tyvv
         | Op(N (op,vars)) ->
             match op,vars with
+            | ExternFSUGlobalConstant,[a;b] -> extern_fsu_global_constant d a b
+            | ExternFSUMethod,[a;b;c;d'] -> extern_fsu_method d a b c d'
+            | ExternFSUConstructor,[a;b] -> extern_fsu_constructor d a b
             | Apply,[a;b] -> apply_tev d a b
             | StringLength,[a] -> string_length d a
             | DotNetAssemblyLoad,[a] -> dotnet_assembly_load false d a
@@ -2321,7 +2339,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             annotations ^<| indentations statements expressions <| s
         runParserOnString (spaces >>. expr .>> eof) {ops=inbuilt_operators; semicolon_line= -1L} module_name module_code
 
-    // Codegen
+    // #Codegen
     let process_statements statements =
         let process_statement (code: StringBuilder,ind as state) statement =
             match statement with
@@ -2731,7 +2749,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         buffer_temp |> process_statements
 
-    // #Fs
+    // #F#
     let spiral_fsharp_codegen main =
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
@@ -3066,6 +3084,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | CudaKernels,[] -> cuda_kernels_name
                 | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
                 | UnsafeDowncastTo,[a;b] -> sprintf "(%s :?> %s)" (codegen b) (print_type (get_type a))
+                | ExternFSUGlobalConstant,[TypeString a] -> a
+                | ExternFSUMethod,[a;TypeString b;TyTuple c] -> sprintf "%s.%s(%s)" (codegen a) b (List.map codegen c |> String.concat ", ")
+                | ExternFSUConstructor,[TyType a;TyTuple b] -> sprintf "%s(%s)" (print_type a) (List.map codegen b |> String.concat ", ")
                 | x -> failwithf "Missing TyOp case. %A" x
 
         let type_prefix =

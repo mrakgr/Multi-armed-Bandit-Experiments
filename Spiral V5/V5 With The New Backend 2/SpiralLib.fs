@@ -729,7 +729,7 @@ let extern_ =
     """
 /// The sprintf in parsing is very slow to compile so this is the reasonable alternative to it.
 /// It is a decent bit more flexible that it too.
-/// TODO: Move this somewhere better. There needs will be a String module at some point.
+/// TODO: Move this somewhere better. There needs to be a String module at some point.
 inl rec string_concat sep l =
     inl StringBuilder = mscorlib.System.Text.StringBuilder
     inl ap s = function
@@ -767,7 +767,15 @@ inl closure_of_template check_range f tys =
 inl closure_of' = closure_of_template false
 inl closure_of = closure_of_template true
 
-{string_concat closure_of closure_of'}
+inl FSU = {
+    Global = {
+        Constant = inl a t -> !ExternFSUGlobalConstant(a,t)
+        }
+    Method = inl a b c t -> !ExternFSUMethod(a,b,c,t)
+    Constructor = inl a b -> !ExternFSUConstructor(a,b)
+    }
+
+{string_concat closure_of closure_of' FSU}
     """) |> module_
 
 let cuda =
@@ -844,11 +852,10 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl process = system .System.Diagnostics.Process()
     process.set_StartInfo procStartInfo
     inl print_to_standard_output = 
-        closure_of (inl _ args -> args.get_Data() |> writeline) 
-            (mscorlib .System.Object => system .System.Diagnostics.DataReceivedEventArgs => ())
-        |> system .System.Diagnostics.DataReceivedEventHandler
+        closure_of (inl args -> args.get_Data() |> writeline) 
+            (system .System.Diagnostics.DataReceivedEventArgs => ())
 
-    process.ErrorDataReceived.AddHandler print_to_standard_output
+    Extern.FSU.Method process ."ErrorDataReceived.Add" print_to_standard_output ()
 
     inl concat = string_concat ""
     inl (+) a b = concat (a, b)
