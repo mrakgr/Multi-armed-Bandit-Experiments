@@ -813,7 +813,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let assembly_compile d (x: Reflection.Assembly) =
             let rec to_typedexpr = function
                 | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule) |> layoutify LayoutStack d
-                | LoadType typ -> ss_type_definition typ |> dotnet_typet |> tyt
+                | LoadType typ -> match ss_type_definition typ with SSTyType x -> tyt x | x -> dotnet_typet x |> tyt
 
             x.GetTypes()
             |> Array.fold (fun map (typ: Type) ->
@@ -946,17 +946,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type 
             | TyType(DotNetTypeT(N t)) & dotnet_type, arg ->
-                let dotnet_type, t = 
-                    let f t t' = t |> tyt, t'
+                let dotnet_type, t =
                     match t with
-                    | SSTyLam(e,[||],b) -> // Appllies the empty type constructor.
-                        match ss_eval prim_dotnet_type_to_ty e b with
-                        | DotNetTypeT(N t') as t -> f t t'
-                        | _ -> // Primitive case
-                            match ss_eval (|>) e b with 
-                            | DotNetTypeT(N t') as t -> f t t'
-                            | _ -> failwith "impossible"
-                    | x -> dotnet_type, t // Does nothing.
+                    | SSTyType t -> 
+                        match prim_ty_to_type t |> ss_compile_type_definition (|>) Map.empty with
+                        | DotNetTypeT(N t) & dotnet_type -> tyt dotnet_type, t
+                        | _ -> failwith "impossible"
+                    | _ -> dotnet_type, t
 
                 let lambdify a b =
                     let lam = 
