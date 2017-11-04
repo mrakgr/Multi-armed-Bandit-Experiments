@@ -1,4 +1,4 @@
-Cannot find method ErrorDataReceived in the .NET type.
+No constructors with the matching arguments exist.
 Error trace on line: 2, column: 1 in file "Cuda".
 open Extern
 ^
@@ -77,10 +77,10 @@ inl context = ManagedCuda.CudaContext false
 Error trace on line: 56, column: 1 in file "Cuda".
 inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
 ^
-Error trace on line: 125, column: 1 in file "Cuda".
+Error trace on line: 124, column: 1 in file "Cuda".
 inl current_directory = Environment.get_CurrentDirectory()
 ^
-Error trace on line: 126, column: 15 in file "Cuda".
+Error trace on line: 125, column: 15 in file "Cuda".
 inl modules = compile_kernel_using_nvcc_bat_router current_directory
               ^
 Error trace on line: 57, column: 5 in file "Cuda".
@@ -90,23 +90,29 @@ Error trace on line: 58, column: 5 in file "Cuda".
     inl File = mscorlib .System.IO.File
     ^
 Error trace on line: 59, column: 5 in file "Cuda".
-    inl StreamWriter = mscorlib .System.IO.StreamWriter
+    inl Stream = mscorlib .System.IO.Stream
     ^
 Error trace on line: 60, column: 5 in file "Cuda".
+    inl StreamWriter = mscorlib .System.IO.StreamWriter
+    ^
+Error trace on line: 61, column: 5 in file "Cuda".
     inl ProcessStartInfo = system .System.Diagnostics.ProcessStartInfo
     ^
-Error trace on line: 62, column: 5 in file "Cuda".
+Error trace on line: 63, column: 5 in file "Cuda".
     inl nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
     ^
-Error trace on line: 63, column: 5 in file "Cuda".
+Error trace on line: 64, column: 5 in file "Cuda".
     inl procStartInfo = ProcessStartInfo()
     ^
-Error trace on line: 68, column: 5 in file "Cuda".
+Error trace on line: 69, column: 5 in file "Cuda".
     inl process = system .System.Diagnostics.Process()
     ^
-Error trace on line: 70, column: 5 in file "Cuda".
-    inl print_to_standard_output = 
-    ^
-Error trace on line: 76, column: 5 in file "Cuda".
-    process.ErrorDataReceived.Add print_to_standard_output
-    ^
+Error trace on line: 72, column: 9 in file "Cuda".
+        closure_of (inl _ args -> args.get_Data() |> writeline) 
+        ^
+Error trace on line: 74, column: 9 in file "Cuda".
+        |> system .System.Diagnostics.DataReceivedEventHandler
+        ^
+Error trace on line: 60, column: 16 in file "Core".
+inl (|>) a b = b a
+               ^

@@ -1004,7 +1004,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             |> make_tyv_and_push_typed_expr_even_if_unit d
                         | _ -> failwith "Fields should always be staged."
 
-                let ss_event_and_field x = ss_field_template (fun {fields=a; events=b} -> Map.foldBack Map.add a b) x
+                let ss_field x = ss_field_template (fun {fields=a} -> a) x
                 let ss_static_field x = ss_field_template (fun {static_fields=x} -> x) x
 
                 let ss_constructor (t': SSTypedExprClass) (TyType args_ty & args) =
@@ -1036,7 +1036,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         match arg with
                         | TyList [TypeString method_name; typ_arg; arg] -> ss_method t method_name typ_arg arg
                         | TyList [TypeString method_name; arg] -> ss_method t method_name TyB arg
-                        | TypeString field_name -> ss_event_and_field t field_name
+                        | TypeString field_name -> ss_field t field_name
                         | _ -> on_type_er (trace d) "Invalid input to a .NET type."
                     | _ -> failwith "Compiler error: An instance of a .NET type should always be a SSTyClass."
                 | _ -> failwith "impossible"
@@ -1770,15 +1770,26 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let wildcard = operatorChar '_'
 
         let pbool = ((skipString "false" >>% LitBool false) <|> (skipString "true" >>% LitBool true)) .>> spaces
-        let pnumber : Parser<_,_> =
-            let numberFormat =  NumberLiteralOptions.AllowFraction
-                                ||| NumberLiteralOptions.AllowExponent
-                                ||| NumberLiteralOptions.AllowHexadecimal
-                                ||| NumberLiteralOptions.AllowBinary
-                                ||| NumberLiteralOptions.AllowInfinity
-                                ||| NumberLiteralOptions.AllowNaN
 
-            let parser = numberLiteral numberFormat "number"
+        let unary_minus_check_precondition s = previousCharSatisfiesNot (is_separator_char >> not) s
+        let unary_minus_check s = (unary_minus_check_precondition >>. prefix_negate) s
+
+        let pnumber : Parser<_,_> =
+            let default_number_format =  
+                NumberLiteralOptions.AllowFraction
+                ||| NumberLiteralOptions.AllowExponent
+                ||| NumberLiteralOptions.AllowHexadecimal
+                ||| NumberLiteralOptions.AllowBinary
+                ||| NumberLiteralOptions.AllowInfinity
+                ||| NumberLiteralOptions.AllowNaN
+            
+            let number_format_with_minus = default_number_format ||| NumberLiteralOptions.AllowMinusSign
+
+            let parser (s: CharStream<_>) = 
+                let parse_num_lit number_format s = numberLiteral number_format "number" s
+                /// This is necessary in order to differentiate binary from unary operations.
+                if s.Peek() = '-' then (unary_minus_check_precondition >>. parse_num_lit number_format_with_minus) s
+                else parse_num_lit default_number_format s
 
             let inline safe_parse f on_succ er_msg x = 
                 match f x with
@@ -2153,7 +2164,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     ) s
             squares (many (pat .>> optional semicolon')) |>> function [x] -> x | x -> vv x
 
-        let case_negate expr = previousCharSatisfiesNot (is_separator_char >> not) >>. prefix_negate >>. expr |>> (ap (v "negate"))
+        let case_negate expr = unary_minus_check >>. expr |>> (ap (v "negate"))
         let case_join_point expr = keywordString "join" >>. expr |>> join_point_entry_method
         let case_cuda expr = keywordString "cuda" >>. expr |>> inl' ["threadIdx"; "blockIdx"; "blockDim";"gridDim"]
 
