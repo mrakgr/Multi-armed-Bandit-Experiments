@@ -225,6 +225,7 @@
     <None Include="Scripts\reflection_v3.fsx" />
     <None Include="Scripts\cecil_v3.fsx" />
     <None Include="Scripts\cecil_v4.fsx" />
+    <None Include="Scripts\cecil_v5.fsx" />
     <None Include="V5 With The New Backend 2\patterns_v0.fsx" />
     <None Include="V5 With The New Backend 2\hosting_v0.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v0.fsx" />
