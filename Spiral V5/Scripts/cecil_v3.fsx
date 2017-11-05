@@ -1,37 +1,18 @@
 ﻿#load "load-references-release.fsx"
 
-open System
 open Mono.Cecil
 open Mono.Cecil.Rocks
 
 let mscorlib_path = @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscorlib.dll"
-let mscorlib = AssemblyDefinition.ReadAssembly(mscorlib_path)
+let mscorlib = AssemblyDefinition.ReadAssembly(mscorlib_path).MainModule
 
-let dictionary_type =
-    mscorlib.Modules.[0].Types
-    |> Seq.find (fun x -> x.Name = "Dictionary`2")
+let task = mscorlib.Types |> Seq.find (fun x -> x.Name = "Task`1")
 
-let add_method =
-    dictionary_type.Methods
-    |> Seq.find (fun x -> x.Name = "Add")
+let task_cons = task.GetConstructors()
 
-let mets =
-    mscorlib.MainModule.Types
-    |> Seq.collect (fun x ->
-        x.Methods
-        )
-    |> Seq.filter (fun x ->
-        x.Parameters
-        |> Seq.exists (fun x -> x.ParameterType.ContainsGenericParameter)
-        )
+let con =
+    task_cons
     |> Seq.toArray
+    |> fun x -> x.[8]
 
-let met = mets |> Array.find (fun x -> x.Name.Contains "AsReadOnly")
-
-let readonly_col = met.ReturnType.Resolve()
-let readonly_col' = 
-    mscorlib.MainModule.Types
-    |> Seq.find (fun x -> x.Name.Contains "ReadOnlyCollection`1")
-
-readonly_col = readonly_col' // true
-Object.ReferenceEquals(readonly_col,readonly_col') // true
+con.Parameters.[0].ParameterType

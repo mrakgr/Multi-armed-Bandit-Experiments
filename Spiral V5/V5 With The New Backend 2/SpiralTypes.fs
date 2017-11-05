@@ -252,10 +252,10 @@ type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 
     | SSVar of string
     | SSArray of SSExpr []
     | SSLam of string [] * SSExpr
-    | SSCompileTypeDefinition of Type
-    | SSCompileMethod of Reflection.MethodInfo
-    | SSCompileField of Reflection.FieldInfo
-    | SSCompileConstructor of Reflection.ConstructorInfo
+    | SSCompileTypeDefinition of Mono.Cecil.TypeDefinition
+    | SSCompileMethod of Mono.Cecil.MethodDefinition
+    | SSCompileField of Mono.Cecil.FieldDefinition
+    | SSCompileConstructor of Mono.Cecil.MethodDefinition
 
 and SSTypedExpr =
     | SSTyType of Ty
@@ -270,7 +270,6 @@ and SSEvents = Map<string, SSTypedExpr>
 
 and SSTypedExprClass = {
     full_name : string
-    assembly_name : string
     generic_type_args : Ty []
     methods : SSMethodMap
     static_methods : SSMethodMap
