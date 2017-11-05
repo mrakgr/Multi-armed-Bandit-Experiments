@@ -810,35 +810,36 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | :? TypeError as e -> reraise()
             | e -> on_type_er (trace d) (".NET exception:\n"+e.Message)
 
-        let assembly_compile d (x: Reflection.Assembly) =
-            let rec to_typedexpr = function
-                | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule) |> layoutify LayoutStack d
-                | LoadType typ -> match ss_type_definition typ with SSTyType x -> tyt x | x -> dotnet_typet x |> tyt
+        let assembly_compile d =
+            memoize ss_cache_assembly <| fun (x: Reflection.Assembly) ->
+                let rec to_typedexpr = function
+                    | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule) |> layoutify LayoutStack d
+                    | LoadType typ -> match ss_type_definition typ with SSTyType x -> tyt x | x -> dotnet_typet x |> tyt
 
-            x.GetTypes()
-            |> Array.fold (fun map (typ: Type) ->
-                if typ.IsPublic then
-                    let namesp = typ.FullName.Split '.'
-                    let typ = typ
-                    let rec loop i map =
-                        if i < namesp.Length then
-                            let name = namesp.[i]
-                            match map with
-                            | LoadMap map ->
-                                let env =
-                                    match Map.tryFind name map with
-                                    | Some(LoadMap _ & env) -> env
-                                    | None -> LoadMap Map.empty
-                                    | _ -> failwith "impossible"
-                                LoadMap (Map.add name (loop (i+1) env) map)
-                            | _ -> failwith "impossible"
-                        else
-                            LoadType typ
-                    loop 0 map
-                else
-                    map
-                    ) (LoadMap Map.empty)
-            |> to_typedexpr
+                x.GetTypes()
+                |> Array.fold (fun map (typ: Type) ->
+                    if typ.IsPublic then
+                        let namesp = typ.FullName.Split '.'
+                        let typ = typ
+                        let rec loop i map =
+                            if i < namesp.Length then
+                                let name = namesp.[i]
+                                match map with
+                                | LoadMap map ->
+                                    let env =
+                                        match Map.tryFind name map with
+                                        | Some(LoadMap _ & env) -> env
+                                        | None -> LoadMap Map.empty
+                                        | _ -> failwith "impossible"
+                                    LoadMap (Map.add name (loop (i+1) env) map)
+                                | _ -> failwith "impossible"
+                            else
+                                LoadType typ
+                        loop 0 map
+                    else
+                        map
+                        ) (LoadMap Map.empty)
+                |> to_typedexpr
 
         let dotnet_assembly_load is_load_file d x =
             match tev d x with
@@ -3212,8 +3213,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | None -> true
                 | _ -> false
             if b then
-                let er_code = 
-                    memoize code file (fun () -> file_code.Split [|'\n'|])
+                let er_code =
+                    memoize code (fun _ -> file_code.Split [|'\n'|]) file
                     |> fun x -> x.[int line - 1]
 
                 let er_file = if file_name <> "" then sprintf " in file \"%s\"." file_name else file_name

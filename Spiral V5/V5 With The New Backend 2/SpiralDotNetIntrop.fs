@@ -19,37 +19,11 @@ let tuple_field_ty = function
     | ListT x -> x
     | x -> [x]
 
-//let ss_cache_assembly: Dictionary<Assembly,TypedExpr> = d0()
+let ss_cache_assembly: Dictionary<Assembly,TypedExpr> = d0()
 let ss_cache_type = d0()
 let ss_cache_method = d0()
 let ss_cache_field = d0()
 let ss_cache_constructor = d0()
-
-let rec prim_type_to_ty (x: System.Type) on_fail =
-    if x = typeof<bool> then PrimT BoolT
-    elif x = typeof<int8> then PrimT Int8T
-    elif x = typeof<int16> then PrimT Int16T
-    elif x = typeof<int32> then PrimT Int32T
-    elif x = typeof<int64> then PrimT Int64T
-
-    elif x = typeof<uint8> then PrimT UInt8T
-    elif x = typeof<uint16> then PrimT UInt16T
-    elif x = typeof<uint32> then PrimT UInt32T
-    elif x = typeof<uint64> then PrimT UInt64T
-
-    elif x = typeof<float32> then PrimT Float32T
-    elif x = typeof<float> then PrimT Float64T
-    elif x = typeof<string> then PrimT StringT
-    elif x = typeof<char> then PrimT CharT
-    elif x = typeof<unit> || x = typeof<System.Void> then BListT
-    elif x.IsArray then arrayt(DotNetHeap, prim_type_to_ty (x.GetElementType()) on_fail)
-    // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
-    elif x.IsByRef then arrayt(DotNetReference, prim_type_to_ty (x.GetElementType()) on_fail) // Incorrect, but useful
-    elif FSharp.Reflection.FSharpType.IsFunction x then 
-        let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
-        closuret (prim_type_to_ty a on_fail) (prim_type_to_ty b on_fail)
-    else 
-        memoize ss_cache_type x <| fun () -> on_fail x
 
 let nodify_ssty = nodify <| d0()
 let dotnet_typet x = nodify_ssty x |> DotNetTypeT
@@ -61,8 +35,8 @@ let rec ss_type_definition (x: Type) =
         ss_compile_type_definition Map.empty x
         |> SSTyType
 
-and ss_compile_type_definition (d: SSEnvTerm) (x: Type): Ty =
-     prim_type_to_ty x <| fun (x: Type) ->
+and ss_compile_type_definition (d: SSEnvTerm) =
+    memoize ss_cache_type <| fun (x: Type) ->
         let gen_args = x.GetGenericArguments()
                 
         let inline is_static x = (^a : (member IsStatic: bool) x)
@@ -119,30 +93,40 @@ and ss_compile_type_definition (d: SSEnvTerm) (x: Type): Ty =
         |> dotnet_typet
 
 and ss_type_apply (d: SSEnvTerm) (x: Type): Ty =
-    let gen_args = x.GetGenericArguments()
-        
-    let ty = 
-        if x.IsGenericType then x.GetGenericTypeDefinition() else x
-        |> ss_type_definition 
-    let gen = 
-        gen_args
-        |> Array.map (function
-            | x when x.IsGenericParameter -> d.[x.Name]
-            | x -> ss_type_apply d x
-            )
-        |> Array.toList
+    if x.IsGenericParameter then d.[x.Name]
+    elif x.IsGenericType then
+        let ty = x.GetGenericTypeDefinition() |> ss_type_definition
+        let args = x.GetGenericArguments() |> Array.map (ss_type_apply d) |> Array.toList
+        ss_apply ty args
+    elif x = typeof<bool> then PrimT BoolT
+    elif x = typeof<int8> then PrimT Int8T
+    elif x = typeof<int16> then PrimT Int16T
+    elif x = typeof<int32> then PrimT Int32T
+    elif x = typeof<int64> then PrimT Int64T
 
-    ss_apply ty gen
+    elif x = typeof<uint8> then PrimT UInt8T
+    elif x = typeof<uint16> then PrimT UInt16T
+    elif x = typeof<uint32> then PrimT UInt32T
+    elif x = typeof<uint64> then PrimT UInt64T
 
-and ss_compile_method (d: SSEnvTerm) (x: MethodInfo): Ty = 
-    memoize ss_cache_method x <| fun () ->
+    elif x = typeof<float32> then PrimT Float32T
+    elif x = typeof<float> then PrimT Float64T
+    elif x = typeof<string> then PrimT StringT
+    elif x = typeof<char> then PrimT CharT
+    elif x = typeof<unit> || x = typeof<System.Void> then BListT
+    elif x.IsArray then arrayt(DotNetHeap, ss_type_apply d (x.GetElementType()))
+    // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
+    elif x.IsByRef then arrayt(DotNetReference, ss_type_apply d (x.GetElementType())) // Incorrect, but useful
+    elif FSharp.Reflection.FSharpType.IsFunction x then 
+        let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
+        closuret (ss_type_apply d a) (ss_type_apply d b)
+    else ss_compile_type_definition Map.empty x
+
+and ss_compile_method (d: SSEnvTerm) = 
+    memoize ss_cache_method <| fun (x: MethodInfo) ->
         let pars =
             x.GetParameters()
-            |> Array.map (fun x ->
-                let t = x.ParameterType
-                if t.IsGenericParameter then d.[t.Name]
-                else ss_type_apply d t
-                )
+            |> Array.map (fun x -> ss_type_apply d x.ParameterType)
             |> Array.toList
             |> listt
 
@@ -150,14 +134,14 @@ and ss_compile_method (d: SSEnvTerm) (x: MethodInfo): Ty =
 
         closuret pars ret
 
-and ss_compile_field (d: SSEnvTerm) (x: FieldInfo): Ty = 
-    memoize ss_cache_field x <| fun () ->
-        ss_type_apply  d x.FieldType
+and ss_compile_field (d: SSEnvTerm) = 
+    memoize ss_cache_field <| fun (x: FieldInfo) ->
+        ss_type_apply d x.FieldType
 
-and ss_compile_constructor (d: SSEnvTerm) (x: ConstructorInfo): Ty = 
-    memoize ss_cache_constructor x <| fun () ->
+and ss_compile_constructor (d: SSEnvTerm) = 
+    memoize ss_cache_constructor <| fun (x: ConstructorInfo) ->
         x.GetParameters()
-        |> Array.map (fun x -> ss_type_apply  d x.ParameterType)
+        |> Array.map (fun x -> ss_type_apply d x.ParameterType)
         |> Array.toList
         |> listt
 
