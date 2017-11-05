@@ -345,7 +345,8 @@ and TypedExpr =
     | TyT of Ty
     | TyV of TyTag
     | TyList of TypedExpr list
-    | TyMap of ConsedNode<EnvTerm> * MapType
+    | TyMap of EnvTerm * MapType * Set<string> option
+    | TyConsedMap of ConsedNode<EnvTerm> * MapType
     | TyBox of TypedExpr * Ty
     | TyLit of Value
 
@@ -412,7 +413,7 @@ type LangEnv = {
     rbeh: RecursiveBehavior
     ltag : int ref
     seq : (TypedExpr -> TypedExpr) ref
-    env : EnvTerm
+    env : EnvTerm * Set<string> option
     cse_env : CSEDict
     trace : Trace
     }
