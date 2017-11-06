@@ -510,7 +510,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | EnvConsed env -> run env.node
             | EnvUnfiltered (env, used_vars) -> if used_vars.Contains x then run env else on_fail()
 
-
         let get_tag d = 
             let t = !d.ltag
             d.ltag := t + 1

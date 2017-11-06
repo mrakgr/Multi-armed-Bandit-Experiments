@@ -1895,7 +1895,7 @@ let cache_test (name,aux,desc,body as m) = File.WriteAllText(make_test_path_from
 let rewrite_test_cache x = 
     let timer = System.Diagnostics.Stopwatch.StartNew()
     match x with
-    | Some (min, max) -> Array.iter cache_test tests.[min..max]
+    | Some (min, max) -> Array.iter cache_test tests.[min..max-1]
     | None -> Array.iter cache_test tests
     printfn "The time it took to run all the tests is: %A" timer.Elapsed
 
@@ -1912,9 +1912,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache (Some(0,20))
+rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp test14
-|> printfn "%s"
-|> ignore
+//output_test_to_temp test33
+//|> printfn "%s"
+//|> ignore
 

@@ -128,5 +128,5 @@ inl (=) a b =
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
  string_length lit_is box_is failwith assert max min eq_type module_values uncased_variable_is event_add_handler (:>)
- (:?>) (=)}
+ (:?>) (=)} |> stack
     """) |> module_
