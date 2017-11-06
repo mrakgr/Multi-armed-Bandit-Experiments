@@ -1906,15 +1906,15 @@ open Parsing
 open Console
 
 inl p = 
-    tuple (Tuple.repeat 10 <| (pint64 .>> spaces))
+    tuple (Tuple.repeat 240 <| (pint64 .>> spaces))
     |>> (Tuple.foldl (+) 0 >> writeline)
 
 run_with_unit_ret (readall()) p
     """
 
-rewrite_test_cache None //(Some(40,80))
+//rewrite_test_cache None //(Some(40,80))
 
-//output_test_to_temp test33
+output_test_to_temp speed1
 //|> printfn "%s"
-//|> ignore
+|> ignore
 
