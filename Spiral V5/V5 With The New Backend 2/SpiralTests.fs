@@ -1911,9 +1911,9 @@ inl p =
 run_with_unit_ret (readall()) p
     """
 
-//rewrite_test_cache None //(Some(0,20))
+//rewrite_test_cache (Some(0,20))
 
-output_test_to_temp speed1
-//|> printfn "%s"
+output_test_to_temp test14
+|> printfn "%s"
 |> ignore
 
