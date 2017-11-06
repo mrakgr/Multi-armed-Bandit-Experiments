@@ -1014,6 +1014,17 @@ match clo_add with
 | (a: int64) => (b: (int64 => int64)) -> clo_add 1 2
     """
 
+let test_89_code =
+    let var i = sprintf "var_%i" i
+    let bnd (a, b) = sprintf "inl %s = %s" a b
+    let vars = [|0..1199|] |> Array.map var
+    let bnds = 
+        vars |> Array.pairwise |> Array.map (fun (a,b) -> b,a) 
+        |> Array.map bnd |> String.concat "\n"
+    let adds = String.concat " + " vars
+    String.concat "\n" [|bnd (var 0, "dyn 0");bnds;adds|]
+
+let test_89 = "test89",[extern_],"Does this get compiled in linear time?",test_89_code
 
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
@@ -1914,7 +1925,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp speed1
+output_test_to_temp test_89
 //|> printfn "%s"
 |> ignore
 
