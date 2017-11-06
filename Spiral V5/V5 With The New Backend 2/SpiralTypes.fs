@@ -43,12 +43,12 @@ type PosKey = Module * int64 * int64
 let h0() = HashSet(HashIdentity.Structural)
 let d0() = Dictionary(HashIdentity.Structural)
 
-let inline memoize (memo_dict: Dictionary<_,_>) f k =
+let inline memoize (memo_dict: Dictionary<_,_>) k f =
     match memo_dict.TryGetValue k with
     | true, v -> v
-    | false, _ -> let v = f k in memo_dict.[k] <- v; v
+    | false, _ -> let v = f() in memo_dict.[k] <- v; v
 
-let nodify (dict: Dictionary<_,_>) = memoize dict (fun x -> Node(x,dict.Count))
+let nodify (dict: Dictionary<_,_>) x = memoize dict x (fun () -> Node(x,dict.Count))
 let nodify_module = nodify <| d0()
 let module_ x = nodify_module x |> Module
 

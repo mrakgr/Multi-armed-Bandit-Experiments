@@ -1097,7 +1097,7 @@ let parsing7 =
 open Console
 open Parsing
 
-inl int64_minvalue = mscorlib.System.Int64.MinValue
+inl int64_minvalue = Extern.FSU.Global.Constant."System.Int64.MinValue" int64
 
 inl p = 
     inm n = parse_int
@@ -1400,7 +1400,7 @@ open Console
 inl primes = 2,3,5,11,13,17,19
 inl non_primes = Tuple.range (2,20) |> Tuple.filter (Tuple.contains primes >> not)
 inl step = Tuple.foldl (*) 1 primes
-inl int64_maxvalue = mscorlib.System.Int64.MaxValue
+inl int64_maxvalue = 9223372036854775807
 for' {from=step; to=int64_maxvalue; by=step; state= -1; body=inl {next state i} ->
     if Tuple.forall (inl x -> i % x = 0) non_primes then i
     else next state
@@ -1913,7 +1913,7 @@ run_with_unit_ret (readall()) p
 
 //rewrite_test_cache None //(Some(0,20))
 
-output_test_to_temp parsing7
+output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
 
