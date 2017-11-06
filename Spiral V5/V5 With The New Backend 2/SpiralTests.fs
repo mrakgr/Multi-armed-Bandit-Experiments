@@ -435,15 +435,6 @@ met f = to_int64 (dyn 'a')
 f
     """
 
-let test33 = // 0.42s
-    "test33",[],"Does a simple loop have superlinear scaling?",
-    """
-inl rec loop = function
-    | i when i > 0 -> loop (i-1)
-    | 0 -> ()
-loop 50000
-    """
-
 let test34 =
     "test34",[],"Does a simple stackified function work?",
     """
@@ -1013,19 +1004,6 @@ inl clo_add = closure_of add closure_type
 match clo_add with
 | (a: int64) => (b: (int64 => int64)) -> clo_add 1 2
     """
-
-let test86 = // Minus the startup, this takes 0.05s to compile versus 1.5s for the previous version of the compiler.
-    let code =
-        let var i = sprintf "var_%i" i
-        let bnd (a, b) = sprintf "inl %s = %s" a b
-        let vars = [|0..1199|] |> Array.map var // Any more than this and it will stack overflow.
-        let bnds = 
-            vars |> Array.pairwise |> Array.map (fun (a,b) -> b,a) 
-            |> Array.map bnd |> String.concat "\n"
-        let adds = String.concat " + " vars
-        String.concat "\n" [|bnd (var 0, "dyn 0");bnds;adds|]
-
-    "test86",[extern_],"Does the linear sequence of bindings get compiled in linear time?",code
 
 let parsing1 = 
     "parsing1",[parsing;console],"Does the Parsing module work?",
@@ -1861,12 +1839,12 @@ let tests =
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
+    test30;test31;test32;       test34;test35;test36;test37;test38;test39
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
-    test80;test81;test82;test83;test84;test85;test86;test87;test88
+    test80;test81;test82;test83;test84;test85;       test87;test88
     hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7;hacker_rank_8;hacker_rank_9
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
@@ -1911,23 +1889,43 @@ let rewrite_test_cache x =
     | None -> Array.iter cache_test tests
     printfn "The time it took to run all the tests is: %A" timer.Elapsed
 
-let speed1 =
-    "speed1",[parsing;console],"Does the Parsing module work?",
-    """
-open Parsing
-open Console
+//let speed1 =
+//    "speed1",[parsing;console],"Does the Parsing module work?",
+//    """
+//open Parsing
+//open Console
+//
+//inl p = 
+//    tuple (Tuple.repeat 240 <| (pint64 .>> spaces))
+//    |>> (Tuple.foldl (+) 0 >> writeline)
+//
+//run_with_unit_ret (readall()) p
+//    """
+//
+//let speed2 = // ~0.42s~ 1s
+//    "speed2",[],"Does a simple loop have superlinear scaling?",
+//    """
+//inl rec loop = function
+//    | i when i > 0 -> loop (i-1)
+//    | 0 -> ()
+//loop 50000
+//    """
+//
+//let speed3 = // Minus the startup, this takes 0.05s to compile versus 1.5s for the previous version of the compiler.
+//    let code =
+//        let var i = sprintf "var_%i" i
+//        let bnd (a, b) = sprintf "inl %s = %s" a b
+//        let vars = [|0..1199|] |> Array.map var // Any more than this and it will stack overflow.
+//        let bnds = 
+//            vars |> Array.pairwise |> Array.map (fun (a,b) -> b,a) 
+//            |> Array.map bnd |> String.concat "\n"
+//        let adds = String.concat " + " vars
+//        String.concat "\n" [|bnd (var 0, "dyn 0");bnds;adds|]
+//
+//    "speed3",[],"Does the linear sequence of bindings get compiled in linear time?",code
 
-inl p = 
-    tuple (Tuple.repeat 240 <| (pint64 .>> spaces))
-    |>> (Tuple.foldl (+) 0 >> writeline)
+//rewrite_test_cache None //(Some(40,80))
 
-run_with_unit_ret (readall()) p
-    """
-
-rewrite_test_cache None //(Some(40,80))
-
-//output_test_to_temp test89
-//|> printfn "%s"
-//|> ignore
-
-
+output_test_to_temp cuda2
+|> printfn "%s"
+|> ignore
