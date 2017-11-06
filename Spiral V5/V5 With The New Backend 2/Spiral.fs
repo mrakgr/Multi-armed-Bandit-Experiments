@@ -254,9 +254,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let inline is_int64 a = is_int64' (get_type a)
 
     // #Prepass
-    let get_pattern_tag =
+    
+    let new_pat_var =
         let mutable i = 0
-        fun () -> i <- i+1; i
+        let get_pattern_tag () = i <- i+1; i
+        fun () -> sprintf " pat_var_%i" (get_pattern_tag())
 
     let rec pattern_compile arg pat =
         let rec pattern_compile arg pat on_succ on_fail =
@@ -295,7 +297,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> case arg
 
             let pat_part_active a pat on_fail arg =
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var = new_pat_var()
                 let on_succ = inl pat_var (cp (v pat_var) pat on_succ on_fail)
                 let on_fail = inl "" on_fail
                 ap' (v a) [arg; on_fail; on_succ]
@@ -316,13 +318,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | PatMName name ->
                     pat_bind name <| fun memb -> l name (ap arg memb) on_succ
                 | PatMRebind(name,pat) ->
-                    let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                    let pat_var = new_pat_var()
                     pat_bind name <| fun memb -> l pat_var (ap arg memb) (cp (v pat_var) pat on_succ on_fail)
                 | PatMPattern pat -> cp arg pat on_succ on_fail
                 | PatMAnd l -> pat_and pattern_module_compile arg l on_succ on_fail
                 | PatMOr l -> pat_or pattern_module_compile arg l on_succ on_fail
                 | PatMXor l ->
-                    let state_var = sprintf " state_var_%i" (get_pattern_tag())
+                    let state_var = new_pat_var()
                     let state_var' = v state_var
                     let bool x = lit <| LitBool x
                     let rec just_one = function
@@ -333,7 +335,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     ap (just_one l) (bool false)
                 | PatMNot x -> pattern_module_compile arg x on_fail on_succ
                 | PatMInnerModule(name,pat) ->
-                    let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                    let pat_var = new_pat_var()
                     let pat_var' = v pat_var
                     let memb = type_lit_lift (LitString name)
                 
@@ -353,7 +355,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | PatTuple l -> pat_tuple l
             | PatCons l -> pat_cons l
             | PatActive (a,b) ->
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var = new_pat_var()
                 l pat_var (ap (v a) arg) (cp (v pat_var) b on_succ on_fail)
             | PatPartActive (a,pat) -> pat_part_active a pat on_fail arg
             | PatExtActive (a,pat) ->
@@ -382,7 +384,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 if_static (eq_type arg x) on_succ on_fail |> case arg
             | PatWhen (p, e) -> cp arg p (if_static e on_succ on_fail) on_fail
             | PatModule(name,pat) ->
-                let pat_var = sprintf " pat_var_%i" (get_pattern_tag())
+                let pat_var = new_pat_var()
                 let pat_var' = v pat_var
                 pattern_module_compile pat_var' pat on_succ on_fail
                 |> fun x -> 
@@ -402,7 +404,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         pattern_compile arg pat pattern_compile_def_on_succ pattern_compile_def_on_fail
 
     and pattern_compile_single pat =
-        let main_arg = "main_arg"
+        let main_arg = new_pat_var()
         inl main_arg (pattern_compile (v main_arg) pat) |> expr_prepass
 
     and expr_prepass e =
@@ -428,10 +430,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     // #Renaming
     let inline renamables0() = {memo=Dictionary(HashIdentity.Reference); renamer=d0(); ref_call_args=ref []; ref_method_pars=ref []} : EnvRenamer
-    let rec renamer_apply_env' r = 
-        Map.map (fun k v -> 
-            printfn "%s..." k
-            renamer_apply_typedexpr' r v)
+    let rec renamer_apply_env' (r: EnvRenamer) (C x) = Map.map (fun k -> renamer_apply_typedexpr' r) x
     and renamer_apply_typedexpr' ({memo=memo; renamer=renamer; ref_call_args=call_args; ref_method_pars=method_pars} as r) e =
         let inline f e = renamer_apply_typedexpr' r e
         let inline rename (n,t as k) =
@@ -442,7 +441,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 renamer.Add(n,n')
                 call_args := k :: !call_args 
                 let k' = n', t
-                printfn "k'=%A" k'
                 method_pars := k' :: !method_pars
                 k'
 
@@ -453,7 +451,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyT _ -> e
             | TyBox (n,t) -> tybox(f n,t)
             | TyList l -> tyvv(List.map f l)
-            | TyMap(C l,t) -> tymap(renamer_apply_env' r l |> consify_env_term, t)
+            | TyMap(l,t) -> tymap(renamer_apply_env' r l |> consify_env_term, t)
             | TyV (n,t as k) ->
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
@@ -466,7 +464,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let x = f r x
         {call_args= !call_args; method_pars= !method_pars; renamer'=renamer}, x
 
-    let inline renamer_apply_env_template f (C x) = renamer_apply_template (fun r -> renamer_apply_env' r >> f) x
+    let inline renamer_apply_env_template f x = renamer_apply_template (fun r -> renamer_apply_env' r >> f) x
     let inline renamer_apply_env x = renamer_apply_env_template Env x
     let inline renamer_apply_envc x = renamer_apply_env_template consify_env_term x
     let inline renamer_apply_typedexpr e = renamer_apply_template renamer_apply_typedexpr' e
@@ -638,9 +636,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let layout_to layout d a = layoutify layout d (tev d a)
 
         let join_point_method d expr = 
-            printfn "In the join point."
             let {call_args=call_arguments; method_pars=method_parameters; renamer'=renamer}, renamed_env = renamer_apply_env d.env
-            printfn "Done with renaming. call_args=%A" call_arguments
             let length=renamer.Count
             let join_point_key = nodify_memo_key (expr, renamed_env) 
             

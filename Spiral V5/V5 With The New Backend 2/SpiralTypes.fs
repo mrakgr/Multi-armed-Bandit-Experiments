@@ -475,9 +475,7 @@ let string_to_op =
 
 let c = function
 | Env env -> env
-| EnvUnfiltered (env,used_vars) -> 
-    printfn "used_vars=%A" used_vars
-    Map.filter (fun k _ -> used_vars.Contains k) env
+| EnvUnfiltered (env,used_vars) -> Map.filter (fun k _ -> used_vars.Contains k) env
 | EnvConsed env -> env.node
 
 let (|C|) x = c x

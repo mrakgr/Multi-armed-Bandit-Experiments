@@ -184,8 +184,8 @@ inl int_expr = box (expr int64)
 inl v x = int_expr (.V, x)
 inl add a b = int_expr (.Add, a, b)
 inl mult a b = int_expr (.Mult, a, b)
-inl a = add (v 1) (v 2) |> dyn
-inl b = add (v 3) (v 4) |> dyn
+met a = add (v 1) (v 2)
+met b = add (v 3) (v 4)
 inl c = mult a b
 
 met rec inter x = 
