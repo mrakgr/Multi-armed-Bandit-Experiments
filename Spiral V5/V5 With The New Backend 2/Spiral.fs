@@ -428,7 +428,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     // #Renaming
     let inline renamables0() = {memo=Dictionary(HashIdentity.Reference); renamer=d0(); ref_call_args=ref []; ref_method_pars=ref []} : EnvRenamer
-    let rec renamer_apply_env' r = Map.map (fun k v -> renamer_apply_typedexpr' r v)
+    let rec renamer_apply_env' r = 
+        Map.map (fun k v -> 
+            printfn "%s..." k
+            renamer_apply_typedexpr' r v)
     and renamer_apply_typedexpr' ({memo=memo; renamer=renamer; ref_call_args=call_args; ref_method_pars=method_pars} as r) e =
         let inline f e = renamer_apply_typedexpr' r e
         let inline rename (n,t as k) =
@@ -439,6 +442,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 renamer.Add(n,n')
                 call_args := k :: !call_args 
                 let k' = n', t
+                printfn "k'=%A" k'
                 method_pars := k' :: !method_pars
                 k'
 
@@ -634,7 +638,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let layout_to layout d a = layoutify layout d (tev d a)
 
         let join_point_method d expr = 
+            printfn "In the join point."
             let {call_args=call_arguments; method_pars=method_parameters; renamer'=renamer}, renamed_env = renamer_apply_env d.env
+            printfn "Done with renaming. call_args=%A" call_arguments
             let length=renamer.Count
             let join_point_key = nodify_memo_key (expr, renamed_env) 
             
