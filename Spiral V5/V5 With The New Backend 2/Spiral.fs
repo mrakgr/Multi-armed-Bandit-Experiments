@@ -58,11 +58,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | x -> x
         
     let nodify_memo_key = nodify <| d0()
-    let consify_env_term = hashcons_add <| hashcons_create 0
+    let consify_env_term = (hashcons_add <| hashcons_create 0) >> EnvConsed
 
     let tyv x = TyV x
     let tyvv x = TyList x
-    let tymap (a,t) = (consify_env_term a,t) |> TyMap
+    let tymap (a,t) = (a,t) |> TyMap
     let tybox x = TyBox x
 
     let lit_int i = LitInt64 i |> lit
@@ -449,7 +449,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyT _ -> e
             | TyBox (n,t) -> tybox(f n,t)
             | TyList l -> tyvv(List.map f l)
-            | TyMap(C l,t) -> tymap(renamer_apply_env' r l, t)
+            | TyMap(C l,t) -> tymap(renamer_apply_env' r l |> consify_env_term, t)
             | TyV (n,t as k) ->
                 let n', _ as k' = rename k
                 if n' = n then e else tyv k'
@@ -462,7 +462,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let x = f r x
         {call_args= !call_args; method_pars= !method_pars; renamer'=renamer}, x
 
-    let inline renamer_apply_env x = renamer_apply_template renamer_apply_env' x
+    let inline renamer_apply_env_template f (C x) = renamer_apply_template (fun r -> renamer_apply_env' r >> f) x
+    let inline renamer_apply_env x = renamer_apply_env_template Env x
+    let inline renamer_apply_envc x = renamer_apply_env_template consify_env_term x
     let inline renamer_apply_typedexpr e = renamer_apply_template renamer_apply_typedexpr' e
 
     let on_type_er trace message = TypeError(trace,message) |> raise
@@ -497,9 +499,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let inline inner_compile x = expr_prepass x |> snd |> tev d
 
         let inline v_find env x on_fail = 
-            match Map.tryFind x env with
-            | Some v -> v
-            | None -> on_fail()
+            let run env = 
+                match Map.tryFind x env with
+                | Some v -> v
+                | None -> on_fail()
+            match env with
+            | Env env -> run env
+            | EnvConsed env -> run env.node
+            | EnvUnfiltered (env, used_vars) -> if used_vars.Contains x then run env else on_fail()
+
 
         let get_tag d = 
             let t = !d.ltag
@@ -578,8 +586,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match r with
             | TyMap _ | TyList _ | TyLit _ -> r
             | TyBox _ -> chase_recurse r
-            | TyT _ -> destructure_var r (List.map (tyt >> destructure)) (Map.map (fun _ -> (tyt >> destructure)))
-            | TyV _ -> destructure_var r (index_tuple_args r) (env_unseal r)
+            | TyT _ -> destructure_var r (List.map (tyt >> destructure)) (Map.map (fun _ -> (tyt >> destructure)) >> Env)
+            | TyV _ -> destructure_var r (index_tuple_args r) (env_unseal r >> Env)
             | TyOp _ -> destructure_cse r
             | TyJoinPoint _ | TyLet _ | TyState _ -> failwithf "This should never appear in destructure. It should go directly into d.seq. Got: %A" r
 
@@ -617,9 +625,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let inline layoutify layout d x = 
             match x with
-            | TyMap(C env,t) as a ->
-                let {renamer'=r}, env' = renamer_apply_env env 
-                let env' = consify_env_term env'
+            | TyMap(env,t) as a ->
+                let {renamer'=r}, env' = renamer_apply_envc env 
                 if r.Count = 0 then LayoutT(layout,env',t) |> tyt
                 else TyOp(layout_to_op layout,[a],LayoutT(layout,env',t)) |> destructure d
             | x -> on_type_er (trace d) <| sprintf "Cannot turn the seleted type into a layout. Got: %A" x
@@ -714,7 +721,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             tyvv [method_name; args]
 
         let join_point_type d expr = 
-            let env = Map.map (fun _ -> get_type >> tyt) d.env
+            let env = Map.map (fun _ -> get_type >> tyt) (c d.env) |> Env
             let join_point_key = nodify_memo_key (expr, env) 
 
             let ret_ty = 
@@ -813,7 +820,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let assembly_compile d =
             memoize ss_cache_assembly <| fun (x: Reflection.Assembly) ->
                 let rec to_typedexpr = function
-                    | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map, MapTypeModule) |> layoutify LayoutStack d
+                    | LoadMap map -> tymap(Map.map (fun _ -> to_typedexpr) map |> consify_env_term, MapTypeModule) |> layoutify LayoutStack d
                     | LoadType typ -> match ss_type_definition typ with SSTyType x -> tyt x | x -> dotnet_typet x |> tyt
 
                 x.GetTypes()
@@ -868,15 +875,23 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyV _ as v -> TyOp(MapGetField,[recf;v],get_type v) |> destructure d
             | TyList l -> tyvv (List.map f l)
             | TyBox(a,b) -> tybox (f a, b)
-            | TyMap(C env, b) -> tymap (layout_env_term_unseal d recf env, b)
+            | TyMap(env, b) -> tymap (layout_env_term_unseal d recf env, b)
             | x -> x
                
-        and layout_env_term_unseal d recf env = Map.map (fun _ -> layout_boxed_unseal d recf) env
+        and layout_env_term_unseal d recf (C env) = Map.map (fun _ -> layout_boxed_unseal d recf) env |> Env
 
         let (|M|_|) = function
-            | TyMap(C env,t) -> Some (None,env,t)
-            | TyType(LayoutT(layout, C env,t)) -> Some (Some layout,env,t)
+            | TyMap(env,t) -> Some (None,env,t)
+            | TyType(LayoutT(layout,env,t)) -> Some (Some layout,env,t)
             | _ -> None
+
+        let inline env_add a b env =
+            match env with
+            | EnvConsed env -> Map.add a b env.node |> Env
+            | Env env -> Map.add a b env |> Env
+            | EnvUnfiltered (env, used_vars) -> 
+                let env = if used_vars.Contains a then Map.add a b env else env
+                EnvUnfiltered(env,used_vars)
 
         let inline apply_func is_term_cast d recf layout env_term fun_type args =
             let unpack () =
@@ -891,11 +906,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             match fun_type with
             | MapTypeRecFunction ((pat,body),name) ->
                 let env_term = unpack()
-                let env = if pat <> "" then Map.add pat args env_term else env_term
-                tev {d with env = Map.add name recf env} body
+                let env = if pat <> "" then env_add pat args env_term else env_term
+                tev {d with env = env_add name recf env} body
             | MapTypeFunction (pat,body) -> 
                 let env_term = unpack()
-                tev {d with env = if pat <> "" then Map.add pat args env_term else env_term} body
+                tev {d with env = if pat <> "" then env_add pat args env_term else env_term} body
             // apply_module
             | MapTypeModule when is_term_cast -> on_type_er (trace d) <| sprintf "Expected a function in term casting application. Got: %A" fun_type
             | MapTypeModule ->
@@ -1123,9 +1138,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let module_open d a b =
             let a = tev d a
             match a with
-            | M(layout,env_term, MapTypeModule) as recf -> 
+            | M(layout,C env_term,MapTypeModule) as recf -> 
                 let inline opt open_ env =
-                    let env = Map.fold (fun s k v -> Map.add k (open_ v) s) d.env env
+                    let env = 
+                        let map_add s k v = Map.add k (open_ v) s
+                        let run d_env = Map.fold map_add d_env env
+                        match d.env with
+                        | Env d_env -> run d_env |> Env
+                        | EnvConsed d_env -> run d_env.node |> Env
+                        | EnvUnfiltered (d_env,used_vars) ->
+                            let d_env = Map.fold (fun s k v -> if used_vars.Contains k then map_add s k v else s) d_env env
+                            EnvUnfiltered(d_env,used_vars)
                     tev {d with env = env} b
                 match layout with
                 | None -> opt id env_term
@@ -1351,7 +1374,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let rec loop = function
                 | TyBox(_, _) | TyLit _ as a -> make_tyv_and_push_typed_expr d a
                 | TyList l -> tyvv (List.map loop l)
-                | TyMap(C env, t) -> tymap (Map.map (fun _ -> loop) env, t)
+                | TyMap(C env, t) -> tymap (Map.map (fun _ -> loop) env |> Env, t)
                 | a -> a
             
             loop (tev d a)
@@ -1363,7 +1386,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | ExprPos p -> loop acc p.Expression
                 | x -> on_type_er (trace d) <| sprintf "Only variable names are allowed in module create. Got: %A" x
             let er n _ = on_type_er (trace d) <| sprintf "In module create, the variable %s was not found." n
-            let env = List.fold (fun s n -> Map.add n (v_find d.env n (er n)) s) Map.empty (loop [] l)
+            let env = List.fold (fun s n -> Map.add n (v_find d.env n (er n)) s) Map.empty (loop [] l) |> Env
             tymap(env, MapTypeModule)
 
         let array_create d size typ =
@@ -1436,7 +1459,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let module_values d a =
             match tev d a with
-            | M(layout,env,MapTypeModule) as recf ->
+            | M(layout,C env,MapTypeModule) as recf ->
                 let inline toList f = Map.foldBack (fun _ x s -> f x :: s) env []
                 match layout with
                 | None -> toList id
@@ -1447,7 +1470,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let module_has_member d a b =
             match tev2 d a b with
-            | M(_,env,MapTypeModule), b -> 
+            | M(_,C env,MapTypeModule), b -> 
                 match b with
                 | TypeString b -> TyLit (LitBool <| Map.containsKey b env)
                 | _ -> on_type_er (trace d) "Expecting a type literals as the second argument to ModuleHasMember."
@@ -1458,7 +1481,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | VV(N [Lit(N(LitString n)); e]) -> Map.add n (tev d e |> destructure d) env
                 | _ -> failwith "impossible"
                 ) Map.empty l
-            |> fun x -> tymap(x, MapTypeModule)
+            |> fun x -> tymap(Env x, MapTypeModule)
 
         let module_with (d: LangEnv) l =
             let names, bindings =
@@ -1467,7 +1490,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | V _ as x :: bindings -> [x], bindings
                 | x -> failwithf "Malformed ModuleWith. %A" x
 
-            let rec module_with_loop cur_env names = 
+            let rec module_with_loop (C cur_env) names = 
                 let inline layout_unseal name =
                     match Map.tryFind name cur_env with
                     | Some (M(layout,env,MapTypeModule) as recf) -> 
@@ -1490,19 +1513,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                 match names with
                 | V(N name) :: names -> layout_map (next names) name
-                | Lit(N(LitString name)) :: names -> tymap (Map.add name (layout_map (next names) name) cur_env, MapTypeModule)
+                | Lit(N(LitString name)) :: names -> tymap (Map.add name (layout_map (next names) name) cur_env |> Env, MapTypeModule)
                 | [] ->
                     List.fold (fun env -> function
                         | VV(N [Lit(N(LitString name)); e]) ->
                             match Map.tryFind name env with
-                            | Some v -> {d with env = Map.add "self" v d.env}
+                            | Some v -> {d with env = env_add "self" v d.env}
                             | None -> d
                             |> fun d -> Map.add name (tev d e |> destructure d) env
                         | Op(N(ModuleWithout,[Lit(N(LitString name))])) ->
                             Map.remove name env
                         | _ -> failwith "impossible"
                         ) cur_env bindings
-                    |> fun env -> tymap(env, MapTypeModule)
+                    |> fun env -> tymap(Env env, MapTypeModule)
                 | x -> failwithf "Malformed ModuleWith. %A" x
             module_with_loop d.env names
 
@@ -1585,9 +1608,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | Lit (N value) -> TyLit value
         | V (N x) -> v_find d.env x (fun () -> on_type_er (trace d) <| sprintf "Variable %A not bound." x) |> destructure d
         | FunctionFilt(N (vars,N (pat, body))) -> 
-            let env = Map.filter (fun k _ -> Set.contains k vars) d.env
-            let pat = if vars.Contains pat then pat else ""
-            tymap(env, MapTypeFunction (pat, body))
+            let env = match d.env with | EnvUnfiltered (env,_) | Env env | EnvConsed (CN env) -> env
+            tymap(EnvUnfiltered (env,vars), MapTypeFunction (pat, body))
         | Function core -> failwith "Function not allowed in this phase as it tends to cause stack overflows in recursive scenarios."
         | Pattern pat -> failwith "Pattern not allowed in this phase as it tends to cause stack overflows when prepass is triggered in the match case."
         | ExprPos p -> tev (add_trace d p.Pos) p.Expression
@@ -1603,7 +1625,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | DotNetAssemblyLoadFile,[a] -> dotnet_assembly_load true d a
             | Fix,[Lit (N (LitString name)); body] ->
                 match tev d body with
-                | TyMap(C env_term,MapTypeFunction core) -> tymap(env_term,MapTypeRecFunction(core,name))
+                | TyMap(env_term,MapTypeFunction core) -> tymap(env_term,MapTypeRecFunction(core,name))
                 | x -> x
             | Case,[v;case] -> case_ d v case
             | IfStatic,[cond;tr;fl] -> if_static d cond tr fl
@@ -1615,7 +1637,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | UnsafeConvert,[to_;from] -> unsafe_convert d to_ from
             | PrintStatic,[a] -> printfn "%A" (tev d a); TyB
             | PrintEnv,[a] -> 
-                Map.iter (fun k v -> printfn "%s" k) d.env
+                Map.iter (fun k v -> printfn "%s" k) (c d.env)
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
             | LayoutToStack,[a] -> layout_to LayoutStack d a
@@ -2417,10 +2439,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let tys = Map.fold (fun s _ t -> define_mem s t) ([],0) tys |> fst |> List.rev
             print_type_definition None name tys
 
-    let inline define_layoutt ty print_tag_env print_type_definition layout env =
+    let inline define_layoutt ty print_tag_env print_type_definition layout (C env) =
         if Map.forall (fun _ -> get_type >> is_unit) env = false then
             let name = print_tag_env (Some layout) ty
-            let {call_args=fv},_ = renamer_apply_env env
+            let {call_args=fv},_ = renamer_apply_env (Env env)
             let tys = List.foldBack (fun (_,x) s -> define_mem s x) fv ([],0) |> fst |> List.rev
             print_type_definition (Some layout) name tys
 
@@ -2731,7 +2753,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match ty with
                 | ListT tys -> define_listt ty print_tag_tuple print_type_definition tys
                 | MapT(tys, _) -> define_mapt ty print_tag_env print_type_definition tys
-                | LayoutT ((LayoutStack | LayoutPackedStack) as layout, C env, _) ->
+                | LayoutT ((LayoutStack | LayoutPackedStack) as layout, env, _) ->
                     define_layoutt ty print_tag_env print_type_definition layout env
 //                | UnionT tys as x ->
 //                    sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
@@ -3175,7 +3197,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match ty with
                 | ListT tys -> define_listt ty print_tag_tuple print_type_definition tys
                 | MapT(tys, _) -> define_mapt ty print_tag_env print_type_definition tys
-                | LayoutT(layout, C env, _) -> define_layoutt ty print_tag_env print_type_definition layout env
+                | LayoutT(layout, env, _) -> define_layoutt ty print_tag_env print_type_definition layout env
                 | RecT key as x ->
                     let tys = 
                         match join_point_dict_type.[key] with
@@ -3230,7 +3252,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     let data_empty () = {
         ltag = ref 0; seq=ref id; trace=[]; rbeh=AnnotationDive
-        env = Map.empty
+        env = Env Map.empty
         cse_env = ref Map.empty
         }
 

@@ -30,7 +30,6 @@ type Node<'a>(expr:'a, symbol:int) =
 
 let inline n (x: Node<_>) = x.Expression
 let (|N|) x = n x
-let (|C|) (x: ConsedNode<_>) = x.node
 let (|S|) (x: Node<_>) = x.Symbol
 
 type ModuleName = string
@@ -333,7 +332,7 @@ and Ty =
     | ListT of Ty list
     | LitT of Value
     | MapT of EnvTy * MapType
-    | LayoutT of LayoutType * ConsedNode<EnvTerm> * MapType
+    | LayoutT of LayoutType * EnvTerm * MapType
     | ClosureT of Ty * Ty
     | UnionT of Set<Ty>
     | RecT of JoinPointKey
@@ -345,7 +344,7 @@ and TypedExpr =
     | TyT of Ty
     | TyV of TyTag
     | TyList of TypedExpr list
-    | TyMap of ConsedNode<EnvTerm> * MapType
+    | TyMap of EnvTerm * MapType
     | TyBox of TypedExpr * Ty
     | TyLit of Value
 
@@ -368,7 +367,11 @@ and JoinPointState<'a,'b> =
 and Tag = int
 and TyTag = Tag * Ty
 and EnvTy = Map<string, Ty>
-and EnvTerm = Map<string, TypedExpr>
+and EnvTerm = 
+| EnvConsed of ConsedNode<Map<string, TypedExpr>>
+| Env of Map<string, TypedExpr>
+| EnvUnfiltered of Map<string, TypedExpr> * Set<string>
+
 and JoinPointKey = Node<Expr * EnvTerm>
 
 and Arguments = TyTag list
@@ -470,4 +473,10 @@ let string_to_op =
         )
     dict.TryGetValue
 
+let c = function
+| Env env -> env
+| EnvUnfiltered (env,used_vars) -> Map.filter (fun k _ -> used_vars.Contains k) env
+| EnvConsed env -> env.node
 
+let (|C|) x = c x
+let (|CN|) (x: ConsedNode<_>) = x.node
