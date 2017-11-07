@@ -4,8 +4,9 @@ open Mono.Cecil
 open Mono.Cecil.Rocks
 
 let resolver = new DefaultAssemblyResolver()
-let mscorlib_path = AssemblyNameReference.Parse("mscorlib")
-let mscorlib = resolver.Resolve(mscorlib_path).MainModule
+let assembly_load fullname = resolver.Resolve(AssemblyNameReference.Parse(fullname)).MainModule
+let mscorlib = assembly_load "mscorlib"
+let fsharp_core = assembly_load "FSharp.Core, Version=4.4.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
 
 let task = mscorlib.Types |> Seq.find (fun x -> x.Name = "Task`1")
 
@@ -18,6 +19,9 @@ let con =
 
 let r = con.Parameters.[0].ParameterType
 
+r.IsGenericInstance
 let ins = r :?> GenericInstanceType
 let args = ins.GenericArguments
 args
+
+typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>.FullName

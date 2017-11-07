@@ -2,7 +2,6 @@
 
 open System
 open System.Collections.Generic
-open System.Reflection
 open Types
 
 let listt x = ListT x
@@ -19,7 +18,7 @@ let tuple_field_ty = function
     | ListT x -> x
     | x -> [x]
 
-let ss_cache_assembly: Dictionary<Assembly,TypedExpr> = d0()
+let ss_cache_assembly: Dictionary<string,TypedExpr> = d0()
 let ss_cache_type = d0()
 let ss_cache_method = d0()
 let ss_cache_field = d0()
@@ -28,16 +27,74 @@ let ss_cache_constructor = d0()
 let nodify_ssty = nodify <| d0()
 let dotnet_typet x = nodify_ssty x |> DotNetTypeT
 
-let rec ss_type_definition (x: Type) =
-    let gen_pars = x.GetGenericArguments() |> Array.map (fun x -> x.Name)
+open Mono.Cecil
+open Mono.Cecil.Rocks
+
+let assembly_load = 
+    let resolver = new DefaultAssemblyResolver()
+    fun fullname -> resolver.Resolve(AssemblyNameReference.Parse(fullname)).MainModule
+let mscorlib = assembly_load "mscorlib"
+let fsharp_core = assembly_load "FSharp.Core, Version=4.4.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
+
+let typeof_bool = mscorlib.GetType("System.Boolean")
+let typeof_int8 = mscorlib.GetType("System.SByte")
+let typeof_int16 = mscorlib.GetType("System.Int16")
+let typeof_int32 = mscorlib.GetType("System.Int32")
+let typeof_int64 = mscorlib.GetType("System.Int64")
+
+let typeof_uint8 = mscorlib.GetType("System.Byte")
+let typeof_uint16 = mscorlib.GetType("System.UInt16")
+let typeof_uint32 = mscorlib.GetType("System.UInt32")
+let typeof_uint64 = mscorlib.GetType("System.UInt64")
+
+let typeof_float32 = mscorlib.GetType("System.Single")
+let typeof_float64 = mscorlib.GetType("System.Double")
+
+let typeof_char = mscorlib.GetType("System.Char")
+let typeof_string = mscorlib.GetType("System.String")
+let typeof_void = mscorlib.GetType("System.Void")
+
+let typeof_func = fsharp_core.GetType("Microsoft.FSharp.Core.FSharpFunc`2")
+let typeof_unit = fsharp_core.GetType("Microsoft.FSharp.Core.Unit")
+let typeof_compilation_source_name = fsharp_core.GetType("Microsoft.FSharp.Core.CompilationSourceNameAttribute")
+
+//let rec prim_type_to_ty (d: SSEnvTerm) (x: TypeDefinition) on_fail =
+//    if x = typeof_bool then PrimT BoolT
+//    elif x = typeof_int8 then PrimT Int8T
+//    elif x = typeof_int16 then PrimT Int16T
+//    elif x = typeof_int32 then PrimT Int32T
+//    elif x = typeof_int64 then PrimT Int64T
+//
+//    elif x = typeof_uint8 then PrimT UInt8T
+//    elif x = typeof_uint16 then PrimT UInt16T
+//    elif x = typeof_uint32 then PrimT UInt32T
+//    elif x = typeof_uint64 then PrimT UInt64T
+//
+//    elif x = typeof_float32 then PrimT Float32T
+//    elif x = typeof_float64 then PrimT Float64T
+//    elif x = typeof_string then PrimT StringT
+//    elif x = typeof_char then PrimT CharT
+//    elif x = typeof_unit || x = typeof_void then BListT
+//    elif x.IsArray then arrayt(DotNetHeap, ss_type_apply d (x.GetElementType()))
+//    // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
+//    elif x.IsByReference then arrayt(DotNetReference, ss_type_apply d (x.GetElementType())) // Incorrect, but useful
+////    elif FSharp.Reflection.FSharpType.IsFunction x then 
+////        let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
+////        closuret (prim_type_to_ty a on_fail) (prim_type_to_ty b on_fail)
+//    else on_fail x
+////        memoize ss_cache_type x <| fun () -> on_fail x
+
+
+let rec ss_type_definition (x: TypeDefinition) =
+    let gen_pars = x.GenericParameters |> Seq.toArray |> Array.map (fun x -> x.Name)
     if gen_pars.Length > 0 then SSTyLam (Map.empty, gen_pars, SSCompileTypeDefinition x)
     else
         ss_compile_type_definition Map.empty x
         |> SSTyType
 
 and ss_compile_type_definition (d: SSEnvTerm) =
-    memoize ss_cache_type <| fun (x: Type) ->
-        let gen_args = x.GetGenericArguments()
+    memoize ss_cache_type <| fun (x: TypeDefinition) ->
+        let gen_args = x.GenericParameters
                 
         let inline is_static x = (^a : (member IsStatic: bool) x)
         let inline is_public x = (^a : (member IsPublic: bool) x)
@@ -51,16 +108,16 @@ and ss_compile_type_definition (d: SSEnvTerm) =
             |> fun (a,b) -> f a, f b
 
         let static_methods, methods = 
-            let name' (meth: MethodInfo) = // Special case because the F# has special compilation names for static methods.
+            let name' (meth: MethodDefinition) = // Special case because the F# has special compilation names for static methods.
                 meth.CustomAttributes
-                |> Seq.tryFind (fun x -> x.AttributeType = typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>)
+                |> Seq.tryFind (fun x -> x.AttributeType.Resolve() = typeof_compilation_source_name)
                 |> Option.map (fun atr -> 
                     atr.ConstructorArguments |> Seq.head 
                     |> fun x -> x.Value :?> string)
                 |> Option.defaultValue meth.Name
 
             x.GetMethods() 
-            |> partition (Array.groupBy name' >> Array.map (fun (k,v) -> 
+            |> partition (Seq.toArray >> Array.groupBy name' >> Array.map (fun (k,v) -> 
                 let v =
                     v |> Array.map (fun x ->
                         let gen = Array.map name (x.GetGenericArguments())

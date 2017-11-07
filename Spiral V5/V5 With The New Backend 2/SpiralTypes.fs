@@ -245,16 +245,14 @@ type Op =
     | FailWith
 
 type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 'S'ystem Type.
-//    | SSAp of SSExpr * SSExpr
-//    | SSSubst of SSExpr * SSExpr
     | SSType of Ty
     | SSVar of string
     | SSArray of SSExpr []
     | SSLam of string [] * SSExpr
-    | SSCompileTypeDefinition of Type
-    | SSCompileMethod of Reflection.MethodInfo
-    | SSCompileField of Reflection.FieldInfo
-    | SSCompileConstructor of Reflection.ConstructorInfo
+    | SSCompileTypeDefinition of Mono.Cecil.TypeDefinition
+    | SSCompileMethod of Mono.Cecil.MethodDefinition
+    | SSCompileField of Mono.Cecil.FieldDefinition
+    | SSCompileConstructor of Mono.Cecil.MethodDefinition
 
 and SSTypedExpr =
     | SSTyType of Ty
