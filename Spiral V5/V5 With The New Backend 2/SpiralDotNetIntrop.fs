@@ -32,9 +32,11 @@ open Mono.Cecil.Rocks
 
 let assembly_load = 
     let resolver = new DefaultAssemblyResolver()
-    fun fullname -> resolver.Resolve(AssemblyNameReference.Parse(fullname))
+    memoize (d0()) <| fun fullname -> 
+        printfn "Loading %s..." fullname
+        resolver.Resolve(AssemblyNameReference.Parse(fullname))
 let mscorlib = (assembly_load "mscorlib").MainModule
-let fsharp_core = (assembly_load "FSharp.Core, Version=4.4.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a").MainModule
+let fsharp_core = (assembly_load "FSharp.Core").MainModule
 
 let typeof_bool = mscorlib.GetType("System.Boolean")
 let typeof_int8 = mscorlib.GetType("System.SByte")
@@ -139,6 +141,11 @@ and ss_type_apply (d: SSEnvTerm) (x: TypeReference): Ty =
     elif x.IsByReference then arrayt(DotNetReference, ss_type_apply d (x.GetElementType())) // Incorrect, but useful
     else
         let x = x.Resolve()
+        if x.Name = "Boolean" then
+            printfn "%A,%i" x (LanguagePrimitives.PhysicalHash x)
+            printfn "%A,%i" typeof_bool (LanguagePrimitives.PhysicalHash typeof_bool)
+            printfn "%b" (x = typeof_bool)
+
         if x = typeof_bool then PrimT BoolT
         elif x = typeof_int8 then PrimT Int8T
         elif x = typeof_int16 then PrimT Int16T

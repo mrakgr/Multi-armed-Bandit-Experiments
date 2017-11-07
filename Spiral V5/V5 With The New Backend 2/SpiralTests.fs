@@ -427,12 +427,22 @@ type b =
 (.A, (2,3)) |> box a |> dyn |> box b
     """
 
-let test32 = // 
+let test32 =
     "test32",[],"Do the .NET methods work inside methods?",
     """
 inl to_int64 = mscorlib .System.Convert .ToInt64
 met f = to_int64 (dyn 'a')
 f
+    """
+
+let test33 =
+    "test33",[],"Do the F# library functions get compiled correctly using Mono.Cecil?",
+    """
+inl fsharp_core = assembly_load."FSharp.Core"
+inl ops = fsharp_core.Microsoft.FSharp.Core.Operators
+inl ty = mscorlib.System.Object
+inl _ = ops(.isNull,ty,1 :> ty)
+1
     """
 
 let test34 =
@@ -1926,6 +1936,6 @@ let rewrite_test_cache x =
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp test1
+output_test_to_temp test33
 |> printfn "%s"
 |> ignore
