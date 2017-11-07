@@ -1579,7 +1579,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     if is_convertible_primt fromt && is_convertible_primt tot then TyOp(UnsafeConvert,[to_;from],tot)
                     else on_type_er (trace d) "Cannot convert %A to the following type: %A" from tot
 
-        let cuda_kernels d = TyOp(CudaKernels,[],PrimT StringT)
         let unsafe_upcast_to d a b =
             let a, b = tev2 d a b
             TyOp(UnsafeUpcastTo,[a;b],get_type a)
@@ -1591,17 +1590,22 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let extern_fsu_global_constant d a b =
             match tev2 d a b with
             | TypeString _ & a, TyType t -> TyOp(ExternFSUGlobalConstant,[a],t) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,_ -> on_type_er (trace d) "Expected a type string as the first argument to ExternFSUGlobalConstant.\nGot: %A" a
+            | a,_ -> on_type_er (trace d) <| sprintf "Expected a type string as the first argument to ExternFSUGlobalConstant.\nGot: %A" a
 
         let extern_fsu_method d a b c d' =
             match tev4 d a b c d' with
             | TyType (DotNetTypeT _) & a, TypeString _ & b, c, TyType t -> TyOp(ExternFSUMethod,[a;b;c],t) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,b,_,_ -> on_type_er (trace d) "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUMethod.\nGot: %A\n...and: %A" a b
+            | a,b,_,_ -> on_type_er (trace d) <| sprintf "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUMethod.\nGot: %A\n...and: %A" a b
 
         let extern_fsu_constructor d a b =
             match tev2 d a b with
             | TyType (DotNetTypeT _ & t) & a, TypeString _ & b -> TyOp(ExternFSUConstructor,[a;b],t) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,b -> on_type_er (trace d) "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUConstructor.\nGot: %A\n...and: %A" a b
+            | a,b -> on_type_er (trace d) <| sprintf "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUConstructor.\nGot: %A\n...and: %A" a b
+
+        let extern_cu_global_constant d a b =
+            match tev2 d a b with
+            | TypeString _ & a, TyType t -> TyOp(ExternCUGlobalConstant,[a],t) |> make_tyv_and_push_typed_expr_even_if_unit d
+            | a,_ -> on_type_er (trace d) <| sprintf "Expected a type string as the first argument to ExternCUGlobalConstant.\nGot: %A" a
             
         let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
 
@@ -1618,6 +1622,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | Op(N (op,vars)) ->
             match op,vars with
             | ExternFSUGlobalConstant,[a;b] -> extern_fsu_global_constant d a b
+            | ExternCUGlobalConstant,[a;b] -> extern_cu_global_constant d a b
             | ExternFSUMethod,[a;b;c;d'] -> extern_fsu_method d a b c d'
             | ExternFSUConstructor,[a;b] -> extern_fsu_constructor d a b
             | Apply,[a;b] -> apply_tev d a b
@@ -1722,12 +1727,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | Tanh,[a] -> prim_un_floating d a Tanh
             | FailWith,[typ;a] -> failwith_ d typ a
 
-            | CudaKernels,[] -> cuda_kernels d
             | UnsafeUpcastTo,[a;b] -> unsafe_upcast_to d a b
             | UnsafeDowncastTo,[a;b] -> unsafe_downcast_to d a b
-
-            // Constants
-            | (ThreadIdxX | ThreadIdxY | ThreadIdxZ | BlockIdxX | BlockIdxY | BlockIdxZ | BlockDimX | BlockDimY | BlockDimZ | GridDimX | GridDimY | GridDimZ),[] -> TyOp(op,[],PrimT Int64T)
 
             | x -> failwithf "Missing Op case. %A" x
 
@@ -2667,19 +2668,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
                 | FailWith,[x] -> on_type_er trace "Exceptions and hence failwith are not supported on the Cuda side."
 
-                | ThreadIdxX,[] -> "threadIdx.x"
-                | ThreadIdxY,[] -> "threadIdx.y"
-                | ThreadIdxZ,[] -> "threadIdx.z"
-                | BlockIdxX,[] -> "blockIdx.x"
-                | BlockIdxY,[] -> "blockIdx.y"
-                | BlockIdxZ,[] -> "blockIdx.z"
-
-                | BlockDimX,[] -> "blockDim.x"
-                | BlockDimY,[] -> "blockDim.y"
-                | BlockDimZ,[] -> "blockDim.z"
-                | GridDimX,[] -> "gridDim.x"
-                | GridDimY,[] -> "gridDim.y"
-                | GridDimZ,[] -> "gridDim.z"
+                | ExternCUGlobalConstant,[TypeString a] -> a
 
                 | x -> failwithf "Missing TyOp case. %A" x
                 |> branch_return
@@ -3105,7 +3094,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     match v with
                     | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s" (print_dotnet_type t) name
                     | _ -> sprintf "%s.%s" (codegen v) name
-                | CudaKernels,[] -> cuda_kernels_name
                 | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
                 | UnsafeDowncastTo,[a;b] -> sprintf "(%s :?> %s)" (codegen b) (print_type (get_type a))
                 | ExternFSUGlobalConstant,[TypeString a] -> a

@@ -112,6 +112,8 @@ type Op =
     | ExternFSUMethod
     | ExternFSUConstructor
 
+    | ExternCUGlobalConstant
+
     // Closure
     | ClosureTypeCreate
     | ClosureIs
@@ -121,16 +123,6 @@ type Op =
     // Cast
     | UnsafeUpcastTo
     | UnsafeDowncastTo
-
-    // Cuda
-    | Syncthreads
-    | CudaKernels
-
-    | ThreadIdxX | ThreadIdxY | ThreadIdxZ
-    | BlockIdxX | BlockIdxY | BlockIdxZ
-
-    | BlockDimX | BlockDimY | BlockDimZ
-    | GridDimX | GridDimY | GridDimZ
 
     // Pattern matching errors
     | ErrorPatMiss

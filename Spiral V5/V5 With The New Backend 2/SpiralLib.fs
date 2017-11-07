@@ -785,22 +785,30 @@ let cuda =
 open Extern
 open Console
 
-inl cuda_kernels = !CudaKernels()
+inl cuda_kernels = FSU.Global.Constant.cuda_kernels string
 inl join_point_entry_cuda x = !JoinPointEntryCuda(x())
 
-inl __threadIdxX() = !ThreadIdxX()
-inl __threadIdxY() = !ThreadIdxY()
-inl __threadIdxZ() = !ThreadIdxZ()
-inl __blockIdxX() = !BlockIdxX()
-inl __blockIdxY() = !BlockIdxY()
-inl __blockIdxZ() = !BlockIdxZ()
+inl cuda_constant a t = !ExternCUGlobalConstant(a,t)
+inl CU = {
+    Global = {
+        Constant = cuda_constant
+        }
+    }
 
-inl __blockDimX() = !BlockDimX()
-inl __blockDimY() = !BlockDimY()
-inl __blockDimZ() = !BlockDimZ()
-inl __gridDimX() = !GridDimX()
-inl __gridDimY() = !GridDimY()
-inl __gridDimZ() = !GridDimZ()
+inl cuda_constant_int (!type_lit_lift constant) () = cuda_constant constant int64
+inl __threadIdxX = cuda_constant_int "threadIdx.x"
+inl __threadIdxY = cuda_constant_int "threadIdx.y"
+inl __threadIdxZ = cuda_constant_int "threadIdx.z"
+inl __blockIdxX = cuda_constant_int "blockIdx.x"
+inl __blockIdxY = cuda_constant_int "blockIdx.y"
+inl __blockIdxZ = cuda_constant_int "blockIdx.z"
+
+inl __blockDimX = cuda_constant_int "blockDim.x"
+inl __blockDimY = cuda_constant_int "blockDim.y"
+inl __blockDimZ = cuda_constant_int "blockDim.z"
+inl __gridDimX = cuda_constant_int "gridDim.x"
+inl __gridDimY = cuda_constant_int "gridDim.y"
+inl __gridDimZ = cuda_constant_int "gridDim.z"
 
 inl fsharp_core = assembly_load."FSharp.Core"
 inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
