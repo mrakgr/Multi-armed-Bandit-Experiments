@@ -691,8 +691,26 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             ty_join_point join_point_key JoinPointClosure captured_arguments (closuret arg_ty ret_ty)
             |> make_tyv_and_push_typed_expr_even_if_unit d
 
+        let rec is_cuda_type = function
+            | LitT _ -> true
+            | PrimT t ->
+                match t with
+                | StringT _ -> false
+                | _ -> true
+            | ListT l -> List.forall is_cuda_type l
+            | MapT (l,_) -> Map.forall (fun _ -> is_cuda_type) l
+            | LayoutT (LayoutPackedStack, l, _) -> 
+                let {call_args=args},_ = renamer_apply_env l
+                List.forall (fun (_,t) -> is_cuda_type t) args
+            | ArrayT ((ArtCudaGlobal _ | ArtCudaShared | ArtCudaLocal),t) -> is_cuda_type t
+            | UnionT _ | LayoutT _ | ArrayT _ | DotNetTypeT _ | ClosureT _ | RecT _ -> false
+
         let join_point_cuda d expr = 
             let {call_args=call_arguments; method_pars=method_parameters; renamer'=renamer}, renamed_env = renamer_apply_env d.env
+            match List.filter (snd >> is_cuda_type >> not) call_arguments with
+            | [] -> ()
+            | l -> on_type_er (trace d) <| sprintf "At the Cuda join point the following arguments have disallowed types: %A" l
+
             let length=renamer.Count
             let join_point_key = nodify_memo_key (expr, renamed_env) 
 
@@ -956,10 +974,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _, TypeString x -> 
                     if x = "elem_type" then elem_ty |> tyt
                     else failwithf "Unknown type string applied to array. Got: %s" x
-                | DotNetHeap, idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
-                | DotNetHeap, idx -> on_type_er (trace d) <| sprintf "The index into an array is not an int. Got: %A" idx
-                | DotNetReference, TyList [] -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
-                | DotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
+                | ArtDotNetHeap, idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
+                | ArtDotNetHeap, idx -> on_type_er (trace d) <| sprintf "The index into an array is not an int. Got: %A" idx
+                | ArtDotNetReference, TyList [] -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
+                | ArtDotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
                 | _ -> failwith "Not implemented."
             // apply_dotnet_type 
             | TyType(DotNetTypeT(N t)) & dotnet_type, arg ->
@@ -1395,14 +1413,14 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let size,array_type =
                 match tev d size with
-                | size when is_int size -> size,arrayt(DotNetHeap,typ)
+                | size when is_int size -> size,arrayt(ArtDotNetHeap,typ)
                 | size -> on_type_er (trace d) <| sprintf "An size argument in CreateArray is not of type int64.\nGot: %A" size
 
             TyOp(ArrayCreate,[size],array_type) |> make_tyv_and_push_typed_expr d
 
         let reference_create d x =
             let x = tev d x
-            let array_type = arrayt(DotNetReference, get_type x)
+            let array_type = arrayt(ArtDotNetReference, get_type x)
             TyOp(ReferenceCreate,[x],array_type) |> make_tyv_and_push_typed_expr d
 
         let mutable_set d ar idx r =
@@ -1410,13 +1428,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 if is_unit t then TyB
                 else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(MutableSet,[ar;idx;r],BListT))
             match tev3 d ar idx r with
-            | ar & TyType (ArrayT(DotNetHeap,ar_ty)), idx, r ->
+            | ar & TyType (ArrayT(ArtDotNetHeap,ar_ty)), idx, r ->
                 if is_int idx then
                     let r_ty = get_type r
                     if ar_ty = r_ty then ret ar_ty ar idx r
                     else on_type_er (trace d) <| sprintf "The two sides in array set have different types.\nGot: %A and %A" ar_ty r_ty
                 else on_type_er (trace d) <| sprintf "Expected the array index to be an integer.\nGot: %A" idx
-            | ar & TyType (ArrayT(DotNetReference,ar_ty)), idx, r ->
+            | ar & TyType (ArrayT(ArtDotNetReference,ar_ty)), idx, r ->
                 match idx with
                 | TyList [] ->
                     let r_ty = get_type r
@@ -1444,8 +1462,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let array_length d ar =
             match tev d ar with
-            | ar & TyType (ArrayT(DotNetHeap,t))-> make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
-            | ar & TyType (ArrayT(DotNetReference,t))-> TyLit (LitInt64 1L)
+            | ar & TyType (ArrayT(ArtDotNetHeap,t))-> make_tyv_and_push_typed_expr d (TyOp(ArrayLength,[ar],PrimT Int64T))
+            | ar & TyType (ArrayT(ArtDotNetReference,t))-> TyLit (LitInt64 1L)
             | x -> on_type_er (trace d) <| sprintf "ArrayLength is only supported for .NET arrays. Got: %A" x
 
         let module_is d a =
@@ -1586,6 +1604,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let unsafe_downcast_to d a b =
             let a, b = tev2 d a b
             TyOp(UnsafeDowncastTo,[a;b],get_type a)
+
+        let unsafe_coerce_to_array_cuda_global d a b =
+            match tev2 d a b with
+            | TyV(x,t'), t -> tyv(x,ArrayT(ArtCudaGlobal t',get_type t))
+            | TyT t', t -> tyt(ArrayT(ArtCudaGlobal t',get_type t))
+            | _ -> on_type_er (trace d) "Only variables or runtime types can be converted to the Cuda global array type."
 
         let extern_fsu_global_constant d a b =
             match tev2 d a b with
@@ -1729,7 +1753,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             | UnsafeUpcastTo,[a;b] -> unsafe_upcast_to d a b
             | UnsafeDowncastTo,[a;b] -> unsafe_downcast_to d a b
-
+            | UnsafeCoerceToArrayCudaGlobal,[a;b] -> unsafe_coerce_to_array_cuda_global d a b
+            
             | x -> failwithf "Missing Op case. %A" x
 
     // #Parsing
@@ -2477,15 +2502,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let print_tag_closure' t = sprintf "FunPointer%i" t // Not actual closures. They are only function pointers on the Cuda side.
         let print_tag_closure t = def_enqueue print_tag_closure' t
 
-        let rec print_type trace = function
+        let rec print_type = function
             | Unit -> "void"
             | MapT _ as x -> print_tag_env None x
             | LayoutT ((LayoutStack | LayoutPackedStack) as layout, _, _) as x -> print_tag_env (Some layout) x
             | ListT _ as x -> print_tag_tuple x
             | UnionT _ as x -> print_tag_union x
-            | ArrayT((CudaLocal | CudaShared | CudaGlobal),t) -> sprintf "%s *" (print_type trace t)
+            | ArrayT((ArtCudaLocal | ArtCudaShared | ArtCudaGlobal _),t) -> sprintf "%s *" (print_type t)
             | ArrayT _ -> failwith "Not implemented."
-            | LayoutT (_, _, _) | RecT _ | DotNetTypeT _ as x -> on_type_er trace <| sprintf "%A is not supported on the Cuda side." x
+            | LayoutT (_, _, _) | RecT _ | DotNetTypeT _ as x -> failwithf "%A is not supported on the Cuda side." x
             | ClosureT _ as t -> print_tag_closure t
             | PrimT x ->
                 match x with
@@ -2499,20 +2524,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | Int64T -> "long long int"
                 | Float32T -> "float"
                 | Float64T -> "double"
-                | BoolT -> "int"
-                | CharT -> on_type_er trace "The char type is not supported on the Cuda side."
-                | StringT -> on_type_er trace "The string type is not supported on the Cuda side."
+                | BoolT -> "char"
+                | CharT -> "unsigned short"
+                | StringT -> failwith "The string type is not supported on the Cuda side."
             | LitT _ -> 
                 failwith "Should be covered in Unit."
 
-        and print_tyv_with_type trace (tag,ty as v) = sprintf "%s %s" (print_type trace ty) (print_tyv v)
+        and print_tyv_with_type (tag,ty as v) = sprintf "%s %s" (print_type ty) (print_tyv v)
         and print_args' print_tyv x = print_args print_tyv x
         let rec codegen' ({branch_return=branch_return; trace=trace} as d) expr =
             let inline codegen expr = codegen' {d with branch_return=id} expr
 
-            let inline print_tyv_with_type x = print_tyv_with_type trace x
             let inline print_method_definition_args x = print_args' print_tyv_with_type x
-            let inline print_type x = print_type trace x
             let inline print_join_point_args x = 
                 let print_with_error_checking x = print_type (snd x) |> ignore; print_tyv x
                 print_args' print_with_error_checking x
@@ -2529,7 +2552,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | LitFloat32 x -> string x
                 | LitFloat64 x -> string x
                 | LitBool x -> if x then "1" else "0"
-                | LitChar x -> on_type_er trace "Char literals are not supported on the Cuda side."
+                | LitChar x -> string (int x)
                 | LitString x -> on_type_er trace "String literals are not supported on the Cuda side."
 
             let inline if_ v cond tr fl =
@@ -2565,118 +2588,122 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | _ -> failwith "impossible"
                 sprintf "((%s) (%s))" conv_func (codegen from)
 
-            match expr with
-            | TyT Unit | TyV (_, Unit) -> ""
-            | TyT t -> on_type_er trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
-            | TyV v -> print_tyv v |> branch_return
-            | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' {d with trace=trace} b
-            | TyState(b,rest,_,trace) ->
-                let d' = {d with branch_return=id; trace=trace}
-                match b with
-                | TyOp(MutableSet,[ar;idx;b],_) ->
-                    match get_type ar with
-                    | ArrayT((CudaLocal | CudaShared | CudaGlobal),_) -> 
-                        sprintf "%s[%s] = %s" (codegen' d' ar) (codegen' d' idx) (codegen' d' b) |> state
-                    | _ -> failwith "impossible"
-                | _ ->
-                    let b = codegen' d' b
-                    if b <> "" then sprintf "%s" b |> state
-                codegen' {d with trace=trace} rest
-            | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' {d with trace=trace} rest
-//            | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
-            | TyLet(tyv,b,rest,_,trace) -> 
-                let _ = 
-                    let d = {d with branch_return=id; trace=trace}
+            try
+                match expr with
+                | TyT Unit | TyV (_, Unit) -> ""
+                | TyT t -> on_type_er trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
+                | TyV v -> print_tyv v |> branch_return
+                | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' {d with trace=trace} b
+                | TyState(b,rest,_,trace) ->
+                    let d' = {d with branch_return=id; trace=trace}
                     match b with
-                    | TyOp(ArrayCreate,[a],t) -> sprintf "%s[%s]" (print_tyv_with_type tyv) (codegen' d a)
-                    | _ -> sprintf "%s = %s" (print_tyv_with_type tyv) (codegen' d b) 
-                    |> state 
-                codegen' {d with trace=trace} rest
-            | TyLit x -> print_value x |> branch_return
-            | TyJoinPoint(S tag & key,join_point_type,call_args,_) ->
-                let method_name = print_method tag
-                let tomjp = TomJP (join_point_type,key)
-                if definitions_set.Add tomjp then definitions_queue.Enqueue tomjp
-                match join_point_type with
-                | JoinPointType -> failwith "Should never be printed."
-                | JoinPointCuda -> // This join point is just a placeholder.
-                    "// Cuda join point" |> state
-                    sprintf "// %s(%s)" method_name (print_join_point_args call_args) |> state
-                    ""
-                | JoinPointMethod -> 
-                    sprintf "%s(%s)" method_name (print_join_point_args call_args) |> branch_return
-                | JoinPointClosure ->
-                    if List.isEmpty call_args then branch_return method_name 
-                    else on_type_er trace "The closure should not have free variables on the Cuda side."
-            | TyBox(x, t) -> failwith "TODO"
-            | TyMap(C env_term, _) ->
-                let t = get_type expr
-                Map.toArray env_term
-                |> Array.map snd
-                |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env None t) args)
-                |> branch_return
-            | TyList l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "make_%s(%s)" (print_tag_tuple t) args) |> branch_return
-            | TyOp(op,args,t) ->
-                match op, args with
-                | Apply,[a;b] ->
-                    // Apply during codegen is only used for applying closures.
-                    // There is one level of flattening in the outer arguments.
-                    // The reason for this is the symmetry between the F# and the Cuda side.
-                    let b = tuple_field b |> List.map codegen |> String.concat ", "
-                    sprintf "%s(%s)" (codegen a) b
-//                | Case,v :: cases -> match_with print_if_tail v cases; ""
-                | If,[cond;tr;fl] -> if_ None cond tr fl; ""
-                | ArrayCreate,[a] -> failwith "ArrayCreate should be done in a let statement on the Cuda side."
-                | ArrayIndex,[ar & TyType(ArrayT((CudaLocal | CudaShared | CudaGlobal),_));idx] -> sprintf "%s[%s]" (codegen ar) (codegen idx)
-                | ArrayLength,[a] -> on_type_er trace "The ArrayLlength operation is invalid on the Cuda side as the array is just a pointer."
-                | UnsafeConvert,[_;from] -> unsafe_convert t from
+                    | TyOp(MutableSet,[ar;idx;b],_) ->
+                        match get_type ar with
+                        | ArrayT((ArtCudaLocal | ArtCudaShared | ArtCudaGlobal _),_) -> 
+                            sprintf "%s[%s] = %s" (codegen' d' ar) (codegen' d' idx) (codegen' d' b) |> state
+                        | _ -> failwith "impossible"
+                    | _ ->
+                        let b = codegen' d' b
+                        if b <> "" then sprintf "%s" b |> state
+                    codegen' {d with trace=trace} rest
+                | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' {d with trace=trace} rest
+    //            | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
+                | TyLet(tyv,b,rest,_,trace) -> 
+                    let _ = 
+                        let d = {d with branch_return=id; trace=trace}
+                        match b with
+                        | TyOp(ArrayCreate,[a],t) -> sprintf "%s[%s]" (print_tyv_with_type tyv) (codegen' d a)
+                        | _ -> sprintf "%s = %s" (print_tyv_with_type tyv) (codegen' d b) 
+                        |> state 
+                    codegen' {d with trace=trace} rest
+                | TyLit x -> print_value x |> branch_return
+                | TyJoinPoint(S tag & key,join_point_type,call_args,_) ->
+                    let method_name = print_method tag
+                    let tomjp = TomJP (join_point_type,key)
+                    if definitions_set.Add tomjp then definitions_queue.Enqueue tomjp
+                    match join_point_type with
+                    | JoinPointType -> failwith "Should never be printed."
+                    | JoinPointCuda -> // This join point is just a placeholder.
+                        "// Cuda join point" |> state
+                        sprintf "// %s(%s)" method_name (print_join_point_args call_args) |> state
+                        ""
+                    | JoinPointMethod -> 
+                        sprintf "%s(%s)" method_name (print_join_point_args call_args) |> branch_return
+                    | JoinPointClosure ->
+                        if List.isEmpty call_args then branch_return method_name 
+                        else on_type_er trace "The closure should not have free variables on the Cuda side."
+                | TyBox(x, t) -> failwith "TODO"
+                | TyMap(C env_term, _) ->
+                    let t = get_type expr
+                    Map.toArray env_term
+                    |> Array.map snd
+                    |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env None t) args)
+                    |> branch_return
+                | TyList l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "make_%s(%s)" (print_tag_tuple t) args) |> branch_return
+                | TyOp(op,args,t) ->
+                    match op, args with
+                    | Apply,[a;b] ->
+                        // Apply during codegen is only used for applying closures.
+                        // There is one level of flattening in the outer arguments.
+                        // The reason for this is the symmetry between the F# and the Cuda side.
+                        let b = tuple_field b |> List.map codegen |> String.concat ", "
+                        sprintf "%s(%s)" (codegen a) b
+    //                | Case,v :: cases -> match_with print_if_tail v cases; ""
+                    | If,[cond;tr;fl] -> if_ None cond tr fl; ""
+                    | ArrayCreate,[a] -> failwith "ArrayCreate should be done in a let statement on the Cuda side."
+                    | ArrayIndex,[ar & TyType(ArrayT((ArtCudaLocal | ArtCudaShared | ArtCudaGlobal _),_));idx] -> sprintf "%s[%s]" (codegen ar) (codegen idx)
+                    | ArrayLength,[a] -> on_type_er trace "The ArrayLlength operation is invalid on the Cuda side as the array is just a pointer."
+                    | UnsafeConvert,[_;from] -> unsafe_convert t from
 
-                // Primitive operations on expressions.
-                | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
-                | Sub,[a;b] -> sprintf "(%s - %s)" (codegen a) (codegen b)
-                | Mult,[a;b] -> sprintf "(%s * %s)" (codegen a) (codegen b)
-                | Div,[a;b] -> sprintf "(%s / %s)" (codegen a) (codegen b)
-                | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
-                | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
-                | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
-                | EQ,[a;b] -> sprintf "(%s == %s)" (codegen a) (codegen b)
-                | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
-                | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
-                | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
-                | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
-                | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
-                | BitwiseAnd,[a;b] -> sprintf "(%s & %s)" (codegen a) (codegen b)
-                | BitwiseOr,[a;b] -> sprintf "(%s | %s)" (codegen a) (codegen b)
-                | BitwiseXor,[a;b] -> sprintf "(%s ^ %s)" (codegen a) (codegen b)
+                    // Primitive operations on expressions.
+                    | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
+                    | Sub,[a;b] -> sprintf "(%s - %s)" (codegen a) (codegen b)
+                    | Mult,[a;b] -> sprintf "(%s * %s)" (codegen a) (codegen b)
+                    | Div,[a;b] -> sprintf "(%s / %s)" (codegen a) (codegen b)
+                    | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
+                    | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
+                    | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
+                    | EQ,[a;b] -> sprintf "(%s == %s)" (codegen a) (codegen b)
+                    | NEQ,[a;b] -> sprintf "(%s != %s)" (codegen a) (codegen b)
+                    | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
+                    | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
+                    | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
+                    | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
+                    | BitwiseAnd,[a;b] -> sprintf "(%s & %s)" (codegen a) (codegen b)
+                    | BitwiseOr,[a;b] -> sprintf "(%s | %s)" (codegen a) (codegen b)
+                    | BitwiseXor,[a;b] -> sprintf "(%s ^ %s)" (codegen a) (codegen b)
 
-                | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
-                | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
+                    | ShiftLeft,[x;y] -> sprintf "(%s << %s)" (codegen x) (codegen y)
+                    | ShiftRight,[x;y] -> sprintf "(%s >> %s)" (codegen x) (codegen y)
 
-                | Neg,[a] -> sprintf "(-%s)" (codegen a)
-                | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
-                | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
-                | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
-                    let {call_args=fv},_ = renamer_apply_typedexpr a
-                    match op with
-                    | LayoutToStack | LayoutToPackedStack ->
-                        let args = Seq.map print_tyv fv |> String.concat ", "
-                        sprintf "make_%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
-                    | LayoutToHeap | LayoutToHeapMutable -> on_type_er trace "Heapify is unsupported on the Cuda side."
-                    | _ -> failwith "impossible"
-                | Log,[x] -> sprintf "log(%s)" (codegen x)
-                | Exp,[x] -> sprintf "exp(%s)" (codegen x)
-                | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
-                | FailWith,[x] -> on_type_er trace "Exceptions and hence failwith are not supported on the Cuda side."
+                    | Neg,[a] -> sprintf "(-%s)" (codegen a)
+                    | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
+                    | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
+                    | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
+                        let {call_args=fv},_ = renamer_apply_typedexpr a
+                        match op with
+                        | LayoutToStack | LayoutToPackedStack ->
+                            let args = Seq.map print_tyv fv |> String.concat ", "
+                            sprintf "make_%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
+                        | LayoutToHeap | LayoutToHeapMutable -> on_type_er trace "Heapify is unsupported on the Cuda side."
+                        | _ -> failwith "impossible"
+                    | Log,[x] -> sprintf "log(%s)" (codegen x)
+                    | Exp,[x] -> sprintf "exp(%s)" (codegen x)
+                    | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
+                    | FailWith,[x] -> on_type_er trace "Exceptions and hence failwith are not supported on the Cuda side."
 
-                | ExternCUGlobalConstant,[TypeString a] -> a
+                    | ExternCUGlobalConstant,[TypeString a] -> a
 
-                | x -> failwithf "Missing TyOp case. %A" x
-                |> branch_return
+                    | x -> failwithf "Missing TyOp case. %A" x
+                    |> branch_return
+            with 
+            | :? TypeError -> reraise()
+            | e -> on_type_er trace e.Message
 
         let print_closure_type_definition (a,r) tag =
-            let ret_ty = print_type [] r
+            let ret_ty = print_type r
             let name = print_tag_closure' tag
-            let ty = tuple_field_ty a |> List.map (print_type []) |> String.concat ", "
+            let ty = tuple_field_ty a |> List.map print_type |> String.concat ", "
             sprintf "typedef %s(*%s)(%s);" ret_ty name ty |> state
 
         let print_type_definition layout name tys =
@@ -2686,7 +2713,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let args =
                 List.map (fun (name,ty) ->
-                    sprintf "%s %s" (print_type [] ty) name
+                    sprintf "%s %s" (print_type ty) name
                     ) tys
 
             sprintf "struct %s {" name |> state_new
@@ -2708,8 +2735,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | x -> sprintf "return %s" x
             let print_body() = enter <| fun _ -> codegen' {branch_return=method_return; trace=[]} body
             let print_method prefix =
-                let args = print_args' (print_tyv_with_type []) fv
-                sprintf "%s %s %s(%s) {" prefix (print_type [] (get_type body)) method_name args |> state_new
+                let args = print_args' print_tyv_with_type fv
+                sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state_new
                 print_body()
                 "}" |> state_new
 
@@ -2801,9 +2828,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ListT _ as x -> print_tag_tuple x
             | UnionT _ as x -> print_tag_union x
             | RecT _ as x -> print_tag_rec x
-            | ArrayT(DotNetReference,t) -> sprintf "(%s ref)" (print_type t)
-            | ArrayT(DotNetHeap,t) -> sprintf "(%s [])" (print_type t)
-            | ArrayT _ -> failwith "Not implemented."
+            | ArrayT(ArtDotNetReference,t) -> sprintf "(%s ref)" (print_type t)
+            | ArrayT(ArtDotNetHeap,t) -> sprintf "(%s [])" (print_type t)
+            | ArrayT(ArtCudaGlobal t,_) -> print_type t
+            | ArrayT((ArtCudaShared | ArtCudaLocal),_) -> failwith "Cuda local and shared arrays cannot be used on the F# side."
             | DotNetTypeT (N t) -> print_dotnet_type t
             | ClosureT(a,b) -> 
                 let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
@@ -2967,139 +2995,143 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | _ -> failwith "impossible"
                 sprintf "(%s %s)" conv_func (codegen from)
 
-            match expr with
-            | TyT Unit | TyV (_, Unit) -> ""
-            | TyT t -> on_type_er trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
-            | TyV v -> print_tyv v
-            | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' trace b
-            | TyState(b,rest,_,trace) ->
-                match b with
-                | TyOp(MutableSet,[ar;idx;b],_) ->
-                    match get_type ar with
-                    | ArrayT(DotNetReference,_) -> reference_set ar b
-                    | ArrayT(DotNetHeap,_) -> array_set ar idx b
-                    | LayoutT(LayoutHeapMutable,_,_) -> 
-                        match idx with
-                        | TypeString field -> layout_heap_mutable_set ar field b
+            try
+                match expr with
+                | TyT Unit | TyV (_, Unit) -> ""
+                | TyT t -> on_type_er trace <| sprintf "Usage of naked type %A as an instance on the term level is invalid." t
+                | TyV v -> print_tyv v
+                | TyLet(tyv,b,TyV tyv',_,trace) when tyv = tyv' -> codegen' trace b
+                | TyState(b,rest,_,trace) ->
+                    match b with
+                    | TyOp(MutableSet,[ar;idx;b],_) ->
+                        match get_type ar with
+                        | ArrayT(ArtDotNetReference,_) -> reference_set ar b
+                        | ArrayT(ArtDotNetHeap,_) -> array_set ar idx b
+                        | LayoutT(LayoutHeapMutable,_,_) -> 
+                            match idx with
+                            | TypeString field -> layout_heap_mutable_set ar field b
+                            | _ -> failwith "impossible"
                         | _ -> failwith "impossible"
-                    | _ -> failwith "impossible"
-                | _ ->
-                    let b = codegen' trace b
-                    if b <> "" then sprintf "%s" b |> state
-                codegen' trace rest
-            | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' trace rest
-            | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
-            | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
-            | TyLit x -> print_value x
-            | TyJoinPoint(S tag & key,join_point_type,fv,_) ->
-                let method_name = print_method tag
-                let tomjp = TomJP (join_point_type,key)
-                if definitions_set.Add tomjp then definitions_queue.Enqueue tomjp
+                    | _ ->
+                        let b = codegen' trace b
+                        if b <> "" then sprintf "%s" b |> state
+                    codegen' trace rest
+                | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' trace rest
+                | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
+                | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
+                | TyLit x -> print_value x
+                | TyJoinPoint(S tag & key,join_point_type,fv,_) ->
+                    let method_name = print_method tag
+                    let tomjp = TomJP (join_point_type,key)
+                    if definitions_set.Add tomjp then definitions_queue.Enqueue tomjp
                 
-                match join_point_type with
-                | JoinPointType -> failwith "Should never be printed."
-                | JoinPointMethod -> sprintf "%s(%s)" method_name (print_args fv)
-                | JoinPointCuda -> 
-                    "// Cuda join point" |> state
-                    sprintf "// %s(%s)" method_name (print_args fv)
-                | JoinPointClosure ->
-                    if List.isEmpty fv then method_name
-                    else sprintf "%s(%s)" method_name (print_args fv)
-            | TyBox(x, t) ->
-                let case_name =
-                    let union_idx s = Seq.findIndex ((=) (get_type x)) s
-                    match t with
-                    | UnionT s -> print_case_union t (union_idx s)
-                    | RecT tag -> 
-                        match join_point_dict_type.[tag] with
-                        | JoinPointDone (UnionT s,_) -> print_case_rec t (union_idx s)
-                        | _ -> print_tag_rec t
-                    | _ -> failwith "Only RecT and UnionT can be boxed types."
-                if is_unit (get_type x) then case_name else sprintf "(%s(%s))" case_name (codegen x)
-            | TyMap(C env_term, _) ->
-                let t = get_type expr
-                Map.toArray env_term
-                |> Array.map snd
-                |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env None t) args)
-            | TyList l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
-            | TyOp(op,args,t) ->
-                match op, args with
-                | Apply,[a;b] ->
-                    // Apply during codegen is only used for applying closures.
-                    // There is one level of flattening in the outer arguments.
-                    // The reason for this is the symmetry between the F# and the Cuda side.
-                    let b = tuple_field b |> List.map codegen |> String.concat ", "
-                    sprintf "%s(%s)" (codegen a) b
-                | Case,v :: cases -> match_with print_if_tail v cases; ""
-                | If,[cond;tr;fl] -> if_ None cond tr fl; ""
-                | ArrayCreate,[a] -> array_create a t
-                | ReferenceCreate,[a] -> reference_create a
-                | ArrayIndex,[b & TyType(ArrayT(DotNetHeap,_));c] -> array_index b c
-                | ArrayIndex,[b & TyType(ArrayT(DotNetReference,_));c] -> reference_index b
-                | ArrayLength,[a] -> array_length a
-                | StringIndex,[str;idx] -> string_index str idx
-                | StringSlice,[str;a;b] -> string_slice str a b
-                | StringLength,[str] -> string_length str
-                | UnsafeConvert,[_;from] -> unsafe_convert t from
+                    match join_point_type with
+                    | JoinPointType -> failwith "Should never be printed."
+                    | JoinPointMethod -> sprintf "%s(%s)" method_name (print_args fv)
+                    | JoinPointCuda -> 
+                        "// Cuda join point" |> state
+                        sprintf "// %s(%s)" method_name (print_args fv)
+                    | JoinPointClosure ->
+                        if List.isEmpty fv then method_name
+                        else sprintf "%s(%s)" method_name (print_args fv)
+                | TyBox(x, t) ->
+                    let case_name =
+                        let union_idx s = Seq.findIndex ((=) (get_type x)) s
+                        match t with
+                        | UnionT s -> print_case_union t (union_idx s)
+                        | RecT tag -> 
+                            match join_point_dict_type.[tag] with
+                            | JoinPointDone (UnionT s,_) -> print_case_rec t (union_idx s)
+                            | _ -> print_tag_rec t
+                        | _ -> failwith "Only RecT and UnionT can be boxed types."
+                    if is_unit (get_type x) then case_name else sprintf "(%s(%s))" case_name (codegen x)
+                | TyMap(C env_term, _) ->
+                    let t = get_type expr
+                    Map.toArray env_term
+                    |> Array.map snd
+                    |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env None t) args)
+                | TyList l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "%s(%s)" (print_tag_tuple t) args)
+                | TyOp(op,args,t) ->
+                    match op, args with
+                    | Apply,[a;b] ->
+                        // Apply during codegen is only used for applying closures.
+                        // There is one level of flattening in the outer arguments.
+                        // The reason for this is the symmetry between the F# and the Cuda side.
+                        let b = tuple_field b |> List.map codegen |> String.concat ", "
+                        sprintf "%s(%s)" (codegen a) b
+                    | Case,v :: cases -> match_with print_if_tail v cases; ""
+                    | If,[cond;tr;fl] -> if_ None cond tr fl; ""
+                    | ArrayCreate,[a] -> array_create a t
+                    | ReferenceCreate,[a] -> reference_create a
+                    | ArrayIndex,[b & TyType(ArrayT(ArtDotNetHeap,_));c] -> array_index b c
+                    | ArrayIndex,[b & TyType(ArrayT(ArtDotNetReference,_));c] -> reference_index b
+                    | ArrayLength,[a] -> array_length a
+                    | StringIndex,[str;idx] -> string_index str idx
+                    | StringSlice,[str;a;b] -> string_slice str a b
+                    | StringLength,[str] -> string_length str
+                    | UnsafeConvert,[_;from] -> unsafe_convert t from
 
-                // Primitive operations on expressions.
-                | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
-                | Sub,[a;b] -> sprintf "(%s - %s)" (codegen a) (codegen b)
-                | Mult,[a;b] -> sprintf "(%s * %s)" (codegen a) (codegen b)
-                | Div,[a;b] -> sprintf "(%s / %s)" (codegen a) (codegen b)
-                | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
-                | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
-                | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
-                | EQ,[a;b] -> sprintf "(%s = %s)" (codegen a) (codegen b)
-                | NEQ,[a;b] -> sprintf "(%s <> %s)" (codegen a) (codegen b)
-                | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
-                | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
-                | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
-                | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
-                | BitwiseAnd,[a;b] -> sprintf "(%s &&& %s)" (codegen a) (codegen b)
-                | BitwiseOr,[a;b] -> sprintf "(%s ||| %s)" (codegen a) (codegen b)
-                | BitwiseXor,[a;b] -> sprintf "(%s ^^^ %s)" (codegen a) (codegen b)
+                    // Primitive operations on expressions.
+                    | Add,[a;b] -> sprintf "(%s + %s)" (codegen a) (codegen b)
+                    | Sub,[a;b] -> sprintf "(%s - %s)" (codegen a) (codegen b)
+                    | Mult,[a;b] -> sprintf "(%s * %s)" (codegen a) (codegen b)
+                    | Div,[a;b] -> sprintf "(%s / %s)" (codegen a) (codegen b)
+                    | Mod,[a;b] -> sprintf "(%s %% %s)" (codegen a) (codegen b)
+                    | LT,[a;b] -> sprintf "(%s < %s)" (codegen a) (codegen b)
+                    | LTE,[a;b] -> sprintf "(%s <= %s)" (codegen a) (codegen b)
+                    | EQ,[a;b] -> sprintf "(%s = %s)" (codegen a) (codegen b)
+                    | NEQ,[a;b] -> sprintf "(%s <> %s)" (codegen a) (codegen b)
+                    | GT,[a;b] -> sprintf "(%s > %s)" (codegen a) (codegen b)
+                    | GTE,[a;b] -> sprintf "(%s >= %s)" (codegen a) (codegen b)
+                    | And,[a;b] -> sprintf "(%s && %s)" (codegen a) (codegen b)
+                    | Or,[a;b] -> sprintf "(%s || %s)" (codegen a) (codegen b)
+                    | BitwiseAnd,[a;b] -> sprintf "(%s &&& %s)" (codegen a) (codegen b)
+                    | BitwiseOr,[a;b] -> sprintf "(%s ||| %s)" (codegen a) (codegen b)
+                    | BitwiseXor,[a;b] -> sprintf "(%s ^^^ %s)" (codegen a) (codegen b)
 
-                | ShiftLeft,[x;y] -> sprintf "(%s <<< %s)" (codegen x) (codegen y)
-                | ShiftRight,[x;y] -> sprintf "(%s >>> %s)" (codegen x) (codegen y)
+                    | ShiftLeft,[x;y] -> sprintf "(%s <<< %s)" (codegen x) (codegen y)
+                    | ShiftRight,[x;y] -> sprintf "(%s >>> %s)" (codegen x) (codegen y)
 
-                | Neg,[a] -> sprintf "(-%s)" (codegen a)
-                | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
-                | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
-                | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
-                    let {call_args=fv},_ = renamer_apply_typedexpr a
-                    match op with
-                    | LayoutToStack | LayoutToPackedStack ->
-                        let args = List.rev fv |> List.map print_tyv_with_type |> String.concat ", "
-                        sprintf "%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
-                    | LayoutToHeap | LayoutToHeapMutable ->
-                        let args = List.rev fv |> List.mapi (fun i x -> sprintf "mem_%i = %s" i (print_tyv_with_type x)) |> String.concat "; "
-                        sprintf "({%s} : %s)" args (print_tag_env (layout_from_op op |> Some) t)
-                    | _ -> failwith "impossible"
-                | Log,[x] -> sprintf "log(%s)" (codegen x)
-                | Exp,[x] -> sprintf "exp(%s)" (codegen x)
-                | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
-                | FailWith,[x] -> sprintf "(failwith %s)" (codegen x)
-                | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] as x ->
-                    match t with 
-                    | DotNetTypeT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_type instance_type) args
-                    | _ -> failwith "impossible"
-                | DotNetEventAddHandler,[dotnet_type;TypeString event_name;handler] ->
-                    sprintf "%s.%s.AddHandler(%s)" (codegen dotnet_type) event_name (codegen handler)
-                | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
-                    match v with
-                    | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_type t) method_name method_args
-                    | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
-                | DotNetTypeGetField,[v; TypeString name] ->
-                    match v with
-                    | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s" (print_dotnet_type t) name
-                    | _ -> sprintf "%s.%s" (codegen v) name
-                | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
-                | UnsafeDowncastTo,[a;b] -> sprintf "(%s :?> %s)" (codegen b) (print_type (get_type a))
-                | ExternFSUGlobalConstant,[TypeString a] -> a
-                | ExternFSUMethod,[a;TypeString b;TyTuple c] -> sprintf "%s.%s(%s)" (codegen a) b (List.map codegen c |> String.concat ", ")
-                | ExternFSUConstructor,[TyType a;TyTuple b] -> sprintf "%s(%s)" (print_type a) (List.map codegen b |> String.concat ", ")
-                | x -> failwithf "Missing TyOp case. %A" x
+                    | Neg,[a] -> sprintf "(-%s)" (codegen a)
+                    | ListIndex,[a;TyLit(LitInt64 b)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen a) b
+                    | MapGetField, [r; TyV (i,_)] -> if_not_unit t <| fun _ -> sprintf "%s.mem_%i" (codegen r) i
+                    | (LayoutToStack | LayoutToPackedStack | LayoutToHeap | LayoutToHeapMutable),[a] ->
+                        let {call_args=fv},_ = renamer_apply_typedexpr a
+                        match op with
+                        | LayoutToStack | LayoutToPackedStack ->
+                            let args = List.rev fv |> List.map print_tyv_with_type |> String.concat ", "
+                            sprintf "%s(%s)" (print_tag_env (layout_from_op op |> Some) t) args
+                        | LayoutToHeap | LayoutToHeapMutable ->
+                            let args = List.rev fv |> List.mapi (fun i x -> sprintf "mem_%i = %s" i (print_tyv_with_type x)) |> String.concat "; "
+                            sprintf "({%s} : %s)" args (print_tag_env (layout_from_op op |> Some) t)
+                        | _ -> failwith "impossible"
+                    | Log,[x] -> sprintf "log(%s)" (codegen x)
+                    | Exp,[x] -> sprintf "exp(%s)" (codegen x)
+                    | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
+                    | FailWith,[x] -> sprintf "(failwith %s)" (codegen x)
+                    | DotNetTypeConstruct,[TyTuple (DotNetPrintedArgs args)] as x ->
+                        match t with 
+                        | DotNetTypeT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_type instance_type) args
+                        | _ -> failwith "impossible"
+                    | DotNetEventAddHandler,[dotnet_type;TypeString event_name;handler] ->
+                        sprintf "%s.%s.AddHandler(%s)" (codegen dotnet_type) event_name (codegen handler)
+                    | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
+                        match v with
+                        | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_type t) method_name method_args
+                        | _ -> sprintf "%s.%s(%s)" (codegen v) method_name method_args
+                    | DotNetTypeGetField,[v; TypeString name] ->
+                        match v with
+                        | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s" (print_dotnet_type t) name
+                        | _ -> sprintf "%s.%s" (codegen v) name
+                    | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
+                    | UnsafeDowncastTo,[a;b] -> sprintf "(%s :?> %s)" (codegen b) (print_type (get_type a))
+                    | ExternFSUGlobalConstant,[TypeString a] -> a
+                    | ExternFSUMethod,[a;TypeString b;TyTuple c] -> sprintf "%s.%s(%s)" (codegen a) b (List.map codegen c |> String.concat ", ")
+                    | ExternFSUConstructor,[TyType a;TyTuple b] -> sprintf "%s(%s)" (print_type a) (List.map codegen b |> String.concat ", ")
+                    | x -> failwithf "Missing TyOp case. %A" x
+            with 
+            | :? TypeError -> reraise()
+            | e -> on_type_er trace e.Message
 
         let type_prefix =
             let mutable type_is_first = true

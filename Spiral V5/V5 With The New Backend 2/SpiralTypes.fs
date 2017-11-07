@@ -82,14 +82,6 @@ type PrimitiveType =
     | StringT
     | CharT
 
-type ArrayType =
-    | DotNetHeap
-    | DotNetStack
-    | DotNetReference
-    | CudaGlobal
-    | CudaShared
-    | CudaLocal
-
 type Value = 
     | LitUInt8 of uint8
     | LitUInt16 of uint16
@@ -123,6 +115,7 @@ type Op =
     // Cast
     | UnsafeUpcastTo
     | UnsafeDowncastTo
+    | UnsafeCoerceToArrayCudaGlobal
 
     // Pattern matching errors
     | ErrorPatMiss
@@ -236,9 +229,14 @@ type Op =
     | Tanh
     | FailWith
 
-type SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 'S'ystem Type.
-//    | SSAp of SSExpr * SSExpr
-//    | SSSubst of SSExpr * SSExpr
+type ArrayType =
+    | ArtDotNetHeap
+    | ArtDotNetReference
+    | ArtCudaGlobal of Ty
+    | ArtCudaShared
+    | ArtCudaLocal
+
+and SSExpr = // SS are the Spiral .NET interop types. SS is short for 'S'piral 'S'ystem Type.
     | SSType of Ty
     | SSVar of string
     | SSArray of SSExpr []
