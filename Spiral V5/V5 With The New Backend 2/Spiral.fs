@@ -2071,7 +2071,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let reset_semicolon_level expr = attempt (set_semicolon_level_to_line -1L expr)
 
-        let expr_indent i op expr (s: CharStream<_>) = if op i (col s) then expr s else pzero s
+        let inline expr_indent i op expr (s: CharStream<_>) = if op i (col s) then expr s else pzero s
         let if_then_else expr (s: CharStream<_>) =
             let i = (col s)
             let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
@@ -2363,25 +2363,26 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
                         calculate on_fail orig_op) s
 
-            let rec led poperator term left (prec,asoc,m) =
+            let i = (col s)
+            let inline expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
+            let poperator s = expr_indent poperator s
+            let term s = expr_indent expr s
+
+            let rec led left (prec,asoc,m) =
                 match asoc with
-                | Associativity.Left | Associativity.None -> tdop poperator term prec |>> m left
-                | Associativity.Right -> tdop poperator term (prec-1) |>> m left
+                | Associativity.Left | Associativity.None -> tdop prec |>> m left
+                | Associativity.Right -> tdop (prec-1) |>> m left
                 | _ -> failwith "impossible"
 
-            and tdop poperator term rbp =
+            and tdop rbp =
                 let rec f left =
                     poperator >>= fun (prec,asoc,m as v) ->
-                        if rbp < prec then led poperator term left v >>= loop
+                        if rbp < prec then led left v >>= loop
                         else pzero
                 and loop left = attempt (f left) <|>% left
                 term >>= loop
 
-            let i = (col s)
-            let expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
-            let op s = expr_indent poperator s
-            let term s = expr_indent expr s
-            tdop op term Int32.MinValue s
+            tdop Int32.MinValue s
 
         let rec expr s = 
             let expressions s = mset expr ^<| tuple ^<| operators ^<| application ^<| expressions expr <| s
