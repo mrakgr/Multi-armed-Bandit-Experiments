@@ -267,7 +267,6 @@ and SSEvents = Map<string, SSTypedExpr>
 
 and SSTypedExprClass = {
     full_name : string
-    assembly_name : string
     generic_type_args : Ty []
     methods : SSMethodMap
     static_methods : SSMethodMap
@@ -460,7 +459,7 @@ type RenamerResult = {
 let cuda_kernels_name = "cuda_kernels"
 
 type AssemblyLoadType =
-    | LoadType of Type
+    | LoadType of Mono.Cecil.TypeDefinition
     | LoadMap of Map<string,AssemblyLoadType>
 
 let string_to_op =

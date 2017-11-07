@@ -22,6 +22,5 @@ let r = con.Parameters.[0].ParameterType
 r.IsGenericInstance
 let ins = r :?> GenericInstanceType
 let args = ins.GenericArguments
-args
 
-typeof<Microsoft.FSharp.Core.CompilationSourceNameAttribute>.FullName
+mscorlib.GetType("System.Collections.Generic.Dictionary`2").HasGenericParameters
