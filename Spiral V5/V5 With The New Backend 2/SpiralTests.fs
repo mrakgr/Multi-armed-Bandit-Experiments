@@ -1821,6 +1821,7 @@ open Cuda
 inl SizeT = ManagedCuda.BasicTypes.SizeT
 inl cuda_array = ManagedCuda."CudaDeviceVariable`1"
 cuda_array int64 (SizeT 10)
+...
     """
 
 let extern1 =
