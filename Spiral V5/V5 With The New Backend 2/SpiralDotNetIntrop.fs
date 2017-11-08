@@ -31,9 +31,7 @@ let dotnet_typet x = nodify_ssty x |> DotNetTypeT
 let rec ss_type_definition (x: Type) =
     let gen_pars = x.GetGenericArguments() |> Array.map (fun x -> x.Name)
     if gen_pars.Length > 0 then SSTyLam (Map.empty, gen_pars, SSCompileTypeDefinition x)
-    else
-        ss_compile_type_definition Map.empty x
-        |> SSTyType
+    else ss_compile_type_definition Map.empty x |> SSTyType
 
 and ss_compile_type_definition (d: SSEnvTerm) =
     memoize ss_cache_type <| fun (x: Type) ->

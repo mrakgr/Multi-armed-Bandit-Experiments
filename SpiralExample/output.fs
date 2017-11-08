@@ -1,26 +1,6 @@
 module SpiralExample
 let cuda_kernels = """
 extern "C" {
-    struct EnvStack0 {
-        long long int mem_0;
-    };
-    __device__ __forceinline__ EnvStack0 make_EnvStack0(long long int mem_0){
-        EnvStack0 tmp;
-        tmp.mem_0 = mem_0;
-        return tmp;
-    }
-    __global__ void method_1() {
-        long long int var_0 = threadIdx.x;
-        long long int var_1 = threadIdx.y;
-        long long int var_2 = threadIdx.z;
-        long long int var_3 = blockIdx.x;
-        long long int var_4 = blockIdx.y;
-        long long int var_5 = blockIdx.z;
-        long long int var_6 = 64;
-        long long int var_7 = 1;
-        long long int var_8 = (var_6 + var_7);
-        EnvStack0 var_9 = make_EnvStack0(var_8);
-    }
 }
 """
 
@@ -206,15 +186,5 @@ let (var_128: System.Text.StringBuilder) = var_127.Append("Compiled the kernels 
 let (var_129: System.Text.StringBuilder) = var_128.Append(var_12)
 let (var_130: string) = var_129.ToString()
 System.Console.WriteLine(var_130)
-let (var_131: ManagedCuda.CudaStream) = ManagedCuda.CudaStream()
-// Cuda join point
-// method_1()
-let (var_132: (System.Object [])) = Array.zeroCreate<System.Object> (System.Convert.ToInt32(0L))
-let (var_133: ManagedCuda.CudaKernel) = ManagedCuda.CudaKernel("method_1", var_124, var_11)
-let (var_134: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(32u, 1u, 1u)
-var_133.set_GridDimensions(var_134)
-let (var_135: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(64u, 1u, 1u)
-var_133.set_BlockDimensions(var_135)
-let (var_136: ManagedCuda.BasicTypes.CUstream) = var_131.get_Stream()
-var_133.RunAsync(var_136, var_132)
-
+let (var_131: ManagedCuda.BasicTypes.SizeT) = ManagedCuda.BasicTypes.SizeT(10L)
+ManagedCuda.CudaDeviceVariable<int64>(var_131)

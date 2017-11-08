@@ -1924,9 +1924,9 @@ let rewrite_test_cache x =
 //
 //    "speed3",[],"Does the linear sequence of bindings get compiled in linear time?",code
 
-rewrite_test_cache None //(Some(40,80))
+//rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp cuda1
+output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
 
