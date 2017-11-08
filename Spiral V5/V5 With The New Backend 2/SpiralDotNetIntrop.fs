@@ -114,9 +114,9 @@ and ss_type_apply (d: SSEnvTerm) (x: Type): Ty =
     elif x = typeof<string> then PrimT StringT
     elif x = typeof<char> then PrimT CharT
     elif x = typeof<unit> || x = typeof<System.Void> then BListT
-    elif x.IsArray then arrayt(DotNetHeap, ss_type_apply d (x.GetElementType()))
+    elif x.IsArray then arrayt(ArtDotNetHeap, ss_type_apply d (x.GetElementType()))
     // Note: The F# compiler doing implicit conversions on refs really screws with me here. I won't bother trying to make this sound.
-    elif x.IsByRef then arrayt(DotNetReference, ss_type_apply d (x.GetElementType())) // Incorrect, but useful
+    elif x.IsByRef then arrayt(ArtDotNetReference, ss_type_apply d (x.GetElementType())) // Incorrect, but useful
     elif FSharp.Reflection.FSharpType.IsFunction x then 
         let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
         closuret (ss_type_apply d a) (ss_type_apply d b)

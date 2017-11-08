@@ -2365,8 +2365,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             let i = (col s)
             let inline expr_indent expr (s: CharStream<_>) = expr_indent i (<=) expr s
-            let poperator s = expr_indent poperator s
-            let term s = expr_indent expr s
+            let inline poperator s = expr_indent poperator s
+            let inline term s = expr_indent expr s
 
             let rec led left (prec,asoc,m) =
                 match asoc with
@@ -2375,11 +2375,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
 
             and tdop rbp =
-                let rec f left =
-                    poperator >>= fun (prec,asoc,m as v) ->
+                let rec loop left = 
+                    attempt (poperator >>= fun (prec,asoc,m as v) ->
                         if rbp < prec then led left v >>= loop
-                        else pzero
-                and loop left = attempt (f left) <|>% left
+                        else pzero) <|>% left
                 term >>= loop
 
             tdop Int32.MinValue s
