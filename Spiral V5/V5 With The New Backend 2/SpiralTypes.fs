@@ -113,6 +113,7 @@ type Op =
     | ClosureRange
 
     // Cast
+    | UnsafeConvert
     | UnsafeUpcastTo
     | UnsafeDowncastTo
     | UnsafeCoerceToArrayCudaGlobal
@@ -172,7 +173,6 @@ type Op =
     | Fix
     | Apply
     | TermCast
-    | UnsafeConvert
     | JoinPointEntryMethod
     | JoinPointEntryType
     | JoinPointEntryCuda
@@ -194,7 +194,9 @@ type Op =
     | TypeBox
     | EqType
     | ModuleHasMember
+    | SizeOf
 
+    // Array
     | ArrayCreate
     | ReferenceCreate
     | ArrayIndex
@@ -203,10 +205,6 @@ type Op =
    
     | ShiftLeft
     | ShiftRight
-    | ShuffleXor
-    | ShuffleUp
-    | ShuffleDown
-    | ShuffleIndex
 
     // Static unary operations
     | PrintStatic

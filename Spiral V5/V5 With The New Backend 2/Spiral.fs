@@ -1071,7 +1071,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         match arg with
                         | TyList [TypeString method_name; typ_arg; arg] -> ss_method t method_name typ_arg arg
                         | TyList [TypeString method_name; arg] -> ss_method t method_name TyB arg
-                        | TypeString field_name -> ss_field t field_name
+                        | TypeString field_name -> 
+                            match field_name with
+                            | "elem_type" -> match t.generic_type_args with [x] -> tyt x | x -> List.map tyt x |> tyvv
+                            | _ -> ss_field t field_name
                         | _ -> on_type_er (trace d) "Invalid input to a .NET type."
                     | _ -> failwith "Compiler error: An instance of a .NET type should always be a SSTyClass."
                 | _ -> failwith "impossible"
@@ -1611,6 +1614,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyT t', t -> tyt(ArrayT(ArtCudaGlobal t',get_type t))
             | _ -> on_type_er (trace d) "Only variables or runtime types can be converted to the Cuda global array type."
 
+        let sizeof d a = TyOp(SizeOf,[tev d a],PrimT Int64T)
+
         let extern_fsu_global_constant d a b =
             match tev2 d a b with
             | TypeString _ & a, TyType t -> TyOp(ExternFSUGlobalConstant,[a],t) |> make_tyv_and_push_typed_expr_even_if_unit d
@@ -1754,6 +1759,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | UnsafeUpcastTo,[a;b] -> unsafe_upcast_to d a b
             | UnsafeDowncastTo,[a;b] -> unsafe_downcast_to d a b
             | UnsafeCoerceToArrayCudaGlobal,[a;b] -> unsafe_coerce_to_array_cuda_global d a b
+            | SizeOf,[a] -> sizeof d a
             
             | x -> failwithf "Missing Op case. %A" x
 
@@ -2693,6 +2699,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | FailWith,[x] -> on_type_er trace "Exceptions and hence failwith are not supported on the Cuda side."
 
                     | ExternCUGlobalConstant,[TypeString a] -> a
+                    | SizeOf,[a] -> sprintf "(sizeof %s)" (print_type a)
 
                     | x -> failwithf "Missing TyOp case. %A" x
                     |> branch_return
@@ -3128,6 +3135,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | ExternFSUGlobalConstant,[TypeString a] -> a
                     | ExternFSUMethod,[a;TypeString b;TyTuple c] -> sprintf "%s.%s(%s)" (codegen a) b (List.map codegen c |> String.concat ", ")
                     | ExternFSUConstructor,[TyType a;TyTuple b] -> sprintf "%s(%s)" (print_type a) (List.map codegen b |> String.concat ", ")
+                    | SizeOf,[a] -> sprintf "(sizeof<%s>)" (print_type a)
                     | x -> failwithf "Missing TyOp case. %A" x
             with 
             | :? TypeError -> reraise()

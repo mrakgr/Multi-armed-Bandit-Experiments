@@ -1818,9 +1818,18 @@ let cuda2 =
     "cuda2",[tuple;cuda;console],"Does the new Cuda array work?",
     """
 open Cuda
-inl SizeT = ManagedCuda.BasicTypes.SizeT
-inl cuda_array = ManagedCuda."CudaDeviceVariable`1"
-cuda_array int64 (SizeT 10)
+//inl SizeT = ManagedCuda.BasicTypes.SizeT
+//inl cuda_array = ManagedCuda."CudaDeviceVariable`1"
+//cuda_array int64 (SizeT 10)
+//inl CudaArray = {
+//    size = 
+//    }
+//inl create elem_type size = {
+//    size
+//    elem_type
+//    ptr = !UnsafeCoerceToArrayCudaGlobal(Tuple.foldl (*) 1 size * sizeof elem_type |> alloc, elem_type)
+//    } 
+
 ...
     """
 
