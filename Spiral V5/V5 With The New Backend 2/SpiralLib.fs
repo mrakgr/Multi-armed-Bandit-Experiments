@@ -678,9 +678,9 @@ inl create n typ =
 {create}
     """) |> module_
 
-let arrayn =
+let host_tensor =
     (
-    "ArrayN",[tuple;loops;console],"The array module",
+    "HostTensor",[tuple;loops;console],"The host tensor module.",
     """
 open Loops
 open Console
@@ -701,8 +701,13 @@ inl offset_at_index array i =
             state
     loop (array,i) (0,inl _ -> 1) |> fst
 
-inl index {ar} as x i = ar (offset_at_index x i)
-inl set {ar} as x i v = ar (offset_at_index x i) <- v
+inl index x i = 
+    inl {ar} = x
+    ar (offset_at_index x i)
+
+inl set x i v = 
+    inl {ar} = x
+    ar (offset_at_index x i) <- v
         
 inl map_dims = 
     Tuple.map (function
@@ -723,10 +728,9 @@ inl init !map_dims dim_ranges f =
                     } |> ignore
             | (),() -> ar offset <- f (Tuple.rev index)
         loop (dyn 0) () (dim_ranges,dim_offsets)
-        inl array_data = heap {dim_ranges ar}
-        {array_data index=(inl i -> index array_data i); set=(inl i v -> set array_data i v)}
+        heap {dim_ranges ar}
                 
-{init}
+{init index set}
     """) |> module_
 
 let extern_ =

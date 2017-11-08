@@ -920,12 +920,12 @@ Tuple.scanl (+) 0 x, Tuple.scanr (+) x 0
     """
 
 let test79 =
-    "test79",[arrayn],"Does the ArrayN init work? Do set and index for the new array module work?",
+    "test79",[host_tensor],"Does the HostTensor init work? Do set and index for the new array module work?",
     """
-inl ar = ArrayN.init (10,10) (inl (a,b) -> a*b)
-inl x = ar.index (2,2)
-ar.set (2,2) (x+100)
-ar.index (2,2)
+inl ar = HostTensor.init (10,10) (inl (a,b) -> a*b)
+inl x = HostTensor.index ar (2,2)
+HostTensor.set ar (2,2) (x+100)
+HostTensor.index ar (2,2)
     """
 
 let test80 =
@@ -960,9 +960,9 @@ a = b
     """
 
 let test83 =
-    "test83",[arrayn],"Does passing heapified arrays cause unnecessary coping of its individual elements in the resultant code?",
+    "test83",[host_tensor],"Does passing heapified arrays cause unnecessary coping of its individual elements in the resultant code?",
     """
-inl ar = ArrayN.init (dyn 10,dyn 10) (const false)
+inl ar = HostTensor.init (dyn 10,dyn 10) (const false)
 met f _ = ar
 f true
     """
@@ -1400,7 +1400,7 @@ for' {from=step; to=int64_maxvalue; by=step; state= -1; body=inl {next state i} 
     """
 
 let hacker_rank_2 =
-    "hacker_rank_2",[tuple;array;arrayn;loops;list;option;parsing;console],"Save The Princess",
+    "hacker_rank_2",[tuple;array;host_tensor;loops;list;option;parsing;console],"Save The Princess",
     """
 // https://www.hackerrank.com/challenges/saveprincess
 // A simple dynamic programming problem. It wouldn't be hard to do in F#, but Spiral
@@ -1448,8 +1448,8 @@ inl parser =
         }
     |> function
         | {mario=[Some: mario_row, mario_col as mario_pos] princess=[Some: princess_row, princess_col as princess_pos]} ->
-            inl cells_visited = ArrayN.init (n,n) (const false)
-            cells_visited.set mario_pos true
+            inl cells_visited = HostTensor.init (n,n) (const false)
+            HostTensor.set cells_visited mario_pos true
 
             inl up_string = dyn "UP"
             inl down_string = dyn "DOWN"
@@ -1478,9 +1478,9 @@ inl parser =
                             Tuple.map (inl move -> 
                                 inl new_pos,_ as new_state = move state
                                 inl is_valid =
-                                    if is_in_range new_state && cells_visited.index new_pos = false then 
+                                    if is_in_range new_state && HostTensor.index cells_visited new_pos = false then 
                                         if is_princess_in_state new_state then solution := some new_state
-                                        cells_visited.set new_pos true
+                                        HostTensor.set cells_visited new_pos true
                                         true
                                     else false
                                 new_state, is_valid
@@ -1512,7 +1512,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_3 =
-    "hacker_rank_3",[tuple;array;arrayn;loops;list;parsing;console;queue],"Save The Princess 2",
+    "hacker_rank_3",[tuple;array;host_tensor;loops;list;parsing;console;queue],"Save The Princess 2",
     """
 // https://www.hackerrank.com/challenges/saveprincess2
 // A version of this similar to the previous one made in order to test the new queue.
@@ -1556,8 +1556,8 @@ inl parser ret =
 
 inl main = {
     some = met {n field mario=(mario_row, mario_col as mario_pos) princess=(princess_row, princess_col as princess_pos)} ->
-        inl cells_visited = ArrayN.init (n,n) (const false)
-        cells_visited.set mario_pos true
+        inl cells_visited = HostTensor.init (n,n) (const false)
+        HostTensor.set cells_visited mario_pos true
 
         inl up_string = dyn "UP"
         inl down_string = dyn "DOWN"
@@ -1586,10 +1586,10 @@ inl main = {
 
         met evaluate_move state move on_fail =
             inl new_pos,_ as new_state = move state
-            if is_in_range new_state && cells_visited.index new_pos = false then 
+            if is_in_range new_state && HostTensor.index cells_visited new_pos = false then 
                 if is_princess_in_state new_state then print_solution new_state
                 else
-                    cells_visited.set new_pos true
+                    HostTensor.set cells_visited new_pos true
                     queue.enqueue new_state
                     on_fail ()
             else on_fail ()
@@ -1670,7 +1670,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_6 =
-    "hacker_rank_6",[tuple;array;arrayn;parsing;console;option],"A Chessboard Game",
+    "hacker_rank_6",[tuple;array;host_tensor;parsing;console;option],"A Chessboard Game",
     """
 // https://www.hackerrank.com/challenges/a-chessboard-game-1
 open Parsing
@@ -1684,8 +1684,8 @@ inl second = 1
 inl max_t = 15
 
 inl cache = 
-    inl cache = ArrayN.init (max_t,max_t,num_players) (const (none first))
-    inl op (x,y,player_one,player_two) -> cache op (x-1,y-1,player_one)
+    inl cache = HostTensor.init (max_t,max_t,num_players) (const (none first))
+    inl op (x,y,player_one,player_two) -> HostTensor op cache (x-1,y-1,player_one)
 
 met rec solve !dyn (x,y,player_one,player_two) as d = 
     inl new_positions = (x-2,y+1),(x-2,y-1),(x+1,y-2),(x-1,y-2)
@@ -1710,7 +1710,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_7 =
-    "hacker_rank_7",[tuple;array;arrayn;parsing;console;option],"Introduction to Nim Game",
+    "hacker_rank_7",[tuple;array;parsing;console;option],"Introduction to Nim Game",
     """
 // https://www.hackerrank.com/challenges/nim-game-1/problem
 
@@ -1734,7 +1734,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_8 =
-    "hacker_rank_8",[tuple;array;arrayn;parsing;console;option],"Misere Nim",
+    "hacker_rank_8",[tuple;array;parsing;console;option],"Misere Nim",
     """
 // https://www.hackerrank.com/challenges/misere-nim-1
 
@@ -1763,7 +1763,7 @@ run_with_unit_ret (readall()) parser
     """
 
 let hacker_rank_9 =
-    "hacker_rank_9",[tuple;array;arrayn;parsing;console;option],"The Power Sum",
+    "hacker_rank_9",[tuple;array;host_tensor;parsing;console;option],"The Power Sum",
     """
 // https://www.hackerrank.com/challenges/the-power-sum
 
@@ -1776,10 +1776,10 @@ inl x_range = {from=1; to=1000}
 inl n_range = {from=2; to=10}
 
 inl x_to_n = 
-    inl cache = ArrayN.init (x_range,n_range) (inl x,n ->
+    inl cache = HostTensor.init (x_range,n_range) (inl x,n ->
         for {from=2; to=n; state=x; body=inl {state=x'} -> x*x'}
         )
-    cache.index
+    HostTensor.index cache
 
 met rec solve !dyn state !dyn sum !dyn from to,n =
     for' {from to state body=inl {next state i=x} ->
@@ -1794,10 +1794,10 @@ inl parser = parse_int .>>. parse_int |>> (solve 0 0 1 >> writeline)
 run_with_unit_ret (readall()) parser 
     """
 
-let hacker_rank_10 =
-    "hacker_rank_10",[tuple;array;arrayn;list;parsing;console;option],"Crossword Puzzle",
-    """
-    """
+//let hacker_rank_10 =
+//    "hacker_rank_10",[tuple;array;list;parsing;console;option],"Crossword Puzzle",
+//    """
+//    """
 
 let cuda1 = 
     "cuda1",[tuple;array;cuda],"Does the Cuda call work?",
@@ -1818,77 +1818,6 @@ let cuda2 =
     "cuda2",[tuple;cuda;console;array],"Does the new Cuda array work?",
     """
 open Cuda
-inl CudaTensor =
-    inl SizeT = ManagedCuda.BasicTypes.SizeT
-    inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
-    inl total_size = function
-        | _ :: _ as x -> Tuple.foldl (*) 1 x
-        | x -> x
-    inl create elem_type size = {
-        size
-        dev_var = CudaDeviceVariable elem_type (total_size size |> SizeT)
-        } 
-
-    inl ptr {dev_var} = 
-        inl x = dev_var.get_DevicePointer()
-        inl t = dev_var.elem_type
-        !UnsafeCoerceToArrayCudaGlobal(x,t)        
-    inl elem_type {dev_var} = dev_var.elem_type
-    inl size {size} = size
-
-    inl from_host_array x = 
-        inl t = create (x.elem_type) (Array.length x)
-        t.dev_var.CopyToDevice x
-        t
-
-    inl to_host_array x =
-        inl t = Array.create (x.elem_type) (total_size (x.size))
-        x.dev_var.CopyToHost t
-        context.Synchronize()
-        t
-
-    {create ptr elem_type size from_host_array to_host_array} |> stack
-
-inl CudaKernels =
-    inl map {map_op length ins outs} = cuda
-        inl stride = gridDim.x * blockDim.x
-        
-        met rec loop i =
-            if i < length then
-                Tuple.map (inl x -> x i) ins 
-                |> map_op
-                |> Tuple.iter2 (inl a b -> a i <- b) outs
-                loop (i+stride)
-        loop (blockIdx.x * blockDim.x + threadIdx.x)
-
-    {map} |> stack
-
-inl run_map map_op ins =
-    inl s = CudaTensor.size
-    inl length =
-        Tuple.foldl (function
-            | () a -> s a
-            | sa b -> 
-                assert (sa = s b) "All the inputs must have equal sizes"
-                sa) () ins
-    inl ty = Tuple.map (CudaTensor.elem_type) ins
-
-    inl ins = Tuple.map (CudaTensor.ptr) ins
-    inl outs = Tuple.map (inl x -> CudaTensor.create x length |> CudaTensor.ptr) ty
-
-    Cuda.run {
-        stream = Cuda.ManagedCuda.CudaStream()
-        blockDim = 64
-        gridDim = 32
-        kernel = CudaKernels.map {map_op length ins outs}
-        }
-
-    outs
-
-
-inl host_ar = Array.init 8 id
-inl dev_ar = CudaTensor.from_host_array host_ar
-run_map (inl x -> x * 2) (dev_ar :: ())
     """
 
 let extern1 =
@@ -1917,7 +1846,7 @@ let tests =
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
-    cuda1;cuda2
+    cuda1; //cuda2
     |]
 
 open System.IO
@@ -1992,9 +1921,9 @@ let rewrite_test_cache x =
 //
 //    "speed3",[],"Does the linear sequence of bindings get compiled in linear time?",code
 
-//rewrite_test_cache None //(Some(40,80))
+rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp cuda2
+output_test_to_temp test83
 |> printfn "%s"
 |> ignore
 
