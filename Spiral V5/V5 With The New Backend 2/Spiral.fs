@@ -697,7 +697,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match t with
                 | StringT _ -> false
                 | _ -> true
-            | ListT l -> List.forall is_cuda_type l
+            | ListT l -> false
             | MapT (l,_) -> Map.forall (fun _ -> is_cuda_type) l
             | LayoutT (LayoutPackedStack, l, _) -> 
                 let {call_args=args},_ = renamer_apply_env l
@@ -974,11 +974,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _, TypeString x -> 
                     if x = "elem_type" then elem_ty |> tyt
                     else failwithf "Unknown type string applied to array. Got: %s" x
-                | ArtDotNetHeap, idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
-                | ArtDotNetHeap, idx -> on_type_er (trace d) <| sprintf "The index into an array is not an int. Got: %A" idx
+                | (ArtDotNetHeap | ArtCudaGlobal _ | ArtCudaShared | ArtCudaLocal), idx when is_int idx -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
+                | (ArtDotNetHeap | ArtCudaGlobal _ | ArtCudaShared | ArtCudaLocal), idx -> on_type_er (trace d) <| sprintf "The index into an array is not an int. Got: %A" idx
                 | ArtDotNetReference, TyList [] -> TyOp(ArrayIndex,[ar;idx],elem_ty) |> make_tyv_and_push_typed_expr d
                 | ArtDotNetReference, _ -> on_type_er (trace d) <| sprintf "The index into a reference is not a unit. Got: %A" idx
-                | _ -> failwith "Not implemented."
             // apply_dotnet_type 
             | TyType(DotNetTypeT(N t)) & dotnet_type, arg ->
                 let lambdify a b =
@@ -1073,7 +1072,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | TyList [TypeString method_name; arg] -> ss_method t method_name TyB arg
                         | TypeString field_name -> 
                             match field_name with
-                            | "elem_type" -> match t.generic_type_args with [x] -> tyt x | x -> List.map tyt x |> tyvv
+                            | "elem_type" -> 
+                                match t.generic_type_args with 
+                                | [|x|] -> tyt x 
+                                | x -> Array.map tyt x |> Array.toList |> tyvv
                             | _ -> ss_field t field_name
                         | _ -> on_type_er (trace d) "Invalid input to a .NET type."
                     | _ -> failwith "Compiler error: An instance of a .NET type should always be a SSTyClass."
@@ -1721,11 +1723,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             | ShiftLeft,[a;b] -> prim_shift_op d a b ShiftLeft
             | ShiftRight,[a;b] -> prim_shift_op d a b ShiftRight
-
-            | ShuffleXor,[a;b] -> prim_shuffle_op d a b ShuffleXor
-            | ShuffleUp,[a;b] -> prim_shuffle_op d a b ShuffleUp
-            | ShuffleDown,[a;b] -> prim_shuffle_op d a b ShuffleDown
-            | ShuffleIndex,[a;b] -> prim_shuffle_op d a b ShuffleIndex
 
             | ListIndex,[a;b] -> vv_index d a b
             | ListLength,[a] -> vv_length d a
@@ -2699,7 +2696,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | FailWith,[x] -> on_type_er trace "Exceptions and hence failwith are not supported on the Cuda side."
 
                     | ExternCUGlobalConstant,[TypeString a] -> a
-                    | SizeOf,[a] -> sprintf "(sizeof %s)" (print_type a)
+                    | SizeOf,[TyType a] -> sprintf "(sizeof %s)" (print_type a)
 
                     | x -> failwithf "Missing TyOp case. %A" x
                     |> branch_return
@@ -3135,7 +3132,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | ExternFSUGlobalConstant,[TypeString a] -> a
                     | ExternFSUMethod,[a;TypeString b;TyTuple c] -> sprintf "%s.%s(%s)" (codegen a) b (List.map codegen c |> String.concat ", ")
                     | ExternFSUConstructor,[TyType a;TyTuple b] -> sprintf "%s(%s)" (print_type a) (List.map codegen b |> String.concat ", ")
-                    | SizeOf,[a] -> sprintf "(sizeof<%s>)" (print_type a)
+                    | SizeOf,[TyType a] -> sprintf "(sizeof<%s>)" (print_type a)
                     | x -> failwithf "Missing TyOp case. %A" x
             with 
             | :? TypeError -> reraise()

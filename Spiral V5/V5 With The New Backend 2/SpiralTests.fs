@@ -1815,22 +1815,80 @@ Cuda.run {
     """
 
 let cuda2 =
-    "cuda2",[tuple;cuda;console],"Does the new Cuda array work?",
+    "cuda2",[tuple;cuda;console;array],"Does the new Cuda array work?",
     """
 open Cuda
 inl CudaTensor =
     inl SizeT = ManagedCuda.BasicTypes.SizeT
     inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
+    inl total_size = function
+        | _ :: _ as x -> Tuple.foldl (*) 1 x
+        | x -> x
     inl create elem_type size = {
         size
-        dev_var = CudaDeviceVariable elem_type (Tuple.foldl (*) 1 size) 
+        dev_var = CudaDeviceVariable elem_type (total_size size |> SizeT)
         } 
 
-    inl ptr {dev_var} = !UnsafeCoerceToArrayCudaGlobal(dev_var.CUdeviceptr, elem_type)
+    inl ptr {dev_var} = 
+        inl x = dev_var.get_DevicePointer()
+        inl t = dev_var.elem_type
+        !UnsafeCoerceToArrayCudaGlobal(x,t)        
     inl elem_type {dev_var} = dev_var.elem_type
     inl size {size} = size
 
-    {create ptr elem_type size}
+    inl from_host_array x = 
+        inl t = create (x.elem_type) (Array.length x)
+        t.dev_var.CopyToDevice x
+        t
+
+    inl to_host_array x =
+        inl t = Array.create (x.elem_type) (total_size (x.size))
+        x.dev_var.CopyToHost t
+        context.Synchronize()
+        t
+
+    {create ptr elem_type size from_host_array to_host_array} |> stack
+
+inl CudaKernels =
+    inl map {map_op length ins outs} = cuda
+        inl stride = gridDim.x * blockDim.x
+        
+        met rec loop i =
+            if i < length then
+                Tuple.map (inl x -> x i) ins 
+                |> map_op
+                |> Tuple.iter2 (inl a b -> a i <- b) outs
+                loop (i+stride)
+        loop (blockIdx.x * blockDim.x + threadIdx.x)
+
+    {map} |> stack
+
+inl run_map map_op ins =
+    inl s = CudaTensor.size
+    inl length =
+        Tuple.foldl (function
+            | () a -> s a
+            | sa b -> 
+                assert (sa = s b) "All the inputs must have equal sizes"
+                sa) () ins
+    inl ty = Tuple.map (CudaTensor.elem_type) ins
+
+    inl ins = Tuple.map (CudaTensor.ptr) ins
+    inl outs = Tuple.map (inl x -> CudaTensor.create x length |> CudaTensor.ptr) ty
+
+    Cuda.run {
+        stream = Cuda.ManagedCuda.CudaStream()
+        blockDim = 64
+        gridDim = 32
+        kernel = CudaKernels.map {map_op length ins outs}
+        }
+
+    outs
+
+
+inl host_ar = Array.init 8 id
+inl dev_ar = CudaTensor.from_host_array host_ar
+run_map (inl x -> x * 2) (dev_ar :: ())
     """
 
 let extern1 =

@@ -57,6 +57,12 @@ inl rev, map =
 inl iter f = foldl (const f) ()
 inl iteri f = foldl f 0
 
+inl rec iter2 f a b = 
+    match a,b with
+    | a :: as', b :: bs' -> f a b; iter2 f as' bs'
+    | (), () -> ()
+    | _ -> error_type "The two tuples have uneven lengths." 
+
 inl rec forall f = function
     | x :: xs -> f x && forall f xs
     | () -> true
@@ -147,7 +153,7 @@ inl rec contains t x =
     | [Some: x] -> true
     | [None] -> false
 
-{index length head tail foldl foldr scanl scanr rev map iter iteri forall exists filter zip unzip index 
+{index length head tail foldl foldr scanl scanr rev map iter iteri iter2 forall exists filter zip unzip index 
  init repeat append singleton range tryFind contains}
     """) |> module_
 
