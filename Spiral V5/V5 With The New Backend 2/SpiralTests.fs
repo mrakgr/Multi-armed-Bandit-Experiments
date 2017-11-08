@@ -1818,19 +1818,19 @@ let cuda2 =
     "cuda2",[tuple;cuda;console],"Does the new Cuda array work?",
     """
 open Cuda
-//inl SizeT = ManagedCuda.BasicTypes.SizeT
-//inl cuda_array = ManagedCuda."CudaDeviceVariable`1"
-//cuda_array int64 (SizeT 10)
-//inl CudaArray = {
-//    size = 
-//    }
-//inl create elem_type size = {
-//    size
-//    elem_type
-//    ptr = !UnsafeCoerceToArrayCudaGlobal(Tuple.foldl (*) 1 size * sizeof elem_type |> alloc, elem_type)
-//    } 
+inl CudaTensor =
+    inl SizeT = ManagedCuda.BasicTypes.SizeT
+    inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
+    inl create elem_type size = {
+        size
+        dev_var = CudaDeviceVariable elem_type (Tuple.foldl (*) 1 size) 
+        } 
 
-...
+    inl ptr {dev_var} = !UnsafeCoerceToArrayCudaGlobal(dev_var.CUdeviceptr, elem_type)
+    inl elem_type {dev_var} = dev_var.elem_type
+    inl size {size} = size
+
+    {create ptr elem_type size}
     """
 
 let extern1 =
