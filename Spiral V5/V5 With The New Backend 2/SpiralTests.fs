@@ -1936,6 +1936,6 @@ let rewrite_test_cache x =
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp test33
+output_test_to_temp cuda1
 |> printfn "%s"
 |> ignore

@@ -32,9 +32,10 @@ open Mono.Cecil.Rocks
 
 let assembly_load = 
     let resolver = new DefaultAssemblyResolver()
+    let reader = ReaderParameters(ReadingMode.Immediate, AssemblyResolver=resolver)
     memoize (d0()) <| fun fullname -> 
         printfn "Loading %s..." fullname
-        resolver.Resolve(AssemblyNameReference.Parse(fullname))
+        resolver.Resolve(AssemblyNameReference.Parse(fullname),reader)
 let mscorlib = (assembly_load "mscorlib").MainModule
 let fsharp_core = (assembly_load "FSharp.Core").MainModule
 
