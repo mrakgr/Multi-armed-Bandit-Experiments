@@ -700,73 +700,74 @@ inl offset_at_index array i =
         | {dim_ranges=() ar}, () ->
             state
     loop (array,i) (0,inl _ -> 1) |> fst
-
-inl index x i = 
-    inl {ar} = x
-    ar (offset_at_index x i)
-
-inl set x i v = 
-    inl {ar} = x
-    ar (offset_at_index x i) <- v
-        
+       
 inl map_dims = 
     Tuple.map (function
         | {from to} as d -> d
         | x -> {from=0; to=x-1})
 
-inl init_layout_array_of_tuples !map_dims dim_ranges f =
-    match Tuple.length dim_ranges with
-    | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
-    | num_dims ->
-        inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) dim_ranges 1
-        inl ar = Array.create (type (f (Tuple.repeat num_dims 0))) len
-        inl rec loop offset index = function
-            | {from to} :: dim_ranges, dim_offset :: dim_offsets ->
-                for {from to state=offset; body=inl {state=offset i} ->
-                    loop offset (i :: index) (dim_ranges,dim_offsets)
-                    offset+dim_offset
-                    } |> ignore
-            | (),() -> ar offset <- f (Tuple.rev index)
-        loop (dyn 0) () (dim_ranges,dim_offsets)
-        heap {layout=.array_of_tuples; dim_ranges ar}
+inl rec toa_map f x = 
+    inl rec loop = function
+        | () -> ()
+        | x :: xs -> loop x :: loop xs
+        | {} & x -> module_map (inl _ -> loop) x
+        | x -> f x
+    loop x
 
-inl rec tuple_of_arrays_map f = function
-    | x :: xs -> tuple_of_arrays_map f x :: tuple_of_arrays_map f xs
-    | {} & x -> module_map (inl _ -> tuple_of_arrays_map f) x
-    | x -> f x
-
-inl rec tuple_of_arrays_map2 f a b = 
-    inl rec loop =
-        function
+inl rec toa_map2 f a b = 
+    inl rec loop = function
+        | (), () -> ()
         | x :: xs, y :: ys -> loop (x,y) :: loop (xs,ys)
-        | {} & x, {} & y -> module_map (inl k x -> loop (x,y k)) x
+        | {} & x, {} & y -> module_map (inl k y -> loop (x k,y)) y
         | x,y -> f x y
+    loop (a,b)
 
-    if eq_type a b then loop (a,b)
-    else error_type "The two variables do not have equal types"
-
-inl tuple_of_arrays_create ty len = tuple_of_arrays_map (inl ty -> Array.create ty len) ty
-inl tuple_of_arrays_index offset = tuple_of_arrays_map (inl x -> x offset)
-inl tuple_of_arrays_set offset = tuple_of_arrays_map2 (inl a b -> a offset <- b offset)
-
-inl init !map_dims dim_ranges f =
+inl init_template {create set layout} (!map_dims dim_ranges) f =
     match Tuple.length dim_ranges with
     | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
     | num_dims ->
         inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) dim_ranges 1
         inl ty = type (f (Tuple.repeat num_dims 0))
-        inl ar = tuple_of_arrays_create len ty
+        inl ar = create ty len
         inl rec loop offset index = function
             | {from to} :: dim_ranges, dim_offset :: dim_offsets ->
                 for {from to state=offset; body=inl {state=offset i} ->
                     loop offset (i :: index) (dim_ranges,dim_offsets)
                     offset+dim_offset
                     } |> ignore
-            | (),() -> tuple_of_arrays_map2 (inl ar b -> ar offset <- b) ar (f (Tuple.rev index))
+            | (),() -> set offset ar (f (Tuple.rev index))
         loop (dyn 0) () (dim_ranges,dim_offsets)
-        heap {dim_ranges ar layout=.tuple_of_arrays}
+        heap {dim_ranges ar layout}
+
+inl init_toa = init_template {
+    create = inl ty len -> toa_map (inl ty -> Array.create ty len) ty
+    set = inl offset -> toa_map2 (inl a b -> a offset <- b)
+    layout = .toa
+    }
+
+inl init_aot = init_template {
+    create = inl ty len -> Array.create (type (f (Tuple.repeat num_dims 0))) len
+    set = inl offset ar b -> ar offset <- b
+    layout = .aot
+    }
+
+inl init = init_toa
+
+inl index x i = 
+    inl {ar layout} = x
+    inl offset = (offset_at_index x i)
+    match layout with
+    | .aot -> ar offset
+    | .toa -> toa_map (inl ar -> ar offset) ar
+
+inl set x i v = 
+    inl {ar layout} = x
+    inl offset = (offset_at_index x i)
+    match layout with
+    | .aot -> ar offset <- v
+    | .toa -> toa_map2 (inl ar v -> ar offset <- v) ar v
                 
-{init index set}
+{init init_toa init_aot index set}
     """) |> module_
 
 let extern_ =
