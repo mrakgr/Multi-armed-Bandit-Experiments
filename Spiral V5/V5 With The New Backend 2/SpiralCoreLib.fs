@@ -45,7 +45,6 @@ inl unit = type(())
 inl type_lit_cast x = !TypeLitCast(x)
 inl type_lit_is x = !TypeLitIs(x)
 inl term_cast to from = !TermCast(to,from)
-// TODO: This one might be better implemented directly in the language once the Extern module becomes operational.
 inl unsafe_convert to from = !UnsafeConvert(to,from) 
 inl negate x = !Neg(x)
 inl ignore x = ()
@@ -102,6 +101,8 @@ inl max a b = if a > b then a else b
 inl min a b = if a > b then b else a
 inl eq_type a b = !EqType(a,b)
 inl module_values x = !ModuleValues(x)
+inl module_map f a = !ModuleMap(f,a)
+inl module_fold f s a = !ModuleMap(f,s,a)
 inl uncased_variable_is x = !BoxedVariableIs(x)
 inl event_add_handler a b c = !DotNetEventAddHandler(a,b,c)
 inl (:>) a b = !UnsafeUpcastTo(b,a)
@@ -128,5 +129,5 @@ inl (=) a b =
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
  string_length lit_is box_is failwith assert max min eq_type module_values uncased_variable_is event_add_handler (:>)
- (:?>) (=)} |> stack
+ (:?>) (=) module_map module_fold} |> stack
     """) |> module_

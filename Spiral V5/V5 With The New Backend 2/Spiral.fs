@@ -1492,6 +1492,30 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | x ->
                 on_type_er (trace d) <| sprintf "Expected a module. Got: %A" x
 
+        let module_map d map_op a =
+            match tev2 d map_op a with
+            | map_op, M(layout,C env,MapTypeModule) & recf ->
+                let inline map f = 
+                    let f k x = apply d (apply d map_op (type_lit_create' (LitString k))) (f x)
+                    tymap(Map.map f env |> Env, MapTypeModule)
+                match layout with
+                | None -> map id
+                | Some l -> map (layout_boxed_unseal d recf) |> layoutify l d
+            | x ->
+                on_type_er (trace d) <| sprintf "Expected a module. Got: %A" x
+
+        let module_fold d fold_op s m =
+            match tev3 d fold_op s m with
+            | fold_op, s, M(layout,C env,MapTypeModule) & recf ->
+                let inline fold f = 
+                    let f k x = apply d (apply d (apply d fold_op s) (type_lit_create' (LitString k))) (f x)
+                    tymap(Map.map f env |> Env, MapTypeModule)
+                match layout with
+                | None -> fold id
+                | Some l -> fold (layout_boxed_unseal d recf) |> layoutify l d
+            | x ->
+                on_type_er (trace d) <| sprintf "Expected a module. Got: %A" x
+
         let module_has_member d a b =
             match tev2 d a b with
             | M(_,C env,MapTypeModule), b -> 
@@ -1693,6 +1717,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ModuleValues, [a] -> module_values d a
             | ModuleIs,[a] -> module_is d a
             | ModuleHasMember,[a;b] -> module_has_member d a b
+            | ModuleMap,[a;b] -> module_map d a b
+            | ModuleFold,[a;b;c] -> module_fold d a b c
             | BoxedVariableIs,[a] -> uncased_variable_is d a
 
             | ArrayCreate,[a;b] -> array_create d a b

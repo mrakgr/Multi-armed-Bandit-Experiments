@@ -194,6 +194,8 @@ type Op =
     | TypeBox
     | EqType
     | ModuleHasMember
+    | ModuleMap
+    | ModuleFold
     | SizeOf
 
     // Array
