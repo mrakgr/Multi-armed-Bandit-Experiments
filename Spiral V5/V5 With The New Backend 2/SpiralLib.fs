@@ -708,6 +708,7 @@ inl map_dims =
 
 inl rec toa_map f x = 
     inl rec loop = function
+        | x when caseable_is x -> f x
         | () -> ()
         | x :: xs -> loop x :: loop xs
         | {} & x -> module_map (inl _ -> loop) x
@@ -716,10 +717,11 @@ inl rec toa_map f x =
 
 inl rec toa_map2 f a b = 
     inl rec loop = function
+        | x, y when caseable_is x || caseable_is y -> f x y
         | (), () -> ()
         | x :: xs, y :: ys -> loop (x,y) :: loop (xs,ys)
         | {} & x, {} & y -> module_map (inl k y -> loop (x k,y)) y
-        | x,y -> f x y
+        | x, y -> f x y
     loop (a,b)
 
 inl init_template {create set layout} (!map_dims dim_ranges) f =
@@ -746,7 +748,7 @@ inl init_toa = init_template {
     }
 
 inl init_aot = init_template {
-    create = inl ty len -> Array.create (type (f (Tuple.repeat num_dims 0))) len
+    create = Array.create
     set = inl offset ar b -> ar offset <- b
     layout = .aot
     }

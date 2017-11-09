@@ -427,12 +427,20 @@ type b =
 (.A, (2,3)) |> box a |> dyn |> box b
     """
 
-let test32 = // 
+let test32 =
     "test32",[],"Do the .NET methods work inside methods?",
     """
 inl to_int64 = mscorlib .System.Convert .ToInt64
 met f = to_int64 (dyn 'a')
 f
+    """
+
+let test33 =
+    "test33",[],"Do the module map and fold functions work?",
+    """
+inl m = {a=1;b=2;c=3}
+inl m' = module_map (inl _ v -> v*2) m
+m', module_fold (inl s _ v -> s + v) 0 m'
     """
 
 let test34 =
@@ -846,7 +854,7 @@ inl a: float64 = 5
     """
 
 let test71 =
-    "test71",[],"Does the recent change to error printing work?",
+    "test71",[],"Does the recent change to error printing work? This one should give an error.",
     """
 55 + id
     """
@@ -1836,7 +1844,7 @@ let tests =
     test1;test2;test3;test4;test5;test6;test7;test8;test9
     test10;test11;test12;test13;test14;test15;test16;test17;test18;test19
     test20;test21;test22;test23;test24;test25;test26;test27;test28;test29
-    test30;test31;test32;       test34;test35;test36;test37;test38;test39
+    test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
@@ -1923,7 +1931,7 @@ let rewrite_test_cache x =
 
 rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp test83
+output_test_to_temp hacker_rank_6
 |> printfn "%s"
 |> ignore
 

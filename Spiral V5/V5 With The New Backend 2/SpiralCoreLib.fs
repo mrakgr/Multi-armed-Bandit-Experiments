@@ -95,6 +95,8 @@ inl not x = x = false
 inl string_length x = !StringLength(x)
 inl lit_is x = !LitIs(x)
 inl box_is x = !BoxIs(x)
+inl caseable_is x = !CaseableIs(x)
+inl caseable_boxed_is x = !CaseableBoxedIs(x)
 inl failwith typ msg = !FailWith(typ,msg)
 inl assert c msg = if c then () else failwith unit msg
 inl max a b = if a > b then a else b
@@ -102,8 +104,7 @@ inl min a b = if a > b then b else a
 inl eq_type a b = !EqType(a,b)
 inl module_values x = !ModuleValues(x)
 inl module_map f a = !ModuleMap(f,a)
-inl module_fold f s a = !ModuleMap(f,s,a)
-inl uncased_variable_is x = !BoxedVariableIs(x)
+inl module_fold f s a = !ModuleFold(f,s,a)
 inl event_add_handler a b c = !DotNetEventAddHandler(a,b,c)
 inl (:>) a b = !UnsafeUpcastTo(b,a)
 inl (:?>) a b = !UnsafeDowncastTo(b,a)
@@ -119,7 +120,7 @@ inl (=) a b =
             | (), () -> true
             | a, b when eq_type a b -> prim_eq a b // This repeat eq_type check is because unboxed union types might lead to variables of different types to be compared.
             | _ -> false
-        if uncased_variable_is a && uncased_variable_is b then (met _ -> body (a, b) : bool)()
+        if caseable_boxed_is a && caseable_boxed_is b then (met _ -> body (a, b) : bool)()
         else body (a, b)
     if eq_type a b then a = b
     else error_type ("Trying to compare variables of two different types. Got:",a,b)
@@ -128,6 +129,6 @@ inl (=) a b =
  split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
- string_length lit_is box_is failwith assert max min eq_type module_values uncased_variable_is event_add_handler (:>)
+ string_length lit_is box_is failwith assert max min eq_type module_values caseable_is event_add_handler (:>)
  (:?>) (=) module_map module_fold} |> stack
     """) |> module_

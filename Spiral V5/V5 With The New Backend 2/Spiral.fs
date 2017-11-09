@@ -1393,6 +1393,16 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyBox _ -> TyLit <| LitBool true
             | _ -> TyLit <| LitBool false
 
+        let caseable_is d a =
+            match tev d a with
+            | TyType (UnionT _ | RecT _) -> TyLit (LitBool true)
+            | _ -> TyLit (LitBool false)
+
+        let caseable_boxed_is d a =
+            match tev d a with
+            | (TyT _ | TyV _) & TyType (UnionT _ | RecT _) -> TyLit (LitBool true)
+            | _ -> TyLit (LitBool false)
+
         // Is intended to be equal to push -> destructure.
         let dynamize d a =
             let rec loop = function
@@ -1476,11 +1486,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | M(_,_,MapTypeModule) -> TyLit (LitBool true)
             | _ -> TyLit (LitBool false)
 
-        let uncased_variable_is d a =
-            match tev d a with
-            | (TyV _ | TyT _) & TyType (UnionT _ | RecT _) -> TyLit (LitBool true)
-            | _ -> TyLit (LitBool false)
-
         let module_values d a =
             match tev d a with
             | M(layout,C env,MapTypeModule) as recf ->
@@ -1507,12 +1512,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let module_fold d fold_op s m =
             match tev3 d fold_op s m with
             | fold_op, s, M(layout,C env,MapTypeModule) & recf ->
-                let inline fold f = 
-                    let f k x = apply d (apply d (apply d fold_op s) (type_lit_create' (LitString k))) (f x)
-                    tymap(Map.map f env |> Env, MapTypeModule)
+                let inline ap a b = apply d a b
+                let inline fold f = Map.fold (fun s k v -> ap (ap (ap fold_op s) (type_lit_create' (LitString k))) (f v)) s env
                 match layout with
                 | None -> fold id
-                | Some l -> fold (layout_boxed_unseal d recf) |> layoutify l d
+                | Some l -> fold (layout_boxed_unseal d recf)
             | x ->
                 on_type_er (trace d) <| sprintf "Expected a module. Got: %A" x
 
@@ -1719,7 +1723,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ModuleHasMember,[a;b] -> module_has_member d a b
             | ModuleMap,[a;b] -> module_map d a b
             | ModuleFold,[a;b;c] -> module_fold d a b c
-            | BoxedVariableIs,[a] -> uncased_variable_is d a
+            | CaseableIs,[a] -> caseable_is d a
+            | CaseableBoxedIs,[a] -> caseable_boxed_is d a
 
             | ArrayCreate,[a;b] -> array_create d a b
             | ReferenceCreate,[a] -> reference_create d a

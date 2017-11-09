@@ -141,9 +141,8 @@ type Op =
     | ModuleWithout
     | ModuleIs
     | ModuleValues
-
-    // BoxedVariableIs
-    | BoxedVariableIs
+    | CaseableIs
+    | CaseableBoxedIs
 
     // Case
     | Case
