@@ -701,10 +701,14 @@ inl offset_at_index array i =
             state
     loop (array,i) (0,inl _ -> 1) |> fst
        
-inl map_dims = 
-    Tuple.map (function
+inl map_dims x = 
+    inl f = function
         | {from to} as d -> d
-        | x -> {from=0; to=x-1})
+        | x -> {from=0; to=x-1}
+
+    match x with
+    | _ :: _ -> Tuple.map f x
+    | x -> f x :: ()
 
 inl rec toa_map f x = 
     inl rec loop = function
@@ -769,7 +773,7 @@ inl set x i v =
     | .aot -> ar offset <- v
     | .toa -> toa_map2 (inl ar v -> ar offset <- v) ar v
                 
-{init init_toa init_aot index set}
+{init init_toa init_aot index set toa_map toa_map2 dim_size} |> stack
     """) |> module_
 
 let extern_ =

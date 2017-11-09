@@ -1823,9 +1823,44 @@ Cuda.run {
     """
 
 let cuda2 =
-    "cuda2",[tuple;cuda;console;array],"Does the new Cuda array work?",
+    "cuda2",[loops;tuple;cuda;console;array;host_tensor],"Does the new Cuda array work?",
     """
+open Loops
 open Cuda
+inl CudaTensor =
+    inl SizeT = ManagedCuda.BasicTypes.SizeT
+    inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
+
+    inl total_size = Tuple.foldl (inl s x -> s * HostTensor.dim_size x) 1
+
+    inl from_host_array ar =
+        inl t = CudaDeviceVariable (ar.elem_type) (Array.length ar |> SizeT)
+        t.CopyToDevice ar
+        t
+
+    inl from_host_tensor {dim_ranges ar layout} = 
+        match layout with
+        | .aot -> { dim_ranges layout ar = from_host_array ar}
+        | .toa -> { dim_ranges layout ar = HostTensor.toa_map from_host_array ar }
+
+    inl to_host_array x =
+        inl t = Array.create (x.elem_type) (x.get_Size() |> unsafe_convert int64)
+        x.CopyToHost t
+        context.Synchronize()
+        t
+
+    inl to_host_tensor {dim_ranges ar layout} =
+        match layout with
+        | .aot -> { dim_ranges layout ar = to_host_array ar }
+        | .toa -> { dim_ranges layout ar = HostTensor.toa_map to_host_array ar }
+    ...
+    inl map_1d {map_op ins outs} = cuda
+        inl from = blockIdx.x * blockDim.x + threadIdx.x
+        inl near_to = total_size ins
+        inl by = gridDim.x * blockDim.x
+        for {from near_to by body = inl {i} ->
+            set ins i (map_op (index outs i))
+            }
     """
 
 let extern1 =
@@ -1929,9 +1964,9 @@ let rewrite_test_cache x =
 //
 //    "speed3",[],"Does the linear sequence of bindings get compiled in linear time?",code
 
-rewrite_test_cache None //(Some(40,80))
+//rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp hacker_rank_6
+output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
 
