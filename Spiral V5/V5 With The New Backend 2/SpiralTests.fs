@@ -1969,5 +1969,3 @@ let rewrite_test_cache x =
 output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
-
-
