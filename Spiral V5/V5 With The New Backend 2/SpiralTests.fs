@@ -992,6 +992,16 @@ elif x = 2 then x
 else 3
     """
 
+let test86 =
+    "test86",[host_tensor],"Does the HostTensor.init work? Redux of test 79.",
+    """
+HostTensor.init (10,10) id //{from=1; to=8} id
+//inl ar = HostTensor.init (10,10) (inl (a,b) -> a*b,5)
+//inl x = HostTensor.index ar (2,2)
+//HostTensor.set ar (2,2) (x+100,5)
+//HostTensor.index ar (2,2)
+    """
+
 let test87 =
     "test87",[],"Does a pack stackified function work?",
     """
@@ -1834,12 +1844,12 @@ inl CudaTensor =
     inl total_size = Tuple.foldl (inl s x -> s * HostTensor.dim_size x) 1
 
     inl create {layout ty size} =
-        inl 1d_size = 
+        inl size1d = 
             match size with
             | _ :: _ -> total_size size |> SizeT
             | x -> SizeT x
-        inl create ty = CudaDeviceVariable ty 1d_size
-        match layout_with
+        inl create ty = CudaDeviceVariable ty size1d
+        match layout with
         | .aot -> {layout size ar = create ty}
         | .toa -> {layout size ar = toa_map create ty}
 
@@ -1918,9 +1928,10 @@ inl CudaTensor =
 
 open CudaTensor
 
-inl host_tensor = HostTensor.init {from=1; to=8} id
-inl dev_tensor = from_host_tensor host_tensor
-map (inl x -> x * 2) dev_tensor |> to_host_tensor
+inl host_tensor = HostTensor.init (1,2) id //{from=1; to=8} id
+()
+//inl dev_tensor = from_host_tensor host_tensor
+//map (inl x -> x * 2) dev_tensor |> to_host_tensor
     """
 
 let tests =
@@ -2015,6 +2026,6 @@ let rewrite_test_cache x =
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp cuda2
+output_test_to_temp test86
 |> printfn "%s"
 |> ignore

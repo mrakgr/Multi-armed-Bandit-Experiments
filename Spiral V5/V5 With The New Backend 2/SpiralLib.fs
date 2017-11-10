@@ -728,6 +728,9 @@ inl rec toa_map2 f a b =
         | x, y -> f x y
     loop (a,b)
 
+inl toa_iter f = toa_map (f >> ignore) >> ignore
+inl toa_iter2 f a b = toa_map2 (inl a b -> f a b |> ignore) a b |> ignore
+
 inl init_template {create set layout} (!map_dims size) f =
     match Tuple.length size with
     | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
@@ -747,7 +750,7 @@ inl init_template {create set layout} (!map_dims size) f =
 
 inl init_toa = init_template {
     create = inl ty len -> toa_map (inl ty -> Array.create ty len) ty
-    set = inl offset -> toa_map2 (inl a b -> a offset <- b)
+    set = inl offset -> toa_iter2 (inl a b -> a offset <- b) 
     layout = .toa
     }
 
@@ -769,11 +772,12 @@ inl index x i =
 inl set x i v = 
     inl {ar layout} = x
     inl offset = (offset_at_index x i)
+    inl body ar v = ar offset <- v
     match layout with
-    | .aot -> ar offset <- v
-    | .toa -> toa_map2 (inl ar v -> ar offset <- v) ar v
+    | .aot -> body ar v
+    | .toa -> toa_iter2 body ar v
                 
-{init init_toa init_aot index set toa_map toa_map2 dim_size} |> stack
+{init init_toa init_aot index set toa_map toa_map2 toa_iter toa_iter2 dim_size} |> stack
     """) |> module_
 
 let extern_ =
