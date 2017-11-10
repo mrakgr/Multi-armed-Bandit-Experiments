@@ -728,8 +728,8 @@ inl rec toa_map2 f a b =
         | x, y -> f x y
     loop (a,b)
 
-inl toa_iter f = toa_map (f >> ignore) >> ignore
-inl toa_iter2 f a b = toa_map2 (inl a b -> f a b |> ignore) a b |> ignore
+inl toa_iter f = toa_map (inl x -> f x; ()) >> ignore
+inl toa_iter2 f a b = toa_map2 (inl a b -> f a b; ()) a b |> ignore
 
 inl init_template {create set layout} (!map_dims size) f =
     match Tuple.length size with
@@ -744,7 +744,7 @@ inl init_template {create set layout} (!map_dims size) f =
                     loop offset (i :: index) (size,dim_offsets)
                     offset+dim_offset
                     } |> ignore
-            | (),() -> set offset ar (f (Tuple.rev index))
+            | (),() -> f (Tuple.rev index) |> set offset ar
         loop (dyn 0) () (size,dim_offsets)
         heap {size ar layout}
 

@@ -993,13 +993,10 @@ else 3
     """
 
 let test86 =
-    "test86",[host_tensor],"Does the HostTensor.init work? Redux of test 79.",
+    "test86",[host_tensor],"Is the type of host tensor for the TOA layout correct?",
     """
-HostTensor.init (10,10) id //{from=1; to=8} id
-//inl ar = HostTensor.init (10,10) (inl (a,b) -> a*b,5)
-//inl x = HostTensor.index ar (2,2)
-//HostTensor.set ar (2,2) (x+100,5)
-//HostTensor.index ar (2,2)
+inl ar = HostTensor.init 10 id
+print_static (ar.ar)
     """
 
 let test87 =
@@ -1905,7 +1902,11 @@ inl CudaTensor =
     inl coerce_to_1d {size layout ar} = {layout ar size={from=0; to=total_size size - 1} :: ()}
 
     inl map f (!zip in) =
-        inl out = create {x with ty = type (f (elem_type in))}
+        inl out = 
+            print_static (in.ar.elem_type)
+            inl ty = type (f (elem_type in))
+            print_static ty
+            create {in with ty}
 
         inl in', out' = coerce_to_1d in |> to_device_tensor_form, coerce_to_1d out |> to_device_tensor_form
         inl near_to = total_size in'
@@ -1928,8 +1929,8 @@ inl CudaTensor =
 
 open CudaTensor
 
-inl host_tensor = HostTensor.init (1,2) id //{from=1; to=8} id
-()
+inl host_tensor = HostTensor.init 8 id
+print_static (host_tensor.ar)
 //inl dev_tensor = from_host_tensor host_tensor
 //map (inl x -> x * 2) dev_tensor |> to_host_tensor
     """
