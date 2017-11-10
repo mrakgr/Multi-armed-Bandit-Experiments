@@ -689,15 +689,15 @@ inl dim_size {from to} = to - from + 1 |> max 0
 inl offset_at_index array i =
     inl rec loop x state = 
         match x with
-        | {dim_ranges=({from to} & dim_range) :: dim_ranges ar}, i :: is ->
-            inl offset, dim_offset = loop ({dim_ranges ar}, is) state
+        | {size=({from to} & dim_range) :: size ar}, i :: is ->
+            inl offset, dim_offset = loop ({size ar}, is) state
             inl dim_offset = dim_offset() 
             assert (i >= from && i <= to) "Argument out of bounds."
             
             // The function wrapper here is to simulate lazy eval in order to 
             // avoid the multiply on the first index at the end of the loop.
             (offset+dim_offset*(i-from)), inl _ -> dim_offset * dim_size dim_range 
-        | {dim_ranges=() ar}, () ->
+        | {size=() ar}, () ->
             state
     loop (array,i) (0,inl _ -> 1) |> fst
        
@@ -728,22 +728,22 @@ inl rec toa_map2 f a b =
         | x, y -> f x y
     loop (a,b)
 
-inl init_template {create set layout} (!map_dims dim_ranges) f =
-    match Tuple.length dim_ranges with
+inl init_template {create set layout} (!map_dims size) f =
+    match Tuple.length size with
     | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
     | num_dims ->
-        inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) dim_ranges 1
+        inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) size 1
         inl ty = type (f (Tuple.repeat num_dims 0))
         inl ar = create ty len
         inl rec loop offset index = function
-            | {from to} :: dim_ranges, dim_offset :: dim_offsets ->
+            | {from to} :: size, dim_offset :: dim_offsets ->
                 for {from to state=offset; body=inl {state=offset i} ->
-                    loop offset (i :: index) (dim_ranges,dim_offsets)
+                    loop offset (i :: index) (size,dim_offsets)
                     offset+dim_offset
                     } |> ignore
             | (),() -> set offset ar (f (Tuple.rev index))
-        loop (dyn 0) () (dim_ranges,dim_offsets)
-        heap {dim_ranges ar layout}
+        loop (dyn 0) () (size,dim_offsets)
+        heap {size ar layout}
 
 inl init_toa = init_template {
     create = inl ty len -> toa_map (inl ty -> Array.create ty len) ty
