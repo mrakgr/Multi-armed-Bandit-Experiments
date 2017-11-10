@@ -1443,7 +1443,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 if is_unit t then TyB
                 else make_tyv_and_push_typed_expr_even_if_unit d (TyOp(MutableSet,[ar;idx;r],BListT))
             match tev3 d ar idx r with
-            | ar & TyType (ArrayT(ArtDotNetHeap,ar_ty)), idx, r ->
+            | ar & TyType (ArrayT((ArtDotNetHeap | ArtCudaGlobal _ | ArtCudaShared | ArtCudaLocal),ar_ty)), idx, r ->
                 if is_int idx then
                     let r_ty = get_type r
                     if ar_ty = r_ty then ret ar_ty ar idx r
@@ -1628,7 +1628,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | PrimT _ -> true
                         | _ -> false
                     if is_convertible_primt fromt && is_convertible_primt tot then TyOp(UnsafeConvert,[to_;from],tot)
-                    else on_type_er (trace d) "Cannot convert %A to the following type: %A" from tot
+                    else on_type_er (trace d) <| sprintf "Cannot convert %A to the following type: %A" from tot
 
         let unsafe_upcast_to d a b =
             let a, b = tev2 d a b
@@ -2813,7 +2813,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
-        "module SpiralExample" |> state_new
+        "module SpiralExample.Main" |> state_new
         sprintf "let %s = \"\"\"" cuda_kernels_name |> state_new
         "extern \"C\" {" |> state_new
         enter' <| fun _ ->

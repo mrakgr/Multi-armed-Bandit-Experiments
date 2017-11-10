@@ -686,19 +686,20 @@ open Loops
 open Console
 
 inl dim_size {from to} = to - from + 1 |> max 0
-inl offset_at_index array i =
+inl offset_at_index is_safe array i =
     inl rec loop x state = 
         match x with
         | {size=({from to} & dim_range) :: size ar}, i :: is ->
             inl offset, dim_offset = loop ({size ar}, is) state
             inl dim_offset = dim_offset() 
-            assert (i >= from && i <= to) "Argument out of bounds."
+            if is_safe then assert (i >= from && i <= to) "Argument out of bounds."
             
             // The function wrapper here is to simulate lazy eval in order to 
             // avoid the multiply on the first index at the end of the loop.
             (offset+dim_offset*(i-from)), inl _ -> dim_offset * dim_size dim_range 
         | {size=() ar}, () ->
             state
+    inl i = match i with | _ :: _ -> i | i -> i :: ()
     loop (array,i) (0,inl _ -> 1) |> fst
        
 inl map_dims x = 
@@ -736,6 +737,7 @@ inl init_template {create set layout} (!map_dims size) f =
     | 0 -> error_type "The number of dimensions to init must exceed 0. Use `ref` instead."
     | num_dims ->
         inl len :: dim_offsets = Tuple.scanr (inl (!dim_size dim) s -> dim * s) size 1
+        inl f = if num_dims = 1 then (inl x :: () -> f x) else f
         inl ty = type (f (Tuple.repeat num_dims 0))
         inl ar = create ty len
         inl rec loop offset index = function
@@ -762,22 +764,27 @@ inl init_aot = init_template {
 
 inl init = init_toa
 
-inl index x i = 
+inl index_template is_safe x i = 
     inl {ar layout} = x
-    inl offset = (offset_at_index x i)
+    inl offset = offset_at_index is_safe x i
     match layout with
     | .aot -> ar offset
     | .toa -> toa_map (inl ar -> ar offset) ar
 
-inl set x i v = 
+inl set_template is_safe x i v = 
     inl {ar layout} = x
-    inl offset = (offset_at_index x i)
+    inl offset = offset_at_index is_safe x i
     inl body ar v = ar offset <- v
     match layout with
     | .aot -> body ar v
     | .toa -> toa_iter2 body ar v
+
+inl index = index_template true
+inl index_unsafe = index_template false
+inl set = set_template true
+inl set_unsafe = set_template false
                 
-{init init_toa init_aot index set toa_map toa_map2 toa_iter toa_iter2 dim_size} |> stack
+{init init_toa init_aot index index_unsafe set set_unsafe toa_map toa_map2 toa_iter toa_iter2 dim_size} |> stack
     """) |> module_
 
 let extern_ =
@@ -837,7 +844,7 @@ inl FSU = {
 
 let cuda =
     (
-    "Cuda",[console;extern_],"The Cuda module.",
+    "Cuda",[loops;console;array;host_tensor;extern_],"The Cuda module.",
     """
 open Extern
 open Console
@@ -870,25 +877,25 @@ inl __gridDimZ = cuda_constant_int "gridDim.z"
 inl fsharp_core = assembly_load."FSharp.Core"
 inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
 
-inl ops = fsharp_core.Microsoft.FSharp.Core.Operators
+inl Operators = fsharp_core.Microsoft.FSharp.Core.Operators
 inl Environment = mscorlib.System.Environment
 
 inl cuda_toolkit_path = 
     inl x = Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
     inl x_ty = type(x)
-    if ops(.isNull, x_ty, x) then failwith unit "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
+    if Operators(.isNull, x_ty, x) then failwith unit "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
     x
 
 inl visual_studio_path =
     inl x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")
     inl x_ty = type(x)
-    if ops(.isNull, x_ty, x) then failwith unit "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
+    if Operators(.isNull, x_ty, x) then failwith unit "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
     mscorlib.System.IO.Directory.GetParent(x).get_Parent().get_Parent().get_FullName()
 
 inl cub_path = // The path for the Cuda Unbound library.
     inl x = Environment.GetEnvironmentVariable("CUB_PATH")
     inl x_ty = type(x)
-    if ops(.isNull, x_ty, x) then 
+    if Operators(.isNull, x_ty, x) then 
         failwith unit 
             @"If you are getting this exception then that means that CUB_PATH environment variable is not defined.
 
@@ -982,7 +989,7 @@ inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
     inl to_obj_ar args =
         inl len = Tuple.length args
         inl typ = mscorlib .System.Object
-        if len > 0 then Array.init.static len (Tuple.index args >> unsafe_upcast_to typ)
+        if len > 0 then Array.init.static len (inl x -> Tuple.index args x :> typ)
         else Array.empty typ
 
     inl kernel =
@@ -1009,6 +1016,98 @@ inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
     | {stream} -> cuda_kernel.RunAsync(stream.get_Stream(),args)
     | _ -> cuda_kernel.Run(args)
 
-{ManagedCuda context dim3 run}
+inl CudaTensor =
+    inl SizeT = ManagedCuda.BasicTypes.SizeT
+    inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
+
+    inl total_size = Tuple.foldl (inl s x -> s * HostTensor.dim_size x) 1
+
+    inl create {layout ty size} =
+        inl size1d = 
+            match size with
+            | _ :: _ -> total_size size |> SizeT
+            | x -> SizeT x
+        inl create ty = CudaDeviceVariable ty size1d
+        match layout with
+        | .aot -> {layout size ar = create ty}
+        | .toa -> {layout size ar = HostTensor.toa_map create ty}
+
+    inl from_host_array ar =
+        inl t = CudaDeviceVariable (ar.elem_type) (Array.length ar |> SizeT)
+        t.CopyToDevice ar
+        t
+
+    inl from_host_tensor {size ar layout} = 
+        match layout with
+        | .aot -> { size layout ar = from_host_array ar}
+        | .toa -> { size layout ar = HostTensor.toa_map from_host_array ar }
+
+    inl to_host_array x =
+        inl size = x.get_Size()
+        inl t = Array.create (x.elem_type) (Operators(.int, size, size))
+        x.CopyToHost t
+        context.Synchronize()
+        t
+
+    inl to_host_tensor {size ar layout} =
+        match layout with
+        | .aot -> { size layout ar = to_host_array ar }
+        | .toa -> { size layout ar = HostTensor.toa_map to_host_array ar }
+
+    inl ptr dev_var = 
+        inl x = dev_var.get_DevicePointer()
+        inl t = dev_var.elem_type
+        !UnsafeCoerceToArrayCudaGlobal(x,t)     
+
+    inl to_device_tensor_form {size ar layout} =
+        match layout with
+        | .aot -> {size layout ar = ptr ar}
+        | .toa -> {size layout ar = HostTensor.toa_map ptr ar}
+
+    inl elem_type {ar layout} =
+        match layout with
+        | .aot -> ar.elem_type
+        | .toa -> HostTensor.toa_map (inl x -> x.elem_type) ar
+
+    inl zip = function
+        | x :: xs as l ->
+            inl {size=sa layout=la} = x
+            Tuple.iter (inl {size=sb layout=lb} -> 
+                assert (sa=sb) "The sizes of all the tensors in zip must be the same in order to be zipped"
+                assert (eq_type la lb) "The layouts of all the tensors must have the same format."
+                )
+            match la with
+            | .aot -> error_type "Array of tuples tensor layout is currently not supported."
+            | .toa -> {size=sa layout=la ar = Tuple.map (inl {ar} -> ar) l}
+        | () -> error_type "Empty input to zip is invalid."
+        | x -> x
+        
+    inl coerce_to_1d {size layout ar} = {layout ar size={from=0; to=total_size size - 1} :: ()}
+
+    {create from_host_tensor to_host_tensor zip elem_type coerce_to_1d to_device_tensor_form total_size} |> stack
+
+open CudaTensor
+inl map f (!zip in) =
+    inl out = create {in with ty = type (f (elem_type in))}
+
+    inl in', out' = coerce_to_1d in |> to_device_tensor_form, coerce_to_1d out |> to_device_tensor_form
+    inl near_to = total_size (in'.size)
+    inl body {i} = HostTensor.set_unsafe in' i (f (HostTensor.index_unsafe out' i))
+
+    inl kernel = cuda
+        inl from = blockIdx.x * blockDim.x + threadIdx.x
+        inl by = gridDim.x * blockDim.x
+        Loops.for {from near_to by body}
+
+    run {
+        blockDim = 128
+        gridDim = 32
+        kernel
+        } |> ignore
+
+    out
+
+
+{ManagedCuda context dim3 run CudaTensor map}
     """) |> module_
 

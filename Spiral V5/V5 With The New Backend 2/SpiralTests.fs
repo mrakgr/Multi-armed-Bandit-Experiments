@@ -993,10 +993,11 @@ else 3
     """
 
 let test86 =
-    "test86",[host_tensor],"Is the type of host tensor for the TOA layout correct?",
+    "test86",[host_tensor],"Is the type of host tensor for the TOA layout correct? Does it work on the singleton dimensions?",
     """
-inl ar = HostTensor.init 10 id
-print_static (ar.ar)
+open HostTensor
+inl ar = init 10 id
+index ar 5
     """
 
 let test87 =
@@ -1834,105 +1835,11 @@ let cuda2 =
     """
 open Loops
 open Cuda
-inl CudaTensor =
-    inl SizeT = ManagedCuda.BasicTypes.SizeT
-    inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
-
-    inl total_size = Tuple.foldl (inl s x -> s * HostTensor.dim_size x) 1
-
-    inl create {layout ty size} =
-        inl size1d = 
-            match size with
-            | _ :: _ -> total_size size |> SizeT
-            | x -> SizeT x
-        inl create ty = CudaDeviceVariable ty size1d
-        match layout with
-        | .aot -> {layout size ar = create ty}
-        | .toa -> {layout size ar = toa_map create ty}
-
-    inl from_host_array ar =
-        inl t = CudaDeviceVariable (ar.elem_type) (Array.length ar |> SizeT)
-        t.CopyToDevice ar
-        t
-
-    inl from_host_tensor {size ar layout} = 
-        match layout with
-        | .aot -> { size layout ar = from_host_array ar}
-        | .toa -> { size layout ar = HostTensor.toa_map from_host_array ar }
-
-    inl to_host_array x =
-        inl t = Array.create (x.elem_type) (x.get_Size() |> unsafe_convert int64)
-        x.CopyToHost t
-        context.Synchronize()
-        t
-
-    inl to_host_tensor {size ar layout} =
-        match layout with
-        | .aot -> { size layout ar = to_host_array ar }
-        | .toa -> { size layout ar = HostTensor.toa_map to_host_array ar }
-
-    inl ptr dev_var = 
-        inl x = dev_var.get_DevicePointer()
-        inl t = dev_var.elem_type
-        !UnsafeCoerceToArrayCudaGlobal(x,t)     
-
-    inl to_device_tensor_form {size ar layout} =
-        match layout with
-        | .aot -> {size layout ar = ptr ar}
-        | .toa -> {size layout ar = HostTensor.toa_map ptr ar}
-
-    inl elem_type {ar layout} =
-        match layout with
-        | .aot -> ar.elem_type
-        | .toa -> HostTensor.toa_map (inl x -> x.elem_type) ar
-
-    inl zip = function
-        | x :: xs as l ->
-            inl {size=sa layout=la} = x
-            Tuple.iter (inl {size=sb layout=lb} -> 
-                assert (sa=sb) "The sizes of all the tensors in zip must be the same in order to be zipped"
-                assert (eq_type la lb) "The layouts of all the tensors must have the same format."
-                )
-            match la with
-            | .aot -> error_type "Array of tuples tensor layout is currently not supported."
-            | .toa -> {size=sa layout=la ar = Tuple.map (inl {ar} -> ar) l}
-        | () -> error_type "Empty input to zip is invalid."
-        | x -> x
-        
-    inl coerce_to_1d {size layout ar} = {layout ar size={from=0; to=total_size size - 1} :: ()}
-
-    inl map f (!zip in) =
-        inl out = 
-            print_static (in.ar.elem_type)
-            inl ty = type (f (elem_type in))
-            print_static ty
-            create {in with ty}
-
-        inl in', out' = coerce_to_1d in |> to_device_tensor_form, coerce_to_1d out |> to_device_tensor_form
-        inl near_to = total_size in'
-        inl body {i} = HostTensor.set in' i (f (HostTensor.index out' i))
-
-        inl kernel = cuda
-            inl from = blockIdx.x * blockDim.x + threadIdx.x
-            inl by = gridDim.x * blockDim.x
-            for {from near_to by body}
-
-        Cuda.run {
-            blockDim = 128
-            gridDim = 32
-            kernel
-            }
-
-        out
-
-    {create from_host_tensor to_host_tensor map} |> stack
-
 open CudaTensor
 
 inl host_tensor = HostTensor.init 8 id
-print_static (host_tensor.ar)
-//inl dev_tensor = from_host_tensor host_tensor
-//map (inl x -> x * 2) dev_tensor |> to_host_tensor
+inl dev_tensor = from_host_tensor host_tensor
+map (inl x -> x * 2) dev_tensor |> to_host_tensor
     """
 
 let tests =
@@ -1945,7 +1852,7 @@ let tests =
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
     test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
     test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
-    test80;test81;test82;test83;test84;test85;       test87;test88
+    test80;test81;test82;test83;test84;test85;test86;test87;test88
     hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7;hacker_rank_8;hacker_rank_9
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
@@ -2027,6 +1934,6 @@ let rewrite_test_cache x =
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp test86
+output_test_to_temp cuda2
 |> printfn "%s"
 |> ignore
