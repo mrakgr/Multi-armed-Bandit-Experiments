@@ -1,16 +1,9 @@
 module SpiralExample.Main
 let cuda_kernels = """
 extern "C" {
-    __device__ void method_3(long long int * var_0, long long int * var_1, long long int var_2) {
-        if ((var_2 < 8)) {
-            long long int var_3 = var_1[var_2];
-            long long int var_4 = (var_3 * 2);
-            var_0[var_2] = var_4;
-            long long int var_5 = (var_2 + 4096);
-            method_3(var_0, var_1, var_5);
-        } else {
-        }
-    }
+    __global__ void method_2(long long int * var_0, long long int * var_1);
+    __device__ void method_3(long long int * var_0, long long int * var_1, long long int var_2);
+    
     __global__ void method_2(long long int * var_0, long long int * var_1) {
         long long int var_2 = threadIdx.x;
         long long int var_3 = threadIdx.y;
@@ -21,6 +14,16 @@ extern "C" {
         long long int var_8 = (var_5 * 128);
         long long int var_9 = (var_8 + var_2);
         method_3(var_0, var_1, var_9);
+    }
+    __device__ void method_3(long long int * var_0, long long int * var_1, long long int var_2) {
+        if ((var_2 < 8)) {
+            long long int var_3 = var_1[var_2];
+            long long int var_4 = (var_3 * 2);
+            var_0[var_2] = var_4;
+            long long int var_5 = (var_2 + 4096);
+            method_3(var_0, var_1, var_5);
+        } else {
+        }
     }
 }
 """
@@ -45,6 +48,34 @@ and method_1((var_0: (int64 [])), (var_1: int64), (var_2: int64)): int64 =
         method_1((var_0: (int64 [])), (var_4: int64), (var_3: int64))
     else
         var_2
+and method_4((var_0: (int64 []))): string =
+    let (var_1: System.Text.StringBuilder) = System.Text.StringBuilder()
+    let (var_2: System.Text.StringBuilder) = var_1.Append("[|")
+    let (var_3: int64) = var_0.LongLength
+    let (var_4: int64) = 0L
+    let (var_5: string) = method_5((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_3: int64), (var_4: int64))
+    let (var_6: System.Text.StringBuilder) = var_1.Append("|]")
+    var_1.ToString()
+and method_5((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_3: int64)): string =
+    if (var_3 < var_2) then
+        let (var_4: int64) = var_0.[int32 var_3]
+        let (var_5: System.Text.StringBuilder) = var_1.Append("")
+        let (var_6: string) = System.Convert.ToString(var_4)
+        let (var_7: System.Text.StringBuilder) = var_1.Append(var_6)
+        let (var_8: int64) = (var_3 + 1L)
+        method_6((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_8: int64))
+    else
+        ""
+and method_6((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_3: int64)): string =
+    if (var_3 < var_2) then
+        let (var_4: int64) = var_0.[int32 var_3]
+        let (var_5: System.Text.StringBuilder) = var_1.Append("; ")
+        let (var_6: string) = System.Convert.ToString(var_4)
+        let (var_7: System.Text.StringBuilder) = var_1.Append(var_6)
+        let (var_8: int64) = (var_3 + 1L)
+        method_6((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_8: int64))
+    else
+        "; "
 let (var_0: string) = cuda_kernels
 let (var_1: string) = System.Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
 let (var_2: bool) = Microsoft.FSharp.Core.Operators.isNull(var_1)
@@ -256,4 +287,6 @@ let (var_152: int32) = Microsoft.FSharp.Core.Operators.int(var_151)
 let (var_153: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_152))
 var_143.CopyToHost(var_153)
 var_132.Synchronize()
-var_153 |> printfn "%A"
+let (var_154: string) = method_4((var_153: (int64 [])))
+System.Console.WriteLine(var_154)
+

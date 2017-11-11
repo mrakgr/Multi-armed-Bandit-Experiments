@@ -1815,30 +1815,17 @@ run_with_unit_ret (readall()) parser
 //    """
 //    """
 
-let cuda1 = 
-    "cuda1",[tuple;array;cuda],"Does the Cuda call work?",
-    """
-inl add a b = 
-    stack {result=dyn (a+b)}
-    |> dyn |> ignore
-   
-Cuda.run {
-    stream = Cuda.ManagedCuda.CudaStream()
-    blockDim = 64
-    gridDim = 32
-    kernel = cuda add (dyn <| blockDim.x) (dyn <| gridDim.y)
-    }
-    """
-
-let cuda2 =
-    "cuda2",[loops;tuple;cuda;console;array;host_tensor],"Does the new Cuda array work?",
+let cuda1 =
+    "cuda1",[loops;tuple;cuda;console;array;host_tensor],"Does the map kernel work?",
     """
 open Loops
 open Cuda
 open CudaTensor
+open Console
+
 inl dev_tensor = from_host_tensor (HostTensor.init 8 id)
 inl {ar} = map (inl x -> x * 2) dev_tensor |> to_host_tensor
-ar
+Array.show_array ar |> writeline
     """
 
 let cuda3 =
@@ -1973,7 +1960,7 @@ let tests =
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
-    cuda1; //cuda2
+    cuda1
     |]
 
 open System.IO
@@ -2050,6 +2037,6 @@ let rewrite_test_cache x =
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp cuda2
+output_test_to_temp cuda1
 |> printfn "%s"
 |> ignore

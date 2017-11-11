@@ -262,7 +262,18 @@ inl concat ar =
 inl forall f ar = for' {from=0; near_to=Array.length ar; state=true; body = inl {next state i} -> f (ar i) && next state}
 inl exists f ar = for' {from=0; near_to=Array.length ar; state=false; body = inl {next state i} -> f (ar i) || next state}
 
-{create=Array.create; length=Array.length; empty singleton foldl foldr init map filter append concat forall exists}
+met show_array ar =
+    inl s = mscorlib.System.Text.StringBuilder()
+    s.Append "[|" |> ignore
+    foldl (inl prefix x ->
+        s.Append prefix |> ignore
+        s.Append (mscorlib.System.Convert.ToString x) |> ignore
+        "; "
+        ) "" ar |> ignore
+    s.Append "|]" |> ignore
+    s.ToString()
+
+{create=Array.create; length=Array.length; empty singleton foldl foldr init map filter append concat forall exists show_array}
     """) |> module_
 
 let list =
@@ -922,12 +933,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     procStartInfo.set_UseShellExecute false
     procStartInfo.set_FileName nvcc_router_path
 
-    inl use a b =
-        inl r = b a
-        a.Dispose()
-        r
-
-    use (system.System.Diagnostics.Process()) <| inl process ->
+    use process = system.System.Diagnostics.Process()
     process.set_StartInfo procStartInfo
     inl print_to_standard_output = 
         closure_of (inl args -> args.get_Data() |> writeline) 
@@ -956,8 +962,8 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
    
     inl _ = 
         if File.Exists nvcc_router_path then File.Delete nvcc_router_path
-        use (File.OpenWrite(nvcc_router_path)) <| inl nvcc_router_file ->
-        use (StreamWriter(nvcc_router_file :> Stream)) <| inl nvcc_router_stream ->
+        use nvcc_router_file = File.OpenWrite(nvcc_router_path)
+        use nvcc_router_stream = StreamWriter(nvcc_router_file :> Stream)
 
         nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
         concat (
@@ -1093,17 +1099,16 @@ inl map f (!zip in) =
 
     inl in', out' = coerce_to_1d in |> to_device_tensor_form, coerce_to_1d out |> to_device_tensor_form
     inl near_to = total_size (in'.size)
-    inl body {i} = HostTensor.set_unsafe in' i (f (HostTensor.index_unsafe out' i))
-
-    inl kernel = cuda
-        inl from = blockIdx.x * blockDim.x + threadIdx.x
-        inl by = gridDim.x * blockDim.x
-        Loops.for {from near_to by body}
 
     run {
         blockDim = 128
         gridDim = 32
-        kernel
+        kernel = cuda // Lexical scoping rocks.
+            inl from = blockIdx.x * blockDim.x + threadIdx.x
+            inl by = gridDim.x * blockDim.x
+            Loops.for {from near_to by body=inl {i} ->
+                HostTensor.set_unsafe in' i (f (HostTensor.index_unsafe out' i))
+                }
         } |> ignore
 
     out

@@ -1,5 +1,5 @@
 `is_numeric a && get_type a = get_type b` is false.
-a=TyLit (LitInt64 55L), b=TyMap (Env (map []),MapTypeFunction (" pat_var_116", Op <tag 703>))
+a=TyLit (LitInt64 55L), b=TyMap (Env (map []),MapTypeFunction (" pat_var_119", Op <tag 722>))
 Error trace on line: 2, column: 1 in file "test71".
 55 + id
 ^

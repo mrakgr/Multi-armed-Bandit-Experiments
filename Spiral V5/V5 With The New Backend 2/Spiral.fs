@@ -82,6 +82,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let ap x y = (Apply,[x;y]) |> op
     let lp v b e = ap (inl_pat v e) b
     let inmp v' b e = ap (ap (v ">>=") b) (inl_pat v' e)
+    let usep v' b e = ap (ap (v "use") b) (inl_pat v' e)
     let l v b e = ap (inl v e) b
     let l_rec v b e = ap (inl v e) (fix v b)
 
@@ -1813,11 +1814,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             f ')' || f '}' || f ']'
         let is_operator_char c = (is_identifier_char c || is_separator_char c || is_closing_parenth_char c) = false
 
+        let var_name_core s = (many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces) s
+
         let var_name =
-            many1Satisfy2L is_identifier_starting_char is_identifier_char "identifier" .>> spaces
-            >>=? function
+            var_name_core >>=? function
                 | "match" | "function" | "with" | "without" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm" 
-                | "type" | "print_expr" | "rec" | "if" | "if_dynamic" | "then" | "elif" | "else" | "true" | "false" as x -> 
+                | "use" | "type" | "print_expr" | "rec" | "if" | "if_dynamic" | "then" | "elif" | "else" | "true" | "false" as x -> 
                     fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
@@ -1855,6 +1857,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let set_array = operatorString "<-"
         let inl_ = keywordString "inl"
         let inm_ = keywordString "inm"
+        let use_ = keywordString "use"
         let met_ = keywordString "met"
         let inl_rec = keywordString "inl" >>. keywordString "rec"
         let met_rec = keywordString "met" >>. keywordString "rec"
@@ -2122,7 +2125,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             <| s
 
         let poperator (s: CharStream<Userstate>) = many1Satisfy is_operator_char .>> spaces <| s
-        let var_op_name = var_name <|> rounds poperator
+        let var_op_name = var_name <|> rounds (poperator <|> var_name_core)
 
         let filter_env x = ap (inl "" x) B
         let inl_pat' (args: Pattern list) body = List.foldBack inl_pat args body
@@ -2154,11 +2157,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let case_open expr = open_ >>. expr |>> module_open
         let case_inm_pat_statement expr = pipe2 (inm_ >>. patterns expr) (eq' >>. expr) inmp
+        let case_use_pat_statement expr = pipe2 (use_ >>. patterns expr) (eq' >>. expr) usep
 
         let statements expressions expr = 
             [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement
              case_met_pat_statement; case_met_name_pat_list_statement; case_met_rec_name_pat_list_statement
-             case_open; case_inm_pat_statement; case_type_name_pat_list_statement expressions]
+             case_use_pat_statement; case_inm_pat_statement
+             case_open; case_type_name_pat_list_statement expressions]
             |> List.map (fun x -> x expr |> attempt)
             |> choice
 
@@ -2509,6 +2514,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
     // #Cuda
     let spiral_cuda_codegen (definitions_queue: Queue<TypeOrMethod>) = 
+        let buffer_forward_declarations = ResizeArray()
         let buffer_type_definitions = ResizeArray()
         let buffer_method = ResizeArray()
         let buffer_temp = ResizeArray()
@@ -2762,7 +2768,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 "return tmp" |> state
             "}" |> state_new
 
-        let print_method_definition tag (join_point_type, fv, body) =
+        let print_method_definition is_forward_declaration tag (join_point_type, fv, body) =
             let method_name = print_method tag
 
             let method_return = function
@@ -2771,9 +2777,12 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let print_body() = enter <| fun _ -> codegen' {branch_return=method_return; trace=[]} body
             let print_method prefix =
                 let args = print_args' print_tyv_with_type fv
-                sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state_new
-                print_body()
-                "}" |> state_new
+                if is_forward_declaration then
+                    sprintf "%s %s %s(%s)" prefix (print_type (get_type body)) method_name args |> state
+                else
+                    sprintf "%s %s %s(%s) {" prefix (print_type (get_type body)) method_name args |> state_new
+                    print_body()
+                    "}" |> state_new
 
             match join_point_type with
             | JoinPointClosure | JoinPointMethod -> print_method "__device__"
@@ -2799,7 +2808,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | _ -> failwith "impossible"
                     | JoinPointType -> failwith "impossible"
 
-                print_method_definition key.Symbol (join_point_type, fv, body)
+                print_method_definition true key.Symbol (join_point_type, fv, body)
+                move_to buffer_forward_declarations buffer_temp
+
+                print_method_definition false key.Symbol (join_point_type, fv, body)
                 move_to buffer_method buffer_temp
             | TomType ty ->
                 match ty with
@@ -2818,6 +2830,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         "extern \"C\" {" |> state_new
         enter' <| fun _ ->
             move_to buffer_temp buffer_type_definitions
+            move_to buffer_temp buffer_forward_declarations
+            state_new ""
             move_to buffer_temp buffer_method
         "}" |> state_new
         "\"\"\"" |> state_new

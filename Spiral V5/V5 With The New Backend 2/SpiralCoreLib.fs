@@ -125,10 +125,15 @@ inl (=) a b =
     if eq_type a b then a = b
     else error_type ("Trying to compare variables of two different types. Got:",a,b)
 
+inl (use) a b =
+    inl r = b a
+    a.Dispose()
+    r
+
 {type_lit_lift assembly_load assembly_load_file mscorlib error_type print_static dyn (\/) (=>)
  split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
  string_length lit_is box_is failwith assert max min eq_type module_values caseable_is event_add_handler (:>)
- (:?>) (=) module_map module_fold} |> stack
+ (:?>) (=) module_map module_fold (use)} |> stack
     """) |> module_
