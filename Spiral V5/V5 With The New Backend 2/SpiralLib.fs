@@ -921,7 +921,13 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     procStartInfo.set_RedirectStandardError true
     procStartInfo.set_UseShellExecute false
     procStartInfo.set_FileName nvcc_router_path
-    inl process = system .System.Diagnostics.Process()
+
+    inl use a b =
+        inl r = b a
+        a.Dispose()
+        r
+
+    use (system.System.Diagnostics.Process()) <| inl process ->
     process.set_StartInfo procStartInfo
     inl print_to_standard_output = 
         closure_of (inl args -> args.get_Data() |> writeline) 
@@ -933,7 +939,7 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl (+) a b = concat (a, b)
 
     /// Puts quotes around the string.
-    inl quote x = concat ('"',x,"'")
+    inl quote x = concat ('"',x,'"')
     inl call x = concat ("call ", x)
     inl quoted_vs_path_to_vcvars = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64\vcvarsx86_amd64.bat") |> quote
     inl quoted_vs_path_to_cl = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64") |> quote
@@ -947,20 +953,18 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
 
     if File.Exists input_path then File.Delete input_path
     File.WriteAllText(input_path,cuda_kernels)
-    
+   
     inl _ = 
         if File.Exists nvcc_router_path then File.Delete nvcc_router_path
-        inl nvcc_router_file = File.OpenWrite(nvcc_router_path)
-        inl nvcc_router_stream = StreamWriter(nvcc_router_file :> Stream)
+        use (File.OpenWrite(nvcc_router_path)) <| inl nvcc_router_file ->
+        use (StreamWriter(nvcc_router_file :> Stream)) <| inl nvcc_router_stream ->
 
         nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
         concat (
-            "nvcc -gencode=arch=compute_30,code=\"sm_30,compute_30\" --use-local-env --cl-version 2015 -ccbin ",quoted_vs_path_to_cl,
+            "nvcc -gencode=arch=compute_30,code=\\\"sm_30,compute_30\\\" --use-local-env --cl-version 2015 -ccbin ",quoted_vs_path_to_cl,
             "  -I",quoted_cuda_toolkit_path_to_include," -I",quoted_cub_path_to_include," --keep-dir ",quoted_kernels_dir,
             " -maxrregcount=0  --machine 64 -ptx -cudart static  -o ",quoted_target_path,' ',quoted_input_path
             ) |> nvcc_router_stream.WriteLine
-        nvcc_router_file.Dispose()
-        nvcc_router_stream.Dispose()
 
     if process.Start() = false then failwith unit "NVCC failed to run."
     process.BeginOutputReadLine()
@@ -970,9 +974,6 @@ inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
     inl exit_code = process.get_ExitCode()
     if exit_code <> 0i32 then failwith unit <| concat ("NVCC failed compilation with code ", exit_code)
 
-    // Free memory
-    process.Dispose()
-    
     context.LoadModulePTX target_path
 
 inl current_directory = Environment.get_CurrentDirectory()
