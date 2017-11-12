@@ -83,7 +83,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let lp v b e = ap (inl_pat v e) b
     let inmp v' b e = ap (ap (v ">>=") b) (inl_pat v' e)
     let usep v' b e = ap (ap (v "use") b) (inl_pat v' e)
-    let innp v' b e = ap b (inl_pat v' e)
+    let inbp v' b e = ap b (inl_pat v' e)
     let l v b e = ap (inl v e) b
     let l_rec v b e = ap (inl v e) (fix v b)
 
@@ -1820,8 +1820,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let var_name =
             var_name_core >>=? function
                 | "match" | "function" | "with" | "without" | "open" | "module" | "as" | "when" | "print_env" | "inl" | "met" | "inm" 
-                | "inn" | "use" | "type" | "print_expr" | "rec" | "if" | "if_dynamic" | "then" | "elif" | "else" | "true" | "false" as x -> 
-                    fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
+                | "inb" | "use" | "type" | "print_expr" | "rec" | "if" | "if_dynamic" | "then" | "elif" | "else" | "true" | "false" 
+                | "join" as x -> fun _ -> Reply(Error,messageError <| sprintf "%s not allowed as an identifier." x)
                 | x -> preturn x
 
         let between_brackets l p r = between (skipChar l >>. spaces) (skipChar r >>. spaces) p
@@ -1859,7 +1859,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let inl_ = keywordString "inl"
         let inm_ = keywordString "inm"
         let use_ = keywordString "use"
-        let inn_ = keywordString "inn"
+        let inb_ = keywordString "inb"
         let met_ = keywordString "met"
         let inl_rec = keywordString "inl" >>. keywordString "rec"
         let met_rec = keywordString "met" >>. keywordString "rec"
@@ -2160,7 +2160,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let case_open expr = open_ >>. expr |>> module_open
         let case_inm_pat_statement expr = pipe2 (inm_ >>. patterns expr) (eq' >>. expr) inmp
         let case_use_pat_statement expr = pipe2 (use_ >>. patterns expr) (eq' >>. expr) usep
-        let case_inn_pat_statement expr = pipe2 (inn_ >>. patterns expr) (eq' >>. expr) innp
+        let case_inn_pat_statement expr = pipe2 (inb_ >>. patterns expr) (eq' >>. expr) inbp
 
         let statements expressions expr = 
             [case_inl_pat_statement; case_inl_name_pat_list_statement; case_inl_rec_name_pat_list_statement

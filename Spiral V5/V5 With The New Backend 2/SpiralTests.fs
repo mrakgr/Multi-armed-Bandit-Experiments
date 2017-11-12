@@ -2022,7 +2022,7 @@ let rewrite_test_cache x =
 //loop 50000
 //    """
 //
-//let speed3 = // Minus the startup, this takes 0.05s to compile versus 1.5s for the previous version of the compiler.
+//let speed3 = // Minus the startup, this takes 0.05s to peval versus 1.5s for the previous version of the compiler.
 //    let code =
 //        let var i = sprintf "var_%i" i
 //        let bnd (a, b) = sprintf "inl %s = %s" a b
