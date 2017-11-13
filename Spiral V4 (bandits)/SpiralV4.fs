@@ -52,7 +52,7 @@ let inline dispose (v: #IDisposable) = v.Dispose()
 
 /// Copies a host array to device.
 let inline to_dev (host_ar: 't []) =
-    let d_a = new CudaDeviceVariable<'t>(SizeT host_ar.Length)    
+    let d_a = new CudaDeviceVariable<'t>(SizeT host_ar.Length)
     d_a.CopyToDevice(host_ar)
     d_a
 
