@@ -2675,7 +2675,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | JoinPointClosure ->
                         if List.isEmpty call_args then branch_return method_name 
                         else on_type_er trace "The closure should not have free variables on the Cuda side."
-                | TyBox(x, t) -> failwith "TODO"
+                | TyBox(x, t) -> failwith "Will be implemented. (It can be done easily, I just need to put the printing functions in.)"
                 | TyMap(C env_term, _) ->
                     let t = get_type expr
                     Map.toArray env_term
