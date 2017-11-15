@@ -98,13 +98,11 @@ type Value =
     | LitChar of char
 
 type Op =
-    // Extern
-    // FSU stands for F# Unchecked
-    | ExternFSUGlobalConstant
-    | ExternFSUMethod
-    | ExternFSUConstructor
-
-    | ExternCUGlobalConstant
+    // Macros
+    | MacroCuda
+    | MacroFs
+    | MacroType
+    | MacroTerm
 
     // Closure
     | ClosureTypeCreate
@@ -133,7 +131,6 @@ type Op =
     | DotNetTypeConstruct
     | DotNetTypeCallMethod
     | DotNetTypeGetField
-    | DotNetEventAddHandler
 
     // Module
     | ModuleCreate

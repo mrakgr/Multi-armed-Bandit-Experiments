@@ -1650,26 +1650,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let sizeof d a = TyOp(SizeOf,[tev d a],PrimT Int64T)
 
-        let extern_fsu_global_constant d a b =
-            match tev2 d a b with
-            | TypeString _ & a, TyType t -> TyOp(ExternFSUGlobalConstant,[a],t) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,_ -> on_type_er (trace d) <| sprintf "Expected a type string as the first argument to ExternFSUGlobalConstant.\nGot: %A" a
-
-        let extern_fsu_method d a b c d' =
-            match tev4 d a b c d' with
-            | TyType (DotNetTypeT _) & a, TypeString _ & b, c, TyType t -> TyOp(ExternFSUMethod,[a;b;c],t) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,b,_,_ -> on_type_er (trace d) <| sprintf "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUMethod.\nGot: %A\n...and: %A" a b
-
-        let extern_fsu_constructor d a b =
-            match tev2 d a b with
-            | TyType (DotNetTypeT _ & t) & a, TypeString _ & b -> TyOp(ExternFSUConstructor,[a;b],t) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,b -> on_type_er (trace d) <| sprintf "Expected a .NET type as the first argument and a type string as the second argument to ExternFSUConstructor.\nGot: %A\n...and: %A" a b
-
-        let extern_cu_global_constant d a b =
-            match tev2 d a b with
-            | TypeString _ & a, TyType t -> TyOp(ExternCUGlobalConstant,[a],t) |> make_tyv_and_push_typed_expr_even_if_unit d
-            | a,_ -> on_type_er (trace d) <| sprintf "Expected a type string as the first argument to ExternCUGlobalConstant.\nGot: %A" a
-            
+        let macro op d t a = 
+            let t,a = tev2 d t a
+            TyOp(op,[a],get_type t) |> make_tyv_and_push_typed_expr_even_if_unit d
+           
         let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
 
         match expr with
@@ -1684,10 +1668,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         | VV (N vars) -> List.map (tev d >> destructure d) vars |> tyvv
         | Op(N (op,vars)) ->
             match op,vars with
-            | ExternFSUGlobalConstant,[a;b] -> extern_fsu_global_constant d a b
-            | ExternCUGlobalConstant,[a;b] -> extern_cu_global_constant d a b
-            | ExternFSUMethod,[a;b;c;d'] -> extern_fsu_method d a b c d'
-            | ExternFSUConstructor,[a;b] -> extern_fsu_constructor d a b
+            | (MacroFs | MacroCuda),[a;b] -> macro op d a b
             | Apply,[a;b] -> apply_tev d a b
             | StringLength,[a] -> string_length d a
             | DotNetAssemblyLoad,[a] -> dotnet_assembly_load false d a
@@ -2518,6 +2499,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let tys = List.foldBack (fun (_,x) s -> define_mem s x) fv ([],0) |> fst |> List.rev
             print_type_definition (Some layout) name tys
 
+    let inline codegen_macro codegen print_type (TyTuple x) = 
+        let strb = StringBuilder()
+        let inline append (x: string) = strb.Append x |> ignore
+        let f = function
+            | TyList [TypeString "text"; (TypeString x | TyLit (LitString x))] -> append x
+            | TyList [TypeString "arg"; (TyV _ | TyT _ as x)] -> append (codegen x)
+            | TyList [TypeString "args"; (TyTuple l)] -> append "("; List.map codegen x |> String.concat ", " |> append; append ")"
+            | TyList [TypeString "type"; (TyV (_,x) | TyT x)] -> append (print_type x)
+            | TyList [TypeString "types"; (TyTuple l)] -> append "<"; List.map (get_type >> print_type) x |> String.concat ", " |> append; append ">" 
+            | x -> failwithf "Unknown argument in macro. Got: %A" x
+        List.iter f x
+        strb.ToString()
+
     // #Cuda
     let spiral_cuda_codegen (definitions_queue: Queue<TypeOrMethod>) = 
         let buffer_forward_declarations = ResizeArray()
@@ -2738,7 +2732,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | Tanh,[x] -> sprintf "tanh(%s)" (codegen x)
                     | FailWith,[x] -> on_type_er trace "Exceptions and hence failwith are not supported on the Cuda side."
 
-                    | ExternCUGlobalConstant,[TypeString a] -> a
+                    | MacroCuda,[a] -> codegen_macro codegen print_type a
                     | SizeOf,[TyType a] -> sprintf "(sizeof %s)" (print_type a)
 
                     | x -> failwithf "Missing TyOp case. %A" x
@@ -3168,8 +3162,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         match t with 
                         | DotNetTypeT (N instance_type) -> sprintf "%s(%s)" (print_dotnet_type instance_type) args
                         | _ -> failwith "impossible"
-                    | DotNetEventAddHandler,[dotnet_type;TypeString event_name;handler] ->
-                        sprintf "%s.%s.AddHandler(%s)" (codegen dotnet_type) event_name (codegen handler)
                     | DotNetTypeCallMethod,[v; TyTuple [TypeString method_name; TyTuple (DotNetPrintedArgs method_args)]] ->
                         match v with
                         | TyT _ & TyType (DotNetTypeT (N t)) -> sprintf "%s.%s(%s)" (print_dotnet_type t) method_name method_args
@@ -3180,9 +3172,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         | _ -> sprintf "%s.%s" (codegen v) name
                     | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
                     | UnsafeDowncastTo,[a;b] -> sprintf "(%s :?> %s)" (codegen b) (print_type (get_type a))
-                    | ExternFSUGlobalConstant,[TypeString a] -> a
-                    | ExternFSUMethod,[a;TypeString b;TyTuple c] -> sprintf "%s.%s(%s)" (codegen a) b (List.map codegen c |> String.concat ", ")
-                    | ExternFSUConstructor,[TyType a;TyTuple b] -> sprintf "%s(%s)" (print_type a) (List.map codegen b |> String.concat ", ")
+                    | MacroFs,[a] -> codegen_macro codegen print_type a
                     | SizeOf,[TyType a] -> sprintf "(sizeof<%s>)" (print_type a)
                     | x -> failwithf "Missing TyOp case. %A" x
             with 

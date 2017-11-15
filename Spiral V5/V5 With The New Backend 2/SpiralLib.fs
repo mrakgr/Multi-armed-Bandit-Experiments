@@ -153,8 +153,13 @@ inl rec contains t x =
     | [Some: x] -> true
     | [None] -> false
 
+inl intersperse sep = function
+    | _ :: () as x -> x
+    | x :: xs -> x -> x :: sep :: intersperse sep xs
+    | _ -> error_type "Not a tuple."
+
 {index length head tail foldl foldr scanl scanr rev map iter iteri iter2 forall exists filter zip unzip index 
- init repeat append singleton range tryFind contains}
+ init repeat append singleton range tryFind contains intersperse}
     """) |> module_
 
 let loops =
@@ -841,13 +846,36 @@ inl closure_of_template check_range f tys =
 
 inl closure_of' = closure_of_template false
 inl closure_of = closure_of_template true
+inl dot = "."
 
 inl FSU = {
-    Global = {
-        Constant = inl a t -> !ExternFSUGlobalConstant(a,t)
-        }
-    Method = inl a b c t -> !ExternFSUMethod(a,b,c,t)
-    Constructor = inl a b -> !ExternFSUConstructor(a,b)
+    Constant = inl a t -> !MacroFs(t, [text: a])
+    Method = inl a b c t -> !MacroFs(t, [
+        arg: a
+        text: dot
+        arg: b
+        args: c
+        ])
+    GenericMethod = inl a b c d t -> !MacroFs(t,[
+        arg: a
+        text: dot
+        arg: b
+        types: c
+        args: d
+        ])
+    StaticMethod = inl a b t -> !MacroFs(t, [
+        arg: a
+        args: b
+        ])
+    StaticGenericMethod = inl a b c t -> !MacroFs(t,[
+        arg: a
+        types: b
+        args: c
+        ])
+    Constructor = inl a b -> !MacroFs(a, [
+        type: a
+        args: b
+        ])
     }
 
 {string_concat closure_of closure_of' FSU}
@@ -860,17 +888,12 @@ let cuda =
 open Extern
 open Console
 
-inl cuda_kernels = FSU.Global.Constant.cuda_kernels string
+inl cuda_kernels = FSU.Constant.cuda_kernels string
 inl join_point_entry_cuda x = !JoinPointEntryCuda(x())
 
-inl cuda_constant a t = !ExternCUGlobalConstant(a,t)
-inl CU = {
-    Global = {
-        Constant = cuda_constant
-        }
-    }
+inl cuda_constant a t = !MacroCuda(t,[text: a])
 
-inl cuda_constant_int (!type_lit_lift constant) () = cuda_constant constant int64
+inl cuda_constant_int constant () = cuda_constant constant int64
 inl __threadIdxX = cuda_constant_int "threadIdx.x"
 inl __threadIdxY = cuda_constant_int "threadIdx.y"
 inl __threadIdxZ = cuda_constant_int "threadIdx.z"
