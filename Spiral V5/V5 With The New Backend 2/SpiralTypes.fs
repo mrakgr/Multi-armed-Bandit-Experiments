@@ -183,6 +183,7 @@ type Op =
     | ListIs
     | TypeAnnot
     | MapGetField
+    | LayoutToNone
     | LayoutToStack
     | LayoutToPackedStack
     | LayoutToHeap

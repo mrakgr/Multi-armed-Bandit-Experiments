@@ -68,11 +68,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     let lit_int i = LitInt64 i |> lit
     let lit_string x = LitString x |> lit
 
-    let layout_to_stack a = op(LayoutToStack,[a])
-    let layout_to_packed_stack a = op(LayoutToPackedStack,[a])
-    let layout_to_heap a = op(LayoutToHeap,[a])
-    let layout_to_heap_mutable a = op(LayoutToHeapMutable,[a])
-
     let fix name x =
         match name with
         | "" -> x
@@ -626,13 +621,31 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let if_ d cond tr fl = tev d cond |> if_cond d tr fl
 
-        let inline layoutify layout d x = 
+        let rec layout_boxed_unseal d recf x =
+            let inline f x = layout_boxed_unseal d recf x
             match x with
+            | TyV _ as v -> TyOp(MapGetField,[recf;v],get_type v) |> destructure d
+            | TyList l -> tyvv (List.map f l)
+            | TyBox(a,b) -> tybox (f a, b)
+            | TyMap(env, b) -> tymap (layout_env_term_unseal d recf env, b)
+            | x -> x
+               
+        and layout_env_term_unseal d recf (C env) = Map.map (fun _ -> layout_boxed_unseal d recf) env |> Env
+
+        let layout_to_none' d = function
+            | TyMap _ as a -> a
+            | TyType(LayoutT(_,env,t)) as a -> tymap(layout_env_term_unseal d a env,t)
+            | x -> on_type_er (trace d) <| sprintf "Cannot turn the argument into a non-layout type. Got: %A" x
+        let layout_to_none d a = layout_to_none' d (tev d a)
+
+        let rec layoutify layout d = function
             | TyMap(env,t) as a ->
                 let {renamer'=r}, env' = renamer_apply_envc env 
                 if r.Count = 0 then LayoutT(layout,env',t) |> tyt
                 else TyOp(layout_to_op layout,[a],LayoutT(layout,env',t)) |> destructure d
-            | x -> on_type_er (trace d) <| sprintf "Cannot turn the seleted type into a layout. Got: %A" x
+            | TyType(LayoutT(layout',_,_)) as a ->
+                if layout <> layout' then layout_to_none' d a |> layoutify layout d else a
+            | x -> on_type_er (trace d) <| sprintf "Cannot turn the argument into a layout type. Got: %A" x
 
         let layout_to layout d a = layoutify layout d (tev d a)
 
@@ -889,17 +902,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TyLit (LitString str) -> TyLit (LitInt64 (int64 str.Length))
             | TyType(PrimT StringT) & str -> TyOp(StringLength,[str],PrimT Int64T)
             | _ -> on_type_er (trace d) "Expected a string."
-
-        let rec layout_boxed_unseal d recf x =
-            let inline f x = layout_boxed_unseal d recf x
-            match x with
-            | TyV _ as v -> TyOp(MapGetField,[recf;v],get_type v) |> destructure d
-            | TyList l -> tyvv (List.map f l)
-            | TyBox(a,b) -> tybox (f a, b)
-            | TyMap(env, b) -> tymap (layout_env_term_unseal d recf env, b)
-            | x -> x
-               
-        and layout_env_term_unseal d recf (C env) = Map.map (fun _ -> layout_boxed_unseal d recf) env |> Env
 
         let (|M|_|) = function
             | TyMap(env,t) -> Some (None,env,t)
@@ -1707,6 +1709,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 Map.iter (fun k v -> printfn "%s" k) (c d.env)
                 tev d a
             | PrintExpr,[a] -> printfn "%A" a; tev d a
+            | LayoutToNone,[a] -> layout_to_none d a
             | LayoutToStack,[a] -> layout_to LayoutStack d a
             | LayoutToPackedStack,[a] -> layout_to LayoutPackedStack d a
             | LayoutToHeap,[a] -> layout_to LayoutHeap d a
