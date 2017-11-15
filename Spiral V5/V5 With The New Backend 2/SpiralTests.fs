@@ -1828,121 +1828,25 @@ inl {ar} = map (inl x -> x * 2) dev_tensor |> to_host_tensor
 Array.show_array ar |> writeline
     """
 
-let cuda3 =
-    "cuda3",[loops;console;array;host_tensor;extern_],"Does calling NVCC to compile a kernel work?",
+let learning =
+    "Learning",[option;cuda;extern_],"The deep learning module.",
     """
+open Cuda
 open Extern
-open Console
+inl allocator size =
+    inl to_float x = Operators(.float,x,x)
+    inl to_int x = FSU.StaticMethod .int64 x int64
+    inl (.+) ptr idx = FSU.BinOp ptr " + " idx ptr
+    inl (.-) ptr idx = FSU.BinOp ptr " - " idx ptr
+    inl pool_size, pool = 
+        inl size = 
+            match size with
+            | _ : float64 -> context.GetDeviceInfo().get_TotalGlobalMemory() |> to_int |> to_float |> (*) size |> to_int |> SizeT
+            | _ : int -> SizeT size
+        size, context.AllocateMemory size
+    pool .+ SizeT 128
 
-inl cuda_kernels = FSU.Global.Constant.cuda_kernels string
-
-inl fsharp_core = assembly_load."FSharp.Core"
-inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
-
-inl Operators = fsharp_core.Microsoft.FSharp.Core.Operators
-inl Environment = mscorlib.System.Environment
-
-inl cuda_toolkit_path = 
-    inl x = Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
-    inl x_ty = type(x)
-    if Operators(.isNull, x_ty, x) then failwith unit "CUDA_PATH_V8_0 environment variable not found. Make sure Cuda 8.0 SDK is installed."
-    x
-
-inl visual_studio_path =
-    inl x = Environment.GetEnvironmentVariable("VS140COMNTOOLS")
-    inl x_ty = type(x)
-    if Operators(.isNull, x_ty, x) then failwith unit "VS140COMNTOOLS environment variable not found. Make sure VS2015 is installed."
-    mscorlib.System.IO.Directory.GetParent(x).get_Parent().get_Parent().get_FullName()
-
-inl cub_path = // The path for the Cuda Unbound library.
-    inl x = Environment.GetEnvironmentVariable("CUB_PATH")
-    inl x_ty = type(x)
-    if Operators(.isNull, x_ty, x) then 
-        failwith unit 
-            @"If you are getting this exception then that means that CUB_PATH environment variable is not defined.
-
-Go to: https://nvlabs.github.io/cub/index.html#sec6
-...and download the latest version of the library, extract it somewhere like, 
-eg. : C:\cub-1.6.3
-and add that directory to the global enviroment by creating the CUB_PATH variable with a pointer to it."
-    x
-
-inl ManagedCuda = assembly_load ."ManagedCuda, Version=7.5.7.0, Culture=neutral, PublicKeyToken=242d898828717aa0" .ManagedCuda
-inl context = ManagedCuda.CudaContext false
-
-inl concat = string_concat ""
-inl compile_kernel_using_nvcc_bat_router (kernels_dir: string) =
-    inl Path = mscorlib .System.IO.Path
-    inl File = mscorlib .System.IO.File
-    inl Stream = mscorlib .System.IO.Stream
-    inl StreamWriter = mscorlib .System.IO.StreamWriter
-    inl ProcessStartInfo = system .System.Diagnostics.ProcessStartInfo
-
-    inl nvcc_router_path = Path.Combine(kernels_dir,"nvcc_router.bat")
-    inl procStartInfo = ProcessStartInfo()
-    procStartInfo.set_RedirectStandardOutput true
-    procStartInfo.set_RedirectStandardError true
-    procStartInfo.set_UseShellExecute false
-    procStartInfo.set_FileName nvcc_router_path
-
-    inl use a b =
-        inl r = b a
-        a.Dispose()
-        r
-
-    use (system.System.Diagnostics.Process()) <| inl process ->
-    process.set_StartInfo procStartInfo
-    inl print_to_standard_output = 
-        closure_of (inl args -> args.get_Data() |> writeline) 
-            (system .System.Diagnostics.DataReceivedEventArgs => ())
-
-    Extern.FSU.Method process ."ErrorDataReceived.Add" print_to_standard_output ()
-
-    inl concat = string_concat ""
-    inl (+) a b = concat (a, b)
-
-    /// Puts quotes around the string.
-    inl quote x = concat ('"',x,'"')
-    inl call x = concat ("call ", x)
-    inl quoted_vs_path_to_vcvars = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64\vcvarsx86_amd64.bat") |> quote
-    inl quoted_vs_path_to_cl = Path.Combine(visual_studio_path, @"VC\bin\x86_amd64") |> quote
-    inl quoted_cuda_toolkit_path_to_include = Path.Combine(cuda_toolkit_path,"include") |> quote
-    inl quoted_cub_path_to_include = cub_path |> quote
-    inl quoted_kernels_dir = kernels_dir |> quote
-    inl target_path = Path.Combine(kernels_dir,"cuda_kernels.ptx")
-    inl quoted_target_path = target_path |> quote
-    inl input_path = Path.Combine(kernels_dir,"cuda_kernels.cu")
-    inl quoted_input_path = input_path |> quote
-
-    concat ("Input path to cuda_kernels_cu is: ", input_path) |> writeline
-    if File.Exists input_path then File.Delete input_path
-    File.WriteAllText(input_path,cuda_kernels)
-   
-    inl _ = 
-        if File.Exists nvcc_router_path then File.Delete nvcc_router_path
-        use (File.OpenWrite(nvcc_router_path)) <| inl nvcc_router_file ->
-        use (StreamWriter(nvcc_router_file :> Stream)) <| inl nvcc_router_stream ->
-
-        nvcc_router_stream.WriteLine(call quoted_vs_path_to_vcvars)
-        concat (
-            "nvcc -gencode=arch=compute_30,code=\\\"sm_30,compute_30\\\" --use-local-env --cl-version 2015 -ccbin ",quoted_vs_path_to_cl,
-            "  -I",quoted_cuda_toolkit_path_to_include," -I",quoted_cub_path_to_include," --keep-dir ",quoted_kernels_dir,
-            " -maxrregcount=0  --machine 64 -ptx -cudart static  -o ",quoted_target_path,' ',quoted_input_path
-            ) |> nvcc_router_stream.WriteLine
-
-    if process.Start() = false then failwith unit "NVCC failed to run."
-    process.BeginOutputReadLine()
-    process.BeginErrorReadLine()
-    process.WaitForExit()
-
-    inl exit_code = process.get_ExitCode()
-    if exit_code <> 0i32 then failwith unit <| concat ("NVCC failed compilation with code ", exit_code)
-
-    context.LoadModulePTX target_path
-
-inl kernels_dir = Environment.get_CurrentDirectory()
-inl modules = compile_kernel_using_nvcc_bat_router kernels_dir
-concat ("Compiled the kernels into the following directory: ", kernels_dir) |> writeline
+allocator 0.7
     """
 
 let tests =
@@ -2035,8 +1939,8 @@ let rewrite_test_cache x =
 //
 //    "speed3",[],"Does the linear sequence of bindings get compiled in linear time?",code
 
-rewrite_test_cache None //(Some(40,80))
+//rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp cuda1
+output_test_to_temp learning
 |> printfn "%s"
 |> ignore

@@ -1,30 +1,7 @@
 module SpiralExample.Main
 let cuda_kernels = """
 extern "C" {
-    __global__ void method_2(long long int * var_0, long long int * var_1);
-    __device__ void method_3(long long int * var_0, long long int * var_1, long long int var_2);
     
-    __global__ void method_2(long long int * var_0, long long int * var_1) {
-        long long int var_2 = threadIdx.x;
-        long long int var_3 = threadIdx.y;
-        long long int var_4 = threadIdx.z;
-        long long int var_5 = blockIdx.x;
-        long long int var_6 = blockIdx.y;
-        long long int var_7 = blockIdx.z;
-        long long int var_8 = (var_5 * 128);
-        long long int var_9 = (var_8 + var_2);
-        method_3(var_0, var_1, var_9);
-    }
-    __device__ void method_3(long long int * var_0, long long int * var_1, long long int var_2) {
-        if ((var_2 < 8)) {
-            long long int var_3 = var_1[var_2];
-            long long int var_4 = (var_3 * 2);
-            var_0[var_2] = var_4;
-            long long int var_5 = (var_2 + 4096);
-            method_3(var_0, var_1, var_5);
-        } else {
-        }
-    }
 }
 """
 
@@ -33,49 +10,9 @@ type EnvStack0 =
     val mem_0: ManagedCuda.CudaContext
     new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
-and EnvHeap1 =
-    {
-    mem_0: (int64 [])
-    }
 let rec method_0 ((var_0: System.Diagnostics.DataReceivedEventArgs)): unit =
     let (var_1: string) = var_0.get_Data()
     System.Console.WriteLine(var_1)
-and method_1((var_0: (int64 [])), (var_1: int64), (var_2: int64)): int64 =
-    if (var_1 <= 7L) then
-        var_0.[int32 var_2] <- var_1
-        let (var_3: int64) = (var_2 + 1L)
-        let (var_4: int64) = (var_1 + 1L)
-        method_1((var_0: (int64 [])), (var_4: int64), (var_3: int64))
-    else
-        var_2
-and method_4((var_0: (int64 []))): string =
-    let (var_1: System.Text.StringBuilder) = System.Text.StringBuilder()
-    let (var_2: System.Text.StringBuilder) = var_1.Append("[|")
-    let (var_3: int64) = var_0.LongLength
-    let (var_4: int64) = 0L
-    let (var_5: string) = method_5((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_3: int64), (var_4: int64))
-    let (var_6: System.Text.StringBuilder) = var_1.Append("|]")
-    var_1.ToString()
-and method_5((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_3: int64)): string =
-    if (var_3 < var_2) then
-        let (var_4: int64) = var_0.[int32 var_3]
-        let (var_5: System.Text.StringBuilder) = var_1.Append("")
-        let (var_6: string) = System.Convert.ToString(var_4)
-        let (var_7: System.Text.StringBuilder) = var_1.Append(var_6)
-        let (var_8: int64) = (var_3 + 1L)
-        method_6((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_8: int64))
-    else
-        ""
-and method_6((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_3: int64)): string =
-    if (var_3 < var_2) then
-        let (var_4: int64) = var_0.[int32 var_3]
-        let (var_5: System.Text.StringBuilder) = var_1.Append("; ")
-        let (var_6: string) = System.Convert.ToString(var_4)
-        let (var_7: System.Text.StringBuilder) = var_1.Append(var_6)
-        let (var_8: int64) = (var_3 + 1L)
-        method_6((var_0: (int64 [])), (var_1: System.Text.StringBuilder), (var_2: int64), (var_8: int64))
-    else
-        "; "
 let (var_0: string) = cuda_kernels
 let (var_1: string) = System.Environment.GetEnvironmentVariable("CUDA_PATH_V8_0")
 let (var_2: bool) = Microsoft.FSharp.Core.Operators.isNull(var_1)
@@ -256,37 +193,13 @@ let (var_129: System.Text.StringBuilder) = var_128.Append(var_12)
 let (var_130: string) = var_129.ToString()
 System.Console.WriteLine(var_130)
 let (var_131: EnvStack0) = EnvStack0((var_11: ManagedCuda.CudaContext))
-let (var_132: ManagedCuda.CudaContext) = var_131.mem_0
-let (var_133: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(8L))
-let (var_134: int64) = 0L
-let (var_135: int64) = 0L
-let (var_136: int64) = method_1((var_133: (int64 [])), (var_135: int64), (var_134: int64))
-let (var_137: EnvHeap1) = ({mem_0 = (var_133: (int64 []))} : EnvHeap1)
-let (var_138: (int64 [])) = var_137.mem_0
-let (var_139: int64) = var_138.LongLength
-let (var_140: ManagedCuda.BasicTypes.SizeT) = ManagedCuda.BasicTypes.SizeT(var_139)
-let (var_141: ManagedCuda.CudaDeviceVariable<int64>) = ManagedCuda.CudaDeviceVariable<int64>(var_140)
-var_141.CopyToDevice(var_138)
-let (var_142: ManagedCuda.BasicTypes.SizeT) = ManagedCuda.BasicTypes.SizeT(8L)
-let (var_143: ManagedCuda.CudaDeviceVariable<int64>) = ManagedCuda.CudaDeviceVariable<int64>(var_142)
-let (var_144: ManagedCuda.BasicTypes.CUdeviceptr) = var_141.get_DevicePointer()
-let (var_145: ManagedCuda.BasicTypes.CUdeviceptr) = var_143.get_DevicePointer()
-// Cuda join point
-// method_2((var_144: ManagedCuda.BasicTypes.CUdeviceptr), (var_145: ManagedCuda.BasicTypes.CUdeviceptr))
-let (var_146: (System.Object [])) = Array.zeroCreate<System.Object> (System.Convert.ToInt32(2L))
-var_146.[int32 0L] <- (var_145 :> System.Object)
-var_146.[int32 1L] <- (var_144 :> System.Object)
-let (var_147: ManagedCuda.CudaKernel) = ManagedCuda.CudaKernel("method_2", var_124, var_11)
-let (var_148: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(32u, 1u, 1u)
-var_147.set_GridDimensions(var_148)
-let (var_149: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(128u, 1u, 1u)
-var_147.set_BlockDimensions(var_149)
-let (var_150: float32) = var_147.Run(var_146)
-let (var_151: ManagedCuda.BasicTypes.SizeT) = var_143.get_Size()
-let (var_152: int32) = Microsoft.FSharp.Core.Operators.int(var_151)
-let (var_153: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(var_152))
-var_143.CopyToHost(var_153)
-var_132.Synchronize()
-let (var_154: string) = method_4((var_153: (int64 [])))
-System.Console.WriteLine(var_154)
-
+let (var_132: ManagedCuda.CudaDeviceProperties) = var_11.GetDeviceInfo()
+let (var_133: ManagedCuda.BasicTypes.SizeT) = var_132.get_TotalGlobalMemory()
+let (var_134: int64) = int64(var_133)
+let (var_135: float) = Microsoft.FSharp.Core.Operators.float(var_134)
+let (var_136: float) = (128.0)
+let (var_137: int64) = int64(var_136)
+let (var_138: ManagedCuda.BasicTypes.SizeT) = ManagedCuda.BasicTypes.SizeT(var_137)
+let (var_139: ManagedCuda.BasicTypes.CUdeviceptr) = var_11.AllocateMemory(var_138)
+let (var_140: ManagedCuda.BasicTypes.SizeT) = ManagedCuda.BasicTypes.SizeT(128L)
+printfn "%A" (var_139)

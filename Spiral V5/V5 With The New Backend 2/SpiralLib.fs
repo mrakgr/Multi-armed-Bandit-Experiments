@@ -1051,8 +1051,9 @@ inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
     | {stream} -> cuda_kernel.RunAsync(stream.get_Stream(),args)
     | _ -> cuda_kernel.Run(args)
 
+inl SizeT = ManagedCuda.BasicTypes.SizeT
+
 inl CudaTensor =
-    inl SizeT = ManagedCuda.BasicTypes.SizeT
     inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
 
     inl total_size = Tuple.foldl (inl s x -> s * HostTensor.dim_size x) 1
@@ -1142,6 +1143,6 @@ inl map f (!zip in) =
     out
 
 
-{ManagedCuda context dim3 run CudaTensor map}
+{ManagedCuda SizeT context dim3 run CudaTensor map Operators}
     """) |> module_
 
