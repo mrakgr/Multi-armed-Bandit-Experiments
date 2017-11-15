@@ -153,9 +153,9 @@ inl rec contains t x =
     | [Some: x] -> true
     | [None] -> false
 
-inl intersperse sep = function
+inl rec intersperse sep = function
     | _ :: () as x -> x
-    | x :: xs -> x -> x :: sep :: intersperse sep xs
+    | x :: xs -> x :: sep :: intersperse sep xs
     | _ -> error_type "Not a tuple."
 
 {index length head tail foldl foldr scanl scanr rev map iter iteri iter2 forall exists filter zip unzip index 
@@ -853,28 +853,33 @@ inl FSU = {
     Method = inl a b c t -> !MacroFs(t, [
         arg: a
         text: dot
-        arg: b
+        text: b
         args: c
         ])
     GenericMethod = inl a b c d t -> !MacroFs(t,[
         arg: a
         text: dot
-        arg: b
+        text: b
         types: c
         args: d
         ])
     StaticMethod = inl a b t -> !MacroFs(t, [
-        arg: a
+        text: a
         args: b
         ])
     StaticGenericMethod = inl a b c t -> !MacroFs(t,[
-        arg: a
+        text: a
         types: b
         args: c
         ])
     Constructor = inl a b -> !MacroFs(a, [
         type: a
         args: b
+        ])
+    BinOp = inl a op b t -> !MacroFs(t,[
+        arg: a
+        text: op
+        arg: b
         ])
     }
 

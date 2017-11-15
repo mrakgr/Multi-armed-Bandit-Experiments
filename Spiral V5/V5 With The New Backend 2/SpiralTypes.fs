@@ -101,8 +101,6 @@ type Op =
     // Macros
     | MacroCuda
     | MacroFs
-    | MacroType
-    | MacroTerm
 
     // Closure
     | ClosureTypeCreate

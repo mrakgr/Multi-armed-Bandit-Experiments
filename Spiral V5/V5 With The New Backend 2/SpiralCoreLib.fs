@@ -105,7 +105,6 @@ inl eq_type a b = !EqType(a,b)
 inl module_values x = !ModuleValues(x)
 inl module_map f a = !ModuleMap(f,a)
 inl module_fold f s a = !ModuleFold(f,s,a)
-inl event_add_handler a b c = !DotNetEventAddHandler(a,b,c)
 inl (:>) a b = !UnsafeUpcastTo(b,a)
 inl (:?>) a b = !UnsafeDowncastTo(b,a)
 
@@ -134,6 +133,6 @@ inl (use) a b =
  split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
- string_length lit_is box_is failwith assert max min eq_type module_values caseable_is event_add_handler (:>)
+ string_length lit_is box_is failwith assert max min eq_type module_values caseable_is (:>)
  (:?>) (=) module_map module_fold (use)} |> stack
     """) |> module_

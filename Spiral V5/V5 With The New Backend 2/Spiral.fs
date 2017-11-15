@@ -1651,7 +1651,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let sizeof d a = TyOp(SizeOf,[tev d a],PrimT Int64T)
 
         let macro op d t a = 
-            let t,a = tev2 d t a
+            let t, a = tev_seq d t, tev d a
             TyOp(op,[a],get_type t) |> make_tyv_and_push_typed_expr_even_if_unit d
            
         let inline add_trace (d: LangEnv) x = {d with trace = x :: (trace d)}
@@ -2003,7 +2003,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             pipe3 active_pat var_name pattern <| fun c name pat -> c (name,pat)
         let pat_or pattern = sepBy1 pattern bar |>> function [x] -> x | x -> PatOr x
         let pat_and pattern = sepBy1 pattern amphersand |>> function [x] -> x | x -> PatAnd x
-        let lit_var = lit_ <|> (var_name |>> LitString)
+        let lit_var = lit_ <|> (var_name_core |>> LitString)
         let pat_type_lit = 
             let literal = lit_var |>> PatTypeLit
             let bind = var_name |>> PatTypeLitBind
@@ -2499,17 +2499,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let tys = List.foldBack (fun (_,x) s -> define_mem s x) fv ([],0) |> fst |> List.rev
             print_type_definition (Some layout) name tys
 
-    let inline codegen_macro codegen print_type (TyTuple x) = 
+    let inline codegen_macro codegen print_type x = 
         let strb = StringBuilder()
         let inline append (x: string) = strb.Append x |> ignore
         let f = function
             | TyList [TypeString "text"; (TypeString x | TyLit (LitString x))] -> append x
             | TyList [TypeString "arg"; (TyV _ | TyT _ as x)] -> append (codegen x)
-            | TyList [TypeString "args"; (TyTuple l)] -> append "("; List.map codegen x |> String.concat ", " |> append; append ")"
+            | TyList [TypeString "args"; (TyTuple l)] -> append "("; List.map codegen l |> String.concat ", " |> append; append ")"
             | TyList [TypeString "type"; (TyV (_,x) | TyT x)] -> append (print_type x)
-            | TyList [TypeString "types"; (TyTuple l)] -> append "<"; List.map (get_type >> print_type) x |> String.concat ", " |> append; append ">" 
+            | TyList [TypeString "types"; (TyTuple l)] -> append "<"; List.map (get_type >> print_type) l |> String.concat ", " |> append; append ">" 
             | x -> failwithf "Unknown argument in macro. Got: %A" x
-        List.iter f x
+        match x with
+        | TyList (TyList _ :: _ as x) -> List.iter f x
+        | x -> f x
         strb.ToString()
 
     // #Cuda
