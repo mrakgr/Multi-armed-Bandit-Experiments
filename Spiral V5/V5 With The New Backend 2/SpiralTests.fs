@@ -1829,10 +1829,23 @@ Array.show_array ar |> writeline
     """
 
 let learning =
-    "Learning",[option;cuda;extern_],"The deep learning module.",
+    "Learning",[option;cuda;extern_;option;console],"The deep learning module.",
     """
 open Cuda
 open Extern
+open Console
+
+inl smartptr_create ptr =
+    inl ptr_ty = type (ptr)
+    inl cell = Option.some ptr |> ref
+    function
+    | .Dispose -> cell := none ptr_ty
+    | .Try -> cell()
+    || () ->
+        match cell() with
+        | [Some: x] -> x
+        | _ -> failwith ptr_ty "A Cuda memory cell that has been disposed has been tried to be accessed."
+    |> stack // Unless this closure is converted to a layout type, the CUdeviceptr gets manifested as a runtime type and gives a type error.
 
 inl allocator size =
     inl to_float x = Operators(.float,x,x)
@@ -1843,23 +1856,29 @@ inl allocator size =
             match size with
             | _ : float64 -> context.GetDeviceInfo().get_TotalGlobalMemory() |> to_int |> to_float |> (*) size |> to_int
             | _ : int64 -> size
-        {size ptr=context.AllocateMemory (SizeT size)}
+        {size ptr=context.AllocateMemory (SizeT size) |> smartptr_create}
 
     inl stack = system.System.Collections.Generic."Stack`1"(pool)()
 
-    met allocate size =
-        inl top = if stack.get_Count() > 0i32 then stack.Peek() else {pool with size=0}
-        inl top_ptr, top_size = top.ptr.Pointer |> to_uint, top.size |> to_uint
-        inl pool_ptr, pool_size = pool.ptr.Pointer |> to_uint, pool.size |> to_uint
-
-        inl pool_used = top_ptr - pool_ptr + top_size
-        assert (to_uint size + pool_used <= pool_size) "Cache size has been exceeded in the allocator."
-        inl cell = {size ptr=top_ptr + top_size |> SizeT |> CUdeviceptr}
-        stack.Push cell
-        inl cell_ptr = cell.ptr 
-        function
-        | .Dispose -> ()
-        | () -> cell_ptr
+    inl allocate =
+        inl smartptr_ty = type (pool.ptr)
+        inl f x = x.ptr().Pointer |> to_uint, x.size |> to_uint
+        inl pool_ptr, pool_size = f pool
+        met rec remove_disposed_and_return_the_first_live ret =
+            if stack.get_Count() > 0i32 then 
+                inl t = stack.Peek() 
+                match t.ptr.Try with
+                || [Some: ptr] -> ret (ptr.Pointer |> to_uint, t.size |> to_uint)
+                | _ -> stack.Pop() |> ignore; remove_disposed_and_return_the_first_live ret 
+            else join (ret (pool_ptr, dyn 0u64))
+            : smartptr_ty
+        inl (!dyn size) ->
+            inb top_ptr, top_size = remove_disposed_and_return_the_first_live
+            inl pool_used = top_ptr - pool_ptr + top_size
+            assert (to_uint size + pool_used <= pool_size) "Cache size has been exceeded in the allocator."
+            inl cell = {size ptr=top_ptr + top_size |> SizeT |> CUdeviceptr |> smartptr_create}
+            stack.Push cell
+            cell.ptr
 
     {allocate}
 
@@ -1912,8 +1931,7 @@ inl CudaTensor allocator =
 
     {create from_host_tensor to_host_tensor zip elem_type coerce_to_1d to_device_tensor_form total_size} |> stack
 
-inl CudaTensor = CudaTensor (allocator 0.7)
-open CudaTensor
+open CudaTensor (allocator 0.7)
 
 inl map f (!zip ({size layout} & in)) =
     inl out = create {size layout elem_type = type (f (elem_type in))}
