@@ -1837,22 +1837,24 @@ open Extern
 inl allocator size =
     inl to_float x = Operators(.float,x,x)
     inl to_int x = FSU.StaticMethod .int64 x int64
-    inl (.+) ptr idx = FSU.BinOp ptr " + " idx ptr
-    inl (.-) ptr idx = FSU.BinOp ptr " - " idx ptr
-    inl cache = 
+    inl to_uint x = FSU.StaticMethod .uint64 x uint64
+    inl pool = 
         inl size = 
             match size with
-            | _ : float64 -> context.GetDeviceInfo().get_TotalGlobalMemory() |> to_int |> to_float |> (*) size |> to_int |> SizeT
-            | _ : int -> SizeT size
-        {size ptr=context.AllocateMemory size}
+            | _ : float64 -> context.GetDeviceInfo().get_TotalGlobalMemory() |> to_int |> to_float |> (*) size |> to_int
+            | _ : int64 -> size
+        {size ptr=context.AllocateMemory (SizeT size)}
 
-    inl stack = system.System.Collections.Generic."Stack`1"(cache)()
+    inl stack = system.System.Collections.Generic."Stack`1"(pool)()
 
     met allocate size =
-        inl top = if stack.get_Count() > 0 then stack.Peek() else {size=SizeT 0; ptr=cache.ptr}
-        inl cache_used = top.ptr .- pool.ptr.Pointer .+ top.size
-        assert (size .+ cache_used <= cache.size) "Cache size has been exceeded in the allocator."
-        inl cell = {size ptr=top.ptr .+ top.size}
+        inl top = if stack.get_Count() > 0i32 then stack.Peek() else {pool with size=0}
+        inl top_ptr, top_size = top.ptr.Pointer |> to_uint, top.size |> to_uint
+        inl pool_ptr, pool_size = pool.ptr.Pointer |> to_uint, pool.size |> to_uint
+
+        inl pool_used = top_ptr - pool_ptr + top_size
+        assert (to_uint size + pool_used <= pool_size) "Cache size has been exceeded in the allocator."
+        inl cell = {size ptr=top_ptr + top_size |> SizeT |> CUdeviceptr}
         stack.Push cell
         inl cell_ptr = cell.ptr 
         function
@@ -1862,39 +1864,35 @@ inl allocator size =
     {allocate}
 
 inl CudaTensor allocator =
-    inl total_size = function
-        | _ :: _ as x -> Tuple.foldl (inl s x -> s * HostTensor.dim_size x) 1 x
-        | x -> x
-
-    inl map_tensor_ar f {ar layout} =
-        match layout with
-        | .aot -> f ar
-        | .toa -> HostTensor.toa_map f ar
-
-    inl elem_type = map_tensor_ar (inl ar -> ar.elem_type)
-    inl map_tensor f {size ar layout} & tns = { size layout ar = map_tensor_ar tns }
-    inl create_ar size1d elem_type = function // It needs to be like this rather than a module so toa_map does not split it.
+    open HostTensor
+    inl create_ar size1d elem_type = 
+        inl ptr = allocator.allocate (size1d * unsafe_convert int64 (sizeof elem_type))
+        function // It needs to be like this rather than a module so toa_map does not split it.
         | .elem_type -> elem_type
-        | .ptr -> allocator.allocate (size1d * unsafe_convert int64 (sizeof elem_type) |> SizeT)
+        | .ptr -> ptr
     inl create {layout elem_type size} = map_tensor (create_ar (total_size size)) {layout size ar=type (elem_type)}
 
     inl from_host_array ar =
         inl elem_type = ar.elem_type
         inl size = Array.length ar |> unsafe_convert int64
         inl t = create_ar size elem_type
-        context(.CopyToDevice,ar,(t.ar.ptr(), ar))
+        context(.CopyToDevice,ar,(t.ptr(), ar))
         t
 
     inl from_host_tensor = map_tensor from_host_array
 
-    inl to_host_array size1d {elem_type ptr} =
+    inl to_host_array size1d ar =
+        inl elem_type = ar.elem_type
+        inl ptr = ar.ptr()
         inl t = Array.create elem_type size1d
-        context(.CopyToHost,t,(t,ptr()))
+        context(.CopyToHost,t,(t,ptr))
         context.Synchronize()
         t
 
     inl to_host_tensor {size} & tns = map_tensor (to_host_array (total_size size)) tns
-    inl ptr {ptr elem_type} = !UnsafeCoerceToArrayCudaGlobal(ptr(),elem_type)
+    inl ptr ar = 
+        inl ptr, elem_type = ar.ptr(), ar.elem_type
+        !UnsafeCoerceToArrayCudaGlobal(ptr,elem_type)
     inl to_device_tensor_form = map_tensor ptr
 
     inl zip = function
@@ -1918,11 +1916,10 @@ inl CudaTensor = CudaTensor (allocator 0.7)
 open CudaTensor
 
 inl map f (!zip ({size layout} & in)) =
-    inl q = elem_type in
-    inl elem_type = type (f (q))
-    inl out = create {size layout elem_type}
+    inl out = create {size layout elem_type = type (f (elem_type in))}
 
-    inl in', out' = coerce_to_1d in |> to_device_tensor_form, coerce_to_1d out |> to_device_tensor_form
+    inl in' = coerce_to_1d in |> to_device_tensor_form
+    inl out' = coerce_to_1d out |> to_device_tensor_form
     inl near_to = total_size (in'.size)
 
     run {
@@ -1940,7 +1937,8 @@ inl map f (!zip ({size layout} & in)) =
 
 open Console
 
-inl dev_tensor = from_host_tensor (HostTensor.init 8 id)
+inl host_tensor = HostTensor.init 8 id
+inl dev_tensor = from_host_tensor host_tensor
 inl {ar} = map (inl x -> x * 2) dev_tensor |> to_host_tensor
 Array.show_array ar |> writeline
     """

@@ -131,10 +131,12 @@ inl (use) a b =
     a.Dispose()
     r
 
+inl sizeof x = !SizeOf(x)
+
 {type_lit_lift assembly_load assembly_load_file mscorlib fsharp_core system error_type print_static dyn (\/) (=>)
  split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
  string_length lit_is box_is failwith assert max min eq_type module_values caseable_is (:>)
- (:?>) (=) module_map module_fold (use)} |> stack
+ (:?>) (=) module_map module_fold (use) sizeof} |> stack
     """) |> module_

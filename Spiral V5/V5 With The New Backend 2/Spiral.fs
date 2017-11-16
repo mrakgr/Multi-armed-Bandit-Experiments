@@ -3175,7 +3175,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | UnsafeUpcastTo,[a;b] -> sprintf "(%s :> %s)" (codegen b) (print_type (get_type a))
                     | UnsafeDowncastTo,[a;b] -> sprintf "(%s :?> %s)" (codegen b) (print_type (get_type a))
                     | MacroFs,[a] -> codegen_macro codegen print_type a
-                    | SizeOf,[TyType a] -> sprintf "(sizeof<%s>)" (print_type a)
+                    | SizeOf,[TyType a] -> sprintf "(int64 sizeof<%s>)" (print_type a)
                     | x -> failwithf "Missing TyOp case. %A" x
             with 
             | :? TypeError -> reraise()

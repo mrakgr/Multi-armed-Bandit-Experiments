@@ -799,8 +799,21 @@ inl index = index_template true
 inl index_unsafe = index_template false
 inl set = set_template true
 inl set_unsafe = set_template false
+
+inl total_size = function
+    | _ :: _ as x -> Tuple.foldl (inl s x -> s * dim_size x) 1 x
+    | x -> x
+
+inl map_tensor_ar f {ar layout} =
+    match layout with
+    | .aot -> f ar
+    | .toa -> toa_map f ar
+
+inl elem_type = map_tensor_ar (inl ar -> ar.elem_type)
+inl map_tensor f {size ar layout} & tns = { size layout ar = map_tensor_ar f tns }
                 
-{init init_toa init_aot index index_unsafe set set_unsafe toa_map toa_map2 toa_iter toa_iter2 dim_size} |> stack
+{init init_toa init_aot index index_unsafe set set_unsafe toa_map toa_map2 toa_iter toa_iter2 dim_size
+ total_size map_tensor_ar elem_type map_tensor} |> stack
     """) |> module_
 
 let extern_ =
@@ -1049,6 +1062,7 @@ inl run {blockDim=!dim3 blockDim gridDim=!dim3 gridDim kernel} as runable =
     | _ -> cuda_kernel.Run(args)
 
 inl SizeT = ManagedCuda.BasicTypes.SizeT
+inl CUdeviceptr = ManagedCuda.BasicTypes.CUdeviceptr
 
 inl CudaTensor =
     inl CudaDeviceVariable = ManagedCuda."CudaDeviceVariable`1"
@@ -1140,6 +1154,6 @@ inl map f (!zip in) =
     out
 
 
-{ManagedCuda SizeT context dim3 run CudaTensor map Operators}
+{ManagedCuda SizeT CUdeviceptr context dim3 run CudaTensor map Operators}
     """) |> module_
 
