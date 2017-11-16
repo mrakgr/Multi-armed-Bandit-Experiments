@@ -10,6 +10,8 @@ inl assembly_load x = !DotNetAssemblyLoad(x)
 inl assembly_load_file x = !DotNetAssemblyLoadFile(x)
 
 inl mscorlib = assembly_load."mscorlib"
+inl fsharp_core = assembly_load."FSharp.Core"
+inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
 
 inl error_type x = !ErrorType(x)
 inl print_static x = !PrintStatic(x)
@@ -129,7 +131,7 @@ inl (use) a b =
     a.Dispose()
     r
 
-{type_lit_lift assembly_load assembly_load_file mscorlib error_type print_static dyn (\/) (=>)
+{type_lit_lift assembly_load assembly_load_file mscorlib fsharp_core system error_type print_static dyn (\/) (=>)
  split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not

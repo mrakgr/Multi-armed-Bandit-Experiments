@@ -913,9 +913,6 @@ inl __gridDimX = cuda_constant_int "gridDim.x"
 inl __gridDimY = cuda_constant_int "gridDim.y"
 inl __gridDimZ = cuda_constant_int "gridDim.z"
 
-inl fsharp_core = assembly_load."FSharp.Core"
-inl system = assembly_load ."system, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
-
 inl Operators = fsharp_core.Microsoft.FSharp.Core.Operators
 inl Environment = mscorlib.System.Environment
 

@@ -3222,10 +3222,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     "{" |> state
                     let inline layout_mem_heap a b = sprintf "%s: %s" a b
                     let inline layout_mem_heap_mutable a b = sprintf "mutable %s: %s" a b
-                    let inline layout_mems layout_mem tys = 
+                    let inline layout_mems layout_mem = 
                         List.iter (fun (name,typ) ->
                             layout_mem name (print_type typ) |> state
-                            ) tys
+                            )
                     match layout with
                     | LayoutHeap -> layout_mems layout_mem_heap tys
                     | LayoutHeapMutable -> layout_mems layout_mem_heap_mutable tys

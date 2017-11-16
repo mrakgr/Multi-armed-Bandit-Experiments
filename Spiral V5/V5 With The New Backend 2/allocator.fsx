@@ -2,3 +2,4 @@
 
 let stack = Stack()
 
+typeof<Stack<int>>

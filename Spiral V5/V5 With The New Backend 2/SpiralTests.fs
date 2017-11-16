@@ -1846,7 +1846,7 @@ inl allocator size =
             | _ : int -> SizeT size
         {size ptr=context.AllocateMemory size}
 
-    inl stack = mscorlib.System.Collection.Generic.Stack(cache)()
+    inl stack = system.System.Collections.Generic."Stack`1"(cache)()
 
     met allocate size =
         inl top = if stack.get_Count() > 0 then stack.Peek() else {size=SizeT 0; ptr=cache.ptr}
@@ -1873,7 +1873,9 @@ inl CudaTensor allocator =
 
     inl elem_type = map_tensor_ar (inl ar -> ar.elem_type)
     inl map_tensor f {size ar layout} & tns = { size layout ar = map_tensor_ar tns }
-    inl create_ar size1d elem_type = {elem_type ptr=allocator.allocate (size1d * unsafe_convert int64 (sizeof elem_type) |> SizeT)}
+    inl create_ar size1d elem_type = function // It needs to be like this rather than a module so toa_map does not split it.
+        | .elem_type -> elem_type
+        | .ptr -> allocator.allocate (size1d * unsafe_convert int64 (sizeof elem_type) |> SizeT)
     inl create {layout elem_type size} = map_tensor (create_ar (total_size size)) {layout size ar=type (elem_type)}
 
     inl from_host_array ar =
@@ -1912,8 +1914,35 @@ inl CudaTensor allocator =
 
     {create from_host_tensor to_host_tensor zip elem_type coerce_to_1d to_device_tensor_form total_size} |> stack
 
+inl CudaTensor = CudaTensor (allocator 0.7)
+open CudaTensor
 
-allocator 0.7
+inl map f (!zip ({size layout} & in)) =
+    inl q = elem_type in
+    inl elem_type = type (f (q))
+    inl out = create {size layout elem_type}
+
+    inl in', out' = coerce_to_1d in |> to_device_tensor_form, coerce_to_1d out |> to_device_tensor_form
+    inl near_to = total_size (in'.size)
+
+    run {
+        blockDim = 128
+        gridDim = 32
+        kernel = cuda // Lexical scoping rocks.
+            inl from = blockIdx.x * blockDim.x + threadIdx.x
+            inl by = gridDim.x * blockDim.x
+            Loops.for {from near_to by body=inl {i} ->
+                HostTensor.set_unsafe in' i (f (HostTensor.index_unsafe out' i))
+                }
+        } |> ignore
+
+    out
+
+open Console
+
+inl dev_tensor = from_host_tensor (HostTensor.init 8 id)
+inl {ar} = map (inl x -> x * 2) dev_tensor |> to_host_tensor
+Array.show_array ar |> writeline
     """
 
 let tests =
