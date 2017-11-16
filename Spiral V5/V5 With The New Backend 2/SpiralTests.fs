@@ -1833,18 +1833,85 @@ let learning =
     """
 open Cuda
 open Extern
+
 inl allocator size =
     inl to_float x = Operators(.float,x,x)
     inl to_int x = FSU.StaticMethod .int64 x int64
     inl (.+) ptr idx = FSU.BinOp ptr " + " idx ptr
     inl (.-) ptr idx = FSU.BinOp ptr " - " idx ptr
-    inl pool_size, pool = 
+    inl cache = 
         inl size = 
             match size with
             | _ : float64 -> context.GetDeviceInfo().get_TotalGlobalMemory() |> to_int |> to_float |> (*) size |> to_int |> SizeT
             | _ : int -> SizeT size
-        size, context.AllocateMemory size
-    pool .+ SizeT 128
+        {size ptr=context.AllocateMemory size}
+
+    inl stack = mscorlib.System.Collection.Generic.Stack(cache)()
+
+    met allocate size =
+        inl top = if stack.get_Count() > 0 then stack.Peek() else {size=SizeT 0; ptr=cache.ptr}
+        inl cache_used = top.ptr .- pool.ptr.Pointer .+ top.size
+        assert (size .+ cache_used <= cache.size) "Cache size has been exceeded in the allocator."
+        inl cell = {size ptr=top.ptr .+ top.size}
+        stack.Push cell
+        inl cell_ptr = cell.ptr 
+        function
+        | .Dispose -> ()
+        | () -> cell_ptr
+
+    {allocate}
+
+inl CudaTensor allocator =
+    inl total_size = function
+        | _ :: _ as x -> Tuple.foldl (inl s x -> s * HostTensor.dim_size x) 1 x
+        | x -> x
+
+    inl map_tensor_ar f {ar layout} =
+        match layout with
+        | .aot -> f ar
+        | .toa -> HostTensor.toa_map f ar
+
+    inl elem_type = map_tensor_ar (inl ar -> ar.elem_type)
+    inl map_tensor f {size ar layout} & tns = { size layout ar = map_tensor_ar tns }
+    inl create_ar size1d elem_type = {elem_type ptr=allocator.allocate (size1d * unsafe_convert int64 (sizeof elem_type) |> SizeT)}
+    inl create {layout elem_type size} = map_tensor (create_ar (total_size size)) {layout size ar=type (elem_type)}
+
+    inl from_host_array ar =
+        inl elem_type = ar.elem_type
+        inl size = Array.length ar |> unsafe_convert int64
+        inl t = create_ar size elem_type
+        context(.CopyToDevice,ar,(t.ar.ptr(), ar))
+        t
+
+    inl from_host_tensor = map_tensor from_host_array
+
+    inl to_host_array size1d {elem_type ptr} =
+        inl t = Array.create elem_type size1d
+        context(.CopyToHost,t,(t,ptr()))
+        context.Synchronize()
+        t
+
+    inl to_host_tensor {size} & tns = map_tensor (to_host_array (total_size size)) tns
+    inl ptr {ptr elem_type} = !UnsafeCoerceToArrayCudaGlobal(ptr(),elem_type)
+    inl to_device_tensor_form = map_tensor ptr
+
+    inl zip = function
+        | x :: xs as l ->
+            inl {size=sa layout=la} = x
+            Tuple.iter (inl {size=sb layout=lb} -> 
+                assert (sa=sb) "The sizes of all the tensors in zip must be the same in order to be zipped"
+                assert (eq_type la lb) "The layouts of all the tensors must have the same format."
+                )
+            match la with
+            | .aot -> error_type "Array of tuples tensor layout is currently not supported."
+            | .toa -> {size=sa layout=la ar = Tuple.map (inl {ar} -> ar) l}
+        | () -> error_type "Empty input to zip is invalid."
+        | x -> x
+        
+    inl coerce_to_1d {size layout ar} = {layout ar size={from=0; to=total_size size - 1} :: ()}
+
+    {create from_host_tensor to_host_tensor zip elem_type coerce_to_1d to_device_tensor_form total_size} |> stack
+
 
 allocator 0.7
     """

@@ -246,6 +246,10 @@
     <None Include="V5 With The New Backend 2\reflection_v1.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v2.fsx" />
     <None Include="V5 With The New Backend 2\reflection_v3.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v4.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v5.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v6.fsx" />
+    <None Include="V5 With The New Backend 2\reflection_v7.fsx" />
     <Compile Include="V5 With The New Backend 2\SpiralHashConsing.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralTypes.fs" />
     <Compile Include="V5 With The New Backend 2\SpiralDotNetIntrop.fs" />
@@ -364,11 +368,7 @@
     <Content Include="V5 With The New Backend 2\TestCache\test81.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test82.txt" />
     <Content Include="V5 With The New Backend 2\TestCache\test9.txt" />
-    <None Include="V5 With The New Backend 2\reflection_v4.fsx" />
-    <None Include="V5 With The New Backend 2\reflection_v5.fsx" />
-    <None Include="V5 With The New Backend 2\reflection_v6.fsx" />
-    <None Include="V5 With The New Backend 2\reflection_v7.fsx" />
-    <Content Include="V5 With The New Backend 2\TextFile1.txt" />
+    <None Include="V5 With The New Backend 2\allocator.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="CudaBlas">
