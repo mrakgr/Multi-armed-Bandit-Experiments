@@ -2610,44 +2610,40 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | LitChar x -> string (int x)
                 | LitString x -> on_type_er trace "String literals are not supported on the Cuda side."
 
-            let if_ v cond tr fl =
-                let inline k codegen' = 
-                    sprintf "if (%s) {" (codegen cond) |> state_new
-                    enter <| fun _ -> codegen' tr
-                    "} else {" |> state_new
-                    enter <| fun _ -> codegen' fl
-                    "}" |> state_new
-                let assign_to tyv = function
-                    | "" as x -> x
-                    | x -> sprintf "%s = %s" tyv x
-                match v with
-                | Some tyv -> k (codegen' {d with branch_return = assign_to (print_tyv_with_type tyv)})
-                | None -> k (codegen' d)
+            let assign_to tyv = function
+                | "" as x -> x
+                | x -> sprintf "%s = %s" tyv x
+
+            let inline if_ codegen' cond tr fl =
+                sprintf "if (%s) {" (codegen cond) |> state_new
+                enter <| fun _ -> codegen' tr
+                "} else {" |> state_new
+                enter <| fun _ -> codegen' fl
+                "}" |> state_new
 
             let print_tag_union t = def_enqueue print_tag_union' t
             let print_case_union x i = [|print_tag_union x;"Case";string i|] |> String.concat null
 
-            let match_with v cases =
+            let match_with codegen' v cases =
                 let print_case =
                     match get_type v with
                     | UnionT _ as x -> print_case_union x
                     | _ -> failwith "Only UnionT can be a type of a match case on the Cuda side."
 
-                sprintf "swith (%s).tag {" (codegen v) |> state_new
-                let print_case i case = 
-                    let case = codegen case
-                    sprintf "case %i :" i |> state_new
-                    enter' <| fun _ ->
-                        "break" |> state
-//                    if String.IsNullOrEmpty case then 
-//                    else sprintf "| %s(%s) ->" (print_case i) case |> state
+                let v = codegen v
                 let rec loop i = function
-                    | case :: body :: rest -> 
-                        print_case i case
-                        enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
+                    | case :: body :: rest ->
+                        let case = codegen case
+                        sprintf "case %i :" i |> state_new
+                        enter' <| fun _ ->
+                            sprintf "%s = %s.%s" case v (print_case i) |> state
+                            codegen' body |> state
+                            "break" |> state
                         loop (i+1) rest
                     | [] -> ()
                     | _ -> failwith "The cases should always be in pairs."
+
+                sprintf "swith (%s).tag {" v |> state_new
                 enter' <| fun _ -> loop 0 cases
                 "}" |> state
 
@@ -2670,6 +2666,11 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | _ -> failwith "impossible"
                 sprintf "((%s) (%s))" conv_func (codegen from)
 
+            let inline print_scope tyv f =
+                let tyv' = print_tyv_with_type tyv
+                tyv' |> state
+                f (codegen' {d with branch_return = assign_to tyv'})
+
             try
                 match expr with
                 | TyT Unit | TyV (_, Unit) -> ""
@@ -2688,13 +2689,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         let b = codegen' d' b
                         if b <> "" then sprintf "%s" b |> state
                     codegen' {d with trace=trace} rest
-                | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' {d with trace=trace} rest
-                | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' {d with trace=trace} rest
-                | TyLet(tyv,b,rest,_,trace) -> 
+                | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> 
+                    print_scope tyv if_ cond tr fl
+                    codegen' {d with trace=trace} rest
+                | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> 
+                    print_scope tyv match_with v cases
+                    codegen' {d with trace=trace} rest
+                | TyLet(tyv & (tag,_),b,rest,_,trace) -> 
                     let _ = 
                         let d = {d with branch_return=id; trace=trace}
                         match b with
-                        | TyOp(ArrayCreate,[a],t) -> sprintf "%s[%s]" (print_tyv_with_type tyv) (codegen' d a)
+                        | TyOp(ArrayCreate,[a],t) -> sprintf "%s[%s]" (print_tyv_with_type (tag,t)) (codegen' d a)
                         | _ -> sprintf "%s = %s" (print_tyv_with_type tyv) (codegen' d b) 
                         |> state 
                     codegen' {d with trace=trace} rest
@@ -2736,8 +2741,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         // The reason for this is the symmetry between the F# and the Cuda side.
                         let b = tuple_field b |> List.map codegen |> String.concat ", "
                         sprintf "%s(%s)" (codegen a) b
-    //                | Case,v :: cases -> match_with print_if_tail v cases; ""
-                    | If,[cond;tr;fl] -> if_ None cond tr fl; ""
+                    | Case, v :: cases -> match_with (codegen' d) v cases; ""
+                    | If,[cond;tr;fl] -> if_ (codegen' d) cond tr fl; ""
                     | ArrayCreate,[a] -> failwith "ArrayCreate should be done in a let statement on the Cuda side."
                     | ArrayIndex,[ar & TyType(ArrayT((ArtCudaLocal | ArtCudaShared | ArtCudaGlobal _),_));idx] -> sprintf "%s[%s]" (codegen ar) (codegen idx)
                     | ArrayLength,[a] -> on_type_er trace "The ArrayLlength operation is invalid on the Cuda side as the array is just a pointer."
@@ -3011,26 +3016,17 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     |> sprintf "'%s'"
                 | LitBool x -> if x then "true" else "false"
 
-            let inline print_if_tail f = f()
+            let inline print_scope v f = // Unit types are impossible in let statements so no need to check for that.
+                sprintf "let %s =" (print_tyv_with_type v) |> state
+                enter' <| fun _ -> f()
 
-            let inline print_if (_,t as v) f =
-                match t with
-                | Unit -> f ()
-                | _ ->
-                    sprintf "let %s =" (print_tyv_with_type v) |> state
-                    enter' <| fun _ -> f()
-
-            let inline if_ v cond tr fl =
+            let inline if_ cond tr fl =
                 let enter f = enter <| fun _ -> handle_unit_in_last_position f
                 
-                let inline k() = 
-                    sprintf "if %s then" (codegen cond) |> state
-                    enter <| fun _ -> codegen tr
-                    "else" |> state
-                    enter <| fun _ -> codegen fl
-                match v with
-                | Some tyv -> print_if tyv k
-                | None -> k()
+                sprintf "if %s then" (codegen cond) |> state
+                enter <| fun _ -> codegen tr
+                "else" |> state
+                enter <| fun _ -> codegen fl
 
             let make_struct x = make_struct codegen x
 
@@ -3053,27 +3049,25 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             let string_index str idx = sprintf "%s.[int32 %s]" (codegen str) (codegen idx)
             let string_slice str a b = sprintf "%s.[int32 %s..int32 %s]" (codegen str) (codegen a) (codegen b)
 
-            let match_with print_if v cases =
-                print_if <| fun _ ->
-                    let print_case =
-                        match get_type v with
-                        | RecT _ as x -> print_case_rec x
-                        | UnionT _ as x -> print_case_union x
-                        | _ -> failwith "impossible"
-
-                    sprintf "match %s with" (codegen v) |> state
-                    let print_case i case = 
+            let match_with v cases =
+                let print_case =
+                    match get_type v with
+                    | RecT _ as x -> print_case_rec x
+                    | UnionT _ as x -> print_case_union x
+                    | _ -> failwith "impossible"
+                
+                let rec loop i = function
+                    | case :: body :: rest -> 
                         let case = codegen case
                         if String.IsNullOrEmpty case then sprintf "| %s ->" (print_case i) |> state
                         else sprintf "| %s(%s) ->" (print_case i) case |> state
-                    let rec loop i = function
-                        | case :: body :: rest -> 
-                            print_case i case
-                            enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
-                            loop (i+1) rest
-                        | [] -> ()
-                        | _ -> failwith "The cases should always be in pairs."
-                    loop 0 cases
+                        enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
+                        loop (i+1) rest
+                    | [] -> ()
+                    | _ -> failwith "The cases should always be in pairs."
+
+                sprintf "match %s with" (codegen v) |> state
+                loop 0 cases
 
             let unsafe_convert tot from =
                 let conv_func = 
@@ -3113,8 +3107,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         let b = codegen' trace b
                         if b <> "" then sprintf "%s" b |> state
                     codegen' trace rest
-                | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' trace rest
-                | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
+                | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> print_scope tyv (fun _ -> if_ cond tr fl); codegen' trace rest
+                | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> print_scope tyv (fun _ -> match_with v cases); codegen' trace rest
                 | TyLet(tyv,b,rest,_,trace) -> sprintf "let %s = %s" (print_tyv_with_type tyv) (codegen' trace b) |> state; codegen' trace rest
                 | TyLit x -> print_value x
                 | TyJoinPoint(S tag & key,join_point_type,fv,_) ->
@@ -3156,8 +3150,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         // The reason for this is the symmetry between the F# and the Cuda side.
                         let b = tuple_field b |> List.map codegen |> String.concat ", "
                         sprintf "%s(%s)" (codegen a) b
-                    | Case,v :: cases -> match_with print_if_tail v cases; ""
-                    | If,[cond;tr;fl] -> if_ None cond tr fl; ""
+                    | Case,v :: cases -> match_with v cases; ""
+                    | If,[cond;tr;fl] -> if_ cond tr fl; ""
                     | ArrayCreate,[a] -> array_create a t
                     | ReferenceCreate,[a] -> reference_create a
                     | ArrayIndex,[b & TyType(ArrayT(ArtDotNetHeap,_));c] -> array_index b c
