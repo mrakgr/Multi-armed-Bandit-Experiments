@@ -121,7 +121,7 @@ inl (=) a b =
             | (), () -> true
             | a, b when eq_type a b -> prim_eq a b // This repeat eq_type check is because unboxed union types might lead to variables of different types to be compared.
             | _ -> false
-        if caseable_boxed_is a && caseable_boxed_is b then (met _ -> body (a, b) : bool)()
+        if caseable_boxed_is a && caseable_boxed_is b then join (body (a, b) : bool)
         else body (a, b)
     if eq_type a b then a = b
     else error_type ("Trying to compare variables of two different types. Got:",a,b)

@@ -1269,6 +1269,19 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | LitUInt8 1uy | LitUInt16 1us | LitUInt32 1u | LitUInt64 1UL
                     | LitFloat32 1.0f | LitFloat64 1.0 -> op_arith_num_one a b
                     | _ -> prim_bin_op_helper t a b
+                | TyV(a',typ), TyV(b',_) when a' = b' && t = Sub -> 
+                    match typ with
+                    | PrimT Int8T -> LitInt8 0y |> TyLit
+                    | PrimT Int16T -> LitInt16 0s |> TyLit
+                    | PrimT Int32T -> LitInt32 0 |> TyLit
+                    | PrimT Int64T -> LitInt64 0L |> TyLit
+                    | PrimT UInt8T -> LitUInt8 0uy |> TyLit
+                    | PrimT UInt16T -> LitUInt16 0us |> TyLit
+                    | PrimT UInt32T -> LitUInt32 0u |> TyLit
+                    | PrimT UInt64T -> LitUInt64 0UL |> TyLit
+                    | PrimT Float32T -> LitFloat32 0.0f |> TyLit
+                    | PrimT Float64T -> LitFloat64 0.0 |> TyLit
+                    | _ -> prim_bin_op_helper t a b
                 | _ -> prim_bin_op_helper t a b
                 ) a b t
 

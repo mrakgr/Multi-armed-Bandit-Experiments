@@ -1837,7 +1837,8 @@ open Console
 
 inl smartptr_create ptr =
     inl ptr_ty = type (ptr)
-    inl cell = Option.some ptr |> ref
+    open Option
+    inl cell = some ptr |> ref
     function
     | .Dispose -> cell := none ptr_ty
     | .Try -> cell()
@@ -1847,29 +1848,19 @@ inl smartptr_create ptr =
         | _ -> failwith ptr_ty "A Cuda memory cell that has been disposed has been tried to be accessed."
     |> stack // Unless this closure is converted to a layout type, the CUdeviceptr gets manifested as a runtime type and gives a type error.
 
-inl safe_alloc_template create ret = 
-    inl tns = create ()
-    inl r = ret tns
-    map_tensor (inl x -> x.Dispose) tns |> ignore
-    r
-
-inl safe_alloc create x = safe_alloc_template (inl _ -> create x)
-inl safe_alloc2 create a b = safe_alloc_template (inl _ -> create a b)
-inl safe_alloc3 create a b c = safe_alloc_template (inl _ -> create a b c)
-
 ///// n is the number of args the create function has.
-//inl safe_alloc n create =
-//    if lit_is n = false then error_type "n need to be static."
-//    inl rec loop vars = function
-//        | 0 ret ->
-//            inl tns = Tuple.foldr (inl x create -> create x) vars create
-//            inl r = ret tns
-//            map_tensor (inl x -> x.Dispose) tns |> ignore
-//            r
-//        | n x -> loop (x :: vars) (n-1)
-//    function
-//    | .unsafe -> create
-//    | x -> loop () n x
+inl safe_alloc n create =
+    if lit_is n = false then error_type "n need to be static."
+    inl rec loop vars = function
+        | 0 ret ->
+            inl tns = Tuple.foldr (inl x create -> create x) vars create
+            inl r = ret tns
+            HostTensor.map_tensor (inl x -> x.ptr.Dispose) tns |> ignore
+            r
+        | n x -> loop (x :: vars) (n-1)
+    function
+    | .unsafe -> create
+    | x -> loop () n x
 
 inl allocator size =
     inl to_float x = Operators(.float,x,x)
@@ -1894,7 +1885,7 @@ inl allocator size =
                 match t.ptr.Try with
                 || [Some: ptr] -> ret (ptr.Pointer |> to_uint, t.size |> to_uint)
                 | _ -> stack.Pop() |> ignore; remove_disposed_and_return_the_first_live ret 
-            else join (ret (pool_ptr, dyn 0u64))
+            else join (ret (pool_ptr, 0u64))
             : smartptr_ty
         inl (!dyn size) ->
             inb top_ptr, top_size = remove_disposed_and_return_the_first_live
@@ -1956,7 +1947,6 @@ inl CudaTensor allocator =
     // CPS'd variants of the allcoator functions.
     inl create = safe_alloc 1 create
     inl from_host_tensor = safe_alloc 1 from_host_tensor
-    inl to_host_tensor = safe_alloc 1 to_host_tensor
 
     {create from_host_tensor to_host_tensor zip elem_type coerce_to_1d to_device_tensor_form total_size} |> stack
 
@@ -1986,9 +1976,13 @@ inl map = safe_alloc 2 map
 
 open Console
 
+inl (>>=) a b ret = 
+    inb a = a 
+    b a ret
+
 inl host_tensor = HostTensor.init 8 id
-inl dev_tensor = from_host_tensor.unsafe host_tensor
-//inb dev_tensor = map (inl x -> x * 2) dev_tensor 
+inm dev_tensor = from_host_tensor host_tensor
+inm dev_tensor = map (inl x -> x * 2) dev_tensor
 inl {ar} = to_host_tensor dev_tensor
 Array.show_array ar |> writeline
     """

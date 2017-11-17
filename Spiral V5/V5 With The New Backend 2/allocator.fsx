@@ -1,5 +1,5 @@
 ﻿open System.Collections.Generic
 
-let stack = Stack()
-
-typeof<Stack<int>>
+let bind a b ret =
+    a <| fun a ->
+        b a ret
