@@ -5,7 +5,6 @@ extern "C" {
         int tag;
         union {
             Tuple1 Union0Case0;
-            void Union0Case1;
         } data;
     };
     Union0 make_Union0Case0(Tuple1 v) {
@@ -14,10 +13,9 @@ extern "C" {
         t.data = v;
         return t;
     }
-    Union0 make_Union0Case1(void v) {
+    Union0 make_Union0Case1() {
         struct Union0 t;
         t.tag = 1;
-        t.data = v;
         return t;
     }
     struct Tuple1 {
@@ -47,17 +45,16 @@ extern "C" {
             long long int var_3 = var_1[var_2];
             Union0 var_4 = (make_Union0Case1());
             long long int var_7;
-            swith (var_4).tag {
+            swith (var_4.tag) {
                 case 0 :
                     var_5 = var_4.date.Union0Case0;
                     long long int var_6 = var_5.mem_0;
-                    long long int var_7 = 99;
+                    var_7 = 99;
                     break;
                 case 1 :
-                     = var_4.date.Union0Case1;
-                    long long int var_7 = (var_3 * 2);
+                    var_7 = (var_3 * 2);
                     break;
-            };
+            }
             var_0[var_2] = var_7;
             long long int var_8 = (var_2 + 4096);
             method_7(var_0, var_1, var_8);

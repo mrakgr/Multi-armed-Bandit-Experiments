@@ -2632,10 +2632,10 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let v = codegen v
                 let rec loop i = function
                     | case :: body :: rest ->
-                        let case = codegen case
                         sprintf "case %i :" i |> state_new
                         enter' <| fun _ ->
-                            sprintf "%s = %s.date.%s" case v (print_case i) |> state
+                            let case = codegen case
+                            if case <> "" then sprintf "%s = %s.date.%s" case v (print_case i) |> state
                             codegen' body |> state
                             "break" |> state
                         loop (i+1) rest
