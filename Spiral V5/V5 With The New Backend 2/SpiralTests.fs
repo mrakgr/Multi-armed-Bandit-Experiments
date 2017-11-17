@@ -1976,15 +1976,16 @@ inl map = safe_alloc 2 map
 
 open Console
 
-inl (>>=) a b ret = 
-    inb a = a 
-    b a ret
+inl (>>=) a b ret = a <| inl a -> b a ret
+inl succ a ret = ret a
 
-inl host_tensor = HostTensor.init 8 id
-inm dev_tensor = from_host_tensor host_tensor
-inm dev_tensor = map (inl x -> x * 2) dev_tensor
-inl {ar} = to_host_tensor dev_tensor
-Array.show_array ar |> writeline
+inl program = 
+    inl host_tensor = HostTensor.init 8 id
+    inm device_tensor = from_host_tensor host_tensor >>= map (inl x -> x * 2)
+    inl {ar} = to_host_tensor device_tensor
+    succ (Array.show_array ar |> writeline)
+
+program id
     """
 
 let tests =
