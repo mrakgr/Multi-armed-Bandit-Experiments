@@ -2642,9 +2642,9 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | [] -> ()
                     | _ -> failwith "The cases should always be in pairs."
 
-                sprintf "swith (%s).tag {" v |> state_new
+                sprintf "swith (%s.tag) {" v |> state_new
                 enter' <| fun _ -> loop 0 cases
-                "}" |> state
+                "}" |> state_new
 
             let make_struct x = make_struct codegen x
 
@@ -2666,9 +2666,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 sprintf "((%s) (%s))" conv_func (codegen from)
 
             let inline print_scope tyv f =
-                let tyv' = print_tyv_with_type tyv
-                tyv' |> state
-                f (codegen' {d with branch_return = assign_to tyv'})
+                print_tyv_with_type tyv |> state
+                f (codegen' {d with branch_return = assign_to (print_tyv tyv)})
 
             try
                 match expr with
@@ -2805,17 +2804,20 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 "union {" |> state_new
                 enter' <| fun _ ->
                     Array.iteri (fun i t -> 
-                        sprintf "%s %sCase%i" (print_type t) name i |> state
+                        if is_unit t = false then
+                            sprintf "%s %sCase%i" (print_type t) name i |> state
                         ) tys
                 "} data" |> state
             "}" |> state
 
             Array.iteri (fun i t ->
-                sprintf "%s make_%sCase%i(%s v) {" name name i (print_type t) |> state_new
+                let is_unit_false = is_unit t = false
+                if is_unit_false then sprintf "%s make_%sCase%i(%s v) {" name name i (print_type t) |> state_new
+                else sprintf "%s make_%sCase%i() {" name name i |> state_new
                 enter' <| fun _ ->
                     sprintf "struct %s t" name |> state
                     sprintf "t.tag = %i" i |> state
-                    "t.data = v" |> state
+                    if is_unit_false then "t.data = v" |> state
                     "return t" |> state
                 "}" |> state_new
                 ) tys

@@ -1979,9 +1979,15 @@ open Console
 inl (>>=) a b ret = a <| inl a -> b a ret
 inl succ a ret = ret a
 
+inl map_op x =
+    open Option
+    match dyn (none int64) with
+    | [Some: x] -> 99
+    | [None] -> x*2
+
 inl program = 
     inl host_tensor = HostTensor.init 8 id
-    inm device_tensor = from_host_tensor host_tensor >>= map (inl x -> x * 2)
+    inm device_tensor = from_host_tensor host_tensor >>= map map_op
     inl {ar} = to_host_tensor device_tensor
     succ (Array.show_array ar |> writeline)
 
@@ -2078,9 +2084,9 @@ let rewrite_test_cache x =
 //
 //    "speed3",[],"Does the linear sequence of bindings get compiled in linear time?",code
 
-rewrite_test_cache None //(Some(40,80))
+//rewrite_test_cache None //(Some(40,80))
 
-//output_test_to_temp learning
-//|> printfn "%s"
-//|> ignore
+output_test_to_temp learning
+|> printfn "%s"
+|> ignore
 

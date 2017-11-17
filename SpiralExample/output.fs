@@ -1,6 +1,33 @@
 module SpiralExample.Main
 let cuda_kernels = """
 extern "C" {
+    struct Union0 {
+        int tag;
+        union {
+            Tuple1 Union0Case0;
+            void Union0Case1;
+        } data;
+    };
+    Union0 make_Union0Case0(Tuple1 v) {
+        struct Union0 t;
+        t.tag = 0;
+        t.data = v;
+        return t;
+    }
+    Union0 make_Union0Case1(void v) {
+        struct Union0 t;
+        t.tag = 1;
+        t.data = v;
+        return t;
+    }
+    struct Tuple1 {
+        long long int mem_0;
+    };
+    __device__ __forceinline__ Tuple1 make_Tuple1(long long int mem_0){
+        Tuple1 tmp;
+        tmp.mem_0 = mem_0;
+        return tmp;
+    }
     __global__ void method_6(long long int * var_0, long long int * var_1);
     __device__ void method_7(long long int * var_0, long long int * var_1, long long int var_2);
     
@@ -18,10 +45,22 @@ extern "C" {
     __device__ void method_7(long long int * var_0, long long int * var_1, long long int var_2) {
         if ((var_2 < 8)) {
             long long int var_3 = var_1[var_2];
-            long long int var_4 = (var_3 * 2);
-            var_0[var_2] = var_4;
-            long long int var_5 = (var_2 + 4096);
-            method_7(var_0, var_1, var_5);
+            Union0 var_4 = (make_Union0Case1());
+            long long int var_7;
+            swith (var_4).tag {
+                case 0 :
+                    var_5 = var_4.date.Union0Case0;
+                    long long int var_6 = var_5.mem_0;
+                    long long int var_7 = 99;
+                    break;
+                case 1 :
+                     = var_4.date.Union0Case1;
+                    long long int var_7 = (var_3 * 2);
+                    break;
+            };
+            var_0[var_2] = var_7;
+            long long int var_8 = (var_2 + 4096);
+            method_7(var_0, var_1, var_8);
         } else {
         }
     }
@@ -376,28 +415,28 @@ let (var_162: EnvStack3) = method_3((var_149: uint64), (var_151: System.Collecti
 let (var_163: (Union1 ref)) = var_162.mem_0
 let (var_164: ManagedCuda.BasicTypes.CUdeviceptr) = method_1((var_163: (Union1 ref)))
 var_152.CopyToDevice(var_164, var_158)
-let (var_165: int64) = (8L * var_160)
-let (var_166: EnvStack3) = method_3((var_149: uint64), (var_151: System.Collections.Generic.Stack<Env4>), (var_150: uint64), (var_165: int64))
-let (var_167: ManagedCuda.BasicTypes.CUdeviceptr) = method_1((var_163: (Union1 ref)))
-let (var_168: (Union1 ref)) = var_166.mem_0
-let (var_169: ManagedCuda.BasicTypes.CUdeviceptr) = method_1((var_168: (Union1 ref)))
+let (var_169: int64) = (8L * var_160)
+let (var_170: EnvStack3) = method_3((var_149: uint64), (var_151: System.Collections.Generic.Stack<Env4>), (var_150: uint64), (var_169: int64))
+let (var_171: ManagedCuda.BasicTypes.CUdeviceptr) = method_1((var_163: (Union1 ref)))
+let (var_172: (Union1 ref)) = var_170.mem_0
+let (var_173: ManagedCuda.BasicTypes.CUdeviceptr) = method_1((var_172: (Union1 ref)))
 // Cuda join point
-// method_6((var_167: ManagedCuda.BasicTypes.CUdeviceptr), (var_169: ManagedCuda.BasicTypes.CUdeviceptr))
-let (var_170: (System.Object [])) = Array.zeroCreate<System.Object> (System.Convert.ToInt32(2L))
-var_170.[int32 0L] <- (var_169 :> System.Object)
-var_170.[int32 1L] <- (var_167 :> System.Object)
-let (var_171: ManagedCuda.CudaKernel) = ManagedCuda.CudaKernel("method_6", var_124, var_11)
-let (var_172: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(32u, 1u, 1u)
-var_171.set_GridDimensions(var_172)
-let (var_173: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(128u, 1u, 1u)
-var_171.set_BlockDimensions(var_173)
-let (var_174: float32) = var_171.Run(var_170)
-let (var_175: ManagedCuda.BasicTypes.CUdeviceptr) = method_1((var_168: (Union1 ref)))
-let (var_176: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(8L))
-var_152.CopyToHost(var_176, var_175)
+// method_6((var_171: ManagedCuda.BasicTypes.CUdeviceptr), (var_173: ManagedCuda.BasicTypes.CUdeviceptr))
+let (var_174: (System.Object [])) = Array.zeroCreate<System.Object> (System.Convert.ToInt32(2L))
+var_174.[int32 0L] <- (var_173 :> System.Object)
+var_174.[int32 1L] <- (var_171 :> System.Object)
+let (var_175: ManagedCuda.CudaKernel) = ManagedCuda.CudaKernel("method_6", var_124, var_11)
+let (var_176: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(32u, 1u, 1u)
+var_175.set_GridDimensions(var_176)
+let (var_177: ManagedCuda.VectorTypes.dim3) = ManagedCuda.VectorTypes.dim3(128u, 1u, 1u)
+var_175.set_BlockDimensions(var_177)
+let (var_178: float32) = var_175.Run(var_174)
+let (var_179: ManagedCuda.BasicTypes.CUdeviceptr) = method_1((var_172: (Union1 ref)))
+let (var_180: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(8L))
+var_152.CopyToHost(var_180, var_179)
 var_152.Synchronize()
-let (var_177: string) = method_8((var_176: (int64 [])))
-System.Console.WriteLine(var_177)
-var_168 := Union1Case1
+let (var_181: string) = method_8((var_180: (int64 [])))
+System.Console.WriteLine(var_181)
+var_172 := Union1Case1
 var_163 := Union1Case1
 
