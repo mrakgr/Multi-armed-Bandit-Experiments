@@ -2632,17 +2632,18 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let v = codegen v
                 let rec loop i = function
                     | case :: body :: rest ->
-                        sprintf "case %i :" i |> state_new
+                        sprintf "case %i : {" i |> state_new
                         enter' <| fun _ ->
-                            let case = codegen case
-                            if case <> "" then sprintf "%s = %s.date.%s" case v (print_case i) |> state
+                            let case_ty = get_type case
+                            if is_unit case_ty = false then sprintf "%s %s = %s.data.%s" (print_type case_ty) (codegen case) v (print_case i) |> state
                             codegen' body |> state
                             "break" |> state
+                        "}" |> state_new
                         loop (i+1) rest
                     | [] -> ()
                     | _ -> failwith "The cases should always be in pairs."
 
-                sprintf "swith (%s.tag) {" v |> state_new
+                sprintf "switch (%s.tag) {" v |> state_new
                 enter' <| fun _ -> loop 0 cases
                 "}" |> state_new
 
@@ -2798,7 +2799,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             sprintf "typedef %s(*%s)(%s);" ret_ty name ty |> state
 
         let print_union_definition name tys =
-            sprintf "struct %s {" name |> state_new
+            sprintf "typedef struct %s {" name |> state_new
             enter' <| fun _ ->
                 "int tag" |> state
                 "union {" |> state_new
@@ -2813,7 +2814,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             Array.iteri (fun i t ->
                 let is_unit_false = is_unit t = false
                 if is_unit_false then sprintf "%s make_%sCase%i(%s v) {" name name i (print_type t) |> state_new
-                else sprintf "%s make_%sCase%i() {" name name i |> state_new
+                else sprintf "__device__ __forceinline__  %s make_%sCase%i() {" name name i |> state_new
                 enter' <| fun _ ->
                     sprintf "struct %s t" name |> state
                     sprintf "t.tag = %i" i |> state
