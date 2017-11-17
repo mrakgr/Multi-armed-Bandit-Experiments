@@ -2547,6 +2547,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let print_tag_tuple t = def_enqueue print_tag_tuple' t
         let print_tag_union t = def_enqueue print_tag_union' t
+        let print_case_union x i = [|print_tag_union x;"Case";string i|] |> String.concat null
+
         let print_tag_env layout t =
             match layout with
             | None -> def_enqueue print_tag_env' t
@@ -2621,9 +2623,6 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 enter <| fun _ -> codegen' fl
                 "}" |> state_new
 
-            let print_tag_union t = def_enqueue print_tag_union' t
-            let print_case_union x i = [|print_tag_union x;"Case";string i|] |> String.concat null
-
             let match_with codegen' v cases =
                 let print_case =
                     match get_type v with
@@ -2636,7 +2635,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         let case = codegen case
                         sprintf "case %i :" i |> state_new
                         enter' <| fun _ ->
-                            sprintf "%s = %s.%s" case v (print_case i) |> state
+                            sprintf "%s = %s.date.%s" case v (print_case i) |> state
                             codegen' body |> state
                             "break" |> state
                         loop (i+1) rest
@@ -2730,7 +2729,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     let t = get_type expr
                     Map.toArray env_term
                     |> Array.map snd
-                    |> fun x -> make_struct x "" (fun args -> sprintf "(%s(%s))" (print_tag_env None t) args)
+                    |> fun x -> make_struct x "" (fun args -> sprintf "(make_%s(%s))" (print_tag_env None t) args)
                     |> branch_return
                 | TyList l -> let t = get_type expr in make_struct l "" (fun args -> sprintf "make_%s(%s)" (print_tag_tuple t) args) |> branch_return
                 | TyOp(op,args,t) ->
@@ -2794,11 +2793,32 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | :? TypeError -> reraise()
             | e -> on_type_er trace e.Message
 
-        let print_closure_type_definition (a,r) tag =
+        let print_closure_type_definition name (a,r) =
             let ret_ty = print_type r
-            let name = print_tag_closure' tag
             let ty = tuple_field_ty a |> List.map print_type |> String.concat ", "
             sprintf "typedef %s(*%s)(%s);" ret_ty name ty |> state
+
+        let print_union_definition name tys =
+            sprintf "struct %s {" name |> state_new
+            enter' <| fun _ ->
+                "int tag" |> state
+                "union {" |> state_new
+                enter' <| fun _ ->
+                    Array.iteri (fun i t -> 
+                        sprintf "%s %sCase%i" (print_type t) name i |> state
+                        ) tys
+                "} data" |> state
+            "}" |> state
+
+            Array.iteri (fun i t ->
+                sprintf "%s make_%sCase%i(%s v) {" name name i (print_type t) |> state_new
+                enter' <| fun _ ->
+                    sprintf "struct %s t" name |> state
+                    sprintf "t.tag = %i" i |> state
+                    "t.data = v" |> state
+                    "return t" |> state
+                "}" |> state_new
+                ) tys
 
         let print_type_definition layout name tys =
             match layout with
@@ -2872,9 +2892,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | MapT(tys, _) -> define_mapt ty print_tag_env print_type_definition tys
                 | LayoutT ((LayoutStack | LayoutPackedStack) as layout, env, _) ->
                     define_layoutt ty print_tag_env print_type_definition layout env
-//                | UnionT tys as x ->
-//                    sprintf "%s %s =" (type_prefix()) (print_tag_union x) |> state
-//                    print_union_cases (print_case_union x) (Set.toList tys)
+                | UnionT tys as x -> print_union_definition (print_tag_union x) (Set.toArray tys)
+                | ClosureT(a,r) as x -> print_closure_type_definition (print_tag_closure x) (a,r)
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
@@ -2969,8 +2988,8 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let print_tyv_with_type (tag,ty as v) = sprintf "(%s: %s)" (print_tyv v) (print_type ty)
         let print_args x = print_args print_tyv_with_type x
 
-        let print_case_rec x i = print_tag_rec x + sprintf "Case%i" i
-        let print_case_union x i = print_tag_union x + sprintf "Case%i" i
+        let print_case_rec x i = [|print_tag_rec x;"Case";string i|] |> String.concat null
+        let print_case_union x i = [|print_tag_union x;"Case";string i|] |> String.concat null
 
         let inline handle_unit_in_last_position f =
             let c = buffer_temp.Count
