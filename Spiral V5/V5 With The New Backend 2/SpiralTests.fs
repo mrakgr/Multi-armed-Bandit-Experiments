@@ -1847,17 +1847,29 @@ inl smartptr_create ptr =
         | _ -> failwith ptr_ty "A Cuda memory cell that has been disposed has been tried to be accessed."
     |> stack // Unless this closure is converted to a layout type, the CUdeviceptr gets manifested as a runtime type and gives a type error.
 
-/// n is the number of args the create function has.
-inl safe_alloc n create ret =
-    if lit_is n = false then error_type "n need to be static."
-    inl rec loop vars = function
-        | 0 -> 
-            inl tns = Tuple.foldr (inl x create -> create x) vars create) ret
-            inl r = ret tns
-            map_tensor (inl x -> x.Dispose) tns |> ignore
-            r
-        | n -> inl x -> loop (x :: vars) (n-1)
-    loop () n
+inl safe_alloc_template create ret = 
+    inl tns = create ()
+    inl r = ret tns
+    map_tensor (inl x -> x.Dispose) tns |> ignore
+    r
+
+inl safe_alloc create x = safe_alloc_template (inl _ -> create x)
+inl safe_alloc2 create a b = safe_alloc_template (inl _ -> create a b)
+inl safe_alloc3 create a b c = safe_alloc_template (inl _ -> create a b c)
+
+///// n is the number of args the create function has.
+//inl safe_alloc n create =
+//    if lit_is n = false then error_type "n need to be static."
+//    inl rec loop vars = function
+//        | 0 ret ->
+//            inl tns = Tuple.foldr (inl x create -> create x) vars create
+//            inl r = ret tns
+//            map_tensor (inl x -> x.Dispose) tns |> ignore
+//            r
+//        | n x -> loop (x :: vars) (n-1)
+//    function
+//    | .unsafe -> create
+//    | x -> loop () n x
 
 inl allocator size =
     inl to_float x = Operators(.float,x,x)
@@ -1951,7 +1963,7 @@ inl CudaTensor allocator =
 open CudaTensor (allocator 0.7)
 
 inl map f (!zip ({size layout} & in)) =
-    inl out = create {size layout elem_type = type (f (elem_type in))}
+    inl out = create.unsafe {size layout elem_type = type (f (elem_type in))}
 
     inl in' = coerce_to_1d in |> to_device_tensor_form
     inl out' = coerce_to_1d out |> to_device_tensor_form
@@ -1975,8 +1987,8 @@ inl map = safe_alloc 2 map
 open Console
 
 inl host_tensor = HostTensor.init 8 id
-inb dev_tensor = from_host_tensor host_tensor
-inb dev_tensor = map (inl x -> x * 2) dev_tensor 
+inl dev_tensor = from_host_tensor.unsafe host_tensor
+//inb dev_tensor = map (inl x -> x * 2) dev_tensor 
 inl {ar} = to_host_tensor dev_tensor
 Array.show_array ar |> writeline
     """
