@@ -2610,7 +2610,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | LitChar x -> string (int x)
                 | LitString x -> on_type_er trace "String literals are not supported on the Cuda side."
 
-            let inline if_ v cond tr fl =
+            let if_ v cond tr fl =
                 let inline k codegen' = 
                     sprintf "if (%s) {" (codegen cond) |> state_new
                     enter <| fun _ -> codegen' tr
@@ -2623,6 +2623,33 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 match v with
                 | Some tyv -> k (codegen' {d with branch_return = assign_to (print_tyv_with_type tyv)})
                 | None -> k (codegen' d)
+
+            let print_tag_union t = def_enqueue print_tag_union' t
+            let print_case_union x i = [|print_tag_union x;"Case";string i|] |> String.concat null
+
+            let match_with v cases =
+                let print_case =
+                    match get_type v with
+                    | UnionT _ as x -> print_case_union x
+                    | _ -> failwith "Only UnionT can be a type of a match case on the Cuda side."
+
+                sprintf "swith (%s).tag {" (codegen v) |> state_new
+                let print_case i case = 
+                    let case = codegen case
+                    sprintf "case %i :" i |> state_new
+                    enter' <| fun _ ->
+                        "break" |> state
+//                    if String.IsNullOrEmpty case then 
+//                    else sprintf "| %s(%s) ->" (print_case i) case |> state
+                let rec loop i = function
+                    | case :: body :: rest -> 
+                        print_case i case
+                        enter <| fun _ -> handle_unit_in_last_position (fun _ -> codegen body)
+                        loop (i+1) rest
+                    | [] -> ()
+                    | _ -> failwith "The cases should always be in pairs."
+                enter' <| fun _ -> loop 0 cases
+                "}" |> state
 
             let make_struct x = make_struct codegen x
 
@@ -2662,7 +2689,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                         if b <> "" then sprintf "%s" b |> state
                     codegen' {d with trace=trace} rest
                 | TyLet(tyv,TyOp(If,[cond;tr;fl],t),rest,_,trace) -> if_ (Some tyv) cond tr fl; codegen' {d with trace=trace} rest
-    //            | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' trace rest
+                | TyLet(tyv,TyOp(Case,v :: cases,t),rest,_,trace) -> match_with (print_if tyv) v cases; codegen' {d with trace=trace} rest
                 | TyLet(tyv,b,rest,_,trace) -> 
                     let _ = 
                         let d = {d with branch_return=id; trace=trace}
@@ -2687,7 +2714,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                     | JoinPointClosure ->
                         if List.isEmpty call_args then branch_return method_name 
                         else on_type_er trace "The closure should not have free variables on the Cuda side."
-                | TyBox(x, t) -> failwith "Will be implemented. (It can be done easily, I just need to put the printing functions in.)"
+                | TyBox(x, t) -> 
+                    let case_name =
+                        let union_idx s = Seq.findIndex ((=) (get_type x)) s
+                        match t with
+                        | UnionT s -> "make_" + print_case_union t (union_idx s)
+                        | _ -> failwith "Only UnionT can be a boxed type."
+                    if is_unit (get_type x) then sprintf "(%s())" case_name else sprintf "(%s(%s))" case_name (codegen x)
                 | TyMap(C env_term, _) ->
                     let t = get_type expr
                     Map.toArray env_term
