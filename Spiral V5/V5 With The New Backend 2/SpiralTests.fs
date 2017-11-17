@@ -1847,6 +1847,18 @@ inl smartptr_create ptr =
         | _ -> failwith ptr_ty "A Cuda memory cell that has been disposed has been tried to be accessed."
     |> stack // Unless this closure is converted to a layout type, the CUdeviceptr gets manifested as a runtime type and gives a type error.
 
+/// n is the number of args the create function has.
+inl safe_alloc n create ret =
+    if lit_is n = false then error_type "n need to be static."
+    inl rec loop vars = function
+        | 0 -> 
+            inl tns = Tuple.foldr (inl x create -> create x) vars create) ret
+            inl r = ret tns
+            map_tensor (inl x -> x.Dispose) tns |> ignore
+            r
+        | n -> inl x -> loop (x :: vars) (n-1)
+    loop () n
+
 inl allocator size =
     inl to_float x = Operators(.float,x,x)
     inl to_int x = FSU.StaticMethod .int64 x int64
@@ -1929,6 +1941,11 @@ inl CudaTensor allocator =
         
     inl coerce_to_1d {size layout ar} = {layout ar size={from=0; to=total_size size - 1} :: ()}
 
+    // CPS'd variants of the allcoator functions.
+    inl create = safe_alloc 1 create
+    inl from_host_tensor = safe_alloc 1 from_host_tensor
+    inl to_host_tensor = safe_alloc 1 to_host_tensor
+
     {create from_host_tensor to_host_tensor zip elem_type coerce_to_1d to_device_tensor_form total_size} |> stack
 
 open CudaTensor (allocator 0.7)
@@ -1953,11 +1970,14 @@ inl map f (!zip ({size layout} & in)) =
 
     out
 
+inl map = safe_alloc 2 map
+
 open Console
 
 inl host_tensor = HostTensor.init 8 id
-inl dev_tensor = from_host_tensor host_tensor
-inl {ar} = map (inl x -> x * 2) dev_tensor |> to_host_tensor
+inb dev_tensor = from_host_tensor host_tensor
+inb dev_tensor = map (inl x -> x * 2) dev_tensor 
+inl {ar} = to_host_tensor dev_tensor
 Array.show_array ar |> writeline
     """
 
