@@ -103,7 +103,7 @@ type Op =
     | MacroFs
 
     // Closure
-    | ClosureTypeCreate
+    | TermFunctionTypeCreate
     | ClosureIs
     | ClosureDomain
     | ClosureRange
@@ -318,7 +318,7 @@ and Ty =
     | LitT of Value
     | MapT of EnvTy * MapType
     | LayoutT of LayoutType * EnvTerm * MapType
-    | ClosureT of Ty * Ty
+    | TermFunctionT of Ty * Ty
     | UnionT of Set<Ty>
     | RecT of JoinPointKey
     | ArrayT of ArrayType * Ty

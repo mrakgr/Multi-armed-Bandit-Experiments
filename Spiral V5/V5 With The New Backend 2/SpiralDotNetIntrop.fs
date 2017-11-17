@@ -9,7 +9,7 @@ let listt x = ListT x
 let litt x = LitT x
 let funt (x, core) = MapT (x, core)
 let uniont x = UnionT x
-let closuret a b = ClosureT (a,b)
+let term_functiont a b = TermFunctionT (a,b)
 let arrayt x = ArrayT x
 
 let BListT = listt []
@@ -117,7 +117,7 @@ and ss_type_apply (d: SSEnvTerm) (x: Type): Ty =
     elif x.IsByRef then arrayt(ArtDotNetReference, ss_type_apply d (x.GetElementType())) // Incorrect, but useful
     elif FSharp.Reflection.FSharpType.IsFunction x then 
         let a,b = FSharp.Reflection.FSharpType.GetFunctionElements x
-        closuret (ss_type_apply d a) (ss_type_apply d b)
+        term_functiont (ss_type_apply d a) (ss_type_apply d b)
     else ss_compile_type_definition Map.empty x
 
 and ss_compile_method (d: SSEnvTerm) = 
@@ -130,7 +130,7 @@ and ss_compile_method (d: SSEnvTerm) =
 
         let ret = ss_type_apply d x.ReturnType
 
-        closuret pars ret
+        term_functiont pars ret
 
 and ss_compile_field (d: SSEnvTerm) = 
     memoize ss_cache_field <| fun (x: FieldInfo) ->

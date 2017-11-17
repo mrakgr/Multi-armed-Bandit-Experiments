@@ -174,7 +174,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     and is_unit_env x = Map.forall (fun _ -> is_unit) x
     and is_unit = function
         | LitT _ -> true
-        | UnionT _ | RecT _ | DotNetTypeT _ | ClosureT _ | PrimT _ -> false
+        | UnionT _ | RecT _ | DotNetTypeT _ | TermFunctionT _ | PrimT _ -> false
         | ArrayT (_,t) -> is_unit t
         | MapT (env,_) -> is_unit_env env
         | LayoutT (_, C x, _) -> typed_expr_env_free_var_exists x = false
@@ -703,7 +703,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let imaginary_arguments = HashSet(imaginary_arguments)
                 List.filter (imaginary_arguments.Contains >> not) call_arguments
 
-            ty_join_point join_point_key JoinPointClosure captured_arguments (closuret arg_ty ret_ty)
+            ty_join_point join_point_key JoinPointClosure captured_arguments (term_functiont arg_ty ret_ty)
             |> make_tyv_and_push_typed_expr_even_if_unit d
 
         let rec is_cuda_type = function
@@ -718,7 +718,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 let {call_args=args},_ = renamer_apply_env l
                 List.forall (fun (_,t) -> is_cuda_type t) args
             | ArrayT ((ArtCudaGlobal _ | ArtCudaShared | ArtCudaLocal),t) -> is_cuda_type t
-            | UnionT _ | LayoutT _ | ArrayT _ | DotNetTypeT _ | ClosureT _ | RecT _ -> false
+            | UnionT _ | LayoutT _ | ArrayT _ | DotNetTypeT _ | TermFunctionT _ | RecT _ -> false
 
         let join_point_cuda d expr = 
             let {call_args=call_arguments; method_pars=method_parameters; renamer'=renamer}, renamed_env = renamer_apply_env d.env
@@ -802,7 +802,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
         let inline closure_f on_fail on_succ d x =
             match tev d x with
-            | TyType(ClosureT (a,b)) -> on_succ (a,b)
+            | TyType(TermFunctionT (a,b)) -> on_succ (a,b)
             | x -> on_fail x
 
         let closure_is d x =
@@ -817,7 +817,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let closure_type_create d a b =
             let a = tev_seq d a
             let b = tev_seq d b
-            closuret (get_type a) (get_type b) |> tyt
+            term_functiont (get_type a) (get_type b) |> tyt
 
         let case_ d v case =
             let inline assume d v x branch = tev_assume (cse_add' d v x) d branch
@@ -998,7 +998,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                             if typ_arg_len = typ_arg'.Length then
                                 let r = ss_apply lam typ_arg
                                 match r with
-                                | ClosureT(method_ty,method_ret) -> 
+                                | TermFunctionT(method_ty,method_ret) -> 
                                     if tuple_field_ty method_ty = tuple_field_ty arg_ty then Some method_ret else None
                                 | _ -> failwith "Methods need to return an arrow type."
                             else None
@@ -1092,7 +1092,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 if is_int idx then TyOp(StringIndex,[str;idx],PrimT CharT) |> destructure d
                 else on_type_er (trace d) "Expected an int as the second argument to string index."
             // apply_closure
-            | closure & TyType(ClosureT (clo_arg_ty,clo_ret_ty)), args -> 
+            | closure & TyType(TermFunctionT (clo_arg_ty,clo_ret_ty)), args -> 
                 let arg_ty = get_type args
                 if arg_ty <> clo_arg_ty then on_type_er (trace d) <| sprintf "Cannot apply an argument of type %A to closure (%A -> %A)." arg_ty clo_arg_ty clo_ret_ty
                 else TyOp(Apply,[closure;args],clo_ret_ty) |> make_tyv_and_push_typed_expr_even_if_unit d
@@ -1766,7 +1766,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | TypeGet,[a] -> type_get d a
             | TypeSplit,[a] -> type_split d a
 
-            | ClosureTypeCreate,[a;b] -> closure_type_create d a b
+            | TermFunctionTypeCreate,[a;b] -> closure_type_create d a b
             | ClosureIs,[a] -> closure_is d a
             | ClosureDomain,[a] -> closure_dr true d a
             | ClosureRange,[a] -> closure_dr false d a 
@@ -2568,7 +2568,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ArrayT((ArtCudaLocal | ArtCudaShared | ArtCudaGlobal _),t) -> sprintf "%s *" (print_type t)
             | ArrayT _ -> failwith "Not implemented."
             | LayoutT (_, _, _) | RecT _ | DotNetTypeT _ as x -> failwithf "%A is not supported on the Cuda side." x
-            | ClosureT _ as t -> print_tag_closure t
+            | TermFunctionT _ as t -> print_tag_closure t
             | PrimT x ->
                 match x with
                 | UInt8T -> "unsigned char"
@@ -2893,7 +2893,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | LayoutT ((LayoutStack | LayoutPackedStack) as layout, env, _) ->
                     define_layoutt ty print_tag_env print_type_definition layout env
                 | UnionT tys as x -> print_union_definition (print_tag_union x) (Set.toArray tys)
-                | ClosureT(a,r) as x -> print_closure_type_definition (print_tag_closure x) (a,r)
+                | TermFunctionT(a,r) as x -> print_closure_type_definition (print_tag_closure x) (a,r)
                 | _ -> failwith "impossible"
                 move_to buffer_type_definitions buffer_temp
 
@@ -2954,7 +2954,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             | ArrayT(ArtCudaGlobal t,_) -> print_type t
             | ArrayT((ArtCudaShared | ArtCudaLocal),_) -> failwith "Cuda local and shared arrays cannot be used on the F# side."
             | DotNetTypeT (N t) -> print_dotnet_type t
-            | ClosureT(a,b) -> 
+            | TermFunctionT(a,b) -> 
                 let a = tuple_field_ty a |> List.map print_type |> String.concat " * "
                 sprintf "(%s -> %s)" a (print_type b)
             | PrimT x ->
