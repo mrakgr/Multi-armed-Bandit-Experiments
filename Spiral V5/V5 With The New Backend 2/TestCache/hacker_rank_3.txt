@@ -789,7 +789,7 @@ and method_20((var_0: int64), (var_1: (bool [])), (var_2: int64), (var_3: int64)
 and method_23((var_0: (Tuple2 [])), (var_1: (Tuple2 [])), (var_2: int64), (var_3: int64)): unit =
     if (var_2 < var_3) then
         let (var_4: Tuple2) = var_0.[int32 var_2]
-        var_1.[int32 (var_2 - var_2)] <- var_4
+        var_1.[int32 0L] <- var_4
         let (var_5: int64) = (var_2 + 1L)
         method_24((var_0: (Tuple2 [])), (var_1: (Tuple2 [])), (var_2: int64), (var_3: int64), (var_5: int64))
     else

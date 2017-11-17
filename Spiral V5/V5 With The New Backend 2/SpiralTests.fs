@@ -742,8 +742,8 @@ inl f [a:q b:w c:e] = q,w,e
 f [ a : 1; b : 2; c : 3 ]
     """
 
-let test60 =
-    "test60",[],"Is the trace being correctly propagated for TyTs?",
+let test60_error =
+    "test60_error",[],"Is the trace being correctly propagated for TyTs?",
     """
 inl a = dyn 1
 inl b = dyn 2
@@ -853,8 +853,8 @@ inl a: float64 = 5
 ()
     """
 
-let test71 =
-    "test71",[],"Does the recent change to error printing work? This one should give an error.",
+let test71_error =
+    "test71_error",[],"Does the recent change to error printing work? This one should give an error.",
     """
 55 + id
     """
@@ -1190,8 +1190,8 @@ for {static_from=6; to=3; by= -1; state=0; body = inl {state i} ->
 |> writeline
     """
 
-let loop4 =
-    "loop4",[loops;console],"Does the Loop module work? This particular test should give an error.",
+let loop4_error =
+    "loop4_error",[loops;console],"Does the Loop module work? This particular test should give an error.",
     """
 open Console
 open Loops
@@ -1313,7 +1313,7 @@ for {from=0; near_to=n; state={};
                     ret {state with princess=princess_pos}
                 else ret state
             finally = row
-                }
+            }
     finally = ret .none
     }
     """
@@ -1996,12 +1996,12 @@ let tests =
     test30;test31;test32;test33;test34;test35;test36;test37;test38;test39
     test40;test41;test42;test43;test44;test45;test46;test47;test48;test49
     test50;test51;test52;test53;test54;test55;test56;test57;test58;test59
-    test60;test61;test62;test63;test64;test65;test66;test67;test68;test69
-    test70;test71;test72;test73;test74;test75;test76;test77;test78;test79
+    test60_error;test61;test62;test63;test64;test65;test66;test67;test68;test69
+    test70;test71_error;test72;test73;test74;test75;test76;test77;test78;test79
     test80;test81;test82;test83;test84;test85;test86;test87;test88
     hacker_rank_1;hacker_rank_2;hacker_rank_3;hacker_rank_4;hacker_rank_5;hacker_rank_6;hacker_rank_7;hacker_rank_8;hacker_rank_9
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
-    loop1;loop2;loop3;loop4;loop5;loop6;loop7;loop8
+    loop1;loop2;loop3;loop4_error;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
     cuda1
     |]
@@ -2078,9 +2078,9 @@ let rewrite_test_cache x =
 //
 //    "speed3",[],"Does the linear sequence of bindings get compiled in linear time?",code
 
-//rewrite_test_cache None //(Some(40,80))
+rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp learning
-|> printfn "%s"
-|> ignore
+//output_test_to_temp learning
+//|> printfn "%s"
+//|> ignore
 
