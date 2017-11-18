@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 let rec method_0((var_0: bool)): bool =
     var_0
 let (var_0: bool) = true

@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 type Union0 =
     | Union0Case0 of int64
     | Union0Case1 of Tuple3
@@ -19,8 +26,8 @@ and Tuple3 =
     end
 and Tuple4 =
     struct
-    val mem_1: Tuple2
-    new(arg_mem_1) = {mem_1 = arg_mem_1}
+    val mem_0: Tuple2
+    new(arg_mem_0) = {mem_0 = arg_mem_0}
     end
 let (var_0: Union0) = (Union0Case0(1L))
 match var_0 with
@@ -33,7 +40,7 @@ match var_0 with
 | Union0Case2(var_3) ->
     match var_3 with
     | Rec1Case0(var_6) ->
-        let (var_7: Tuple2) = var_6.mem_1
+        let (var_7: Tuple2) = var_6.mem_0
         let (var_8: int64) = var_7.mem_0
         let (var_9: Rec1) = var_7.mem_1
         2L

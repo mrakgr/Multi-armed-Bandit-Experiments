@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 let rec method_1((var_0: ((int64 []) [])), (var_1: int64)): unit =
     if (var_1 < 4L) then
         let (var_2: (int64 [])) = Array.zeroCreate<int64> (System.Convert.ToInt32(8L))

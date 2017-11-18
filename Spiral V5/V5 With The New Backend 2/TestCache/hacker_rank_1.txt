@@ -1,7 +1,4 @@
-let (var_0: string) = System.Console.ReadLine()
-let (var_1: int32) = System.Int32.Parse(var_0)
-let (var_2: string) = System.Console.ReadLine()
-let (var_3: int32) = System.Int32.Parse(var_2)
-let (var_4: int32) = (var_1 + var_3)
-System.Console.Write(var_4)
-
+Invalid use of apply. TyT (LitT (LitString "System")) and TyT (LitT (LitString "Console"))
+Error trace on line: 2, column: 15 in file "hacker_rank_1".
+inl console = .System.Console |> mscorlib
+              ^

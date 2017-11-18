@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 type EnvStack0 =
     struct
     val mem_0: int64

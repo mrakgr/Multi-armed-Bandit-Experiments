@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 let rec method_0(): int64 =
     5L
 and method_1(): int64 =

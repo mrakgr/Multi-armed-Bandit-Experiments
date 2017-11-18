@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 let rec method_0((var_0: (int64 [])), (var_1: int64)): unit =
     if (var_1 < 4L) then
         var_0.[int32 var_1] <- var_1

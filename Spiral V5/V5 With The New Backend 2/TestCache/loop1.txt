@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 let rec method_0((var_0: int64), (var_1: int64), (var_2: int64), (var_3: int64)): int64 =
     if (var_2 >= var_1) then
         let (var_4: int64) = (var_2 % 3L)
@@ -38,14 +45,10 @@ let (var_0: int64) = 999L
 let (var_1: int64) = 3L
 let (var_2: int64) = -1L
 let (var_3: int64) = 0L
-let (var_7: int64) =
-    if (var_2 = 0L) then
-        (failwith "The by field should not be zero in loop as the program would diverge.")
-        var_3
+let (var_6: int64) =
+    if (var_2 < 0L) then
+        method_0((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
     else
-        if (var_2 < 0L) then
-            method_0((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
-        else
-            method_1((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
-System.Console.WriteLine(var_7)
+        method_1((var_2: int64), (var_1: int64), (var_0: int64), (var_3: int64))
+System.Console.WriteLine(var_6)
 

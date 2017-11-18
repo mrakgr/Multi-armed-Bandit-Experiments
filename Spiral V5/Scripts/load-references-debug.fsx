@@ -20,3 +20,7 @@
 #r "System.Xml.dll"
 #r "System.Xml.Linq.dll"
 #r "../../packages/Iesi.Collections.4.0.2/lib/net40/Iesi.Collections.dll"
+#r "../../packages/Mono.Cecil.0.10.0-beta6/lib/net40/Mono.Cecil.dll"
+#r "../../packages/Mono.Cecil.0.10.0-beta6/lib/net40/Mono.Cecil.Mdb.dll"
+#r "../../packages/Mono.Cecil.0.10.0-beta6/lib/net40/Mono.Cecil.Pdb.dll"
+#r "../../packages/Mono.Cecil.0.10.0-beta6/lib/net40/Mono.Cecil.Rocks.dll"

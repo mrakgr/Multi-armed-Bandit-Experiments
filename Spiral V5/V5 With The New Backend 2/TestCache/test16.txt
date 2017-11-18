@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 type Union0 =
     | Union0Case0 of int64
     | Union0Case1 of float

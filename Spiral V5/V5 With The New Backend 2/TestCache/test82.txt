@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 type Rec0 =
     | Rec0Case0
     | Rec0Case1 of Tuple1
@@ -7,7 +14,7 @@ and Tuple1 =
     val mem_1: Rec0
     new(arg_mem_0, arg_mem_1) = {mem_0 = arg_mem_0; mem_1 = arg_mem_1}
     end
-let rec method_4((var_0: Rec0), (var_1: Rec0)): bool =
+let rec method_1((var_0: Rec0), (var_1: Rec0)): bool =
     match var_0 with
     | Rec0Case0 ->
         match var_1 with
@@ -27,9 +34,9 @@ let rec method_4((var_0: Rec0), (var_1: Rec0)): bool =
             let (var_10: int64) = var_9.mem_0
             let (var_11: Rec0) = var_9.mem_1
             if (var_7 = var_10) then
-                method_4((var_8: Rec0), (var_11: Rec0))
+                method_1((var_8: Rec0), (var_11: Rec0))
             else
                 false
 let (var_0: Rec0) = Rec0Case0
 let (var_1: Rec0) = Rec0Case0
-method_4((var_0: Rec0), (var_1: Rec0))
+method_1((var_0: Rec0), (var_1: Rec0))

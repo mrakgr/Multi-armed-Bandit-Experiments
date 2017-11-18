@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 let rec method_0((var_0: (int64 [])), (var_1: string), (var_2: int64), (var_3: int64)): unit =
     let (var_4: bool) = (var_2 < 16L)
     if var_4 then
@@ -22,7 +29,7 @@ let rec method_0((var_0: (int64 [])), (var_1: string), (var_2: int64), (var_3: i
             let (var_13: bool) = true
             method_1((var_13: bool), (var_0: (int64 [])), (var_2: int64), (var_5: int64), (var_1: string), (var_3: int64))
     else
-        System.Console.WriteLine(var_0)
+        ()
 and method_1((var_0: bool), (var_1: (int64 [])), (var_2: int64), (var_3: int64), (var_4: string), (var_5: int64)): unit =
     let (var_7: bool) =
         if (var_5 >= 0L) then

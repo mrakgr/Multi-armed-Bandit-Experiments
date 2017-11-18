@@ -1,3 +1,10 @@
+module SpiralExample.Main
+let cuda_kernels = """
+extern "C" {
+    
+}
+"""
+
 type Tuple0 =
     struct
     val mem_0: int64
@@ -193,10 +200,10 @@ and method_7((var_0: int64), (var_1: (int64 [])), (var_2: int64)): Tuple0 =
                     (var_0 < var_2)
             else
                 false
-        if (var_6 = false) then
-            (failwith "Out of bounds.")
-        else
+        if var_6 then
             ()
+        else
+            (failwith "Out of bounds.")
         let (var_7: int64) = (var_2 * var_0)
         let (var_8: int64) = (var_7 + var_0)
         let (var_9: int64) = var_1.[int32 var_8]
@@ -215,10 +222,10 @@ and method_7((var_0: int64), (var_1: (int64 [])), (var_2: int64)): Tuple0 =
                     (var_11 < var_2)
             else
                 false
-        if (var_14 = false) then
-            (failwith "Out of bounds.")
-        else
+        if var_14 then
             ()
+        else
+            (failwith "Out of bounds.")
         let (var_15: int64) = (var_7 + var_11)
         let (var_16: int64) = var_1.[int32 var_15]
         method_8((var_9: int64), (var_16: int64), (var_3: int64), (var_1: (int64 [])), (var_2: int64))
@@ -291,10 +298,10 @@ and method_8((var_0: int64), (var_1: int64), (var_2: int64), (var_3: (int64 []))
                     (var_2 < var_4)
             else
                 false
-        if (var_8 = false) then
-            (failwith "Out of bounds.")
-        else
+        if var_8 then
             ()
+        else
+            (failwith "Out of bounds.")
         let (var_9: int64) = (var_4 * var_2)
         let (var_10: int64) = (var_9 + var_2)
         let (var_11: int64) = var_3.[int32 var_10]
@@ -314,10 +321,10 @@ and method_8((var_0: int64), (var_1: int64), (var_2: int64), (var_3: (int64 []))
                     (var_14 < var_4)
             else
                 false
-        if (var_17 = false) then
-            (failwith "Out of bounds.")
-        else
+        if var_17 then
             ()
+        else
+            (failwith "Out of bounds.")
         let (var_18: int64) = (var_9 + var_14)
         let (var_19: int64) = var_3.[int32 var_18]
         let (var_20: int64) = (var_1 + var_19)
