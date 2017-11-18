@@ -2034,11 +2034,11 @@ let output_test_to_string test =
     match spiral_peval (module_ test) with
     | Succ x | Fail x -> x
 
-let output_test_to_temp test = 
+let output_test_to_temp path test = 
     match spiral_peval (module_ test) with
     | Succ x | Fail x -> 
         let file = if x.Length > 1024*128 then "output.txt" else "output.fs"
-        File.WriteAllText(Path.Combine(@"C:\Users\Marko\Documents\Visual Studio 2015\Projects\Multi-armed Bandit Experiments\SpiralExample",file),x)
+        File.WriteAllText(Path.Combine(path,file),x)
         x
 
 let output_tests_to_file file =
@@ -2096,7 +2096,7 @@ let rewrite_test_cache x =
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp learning
+output_test_to_temp @"C:\Users\Marko\Documents\Visual Studio 2015\Projects\Multi-armed Bandit Experiments\SpiralExample" learning
 |> printfn "%s"
 |> ignore
 
