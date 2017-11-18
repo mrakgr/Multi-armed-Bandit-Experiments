@@ -2530,7 +2530,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
     // #Cuda
     let spiral_cuda_codegen (definitions_queue: Queue<TypeOrMethod>) = 
         let buffer_forward_declarations = ResizeArray()
-        let buffer_type_definitions = ResizeArray()
+        let buffer_type_definitions = Stack()
         let buffer_method = ResizeArray()
         let buffer_temp = ResizeArray()
 
@@ -2898,13 +2898,15 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
                 | UnionT tys as x -> print_union_definition (print_tag_union x) (Set.toArray tys)
                 | TermFunctionT(a,r) as x -> print_closure_type_definition (print_tag_closure x) (a,r)
                 | _ -> failwith "impossible"
-                move_to buffer_type_definitions buffer_temp
+                
+                buffer_type_definitions.Push(ResizeArray(buffer_temp))
+                buffer_temp.Clear()
 
         "module SpiralExample.Main" |> state_new
         sprintf "let %s = \"\"\"" cuda_kernels_name |> state_new
         "extern \"C\" {" |> state_new
         enter' <| fun _ ->
-            move_to buffer_temp buffer_type_definitions
+            while buffer_type_definitions.Count > 0 do move_to buffer_temp (buffer_type_definitions.Pop())
             move_to buffer_temp buffer_forward_declarations
             state_new ""
             move_to buffer_temp buffer_method
