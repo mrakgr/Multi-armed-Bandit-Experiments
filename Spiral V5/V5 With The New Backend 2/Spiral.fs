@@ -2796,7 +2796,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
         let print_closure_type_definition name (a,r) =
             let ret_ty = print_type r
             let ty = tuple_field_ty a |> List.map print_type |> String.concat ", "
-            sprintf "typedef %s(*%s)(%s);" ret_ty name ty |> state
+            sprintf "typedef %s(*%s)(%s)" ret_ty name ty |> state
 
         let print_union_definition name tys =
             sprintf "struct %s {" name |> state_new

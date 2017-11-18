@@ -1821,18 +1821,18 @@ run_with_unit_ret (readall()) parser
 //    """
 //    """
 
-let cuda1 =
-    "cuda1",[loops;tuple;cuda;console;array;host_tensor],"Does the map kernel work?",
-    """
-open Loops
-open Cuda
-open CudaTensor
-open Console
-
-inl dev_tensor = from_host_tensor (HostTensor.init 8 id)
-inl {ar} = map (inl x -> x * 2) dev_tensor |> to_host_tensor
-Array.show_array ar |> writeline
-    """
+//let cuda1 =
+//    "cuda1",[loops;tuple;cuda;console;array;host_tensor],"Does the map kernel work?",
+//    """
+//open Loops
+//open Cuda
+//open CudaTensor
+//open Console
+//
+//inl dev_tensor = from_host_tensor (HostTensor.init 8 id)
+//inl {ar} = map (inl x -> x * 2) dev_tensor |> to_host_tensor
+//Array.show_array ar |> writeline
+//    """
 
 let learning =
     "Learning",[option;cuda;extern_;option;console],"The deep learning module.",
@@ -1985,11 +1985,16 @@ open Console
 inl (>>=) a b ret = a <| inl a -> b a ret
 inl succ a ret = ret a
 
-inl map_op x =
+inl map_op_option x =
     open Option
     match dyn (none int64) with
     | [Some: x] -> 99
     | [None] -> x*2
+
+inl map_op x =
+    inl add (x, y) = x + y
+    inl f = term_cast add (x,x)
+    f (x,x)
 
 inl program = 
     inl host_tensor = HostTensor.init 8 id
@@ -2015,7 +2020,6 @@ let tests =
     parsing1;parsing2;parsing3;parsing4;parsing5;parsing6;parsing7;parsing8
     loop1;loop2;loop3;loop4_error;loop5;loop6;loop7;loop8
     euler2;euler3;euler4;euler5
-    cuda1
     |]
 
 open System.IO
@@ -2092,7 +2096,7 @@ let rewrite_test_cache x =
 
 //rewrite_test_cache None //(Some(40,80))
 
-output_test_to_temp test89
+output_test_to_temp learning
 |> printfn "%s"
 |> ignore
 
