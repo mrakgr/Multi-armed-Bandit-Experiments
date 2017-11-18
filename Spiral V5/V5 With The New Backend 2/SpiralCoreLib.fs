@@ -24,6 +24,7 @@ inl stack x = !LayoutToStack(x)
 inl packed_stack x = !LayoutToPackedStack(x)
 inl heap x = !LayoutToHeap(x)
 inl heapm x = !LayoutToHeapMutable(x)
+inl indiv x = !LayoutToNone(x)
 
 inl bool = type(true)
 
@@ -134,7 +135,7 @@ inl (use) a b =
 inl sizeof x = !SizeOf(x)
 
 {type_lit_lift assembly_load assembly_load_file mscorlib fsharp_core system error_type print_static dyn (\/) (=>)
- split box stack packed_stack heap heapm bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
+ split box stack packed_stack heap heapm indiv bool int64 int32 int16 int8 uint64 uint32 uint16 uint8 float64 float32
  string char unit type_lit_cast type_lit_is term_cast unsafe_convert negate ignore id const ref Array (+) (-) (*) (/) (%)
  (|>) (<|) (>>) (<<) (<=) (<) (=) (<>) (>) (>=) (&&&) (|||) (^^^) (::) (&&) (||) (<<<) (>>>) Tuple fst snd not
  string_length lit_is box_is failwith assert max min eq_type module_values caseable_is (:>)
