@@ -2799,7 +2799,7 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
             sprintf "typedef %s(*%s)(%s);" ret_ty name ty |> state
 
         let print_union_definition name tys =
-            sprintf "typedef struct %s {" name |> state_new
+            sprintf "struct %s {" name |> state_new
             enter' <| fun _ ->
                 "int tag" |> state
                 "union {" |> state_new
@@ -2813,12 +2813,13 @@ let spiral_peval (Module(N(module_name,_,_,_)) as module_main) =
 
             Array.iteri (fun i t ->
                 let is_unit_false = is_unit t = false
-                if is_unit_false then sprintf "%s make_%sCase%i(%s v) {" name name i (print_type t) |> state_new
-                else sprintf "__device__ __forceinline__  %s make_%sCase%i() {" name name i |> state_new
+                let case_name = sprintf "%sCase%i" name i
+                if is_unit_false then sprintf "__device__ __forceinline__ %s make_%s(%s v) {" name case_name (print_type t) |> state_new
+                else sprintf "__device__ __forceinline__  %s make_%s() {" name case_name |> state_new
                 enter' <| fun _ ->
-                    sprintf "struct %s t" name |> state
+                    sprintf "%s t" name |> state
                     sprintf "t.tag = %i" i |> state
-                    if is_unit_false then "t.data = v" |> state
+                    if is_unit_false then sprintf "t.data.%s = v" case_name |> state
                     "return t" |> state
                 "}" |> state_new
                 ) tys
