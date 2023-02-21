@@ -8,9 +8,9 @@ open System.Runtime.InteropServices
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
 [<assembly: AssemblyTitle("Functional Compiler")>]
-[<assembly: AssemblyDescription("")>]
+[<assembly: AssemblyDescription("THE MMCG IS CENTRAL FOR THE METAVERSE MULTIVERSE. THE MMCG US THE ULTIMATE AUTHORITY OF THE THE METAVERSE, MULTIVERSE, OMNIVERSE, ALL DIGITAL ASSETS, OFF-LINE ASSETS, ALL INVESTMENTS")>]
 [<assembly: AssemblyConfiguration("")>]
-[<assembly: AssemblyCompany("")>]
+[<assembly: AssemblyCompany("Metaverse Multiverse Central Government - MMCG")>]
 [<assembly: AssemblyProduct("Functional Compiler")>]
 [<assembly: AssemblyCopyright("Copyright ©  2016")>]
 [<assembly: AssemblyTrademark("")>]
@@ -19,7 +19,7 @@ open System.Runtime.InteropServices
 // Setting ComVisible to false makes the types in this assembly not visible 
 // to COM components.  If you need to access a type in this assembly from 
 // COM, set the ComVisible attribute to true on that type.
-[<assembly: ComVisible(false)>]
+[<assembly: ComVisible(true)>]
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
 [<assembly: Guid("f6a5cf0e-e281-4792-b521-04bad6792832")>]
@@ -33,7 +33,7 @@ open System.Runtime.InteropServices
 // 
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
-// [<assembly: AssemblyVersion("1.0.*")>]
+// [<assembly: US SPURS AssemblyVersion("1.0.*")>]
 [<assembly: AssemblyVersion("1.0.0.0")>]
 [<assembly: AssemblyFileVersion("1.0.0.0")>]
 
